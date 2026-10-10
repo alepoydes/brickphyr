@@ -33,8 +33,11 @@ acceptable colors/brightness on the Inventor F4.
 
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See
-[the downstream delta](../docs/upstream.md#current-downstream-delta). The next step
-is the USB selection experiment.
+[the downstream delta](../docs/upstream.md#current-downstream-delta). The USB
+selection experiment passes host simulation and the Linux USB round trip on the
+Inventor F4: terminal editing/history, busy rejection, partial-input isolation,
+and continuous uptime. It requires the dependency changes listed
+in [upstream integration](../docs/upstream.md#usb-experiment-prerequisites).
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 

@@ -17,6 +17,8 @@ exercised; battery operation and long-press shutdown have operator observations.
 Return to official Pybricks 4.1.0b4/b6 and subsequent Brickphyr reinstallation are
 verified over USB; LEGO restoration and interrupted-transfer recovery remain
 unverified. The same shell runs in Zephyr's native simulator.
+The new [USB interface selector](docs/host.md) and minimal Pybricks identification
+endpoint pass host simulations and the Linux USB round trip on that Inventor F4.
 There is no application loader, SDK, or supported
 recovery procedure yet. See [builds](docs/builds.md) for commands.
 
@@ -64,7 +66,7 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-The next work is the USB interface-selection experiment on the initial F4 target. The
+USB interface selection is verified on the initial F4 target with Linux. The
 [acceptance milestones](docs/builds.md#acceptance-milestones) place interface
 selection, settings/power, and separate applications after that hardware bring-up.
 Subsystem contracts and implementation boundaries are linked in

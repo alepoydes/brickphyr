@@ -5,6 +5,11 @@ Robot Inventor F4 hub identified through its factory DFU loader. The PCB revisio
 has not been established. These results do not establish support for every
 Inventor or SPIKE Prime revision, LEGO restoration, or interrupted-update recovery.
 
+The new [USB interface selector](host.md) and minimal Pybricks endpoint are
+checked in simulation and over Linux USB on that Inventor F4. The round trip
+preserves uptime; occupied-session rejection, terminal editing/history and
+partial-input isolation are verified. Other host operating systems remain unverified.
+
 ## Target matrix
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |

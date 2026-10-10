@@ -20,7 +20,8 @@ In a working fork, `origin` is our fork and `upstream` is the original project.
 For an unmodified dependency, its normal upstream remote is sufficient. The
 Pybricks fork is [alepoydes/pybricks-micropython](https://github.com/alepoydes/pybricks-micropython),
 with [pybricks/pybricks-micropython](https://github.com/pybricks/pybricks-micropython)
-as upstream. No Zephyr fork is currently needed.
+as upstream. The USB experiment also needs a published Zephyr fork for the
+[CDC completion change](#usb-experiment-prerequisites).
 
 ## Put the change in its owning project
 
@@ -100,8 +101,9 @@ the same revision in west, a shell script, and a prose installation command.
 ## Current downstream delta
 
 The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and our Pybricks fork.
-The board lives out of tree in Brickphyr; Zephyr and its imported modules remain
-unmodified. Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
+The board lives out of tree in Brickphyr. The published pins still select
+unmodified Zephyr and its imported modules; the USB experiment has additional
+[prerequisites](#usb-experiment-prerequisites). Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
 The firmware adapters use Zephyr ADC, Input, SPI, PWM, GPIO, and LED APIs.
 
 The pinned Pybricks fork includes these changes on the upstream v4.1.0b6 base:
@@ -119,6 +121,21 @@ These changes are published in
 installer and its DFU implementation remain unmodified. No upstream PR has been
 submitted yet; remove the downstream delta when equivalent upstream functionality
 is adopted.
+
+## USB experiment prerequisites
+
+The experimental USB selector additionally requires two portable dependency
+changes, not yet included in the published manifest pins:
+
+- Pybricks COBS decoding must reject truncated blocks and reserved wire bytes.
+- Zephyr's next-stack CDC ACM driver must implement `uart_irq_tx_complete()`,
+  including pending USB packets and the terminating zero-length packet. A FIFO
+  alone cannot establish that the previous protocol's output has drained.
+
+Keep these changes in their owning repositories, run their focused tests, and
+publish reviewed dependency commits before updating the manifest. A clean
+checkout of the current pins does not yet reproduce the complete USB experiment.
+Do not substitute timing delays or inspect private driver buffers in Brickphyr.
 
 ## Contribution certification
 

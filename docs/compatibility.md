@@ -6,8 +6,8 @@ a claim that the port is already complete.
 
 ## Reference and scope
 
-The starting behavioral reference is Pybricks v4.1.0b4. Its source revision is
-recorded in [hardware](hardware.md). Before implementing compatibility, pin the
+The selected behavioral reference is Pybricks v4.1.0b6. Its source revision is
+pinned by the [workspace manifest](../west.yml). Before implementing compatibility, pin the
 selected Pybricks/MicroPython build and publish the covered API version. Changing
 that baseline later is an explicit compatibility decision.
 
@@ -58,6 +58,9 @@ restoration have their own [recovery contract](recovery.md).
 The [host interface](host.md) defines session ownership and the proposed USB
 selection experiment. Native/WASM delivery and management may use standard
 mechanisms beyond the unchanged Pybricks client's capabilities.
+
+The experimental [USB endpoint](host.md#implemented-pybricks-subset) implements
+identification and explicit unsupported-command errors, without Python execution.
 
 ## Initial coverage plan
 

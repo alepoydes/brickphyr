@@ -1,9 +1,12 @@
 # Host connections and interfaces
 
-The current firmware implements only a USB CDC ACM diagnostic shell. Pybricks
-protocol compatibility, interface selection, Bluetooth, and SMP are not yet
-implemented. This document separates required behavior from the USB mechanism
-selected for an experiment.
+The experimental F4 image implements selectable USB CDC ACM interfaces: Zephyr
+Shell and a minimal Pybricks identification endpoint. The stream handler is
+checked with Zephyr's UART emulator and the upstream Pybricks Python client.
+The Shell/Pybricks round trip is verified over Linux USB on one Robot Inventor F4
+(PCB revision unknown), including busy rejection, terminal editing/history,
+partial-input isolation and uninterrupted uptime. Bluetooth, SMP, application loading,
+and Python/WASM execution remain outside this implementation.
 
 ## One management session
 
@@ -54,21 +57,93 @@ or a hub restart. Buttons may offer the same choice locally, but automated tools
 must not depend on them. Bootloader recovery remains a separate operation under
 [recovery](recovery.md).
 
-The candidate uses one CDC ACM data channel and device-specific control requests
-on USB endpoint 0 to query and select its interface. Zephyr exposes vendor-request
-handlers for this purpose. This avoids requiring a second CDC port or an extra
-handshake from an unchanged Pybricks client. The initial compatible interface must
-be usable by that client without knowing Brickphyr's selection extension.
+The implementation uses one CDC ACM data channel and device-specific control
+requests on endpoint 0. Boot selects Pybricks; the selection survives closing the
+port and changes only through an explicit request or reboot. No protocol is
+guessed from data. USB IDs remain the experimental `2fe3:0004`.
 
-Accept the mechanism only after a host can select Shell, execute a real command,
-select Pybricks, read real identification data, and return to Shell without a
-reboot. Verify host-driver access to control requests, rejection of unsupported
-selections, ownership during handover, and separation of buffered data between
-interfaces. No client may steal an active session through the control endpoint.
+DTR acquires the data session. Closing it releases ownership after the old shell
+has finished and pending USB output has drained. Selection while occupied or
+closing fails; a control request cannot evict an owner. The operating system must
+also enforce exclusive access to the serial port: firmware cannot distinguish
+two processes writing through the same host driver. USB reset releases the
+session without selecting another interface.
 
-Request encoding, host API, session-release detection, and interface reset policy
-are still experimental choices. This experiment proves interface selection, not
-Python upload or execution. Do not advertise unavailable Pybricks capabilities.
+The selector tool keeps DTR low while draining previous output and uses device
+recipient control requests without claiming or detaching the CDC interfaces.
+Session buffers, partial protocol frames, and the shell parser are reset at
+handover. Shell history currently belongs to one terminal session.
+
+### Usage
+
+Close the current terminal or client before selection. From the repository:
+
+```sh
+uv run --locked --group flash python -m tools.host status
+uv run --locked --group flash python -m tools.host select shell
+uv run --locked python -m serial.tools.list_ports -v
+uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+```
+
+Use the listed port instead of `/dev/ttyACM0` when different. Run `info` and
+`uptime`, then exit with **Ctrl+]**. Switch and identify through the unmodified
+client in the selected Pybricks checkout:
+
+```sh
+uv run --locked --group flash python -m tools.host select pybricks
+uv run --locked --group flash python -m tools.host identify
+uv run --locked --group flash python -m tools.host select shell
+uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+```
+
+`uptime` must continue across the round trip. After reboot, select Shell again.
+For several hubs, pass `--serial SERIAL_NUMBER` before the subcommand. Linux USB
+permissions must allow device control requests as well as opening the serial port.
+On a Linux desktop using systemd-logind, install the scoped udev rule once:
+
+```sh
+sudo install -m 644 tools/70-brickphyr.rules /etc/udev/rules.d/70-brickphyr.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=usb --attr-match=manufacturer=Brickphyr
+```
+
+The rule grants USB access to the active local user and matches the Brickphyr
+manufacturer string as well as the development IDs. It does not replace the CDC
+driver or change access for other Zephyr devices. The serial port still needs its
+normal access permissions. Headless installations need an administrator's device
+access policy. Windows/macOS driver access and unchanged Pybricks Code discovery
+are unverified.
+
+### Implemented Pybricks subset
+
+Reuse Pybricks' COBS codec, protocol constants, PnP and capability encoders.
+The upstream `tools/flash/serdev/pybricks.py` client supplies host reads.
+
+- Read device name, actual Brickphyr firmware version, protocol version, factory
+  hub variant and hub kind. Unknown characteristics return an empty value.
+- Capabilities advertise no execution engines, program storage or program slots.
+- Subscribe emits current USB-connected status with no running program.
+- Commands, including upload, run, STOP and DFU, return `INVALID_COMMAND` with the
+  original correlation tag. Use the working Shell `reboot dfu` for update entry.
+- Malformed envelopes and oversized frames are discarded through the next frame
+  delimiter. They never select another protocol or execute shell text.
+
+This is identification interoperability, not full Pybricks Code or Python
+compatibility. The returned firmware version does not impersonate Pybricks.
+
+### Experimental control requests
+
+Both requests use device recipient, vendor request `0x42`, and `wIndex = 0`.
+GET (`bmRequestType = 0xc0`, `wValue = 0`, length 8) returns format version 1,
+mode (0 Pybricks, 1 Shell), occupied flag, selectable flag, then a signed
+little-endian 32-bit transport error. SET (`0x40`, length 0) takes the mode in
+`wValue`. Unsupported values and occupied transitions stall the request; GET
+reports the current state without taking ownership. Errors retain the first
+transport failure and require a reboot before retrying.
+
+The mechanism remains experimental beyond the verified Linux/Inventor F4 setup.
+It requires the dependency changes
+listed in [upstream integration](upstream.md#usb-experiment-prerequisites).
 
 ## References
 

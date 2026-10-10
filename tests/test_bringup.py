@@ -116,3 +116,14 @@ def test_hub_drivers():
         check=True,
     )
     assert "PROJECT EXECUTION SUCCESSFUL" in result.stdout, result.stdout
+
+
+def test_host_transport():
+    result = subprocess.run(
+        [BUILD / "host-tests/zephyr/zephyr.exe"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    assert "PROJECT EXECUTION SUCCESSFUL" in result.stdout, result.stdout

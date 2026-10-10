@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# EP0 management access for the active local user; keep the CDC kernel driver.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2fe3", ATTR{idProduct}=="0004", ATTR{manufacturer}=="Brickphyr", TAG+="uaccess"

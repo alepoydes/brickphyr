@@ -125,8 +125,9 @@ It does not add H5 support. Building a package does not verify recovery on hardw
 
 ### Diagnostic shell
 
-The firmware starts the standard Zephyr USB CDC ACM shell without waiting for a
-terminal. Its intended hardware behavior is to keep battery power on and hold
+The F4 firmware starts in the experimental Pybricks identification interface.
+Select the standard Zephyr Shell from the computer before opening a terminal;
+see [host connections](host.md). Boot never waits for a host. Its intended hardware behavior is to keep battery power on and hold
 all six motor bridges in coast. The implementation has no motor commands. The
 current USB descriptors use Zephyr's development VID/PID (`2fe3:0004`); a project
 allocation is required before distribution. These IDs do not identify a physical
@@ -160,17 +161,19 @@ Find `Brickphyr bring-up console` (`2fe3:0004`) and open its device. For
 `/dev/ttyACM0`, use:
 
 ```sh
+uv run --locked --group flash python -m tools.host select shell
 uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
 Replace `/dev/ttyACM0` if the port listing shows another device. Press Enter to
 display `brickphyr> `. Type `info` to identify the firmware, or call `uptime`
 twice to check that it advances. Exit miniterm with **Ctrl+]**. After `reboot`,
-open the port again; its device name may change. Only one terminal may own it.
+select Shell and open the port again; its device name may change. Only one terminal may own it.
 
 The shell uses Zephyr's standard line editing: Left/Right, Home/End,
 Backspace/Delete, Tab completion, and Up/Down command history. History is held
-in RAM and is cleared on firmware reboot. `--raw` lets the host terminal interpret
+in RAM for the terminal session. Closing the session clears its history and
+unfinished input. `--raw` lets the host terminal interpret
 the shell's cursor-control sequences without miniterm filtering them.
 
 The F4 build softly fades in the central button over 1.2 seconds, then breathes
@@ -248,7 +251,8 @@ compiler settings, and instrumentation.
 Continue from the existing F4 image, USB shell, image/package checks, and native
 simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
 fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercised
-on the initial Inventor F4. The next step is USB interface selection; LEGO
+on the initial Inventor F4. USB interface selection also passes the Linux round
+trip on that hub; settings and power policy are next. LEGO
 transitions and interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package

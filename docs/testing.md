@@ -14,6 +14,7 @@ After [workspace setup](builds.md), including the experimental
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 uv run --locked pytest -q
 ```
 
@@ -173,3 +174,22 @@ Python compatibility programs compare Brickphyr with the selected Pybricks
 reference. Native/WASM examples exercise the released hardware interface. An
 application such as babybot validates a useful integration, but balancing success
 alone cannot establish recovery, isolation, or compatibility on other hubs.
+
+## USB interface selection
+
+`tests/host` runs the production dispatcher and Zephyr Shell through the UART
+emulator. It checks Shell → Pybricks → Shell without reboot, real editing/history,
+unknown selections, occupied-session rejection, output draining and partial-line
+isolation, including rapid reopen. This does not exercise a physical USB driver.
+
+The Python protocol checks compile the production C handler with the selected
+Pybricks sources and exchange frames using the unchanged upstream Python client.
+They check real identification, zero application capabilities, tagged errors,
+subscription status and malformed/oversized frame recovery. A host C compiler is
+required. No check inspects source contents.
+
+On an authorized F4 hub, follow the [USB round trip](host.md#usage). Also attempt
+selection while the terminal is open, close it with a partial command, and verify
+that the partial command never executes after reopening. Close all clients at
+handoff. USB-driver access, physical packet completion and unchanged uptime must
+be measured separately from simulation.
