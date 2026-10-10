@@ -12,7 +12,7 @@ partial-input isolation and uninterrupted uptime. Experimental SMP management
 shares the Shell channel and passes native simulation and Linux USB checks with
 standard clients, including fragmented packets and persistent settings. The optional
 [Bluetooth profile](bluetooth.md#experimental-f4-controller) provides Pybricks BLE
-identification/status with the same USB/BLE ownership rule. Application loading
+identification/status and SMP management with the same USB/BLE ownership rule. Application loading
 and Python/WASM execution remain outside this implementation.
 
 ## One management session
@@ -70,7 +70,17 @@ uv run --locked smpmgr --port /dev/ttyACM0 os echo Brickphyr
 
 Use the port reported by `python -m serial.tools.list_ports -v`. The unchanged
 `smpmgr` command and `smpclient` library are checked against a native Zephyr build
-over a pseudoterminal and Linux USB on the Inventor F4. SMP over Bluetooth is not yet implemented.
+over a pseudoterminal and Linux USB on the Inventor F4. The optional
+[Bluetooth profile](bluetooth.md#experimental-f4-controller) also passes standard
+SMP BLE discovery, echo, fragmented packets and Settings read/write/save. After
+`bluetooth on` in the terminal, close USB and use:
+
+```sh
+uv run --locked smpmgr --ble Brickphyr --timeout 10 os echo Brickphyr
+```
+
+For multiple nearby hubs, specify the address reported by BLE discovery instead
+of the shared default name.
 
 The enabled groups provide OS echo/reset and Settings read/write/commit/whole-store
 save. Read and write operate on RAM; save is explicit. Settings values and storage
@@ -82,7 +92,13 @@ SMP executes on the Shell thread, so a response cannot interleave with a Shell
 command's output. Closing the session waits for an accepted operation to finish;
 it discards queued and partial input and suppresses old replies. An accepted save
 may therefore finish after the host disconnects. Reopening cannot inherit an old
-command. The reused receiver needs the local [Zephyr changes](upstream.md#smp-prerequisites).
+command. BLE SMP uses the standard Zephyr GATT transport and management workqueue.
+Packet admission holds the same management owner and power inhibition until the
+accepted packet finishes, even after disconnection. Incomplete and queued old
+packets are discarded; they cannot acquire the next session. A disconnect also
+rejects subsequent commands bundled in the current packet, while an already
+entered handler may finish. These paths require
+the local [Zephyr changes](upstream.md#smp-prerequisites).
 
 ## USB selection experiment
 

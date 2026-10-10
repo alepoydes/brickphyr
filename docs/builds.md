@@ -203,8 +203,7 @@ interface cannot be displaced: confirmation briefly extinguishes the white BT
 light and leaves the menu open. In normal operation BT lighting is off.
 The 5×5 display is not implemented. An optional
 [Bluetooth controller profile](bluetooth.md#experimental-f4-controller) provides
-Pybricks BLE identification/status and shared USB/BLE ownership. SMP over BLE
-is not implemented yet.
+Pybricks BLE identification/status and SMP management with shared USB/BLE ownership.
 
 For a short check, press each button briefly, then run:
 

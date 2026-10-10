@@ -169,6 +169,17 @@ The manifest imports zcbor through Zephyr's pinned module list. Host tooling use
 the locked, unmodified `smpclient` and `smpmgr` packages. Keep the receiver change
 in Zephyr; publish reviewed dependency commits before updating shared pins.
 
+BLE SMP also needs transport packet admission/completion callbacks. An accepted
+packet keeps its session resources until handlers, response output and cleanup
+finish; denied packets never reach a handler. The standard Bluetooth transport
+exposes a public connection callback pair, holds the connection reference through
+processing, rejects obsolete sessions and clears incomplete/queued packets on
+disconnect. Brickphyr uses this boundary to retain the shared management slot
+without blocking Bluetooth RX. Focused Zephyr tests cover admission, malformed
+input, allocation/output failures and exactly-once completion. These local changes
+are not included in the published manifest pin.
+
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

@@ -12,8 +12,9 @@ An optional build initializes the Inventor F4 CC2564C through Zephyr's H:4 drive
 and the official TI service pack. Its Pybricks GATT endpoint provides identity,
 capabilities, status and explicit unsupported-command errors. Linux pybricksdev
 identification, reconnection, return to Shell and USB/BLE exclusion are checked on
-one Inventor F4 (PCB revision unknown). SMP over Bluetooth, program execution,
-pairing and controller input are not implemented in this profile.
+one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide echo
+and settings read/write/save through the same runtime and persistence handlers as
+USB. Program execution, pairing and controller input are not implemented in this profile.
 
 Build this profile from the repository:
 
@@ -30,12 +31,14 @@ bluetooth on
 ```
 
 Close the terminal before connecting over BLE. The hub advertises the Pybricks
-service, PnP identity and name `Brickphyr`, and resumes advertising after a
+and SMP service UUIDs and name `Brickphyr`, and resumes advertising after a
 connection closes. A live USB owner rejects a BLE contender by disconnecting it;
 a live BLE owner rejects USB selection and discards incoming USB data. A rejected
 USB port must close and reopen before it can acquire ownership. Closing a host
 client may precede the hub's disconnect event: wait for ownership to be released
-before opening the other transport.
+before opening the other transport. The 31-byte legacy advertising limit puts one
+service UUID in advertising and the other beside the name in scan response. PnP
+identity remains available through the Device Information GATT service.
 
 The existing pybricksdev BLE client can identify the hub without uploading code:
 

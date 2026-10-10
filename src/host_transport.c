@@ -34,6 +34,9 @@ static int next_mode = -1;
 static bool occupied;
 static bool usb_open;
 static bool ble_occupied;
+static bool ble_closing;
+static bool ble_exit;
+static k_tid_t ble_request_thread;
 static bool ready;
 static bool tx_idle;
 static int first_error;
@@ -79,7 +82,9 @@ static enum mgmt_cb_return management_access(uint32_t event, enum mgmt_cb_return
 	if (previous != MGMT_CB_OK) {
 		return previous;
 	}
-	if (!shell_owner()) {
+	bool ble_allowed = event == MGMT_EVT_OP_CMD_RECV ?
+		host_ble_command_allowed() : host_ble_request_active();
+	if (!shell_owner() && !ble_allowed) {
 		*rc = MGMT_ERR_EACCESSDENIED;
 		return MGMT_CB_ERROR_RC;
 	}
@@ -515,22 +520,68 @@ int host_ble_acquire(void)
 	return err;
 }
 
+static void finish_ble_session(void)
+{
+	if (ble_closing && !ble_request_thread) {
+		ble_occupied = false;
+		ble_closing = false;
+		hub_power_connection(false);
+		if (ble_exit) {
+			mode = HOST_SHELL;
+		}
+		ble_exit = false;
+	}
+}
+
 void host_ble_release(bool exit_compatibility)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (ble_occupied) {
-		ble_occupied = false;
-		hub_power_connection(false);
-		if (exit_compatibility) {
-			mode = HOST_SHELL;
-		}
+	if (ble_occupied && !ble_closing) {
+		ble_closing = true;
+		ble_exit = exit_compatibility;
+		finish_ble_session();
 	}
-	/* A USB open rejected during BLE ownership must close and reopen. Never
-	 * inherit bytes or execute a command queued by the rejected contender. */
+	/* A rejected USB port must close and reopen; never inherit its input. */
 	k_spin_unlock(&lock, key);
+}
+
+bool host_ble_request_begin(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool valid = ble_occupied && !ble_closing && !ble_request_thread;
+	if (valid) {
+		ble_request_thread = k_current_get();
+	}
+	k_spin_unlock(&lock, key);
+	return valid;
+}
+
+void host_ble_request_end(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	__ASSERT_NO_MSG(ble_request_thread == k_current_get());
+	ble_request_thread = NULL;
+	finish_ble_session();
+	k_spin_unlock(&lock, key);
+}
+
+bool host_ble_request_active(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool active = ble_request_thread == k_current_get();
+	k_spin_unlock(&lock, key);
+	return active;
 }
 
 uint16_t host_hub_variant(void)
 {
 	return variant;
+}
+
+bool host_ble_command_allowed(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool allowed = ble_request_thread == k_current_get() && !ble_closing;
+	k_spin_unlock(&lock, key);
+	return allowed;
 }

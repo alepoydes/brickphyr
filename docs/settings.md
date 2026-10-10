@@ -127,8 +127,9 @@ expiry, and a claimed shutdown rejects a later acquisition. No user application
 runs yet; application activity must join this policy before an execution engine
 is enabled. The optional Bluetooth profile acquires the same power hold. USB open/close
 attempts rejected during BLE ownership cannot release it. These policy boundaries
-are checked with synthetic time; physical BLE idle-timeout inhibition remains to
-be measured.
+are checked with synthetic time, including disconnect during an accepted SMP
+operation. BLE inhibition beyond a one-second USB-power timeout is also verified
+on the Inventor F4; automatic power-off and source transitions remain separate checks.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.

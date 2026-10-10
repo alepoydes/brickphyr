@@ -10,6 +10,7 @@
 #include <zephyr/bluetooth/services/nus.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
 
@@ -21,6 +22,7 @@ static struct bt_uuid_128 command_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 /* Connection and GATT callbacks execute on the Bluetooth RX workqueue. */
 static struct bt_conn *owner;
+static struct k_spinlock session_lock;
 static bool exit_compatibility;
 K_MUTEX_DEFINE(radio_lock);
 static bool advertising_enabled;
@@ -54,7 +56,9 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 		return BT_GATT_ERR(error);
 	}
 	/* The sole supported command selects Shell after the link closes. */
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	exit_compatibility = true;
+	k_spin_unlock(&session_lock, key);
 	return len;
 }
 
@@ -130,31 +134,67 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		}
 		return;
 	}
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	owner = bt_conn_ref(conn);
 	exit_compatibility = false;
+	k_spin_unlock(&session_lock, key);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	if (conn == owner) {
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	bool owned = conn == owner;
+	if (owned) {
 		owner = NULL;
+		/* Keep the shared owner/power hold until any accepted packet finishes.
+		 * Do not block RX: the SMP sender may need its disconnect callback. */
 		host_ble_release(exit_compatibility);
 		exit_compatibility = false;
+	}
+	k_spin_unlock(&session_lock, key);
+	if (owned) {
 		bt_conn_unref(conn);
 	}
 }
 
+#if defined(CONFIG_MCUMGR_TRANSPORT_BT)
+static bool request_begin(struct bt_conn *conn)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	bool valid = owner == conn && host_ble_request_begin();
+	k_spin_unlock(&session_lock, key);
+	return valid;
+}
+
+static void request_end(struct bt_conn *conn, int result)
+{
+	host_ble_request_end();
+}
+
+static const struct smp_bt_request_callbacks request_callbacks = {
+	.begin = request_begin, .end = request_end,
+};
+#endif
+
 static int advertise(void)
 {
+#if !defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	uint8_t pnp[2 + PBIO_PYBRICKS_PNP_ID_SIZE];
 	sys_put_le16(PBIO_GATT_PNP_ID_CHAR_UUID, pnp);
 	pbio_pybricks_pnp_id(pnp + 2, PBIO_PYBRICKS_HUB_KIND_PRIME, host_hub_variant());
+#endif
 	const struct bt_data data[] = {
 		BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR),
-		BT_DATA(BT_DATA_UUID128_ALL, service_uuid.val, sizeof(service_uuid.val)),
+		BT_DATA(BT_DATA_UUID128_SOME, service_uuid.val, sizeof(service_uuid.val)),
 	};
 	const struct bt_data response[] = {
+#if defined(CONFIG_MCUMGR_TRANSPORT_BT)
+		/* Legacy advertising has 31 bytes per packet. Put the second UUID
+		 * beside the name in scan response; PnP remains readable over GATT. */
+		BT_DATA_BYTES(BT_DATA_UUID128_SOME, SMP_BT_SVC_UUID_VAL),
+#else
 		BT_DATA(BT_DATA_SVC_DATA16, pnp, sizeof(pnp)),
+#endif
 		BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 	};
 	return bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, data, ARRAY_SIZE(data),
@@ -225,6 +265,10 @@ static int setup(void)
 		sizeof(command_uuid.val));
 	sys_memcpy_swap(capabilities_uuid.val, pbio_pybricks_hub_capabilities_char_uuid,
 		sizeof(capabilities_uuid.val));
+#if defined(CONFIG_MCUMGR_TRANSPORT_BT)
+	return smp_bt_register_request_callbacks(&request_callbacks);
+#else
 	return 0;
+#endif
 }
 SYS_INIT(setup, APPLICATION, 90);

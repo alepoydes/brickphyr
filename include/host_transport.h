@@ -16,7 +16,15 @@ enum host_mode host_interface_current(void);
 int host_interface_select(uint16_t mode);
 
 /* BLE claims the same management slot. Release only the successfully acquired
- * session, after its accepted operations and callbacks have quiesced. */
+ * session. Disconnect defers release until its accepted SMP packet finishes. */
 int host_ble_acquire(void);
 void host_ble_release(bool exit_compatibility);
 uint16_t host_hub_variant(void);
+
+/* Packet callbacks run on one processing thread; only that thread may perform
+ * settings operations under the BLE grant, even while disconnect is draining. */
+bool host_ble_request_begin(void);
+void host_ble_request_end(void);
+bool host_ble_request_active(void);
+/* New commands stop at disconnect; an already entered handler may finish. */
+bool host_ble_command_allowed(void);

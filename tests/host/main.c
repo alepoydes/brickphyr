@@ -278,8 +278,128 @@ static int send_smp(const void *data, int length)
 	return 0;
 }
 
+static int ble_packet_begin(const struct net_buf *packet, void **context)
+{
+	return host_ble_request_begin() ? 0 : MGMT_ERR_EACCESSDENIED;
+}
+
+static void ble_packet_end(void *context, int result)
+{
+	host_ble_request_end();
+}
+
+static bool close_on_reply;
+
+static int discard_ble_response(struct net_buf *packet)
+{
+	zassert_true(host_ble_request_active());
+	smp_packet_free(packet);
+	if (close_on_reply) {
+		host_ble_release(true);
+		return 0;
+	}
+	return MGMT_ERR_EUNKNOWN; /* Synthetic peer disconnected during the handler. */
+}
+
+static int ble_packet_result;
+static void process_ble_packet(void *a, void *b, void *c)
+{
+	struct smp_transport transport = {
+		.functions = { .output = discard_ble_response,
+			.request_begin = ble_packet_begin, .request_end = ble_packet_end },
+	};
+	struct cbor_nb_reader reader;
+	struct cbor_nb_writer writer;
+	struct smp_streamer streamer = {
+		.smpt = &transport, .reader = &reader, .writer = &writer,
+	};
+	const uint8_t request[] = { 0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 3, 0, 0xa0 };
+	struct net_buf *packet = smp_packet_alloc();
+
+	zassert_not_null(packet);
+	net_buf_add_mem(packet, request, sizeof(request));
+	if (close_on_reply) {
+		net_buf_add_mem(packet, request, sizeof(request));
+	}
+	ble_packet_result = smp_process_request_packet(&streamer, packet);
+}
+
+ZTEST(host, test_smp_ble_inflight_disconnect)
+{
+	static const struct mgmt_handler handlers[] = { { .mh_write = blocking_management } };
+	static struct mgmt_group group = {
+		.mg_handlers = handlers, .mg_handlers_count = ARRAY_SIZE(handlers),
+		.mg_group_id = MGMT_GROUP_ID_PERUSER,
+	};
+	static K_THREAD_STACK_DEFINE(stack, 4096);
+	static struct k_thread worker;
+	uint8_t state[8];
+	uint8_t seconds[4];
+
+	management_calls = 0;
+	mgmt_register_group(&group);
+	wait_idle();
+	zassert_ok(host_ble_acquire());
+	sys_put_le32(1, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	int64_t now = k_uptime_get();
+	zassert_false(hub_power_update(1, false, now));
+	k_thread_create(&worker, stack, K_THREAD_STACK_SIZEOF(stack), process_ble_packet,
+		NULL, NULL, NULL, 8, 0, K_NO_WAIT);
+	zassert_ok(k_sem_take(&management_entered, K_SECONDS(1)));
+	zassert_false(host_ble_request_active(), "Grant leaked to a different thread");
+	host_ble_release(true);
+	host_interface_status(state);
+	zassert_true(state[2], "Released owner while accepted request still runs");
+	zassert_equal(host_ble_acquire(), -EBUSY);
+	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
+	zassert_false(host_ble_request_begin(), "Admitted packet after disconnect");
+	zassert_false(hub_power_update(1, false, now + 2000));
+	sys_put_le32(0, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	k_sem_give(&management_release);
+	zassert_ok(k_thread_join(&worker, K_SECONDS(1)));
+	zassert_equal(ble_packet_result, MGMT_ERR_EUNKNOWN);
+	zassert_equal(management_calls, 1);
+	wait_idle();
+	zassert_equal(host_interface_current(), HOST_SHELL);
+	/* A stale queued packet reaches admission after closing; no handler runs. */
+	process_ble_packet(NULL, NULL, NULL);
+	zassert_equal(ble_packet_result, MGMT_ERR_EACCESSDENIED);
+	zassert_equal(management_calls, 1);
+	mgmt_unregister_group(&group);
+}
+
+static int count_management(struct smp_streamer *stream)
+{
+	management_calls++;
+	return 0;
+}
+
+ZTEST(host, test_smp_ble_no_new_command_after_disconnect)
+{
+	static const struct mgmt_handler handlers[] = { { .mh_write = count_management } };
+	static struct mgmt_group group = {
+		.mg_handlers = handlers, .mg_handlers_count = ARRAY_SIZE(handlers),
+		.mg_group_id = MGMT_GROUP_ID_PERUSER,
+	};
+	management_calls = 0;
+	mgmt_register_group(&group);
+	zassert_ok(host_ble_acquire());
+	/* Disconnect just after one response: the next command in the same packet
+	 * must not run under the previous command's lifetime grant. */
+	close_on_reply = true;
+	process_ble_packet(NULL, NULL, NULL);
+	close_on_reply = false;
+	zassert_equal(ble_packet_result, MGMT_ERR_EACCESSDENIED);
+	zassert_equal(management_calls, 1);
+	mgmt_unregister_group(&group);
+	wait_idle();
+}
+
 ZTEST(host, test_smp_inflight_disconnect)
 {
+	management_calls = 0;
 	/* A synthetic slow operation exercises the real SMP processor and teardown. */
 	static const struct mgmt_handler handlers[] = { { .mh_write = blocking_management } };
 	static struct mgmt_group group = {

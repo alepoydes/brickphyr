@@ -221,7 +221,11 @@ exclusion, power inhibition, rejected USB input and fresh-open requirements. Thi
 simulates ownership transitions, not radio traffic. The optional Bluetooth profile
 is checked on the Inventor F4 with pybricksdev discovery, identity, status,
 unsupported-command rejection, reconnection and exit to Shell. Both directions
-of USB/BLE exclusion are exercised with actual host connections; see
+of USB/BLE exclusion are exercised with actual host connections. A synthetic slow
+SMP operation checks admission, held ownership/power during disconnect, completion
+and rejection of a queued stale packet through the production processor. On BLE,
+standard SMP clients exercise fragmented echo, RAM changes versus saved values,
+incomplete-packet isolation and inhibition of a one-second USB-power timeout; see
 [Bluetooth usage](bluetooth.md#experimental-f4-controller).
 
 On an authorized F4 hub, follow the [USB round trip](host.md#usage). Also attempt

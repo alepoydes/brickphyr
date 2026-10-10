@@ -24,8 +24,9 @@ button startup; `shutdown` also disconnected USB. Return to official Pybricks
 4.1.0b4/b6 and back to Brickphyr is verified over USB. LEGO restoration and interrupted
 updates remain unverified. The optional [Bluetooth controller profile](../docs/bluetooth.md)
 passes initialization and Pybricks BLE identity/status, reconnect, return to Shell
-and USB/BLE exclusion checks on the same Inventor F4. BLE SMP, application loading,
-and Python/WASM execution are not implemented yet. Current availability belongs in
+and USB/BLE exclusion checks on the same Inventor F4. Standard SMP BLE discovery,
+fragmented echo and Settings read/write/save also pass. Application loading and
+Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
 The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
@@ -51,7 +52,7 @@ pass against the compiled Brickphyr handler over a PTY and over Linux USB on the
 Inventor F4. Rejected commands leave the connection usable; the in-band return to
 Shell works through the client. See the [client prerequisites](../docs/upstream.md#usb-experiment-prerequisites).
 Runtime power settings use Zephyr Settings; independent USB/battery timeouts
-default to disabled. PA9 detects USB power, and active USB ownership inhibits
+default to disabled. PA9 detects USB power, and active USB/BLE ownership inhibits
 expiry. Experimental LittleFS persistence and standard SMP Settings share the
 runtime handlers. Explicit save, RAM-only changes, reboot restoration, file
 compaction, and standard SMP clients pass native simulation and Linux USB checks
