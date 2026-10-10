@@ -61,6 +61,15 @@ uv, a C/C++ compiler, make, and GNU gperf 3.1 (supported by Zephyr's object-tabl
 generator). CMake, Ninja, west, and the Python dependencies are installed into
 `.venv` by uv.
 
+To create a new workspace checkout:
+
+```sh
+mkdir brickphyr-workspace
+cd brickphyr-workspace
+git clone https://github.com/alepoydes/brickphyr.git
+cd brickphyr
+```
+
 For a standalone checkout whose parent is not yet a west workspace:
 
 ```sh

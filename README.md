@@ -2,6 +2,8 @@
 
 An open application platform for LEGO hubs, built on Zephyr RTOS.
 
+Source repository: [alepoydes/brickphyr](https://github.com/alepoydes/brickphyr).
+
 Brickphyr is being designed to run native applications, MicroPython programs
 using the Pybricks API, and WebAssembly applications on LEGO hubs. One user
 application runs at a time. Hardware services remain responsive independently
