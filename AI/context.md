@@ -26,7 +26,11 @@ updates remain unverified. The optional [Bluetooth controller profile](../docs/b
 passes initialization and Pybricks BLE identity/status, reconnect, return to Shell
 and USB/BLE exclusion checks on the same Inventor F4. It now starts advertising
 automatically; first BLE connection needs no USB preparation. Standard SMP BLE discovery,
-fragmented echo and Settings read/write/save also pass. Application loading and
+fragmented echo and Settings read/write/save also pass. The native BLE terminal
+shares the exact USB Shell instance, parser, editor, history and command handlers.
+Cold-boot BLE entry, editing, long output, reconnection, the Linux terminal CLI,
+and return to USB/SMP/Pybricks are checked on the Inventor F4. See
+[terminal usage](../docs/host.md#native-bluetooth-terminal). Application loading and
 Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 Pybricks Code discovery, connection and reconnection pass through real Chromium
@@ -40,8 +44,8 @@ full host-stack cleanup after controller failure is still outstanding.
 The experimental readiness animation uses saturated cyan for Pybricks and yellow
 for Brickphyr, with continuous small fluctuations and rare additive surges above
 a steady level (95% for yellow, 40% for cyan). Native SPI checks and the installed
-Inventor F4 USB console pass; visual assessment of the effect and brighter BT
-menu white is pending. BT opens/cancels the interface menu, arrows preview, and a
+Inventor F4 USB console pass; the operator accepted the effect and brighter BT
+menu indication. BT opens/cancels the interface menu, arrows preview, and a
 short center release confirms; white BT lighting marks the menu. Manual central
 color stops animation until an interface/menu change or reboot; shutdown prevents
 relighting. The operator confirmed menu operation. RGB commands share gamma-2

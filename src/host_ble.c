@@ -24,6 +24,9 @@ static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 static struct bt_conn *owner;
 static struct k_spinlock session_lock;
 static bool exit_compatibility;
+static uint32_t shell_session;
+static int64_t shell_tx_deadline;
+static bool shell_retired;
 static K_MUTEX_DEFINE(radio_lock);
 enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
 static atomic_t radio_state;
@@ -51,7 +54,7 @@ static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
-	if (conn != owner) {
+	if (conn != owner || shell_session) {
 		return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 	}
 	if (offset || (flags & BT_GATT_WRITE_FLAG_PREPARE)) {
@@ -128,6 +131,126 @@ BT_GATT_SERVICE_DEFINE(legacy_uart,
 	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(BT_UUID_NUS_RX_CHAR_VAL),
 		BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL, reject_stdin, NULL));
 
+/* Native interface's terminal stream. Distinct UUIDs keep Pybricks stdout and
+ * its legacy NUS subscriptions separate; payloads are ordinary Shell bytes. */
+#define SHELL_UUID(id) BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0xf3641400 + (id), \
+	0x00b0, 0x4240, 0xba50, 0x05ca45bf8abc))
+
+static void shell_output(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(shell_output_work, shell_output);
+
+static void shell_tx_ready(void)
+{
+	/* Do not move a pending retry: continuous writers cannot starve output. */
+	k_work_schedule(&shell_output_work, K_NO_WAIT);
+}
+
+static ssize_t shell_subscription(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				  uint16_t value)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	int err = 0;
+	if (conn != owner || value > BT_GATT_CCC_NOTIFY) {
+		err = BT_ATT_ERR_AUTHORIZATION;
+	} else if (value && shell_retired) {
+		/* A new link excludes notifications already queued for the old terminal. */
+		err = BT_ATT_ERR_AUTHORIZATION;
+	} else if (value && !shell_session) {
+		uint32_t session;
+		if (host_ble_shell_open(shell_tx_ready, &session)) {
+			err = BT_ATT_ERR_INSUFFICIENT_RESOURCES;
+		} else {
+			shell_session = session;
+			shell_tx_deadline = 0;
+		}
+	} else if (!value && shell_session) {
+		host_ble_shell_close(shell_session);
+		shell_session = 0;
+		shell_retired = true;
+	}
+	k_spin_unlock(&session_lock, key);
+	return err ? BT_GATT_ERR(err) : sizeof(value);
+}
+
+static ssize_t shell_input(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+	const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+	if (offset || flags & BT_GATT_WRITE_FLAG_PREPARE) {
+		return BT_GATT_ERR(BT_ATT_ERR_NOT_SUPPORTED);
+	}
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	int err = conn == owner && shell_session ?
+		host_ble_shell_receive(shell_session, buf, len) : -ENOTCONN;
+	k_spin_unlock(&session_lock, key);
+	return err ? BT_GATT_ERR(err == -ENOBUFS ? BT_ATT_ERR_INSUFFICIENT_RESOURCES :
+		BT_ATT_ERR_AUTHORIZATION) : len;
+}
+
+BT_GATT_SERVICE_DEFINE(brickphyr_terminal,
+	BT_GATT_PRIMARY_SERVICE(SHELL_UUID(0)),
+	BT_GATT_CHARACTERISTIC(SHELL_UUID(1), BT_GATT_CHRC_NOTIFY,
+		BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC_WITH_WRITE_CB(NULL, shell_subscription,
+		BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(SHELL_UUID(2), BT_GATT_CHRC_WRITE,
+		BT_GATT_PERM_WRITE, NULL, shell_input, NULL));
+
+static void shell_output(struct k_work *work)
+{
+	/* Minimum ATT MTU (23) minus its header: bounded stack use on the shared
+	 * system queue, with no MTU negotiation required for an interactive stream. */
+	uint8_t data[20];
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	struct bt_conn *conn = shell_session && owner ? bt_conn_ref(owner) : NULL;
+	uint32_t session = shell_session;
+	k_spin_unlock(&session_lock, key);
+	if (!conn) {
+		return;
+	}
+	size_t length = host_ble_shell_peek(session, data, sizeof(data));
+	if (!length) {
+		key = k_spin_lock(&session_lock);
+		if (session == shell_session) {
+			shell_tx_deadline = 0;
+		}
+		k_spin_unlock(&session_lock, key);
+		bt_conn_unref(conn);
+		return;
+	}
+	/* Zephyr notify on the system workqueue uses nonblocking allocation.
+	 * Retry temporary backpressure for at most 3 s; never lose a byte silently.
+	 * The deadline bounds a stalled diagnostic link, not its throughput.
+	 */
+	int err = bt_gatt_is_subscribed(conn, &brickphyr_terminal.attrs[2], BT_GATT_CCC_NOTIFY) ?
+		bt_gatt_notify(conn, &brickphyr_terminal.attrs[2], data, length) : -EAGAIN;
+	key = k_spin_lock(&session_lock);
+	bool current = session == shell_session && owner == conn;
+	if (current && !err) {
+		host_ble_shell_consume(session, length);
+		shell_tx_deadline = 0;
+	}
+	if (current && err && !shell_tx_deadline) {
+		shell_tx_deadline = k_uptime_get() + 3000;
+	}
+	bool retry = current && (!err || ((err == -ENOMEM || err == -EAGAIN) &&
+		k_uptime_get() < shell_tx_deadline));
+	if (retry) {
+		k_work_reschedule(&shell_output_work, err ? K_MSEC(10) : K_NO_WAIT);
+	} else if (current) {
+		host_ble_shell_close(session);
+		shell_session = 0;
+	}
+	k_spin_unlock(&session_lock, key);
+	if (current && !retry) {
+		LOG_ERR("BLE terminal output failed: %d; closing link", err);
+		int close_err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		if (close_err) {
+			LOG_ERR("BLE terminal disconnect failed: %d", close_err);
+		}
+	}
+	bt_conn_unref(conn);
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
@@ -143,6 +266,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	owner = bt_conn_ref(conn);
 	exit_compatibility = false;
+	shell_retired = false;
 	k_spin_unlock(&session_lock, key);
 }
 
@@ -152,6 +276,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bool owned = conn == owner;
 	if (owned) {
 		owner = NULL;
+		shell_session = 0;
+		k_work_cancel_delayable(&shell_output_work);
 		/* Keep the shared owner/power hold until any accepted packet finishes.
 		 * Do not block RX: the SMP sender may need its disconnect callback. */
 		host_ble_release(exit_compatibility);

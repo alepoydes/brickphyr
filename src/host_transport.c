@@ -36,6 +36,15 @@ static bool usb_open;
 static bool ble_occupied;
 static bool ble_closing;
 static bool ble_exit;
+/* The single stream/Shell can belong to USB or to the native BLE interface. */
+static bool ble_shell;
+static void (*ble_tx_ready)(void);
+static void finish_ble_session(void);
+
+static uint8_t stream_mode(void)
+{
+	return ble_shell ? HOST_SHELL : mode;
+}
 static k_tid_t ble_request_thread;
 static bool ready;
 static bool tx_idle;
@@ -50,7 +59,7 @@ static void *shell_context;
 static bool shell_owner(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool valid = occupied && running && mode == HOST_SHELL &&
+	bool valid = occupied && running && stream_mode() == HOST_SHELL &&
 		generation == shell_generation;
 	k_spin_unlock(&lock, key);
 	return valid;
@@ -116,7 +125,7 @@ static struct mgmt_callback settings_access = {
 
 static void notify_shell(enum shell_transport_evt event)
 {
-	if (running && occupied && mode == HOST_SHELL) {
+	if (running && occupied && stream_mode() == HOST_SHELL) {
 		shell_handler(event, shell_context);
 	}
 }
@@ -131,10 +140,11 @@ static void uart_callback(const struct device *dev, void *context)
 	if (uart_irq_rx_ready(dev)) {
 		uint8_t data[64];
 		int length;
-		size_t space = occupied ? ring_buf_space_get(&receive_buffer) : sizeof(data);
+		bool usb_stream = occupied && !ble_shell;
+		size_t space = usb_stream ? ring_buf_space_get(&receive_buffer) : sizeof(data);
 
 		while (space && (length = uart_fifo_read(dev, data, MIN(space, sizeof(data)))) > 0) {
-			if (occupied) {
+			if (usb_stream) {
 				ring_buf_put(&receive_buffer, data, length);
 				space = ring_buf_space_get(&receive_buffer);
 			}
@@ -146,10 +156,12 @@ static void uart_callback(const struct device *dev, void *context)
 	}
 	if (uart_irq_tx_ready(dev)) {
 		uint8_t *data;
-		uint32_t length = ring_buf_get_claim(&transmit_buffer, &data, 64);
+		uint32_t length = ble_shell ? 0 : ring_buf_get_claim(&transmit_buffer, &data, 64);
 		int sent = length ? uart_fifo_fill(dev, data, length) : 0;
-		ring_buf_get_finish(&transmit_buffer, sent);
-		if (ring_buf_is_empty(&transmit_buffer)) {
+		if (!ble_shell) {
+			ring_buf_get_finish(&transmit_buffer, sent);
+		}
+		if (ble_shell || ring_buf_is_empty(&transmit_buffer)) {
 			uart_irq_tx_disable(dev);
 		}
 		notify_shell(SHELL_TRANSPORT_EVT_TX_RDY);
@@ -158,7 +170,7 @@ static void uart_callback(const struct device *dev, void *context)
 	if (complete < 0 && !first_error) {
 		first_error = complete;
 	}
-	tx_idle = complete > 0 && ring_buf_is_empty(&transmit_buffer);
+	tx_idle = complete > 0 && (ble_shell || ring_buf_is_empty(&transmit_buffer));
 	k_spin_unlock(&lock, key);
 	k_sem_give(&wake);
 	k_sem_give(&smp_tx_ready);
@@ -205,6 +217,16 @@ static int transport_read(const struct shell_transport *transport, void *data,
 	return 0;
 }
 
+/* Called under lock; the BLE callback only schedules nonblocking output work. */
+static void output_ready(void)
+{
+	if (ble_shell) {
+		ble_tx_ready();
+	} else {
+		uart_irq_tx_enable(uart);
+	}
+}
+
 static int transport_write(const struct shell_transport *transport, const void *data,
 			   size_t length, size_t *count)
 {
@@ -212,12 +234,14 @@ static int transport_write(const struct shell_transport *transport, const void *
 	/* Complete discarded writes on disconnect so a command cannot block teardown. */
 	if (occupied && generation == shell_generation) {
 		*count = ring_buf_put(&transmit_buffer, data, length);
-		tx_idle = false;
+		if (!ble_shell) {
+			tx_idle = false;
+		}
+		output_ready();
 	} else {
 		*count = length;
 	}
 	k_spin_unlock(&lock, key);
-	uart_irq_tx_enable(uart);
 	return 0;
 }
 
@@ -229,13 +253,15 @@ static int smp_write(const void *data, int length)
 		bool valid = occupied && generation == shell_generation;
 		size_t sent = valid ? ring_buf_put(&transmit_buffer, bytes, length) : 0;
 		if (sent) {
-			tx_idle = false;
+			if (!ble_shell) {
+				tx_idle = false;
+			}
+			output_ready();
 		}
 		k_spin_unlock(&lock, key);
 		if (!valid) {
 			return -ENOTCONN;
 		}
-		uart_irq_tx_enable(uart);
 		bytes += sent;
 		length -= sent;
 		if (!sent) {
@@ -267,7 +293,7 @@ static const struct shell_transport_api transport_api = {
 	.write = transport_write,
 };
 static const struct shell_transport transport = { .api = &transport_api };
-SHELL_DEFINE(usb_shell, "brickphyr> ", &transport, 0, 0, SHELL_FLAG_OLF_CRLF);
+SHELL_DEFINE(host_shell, "brickphyr> ", &transport, 0, 0, SHELL_FLAG_OLF_CRLF);
 
 static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 {
@@ -276,7 +302,7 @@ static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 		return -EINVAL;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool owner = occupied && running && mode == HOST_SHELL &&
+	bool owner = occupied && running && stream_mode() == HOST_SHELL &&
 		generation == shell_generation;
 	if (owner) {
 		next_mode = HOST_PYBRICKS;
@@ -311,7 +337,7 @@ static void host_thread(void *a, void *b, void *c)
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool changed = session_generation != generation;
 		bool open = occupied;
-		uint8_t selected = mode;
+		uint8_t selected = stream_mode();
 		uint32_t current_generation = generation;
 		if (changed) {
 			running = false;
@@ -319,9 +345,9 @@ static void host_thread(void *a, void *b, void *c)
 		k_spin_unlock(&lock, key);
 		if (changed) {
 			if (shell_initialized) {
-				shell_uninit(&usb_shell, shell_uninitialized);
+				shell_uninit(&host_shell, shell_uninitialized);
 				k_sem_take(&shell_closed, K_FOREVER);
-				k_thread_join(usb_shell.thread, K_FOREVER);
+				k_thread_join(host_shell.thread, K_FOREVER);
 				if (shell_close_error) {
 					key = k_spin_lock(&lock);
 					if (!first_error) {
@@ -340,6 +366,9 @@ static void host_thread(void *a, void *b, void *c)
 			key = k_spin_lock(&lock);
 			if (generation == session_generation) {
 				ready = true;
+				ble_shell = false;
+				ble_tx_ready = NULL;
+				finish_ble_session();
 			}
 			k_spin_unlock(&lock, key);
 			continue;
@@ -347,7 +376,7 @@ static void host_thread(void *a, void *b, void *c)
 		if (selected == HOST_SHELL && !shell_initialized) {
 			static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
 			shell_generation = session_generation;
-			int err = shell_init(&usb_shell, NULL, flags, false, 0);
+			int err = shell_init(&host_shell, NULL, flags, false, 0);
 			if (err) {
 				key = k_spin_lock(&lock);
 				if (!first_error) {
@@ -429,13 +458,32 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 	mgmt_callback_register(&settings_access);
 	k_thread_create(&host_worker, host_stack, K_THREAD_STACK_SIZEOF(host_stack),
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
-	k_thread_name_set(&host_worker, "host_usb");
+	k_thread_name_set(&host_worker, "host_stream");
 	uart_irq_rx_enable(uart);
 	/* Establish initial completion in the UART callback without requiring
 	 * a USB status request before the first Bluetooth connection. */
 	uart_irq_tx_enable(uart);
 	k_sem_give(&wake);
 	return 0;
+}
+
+/* Caller holds lock. Accepted commands finish; queued bytes and old replies die. */
+static void stream_changed(bool open)
+{
+	occupied = open;
+	ready = false;
+	generation++;
+	ring_buf_reset(&receive_buffer);
+	ring_buf_reset(&transmit_buffer);
+	if (running && stream_mode() == HOST_SHELL) {
+		shell_handler(SHELL_TRANSPORT_EVT_TX_RDY, shell_context);
+	}
+	if (!open && next_mode >= 0) {
+		mode = next_mode;
+		next_mode = -1;
+	}
+	k_sem_give(&wake);
+	k_sem_give(&smp_tx_ready);
 }
 
 void host_connection_changed(bool open)
@@ -446,29 +494,11 @@ void host_connection_changed(bool open)
 		return;
 	}
 	usb_open = open;
-	if (ble_occupied || !hub_power_connection(open)) {
-		k_spin_unlock(&lock, key);
-		return;
-	}
-	if (open != occupied) {
-		occupied = open;
-		ready = false;
-		generation++;
-		ring_buf_reset(&receive_buffer);
-		ring_buf_reset(&transmit_buffer);
-		/* Wake a shell blocked waiting for output space before uninitializing it. */
-		if (running && mode == HOST_SHELL) {
-			shell_handler(SHELL_TRANSPORT_EVT_TX_RDY, shell_context);
-		}
-		if (!open && next_mode >= 0) {
-			mode = next_mode;
-			next_mode = -1;
-		}
+	if (!ble_occupied && hub_power_connection(open) && open != occupied) {
+		stream_changed(open);
 	}
 	k_spin_unlock(&lock, key);
 	uart_irq_rx_enable(uart);
-	k_sem_give(&wake);
-	k_sem_give(&smp_tx_ready);
 }
 
 void host_interface_status(uint8_t state[8])
@@ -525,7 +555,7 @@ int host_ble_acquire(void)
 
 static void finish_ble_session(void)
 {
-	if (ble_closing && !ble_request_thread) {
+	if (ble_closing && !ble_request_thread && !ble_shell) {
 		ble_occupied = false;
 		ble_closing = false;
 		hub_power_connection(false);
@@ -542,6 +572,9 @@ void host_ble_release(bool exit_compatibility)
 	if (ble_occupied && !ble_closing) {
 		ble_closing = true;
 		ble_exit = exit_compatibility;
+		if (ble_shell && occupied) {
+			stream_changed(false);
+		}
 		finish_ble_session();
 	}
 	/* A rejected USB port must close and reopen; never inherit its input. */
@@ -551,7 +584,7 @@ void host_ble_release(bool exit_compatibility)
 bool host_ble_request_begin(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool valid = ble_occupied && !ble_closing && !ble_request_thread;
+	bool valid = ble_occupied && !ble_closing && !ble_request_thread && !ble_shell;
 	if (valid) {
 		ble_request_thread = k_current_get();
 	}
@@ -587,4 +620,75 @@ bool host_ble_command_allowed(void)
 	bool allowed = ble_request_thread == k_current_get() && !ble_closing;
 	k_spin_unlock(&lock, key);
 	return allowed;
+}
+
+int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session)
+{
+	if (!tx_ready || !session) {
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = 0;
+	if (!ble_occupied || ble_closing) {
+		err = -ENOTCONN;
+	} else if (ble_shell || ble_request_thread || !ready || first_error) {
+		err = -EBUSY;
+	} else {
+		ble_shell = true;
+		ble_tx_ready = tx_ready;
+		stream_changed(true);
+		*session = generation;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+static bool ble_stream_valid(uint32_t session)
+{
+	return ble_shell && occupied && generation == session;
+}
+
+void host_ble_shell_close(uint32_t session)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (ble_stream_valid(session)) {
+		stream_changed(false);
+	}
+	k_spin_unlock(&lock, key);
+}
+
+int host_ble_shell_receive(uint32_t session, const void *data, size_t length)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = 0;
+	if (!ble_stream_valid(session)) {
+		err = -ENOTCONN;
+	} else if (ring_buf_space_get(&receive_buffer) < length) {
+		err = -ENOBUFS;
+	} else {
+		ring_buf_put(&receive_buffer, data, length);
+		notify_shell(SHELL_TRANSPORT_EVT_RX_RDY);
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+size_t host_ble_shell_peek(uint32_t session, void *data, size_t capacity)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	size_t length = ble_stream_valid(session) ?
+		ring_buf_peek(&transmit_buffer, data, capacity) : 0;
+	k_spin_unlock(&lock, key);
+	return length;
+}
+
+void host_ble_shell_consume(uint32_t session, size_t length)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (ble_stream_valid(session)) {
+		ring_buf_get(&transmit_buffer, NULL, length);
+		notify_shell(SHELL_TRANSPORT_EVT_TX_RDY);
+		k_sem_give(&smp_tx_ready);
+	}
+	k_spin_unlock(&lock, key);
 }

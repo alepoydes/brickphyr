@@ -5,6 +5,12 @@ simulator, inspect the linked ARM image, and open its firmware package through
 Pybricks. Physical checks and their limits are listed in [hardware](hardware.md).
 Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
 
+The shared terminal checks run the same editing, completion, history and command
+sequence through USB and BLE byte adapters. The command observes the same Shell
+instance on both paths. Additional checks cover stale input/output, USB rejection
+during BLE ownership, and disconnect during an accepted command. These are native
+simulation checks, not evidence of Bluetooth radio behavior.
+
 ## Run the bring-up checks
 
 After [workspace setup](builds.md), including the experimental
@@ -82,8 +88,8 @@ checks use synthetic inputs; they do not verify electrical behavior or a bootloa
 The same SPI path checks the readiness animation with synthetic time: startup
 fade, visible steady levels, continuous small fluctuations, rare bounded surges,
 and cyan/yellow channel exclusion. Green keeps increasing after red saturates.
-It also checks menu lighting, simultaneous central LED updates, skipped late frames, persistent manual central color, independent
-Bluetooth color, and prevention of relighting after shutdown. RGB checks cover
+It also checks menu lighting, simultaneous central LED updates, skipped late
+frames, persistent manual central color, independent Bluetooth color, and prevention of relighting after shutdown. RGB checks cover
 board gains, gamma response, and exact raw PWM including zero and full duty.
 These checks establish output behavior, not perceived color or visual quality.
 The menu checks exercise entry, preview, cancellation, release confirmation, and

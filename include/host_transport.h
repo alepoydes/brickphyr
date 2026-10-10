@@ -7,7 +7,7 @@
 
 enum host_mode { HOST_PYBRICKS, HOST_SHELL };
 
-/* One CDC session; external selection is permitted only between closed sessions.
+/* One shared stream/Shell; USB selection is permitted between closed sessions.
  * Owner commands can request the next mode, applied when their session closes. */
 int host_transport_init(const struct device *uart, uint16_t hub_variant);
 void host_connection_changed(bool open);
@@ -28,3 +28,13 @@ void host_ble_request_end(void);
 bool host_ble_request_active(void);
 /* New commands stop at disconnect; an already entered handler may finish. */
 bool host_ble_command_allowed(void);
+
+/* Native BLE byte stream reuses the same Shell, buffers and session lifecycle.
+ * The nonblocking callback schedules TX work. A session token rejects stale I/O.
+ * RX writes are all-or-nothing; output is consumed only after successful send.
+ * Close joins accepted Shell work asynchronously before releasing ownership. */
+int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session);
+void host_ble_shell_close(uint32_t session);
+int host_ble_shell_receive(uint32_t session, const void *data, size_t length);
+size_t host_ble_shell_peek(uint32_t session, void *data, size_t capacity);
+void host_ble_shell_consume(uint32_t session, size_t length);

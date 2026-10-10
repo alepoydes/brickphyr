@@ -19,6 +19,30 @@
 
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static unsigned int calls;
+static uint32_t terminal_session;
+static const struct shell *observed_shell;
+static K_SEM_DEFINE(probe_entered, 0, 1);
+static K_SEM_DEFINE(probe_continue, 0, 1);
+static unsigned int probes;
+
+static int cmd_probe(const struct shell *shell, size_t argc, char **argv)
+{
+	if (observed_shell) {
+		zassert_equal(shell, observed_shell, "USB and BLE must use the very same Shell");
+	}
+	observed_shell = shell;
+	probes++;
+	if (argc > 1 && !strcmp(argv[1], "wait")) {
+		k_sem_give(&probe_entered);
+		k_sem_take(&probe_continue, K_FOREVER);
+	}
+	shell_print(shell, "PROBE %s", argc > 1 ? argv[1] : "ok");
+	return 0;
+}
+SHELL_CMD_ARG_REGISTER(probe, NULL, "Exercise the shared Shell.", cmd_probe, 1, 1);
+
+static void ble_output_ready(void) {}
+
 
 static int cmd_mark(const struct shell *shell, size_t argc, char **argv)
 {
@@ -44,7 +68,11 @@ static void wait_idle(void)
 
 static void send(const void *data, size_t length)
 {
-	zassert_equal(uart_emul_put_rx_data(uart, data, length), length);
+	if (terminal_session) {
+		zassert_ok(host_ble_shell_receive(terminal_session, data, length));
+	} else {
+		zassert_equal(uart_emul_put_rx_data(uart, data, length), length);
+	}
 }
 
 static void receive_until(const char *ending, char *output, size_t capacity)
@@ -53,7 +81,13 @@ static void receive_until(const char *ending, char *output, size_t capacity)
 	size_t length = 0;
 	output[0] = 0;
 	while (k_uptime_get() < deadline && length < capacity - 1) {
-		length += uart_emul_get_tx_data(uart, output + length, capacity - 1 - length);
+		if (terminal_session) {
+			size_t part = host_ble_shell_peek(terminal_session, output + length, capacity - 1 - length);
+			host_ble_shell_consume(terminal_session, part);
+			length += part;
+		} else {
+			length += uart_emul_get_tx_data(uart, output + length, capacity - 1 - length);
+		}
 		output[length] = 0;
 		if (strstr(output, ending)) {
 			return;
@@ -84,6 +118,76 @@ static void *setup(void)
 	host_ble_release(false);
 	wait_idle();
 	return NULL;
+}
+
+ZTEST(host, test_shared_shell_transports)
+{
+	char output[1024];
+	uint32_t stale = 0;
+
+	/* Run identical editing/command checks over both adapters, then reconnect. */
+	for (int pass = 0; pass < 4; pass++) {
+		bool ble = pass % 2;
+		zassert_ok(host_interface_select(ble ? HOST_PYBRICKS : HOST_SHELL));
+		if (ble) {
+			zassert_ok(host_ble_acquire());
+			zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
+			zassert_false(host_ble_request_begin(), "SMP must not race an active Shell command");
+			zassert_equal(host_ble_shell_receive(stale, "probe stale\r", 12), -ENOTCONN);
+			/* A contender's USB input must not enter the BLE terminal. */
+			host_connection_changed(true);
+			zassert_equal(uart_emul_put_rx_data(uart, "probe leak\r", 11), 11);
+			host_connection_changed(false);
+		} else {
+			host_connection_changed(true);
+		}
+		receive_until("brickphyr> ", output, sizeof(output));
+		zassert_is_null(strstr(output, "leak"));
+		/* Neither history nor an unfinished command survives a new session. */
+		send("\x1b[A\r", 4);
+		receive_until("brickphyr> ", output, sizeof(output));
+		zassert_is_null(strstr(output, "PROBE"));
+		const char *edit = "prX\x08obe edited\r";
+		send(edit, strlen(edit));
+		receive_until("brickphyr> ", output, sizeof(output));
+		zassert_not_null(strstr(output, "PROBE edited"));
+		send("\x1b[A\r", 4);
+		receive_until("brickphyr> ", output, sizeof(output));
+		zassert_not_null(strstr(output, "PROBE edited"));
+		send("prob\tcomplete\r", 14);
+		receive_until("brickphyr> ", output, sizeof(output));
+		zassert_not_null(strstr(output, "PROBE complete"));
+		send("probe unfinished", 16);
+		k_msleep(5);
+		if (ble) {
+			stale = terminal_session;
+			host_ble_release(false);
+			terminal_session = 0;
+			wait_idle();
+			zassert_equal(host_ble_shell_peek(stale, output, sizeof(output)), 0);
+		} else {
+			close_session();
+		}
+	}
+}
+
+ZTEST(host, test_shared_shell_disconnect_during_command)
+{
+	char output[512];
+	zassert_ok(host_ble_acquire());
+	zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
+	receive_until("brickphyr> ", output, sizeof(output));
+	unsigned int before = probes;
+	const char *commands = "probe wait\rprobe stale\r";
+	send(commands, strlen(commands));
+	zassert_ok(k_sem_take(&probe_entered, K_SECONDS(1)));
+	host_ble_release(false);
+	zassert_equal(host_ble_acquire(), -EBUSY, "Accepted command still owns the hub");
+	zassert_equal(host_ble_shell_receive(terminal_session, "probe late\r", 11), -ENOTCONN);
+	k_sem_give(&probe_continue);
+	terminal_session = 0;
+	wait_idle();
+	zassert_equal(probes, before + 1, "Queued command ran after disconnect");
 }
 
 ZTEST(host, test_interface_roundtrip)

@@ -193,8 +193,9 @@ uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 
 Replace `/dev/ttyACM0` if the port listing shows another device. Press Enter to
 display `brickphyr> `. Type `info` to identify the firmware, or call `uptime`
-twice to check that it advances. Exit miniterm with **Ctrl+]**. After `reboot`,
-select Shell and open the port again; its device name may change. Only one terminal may own it.
+twice to check that it advances. Exit miniterm with **Ctrl+]**. For a wireless session, use the
+[native BLE terminal](host.md#native-bluetooth-terminal). After `reboot`,
+select Shell and open the USB port again; its device name may change. Only one terminal may own it.
 
 The shell uses Zephyr's standard line editing: Left/Right, Home/End,
 Backspace/Delete, Tab completion, and Up/Down command history. History is held

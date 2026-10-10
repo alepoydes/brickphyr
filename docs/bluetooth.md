@@ -14,7 +14,8 @@ capabilities, status and explicit unsupported-command errors. Linux pybricksdev
 identification, reconnection, return to Shell and USB/BLE exclusion are checked on
 one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide echo
 and settings read/write/save through the same runtime and persistence handlers as
-USB. Program execution, pairing and controller input are not implemented in this profile.
+USB. The native interface also provides the [shared interactive Shell](host.md#native-bluetooth-terminal).
+Program execution, pairing and controller input are not implemented in this profile.
 
 Build this profile from the repository:
 

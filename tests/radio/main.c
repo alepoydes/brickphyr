@@ -62,6 +62,25 @@ void host_ble_release(bool exit_compatibility)
 	zassert_unreachable("Unexpected disconnection");
 }
 
+/* This radio lifecycle fixture never opens a terminal or emits GATT input. */
+int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session)
+{
+	zassert_unreachable("Unexpected terminal subscription");
+	return -ENOTCONN;
+}
+void host_ble_shell_close(uint32_t session) { zassert_unreachable(); }
+int host_ble_shell_receive(uint32_t session, const void *data, size_t length)
+{
+	zassert_unreachable();
+	return -ENOTCONN;
+}
+size_t host_ble_shell_peek(uint32_t session, void *data, size_t capacity)
+{
+	zassert_unreachable();
+	return 0;
+}
+void host_ble_shell_consume(uint32_t session, size_t length) { zassert_unreachable(); }
+
 uint16_t host_hub_variant(void)
 {
 	return 1;

@@ -12,7 +12,8 @@ partial-input isolation and uninterrupted uptime. Experimental SMP management
 shares the Shell channel and passes native simulation and Linux USB checks with
 standard clients, including fragmented packets and persistent settings. The optional
 [Bluetooth profile](bluetooth.md#experimental-f4-controller) provides Pybricks BLE
-identification/status and SMP management with the same USB/BLE ownership rule. Application loading
+identification/status, SMP management, and the native interactive terminal with
+the same USB/BLE ownership rule. Application loading
 and Python/WASM execution remain outside this implementation.
 
 ## One management session
@@ -42,8 +43,10 @@ computer management clients.
 
 Both interfaces use the same firmware services and application supervisor.
 Choosing an interface does not replace the operating system or select an execution
-engine. A terminal must remain useful independently of Python, native, or WASM
-execution. Its application commands use the same lifecycle operations as other
+engine. One Zephyr Shell instance serves USB and the native BLE stream. Command parsing,
+line editing, completion, history, buffers, and command execution are shared; only
+byte transport changes. A terminal remains useful independently of Python, native,
+or WASM execution. Its application commands use the same lifecycle operations as other
 clients; they do not bypass ownership or admission checks.
 
 Prefer SMP/MCUmgr for extended management if its existing operations and clients
@@ -56,6 +59,45 @@ Shell and SMP can share a serial channel through Zephyr's existing SMP transport
 This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetooth,
 GATT characteristic addresses distinguish services without guessing payloads;
 that does not relax the single-management-session rule.
+
+### Native Bluetooth terminal
+
+The shared Shell passes native stream/session tests and Linux BLE checks on the
+Inventor F4: first connection after boot, editing/history/completion, long output,
+reconnection, and subsequent USB, SMP and Pybricks identification. These checks do
+not establish radio-fault recovery or cross-platform terminal support.
+
+Close the USB terminal or other controlling client. On Linux, from the repository:
+
+```sh
+uv run --locked --group flash python -m tools.terminal
+```
+
+The client discovers `Brickphyr` and connects directly after boot, independently
+of the USB mode. Pass a BLE address or a different hub name as the final argument
+when needed. Ctrl+] closes the link. Editing, completion and history run on the
+same hub Shell as USB; the host forwards terminal bytes without interpreting commands.
+The client restores local terminal settings on exit or connection failure.
+
+The native interface contains standard SMP management and a separate raw terminal
+stream. Its GATT service is `f3641400-00b0-4240-ba50-05ca45bf8abc`; TX notifications
+use `f3641401-00b0-4240-ba50-05ca45bf8abc` and acknowledged RX writes use
+`f3641402-00b0-4240-ba50-05ca45bf8abc`. These identifiers keep the native stream
+separate from Pybricks' application stdin/stdout. There is no additional packet
+format. The name/SMP advertisement discovers the hub; service discovery locates
+the terminal characteristics.
+
+Subscribe to TX to open the Shell. RX requires the subscription and accepts each
+write in full or returns an ATT error. Closing or disconnecting discards unfinished
+input and queued commands; an entered handler finishes before ownership is released.
+Terminal history is per session. Reopening after unsubscribe requires a new BLE
+connection, excluding notifications already queued for the old terminal.
+SMP GATT requests cannot execute concurrently with an open terminal stream.
+A stalled notification sender closes its link after three seconds without progress;
+output is never silently truncated. USB and BLE use the same settings and power hold.
+Commands such as `reboot dfu`, `shutdown`, and `bluetooth off` can close the link
+before the final write acknowledgment arrives. Do not automatically retry a command
+after a transport error; verify the resulting device state first.
 
 ### Experimental SMP management
 
