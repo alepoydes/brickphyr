@@ -29,6 +29,8 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         ("cmsis_6", "LICENSE"),
         ("hal_stm32", "stm32cube/stm32f4xx/drivers/LICENSE.md"),
         ("hal_stm32", "stm32cube/stm32f4xx/soc/LICENSE.md"),
+        ("littlefs", "LICENSE.md"),
+        ("zcbor", "LICENSE"),
     ):
         project = manifest.get_projects([project_name])[0]
         notices.append((f"{project_name}: {license_path}", Path(project.abspath) / license_path))

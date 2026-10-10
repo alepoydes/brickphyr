@@ -146,6 +146,29 @@ The manifest includes the published pybricksdev base in a sibling checkout, and
 uv installs that checkout as an editable dependency for the coordinated experiment.
 The published base alone does not supply the new CDC client or shared codec.
 
+## Settings storage prerequisites
+
+The experimental persistent-settings build also requires a Zephyr file-backend
+correction, currently outside the manifest pin: preserve read errors through
+file close and reject short values whose stored length says more data exists.
+The regression checks use real filesystem operations with truncated Settings
+records. Keep this correction in Zephyr, with its tests, until reviewed dependency
+commits can be published and pinned.
+
+## SMP prerequisites
+
+The experimental Shell/SMP path requires a Zephyr transport change outside the
+published manifest pin. The common serial receiver exposes packet extraction and
+session reset to custom Shell backends, so Brickphyr can reuse its framing while
+joining accepted operations during disconnect. It also rejects oversized lines
+and clears rejected header prefixes. The default UART transport remains available;
+its input-expiration timer is specific to that backend and disabled for custom
+receivers. Portable receiver checks cover both configurations.
+
+The manifest imports zcbor through Zephyr's pinned module list. Host tooling uses
+the locked, unmodified `smpclient` and `smpmgr` packages. Keep the receiver change
+in Zephyr; publish reviewed dependency commits before updating shared pins.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

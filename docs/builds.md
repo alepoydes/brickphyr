@@ -32,7 +32,7 @@ workspace is created. See [west workspaces](https://docs.zephyrproject.org/lates
 ## Dependency resolution
 
 The manifest pins immutable Zephyr, Pybricks, and pybricksdev commits and imports
-CMSIS 6 and STM32 HAL from Zephyr's manifest. The firmware uses Zephyr modules;
+CMSIS 6, STM32 HAL, and LittleFS from Zephyr's manifest. The firmware uses Zephyr modules;
 the pinned Pybricks fork supplies host tools and shared button/LED helpers. See
 [the downstream delta](upstream.md#current-downstream-delta). Keep dependencies
 in separate repositories and pin any explicit overrides.
@@ -91,7 +91,7 @@ pybricksdev dependency. During the USB experiment, the coordinated
 before synchronizing Python tools; the published pins alone remain insufficient.
 
 `west update` checks out the published Pybricks helper changes from the pinned fork.
-It does not publish or supply the pending USB dependency corrections.
+It does not publish or supply the pending USB/storage dependency corrections.
 Build the Prime F4 target and check the
 resulting image:
 
@@ -151,6 +151,8 @@ hub revision.
 | `host_mode pybricks` | F4: select compatibility mode after this terminal closes |
 | `power` | F4: power source, management owner, idle policy, and inhibition reason |
 | `config get NAME` / `config set NAME SECONDS` | F4: read/change [runtime power settings](settings.md#current-runtime-settings) |
+| `config save` | F4: explicitly persist settings; report unavailable or failed storage |
+| `storage info` / `storage read` | F4: inspect or dump the settings partition without raw write access |
 | `led center R G B` | F4: stop breathing and set both central-button LEDs, each component 0–255 |
 | `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
 
@@ -187,7 +189,7 @@ the shell's cursor-control sequences without miniterm filtering them.
 
 The F4 build softly fades in the central button over 1.2 seconds, then breathes
 on a three-second cycle: white/blue for Pybricks, yellow/pink for Brickphyr Shell
-and future SMP. This indicates the selected interface, not a radio connection or
+and experimental SMP. This indicates the selected interface, not a radio connection or
 DFU progress. Palette changes blend over 300 ms without restarting the breath.
 The animation uses native 16-bit LED
 duty with perceptual correction and updates both central LEDs together.
@@ -269,9 +271,10 @@ Continue from the existing F4 image, USB shell, image/package checks, and native
 simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
 fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercised
 on the initial Inventor F4. USB interface selection also passes the Linux round
-trip on that hub. Runtime power settings and idle policy are implemented; persistent
-storage and complete physical timeout/source checks remain next. LEGO
-transitions and interrupted-transfer recovery remain separate checks.
+trip on that hub. Runtime power settings and idle policy are implemented; explicit
+save, reboot restoration, compaction, and SMP management pass Linux USB checks.
+Physical timeout/source transitions remain to be checked. LEGO transitions and
+interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package
    and installation tools, resolve their metadata interface for a Zephyr image,

@@ -45,11 +45,16 @@ Shell `host_mode pybricks` and the Brickphyr-specific Pybricks exit command.
 The in-band round trip passes host simulation and Linux USB on the Inventor F4.
 The local pybricksdev CDC transport reuses its existing command/event API and the
 Python COBS codec shared with the flashing tool. Its identity CLI and reconnect
-pass against the compiled Brickphyr handler over a PTY; physical client validation
-remains outstanding. See the [client prerequisites](../docs/upstream.md#usb-experiment-prerequisites).
+pass against the compiled Brickphyr handler over a PTY and over Linux USB on the
+Inventor F4. Rejected commands leave the connection usable; the in-band return to
+Shell works through the client. See the [client prerequisites](../docs/upstream.md#usb-experiment-prerequisites).
 Runtime power settings use Zephyr Settings; independent USB/battery timeouts
 default to disabled. PA9 detects USB power, and active USB ownership inhibits
-expiry. Storage/save remains unsupported. Policy boundaries pass host simulation.
+expiry. Experimental LittleFS persistence and standard SMP Settings share the
+runtime handlers. Explicit save, RAM-only changes, reboot restoration, file
+compaction, and standard SMP clients pass native simulation and Linux USB checks
+on the Inventor F4; see [settings](../docs/settings.md) and
+[host connections](../docs/host.md). Policy boundaries pass host simulation.
 USB power detection, runtime changes, and inhibition beyond a one-second timeout
 are verified on the Inventor F4 with an open terminal.
 Physical automatic power-off and charger/battery source transitions need checking.

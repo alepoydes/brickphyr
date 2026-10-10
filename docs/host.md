@@ -4,11 +4,14 @@ The experimental F4 image implements selectable USB CDC ACM interfaces: Zephyr
 Shell and a minimal Pybricks identification endpoint. The stream handler is
 checked with Zephyr's UART emulator and the Pybricks Python clients. The local
 pybricksdev CDC extension also identifies the compiled firmware protocol handler
-through a pseudoterminal; physical pybricksdev validation remains outstanding.
+through a pseudoterminal and over Linux USB on the Inventor F4. Identity, status,
+reconnection, rejection of unsupported commands, and return to Shell are verified.
 The Shell/Pybricks round trip is verified over Linux USB on one Robot Inventor F4
 (PCB revision unknown), including busy rejection, terminal editing/history,
-partial-input isolation and uninterrupted uptime. Bluetooth, SMP, application loading,
-and Python/WASM execution remain outside this implementation.
+partial-input isolation and uninterrupted uptime. Experimental SMP management
+shares the Shell channel and passes native simulation and Linux USB checks with
+standard clients, including fragmented packets and persistent settings. Bluetooth, application loading, and Python/WASM
+execution remain outside this implementation.
 
 ## One management session
 
@@ -51,6 +54,33 @@ Shell and SMP can share a serial channel through Zephyr's existing SMP transport
 This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetooth,
 GATT characteristic addresses distinguish services without guessing payloads;
 that does not relax the single-management-session rule.
+
+### Experimental SMP management
+
+In Brickphyr mode, Zephyr's SMP serial framing carries machine requests on the
+same channel as the human Shell. It uses the same session owner and Settings
+handlers. Close the terminal before starting a management client:
+
+```sh
+uv run --locked --group flash python -m tools.host select shell
+uv run --locked smpmgr --port /dev/ttyACM0 os echo Brickphyr
+```
+
+Use the port reported by `python -m serial.tools.list_ports -v`. The unchanged
+`smpmgr` command and `smpclient` library are checked against a native Zephyr build
+over a pseudoterminal and Linux USB on the Inventor F4. Bluetooth remains unverified.
+
+The enabled groups provide OS echo/reset and Settings read/write/commit/whole-store
+save. Read and write operate on RAM; save is explicit. Settings values and storage
+limitations are described in [settings](settings.md). Load, delete and named saves
+are currently rejected before mutation. Shell RPC, firmware/file transfer and
+application loading are not enabled.
+
+SMP executes on the Shell thread, so a response cannot interleave with a Shell
+command's output. Closing the session waits for an accepted operation to finish;
+it discards queued and partial input and suppresses old replies. An accepted save
+may therefore finish after the host disconnects. Reopening cannot inherit an old
+command. The reused receiver needs the local [Zephyr changes](upstream.md#smp-prerequisites).
 
 ## USB selection experiment
 

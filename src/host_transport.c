@@ -2,11 +2,16 @@
 #include "host_protocol.h"
 #include "host_transport.h"
 #include "hub_power.h"
+#include "storage.h"
 
 #include <errno.h>
 #include <string.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
+#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zephyr/mgmt/mcumgr/transport/smp_shell.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/sys/byteorder.h>
@@ -17,6 +22,12 @@ RING_BUF_DECLARE(receive_buffer, 256);
 RING_BUF_DECLARE(transmit_buffer, 256);
 K_SEM_DEFINE(wake, 0, 1);
 K_SEM_DEFINE(shell_closed, 0, 1);
+K_SEM_DEFINE(smp_tx_ready, 0, 1);
+/* Each complete line is consumed synchronously before reading the next one. */
+NET_BUF_POOL_DEFINE(smp_lines, 1, SMP_SHELL_RX_BUF_SIZE, 0, NULL);
+static struct smp_shell_data smp_input = { .buf_pool = &smp_lines };
+static struct mcumgr_serial_rx_ctxt smp_serial;
+static struct smp_transport smp_transport;
 static struct k_spinlock lock;
 static uint8_t mode;
 static int next_mode = -1;
@@ -30,6 +41,71 @@ static uint32_t generation;
 static uint32_t shell_generation;
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
+
+static bool shell_owner(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool valid = occupied && running && mode == HOST_SHELL &&
+		generation == shell_generation;
+	k_spin_unlock(&lock, key);
+	return valid;
+}
+
+static void process_smp(void)
+{
+	struct net_buf *packet;
+
+	while ((packet = smp_shell_rx_packet(&smp_input, &smp_serial)) != NULL) {
+		if (!shell_owner()) {
+			smp_packet_free(packet);
+			continue;
+		}
+		struct cbor_nb_reader reader;
+		struct cbor_nb_writer writer;
+		struct smp_streamer stream = {
+			.smpt = &smp_transport, .reader = &reader, .writer = &writer,
+		};
+		/* The public SMP processor consumes packet. Running on the Shell thread
+		 * serializes output and lets teardown join any accepted operation. */
+		smp_process_request_packet(&stream, packet);
+	}
+}
+
+static enum mgmt_cb_return management_access(uint32_t event, enum mgmt_cb_return previous,
+	int32_t *rc, uint16_t *group, bool *abort_more, void *data, size_t size)
+{
+	if (previous != MGMT_CB_OK) {
+		return previous;
+	}
+	if (!shell_owner()) {
+		*rc = MGMT_ERR_EACCESSDENIED;
+		return MGMT_CB_ERROR_RC;
+	}
+	if (event == MGMT_EVT_OP_SETTINGS_MGMT_ACCESS) {
+		const struct settings_mgmt_access *access = data;
+		/* Whole-store save persists RAM, as in Shell. Delete bypasses runtime
+		 * defaults; bulk load currently hides backend errors in Zephyr. */
+		if (access->access == SETTINGS_ACCESS_DELETE || access->access == SETTINGS_ACCESS_LOAD ||
+		    (access->access == SETTINGS_ACCESS_SAVE &&
+		     (access->name || !IS_ENABLED(CONFIG_SETTINGS_FILE)))) {
+			*rc = MGMT_ERR_ENOTSUP;
+			return MGMT_CB_ERROR_RC;
+		}
+		if (access->access == SETTINGS_ACCESS_SAVE && IS_ENABLED(CONFIG_SETTINGS_FILE) &&
+		    storage_status()) {
+			*rc = MGMT_ERR_EUNKNOWN;
+			return MGMT_CB_ERROR_RC;
+		}
+	}
+	return MGMT_CB_OK;
+}
+
+static struct mgmt_callback command_access = {
+	.callback = management_access, .event_id = MGMT_EVT_OP_CMD_RECV,
+};
+static struct mgmt_callback settings_access = {
+	.callback = management_access, .event_id = MGMT_EVT_OP_SETTINGS_MGMT_ACCESS,
+};
 
 static void notify_shell(enum shell_transport_evt event)
 {
@@ -78,6 +154,7 @@ static void uart_callback(const struct device *dev, void *context)
 	tx_idle = complete > 0 && ring_buf_is_empty(&transmit_buffer);
 	k_spin_unlock(&lock, key);
 	k_sem_give(&wake);
+	k_sem_give(&smp_tx_ready);
 }
 
 static int transport_init(const struct shell_transport *transport, const void *config,
@@ -101,9 +178,22 @@ static int transport_enable(const struct shell_transport *transport, bool blocki
 static int transport_read(const struct shell_transport *transport, void *data,
 			  size_t length, size_t *count)
 {
-	k_spinlock_key_t key = k_spin_lock(&lock);
-	*count = occupied && generation == shell_generation ? ring_buf_get(&receive_buffer, data, length) : 0;
-	k_spin_unlock(&lock, key);
+	*count = 0;
+	while (*count < length) {
+		uint8_t byte;
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		bool received = occupied && generation == shell_generation &&
+			ring_buf_get(&receive_buffer, &byte, 1);
+		k_spin_unlock(&lock, key);
+		if (!received) {
+			break;
+		}
+		if (!smp_shell_rx_bytes(&smp_input, &byte, 1)) {
+			((uint8_t *)data)[(*count)++] = byte;
+		} else if (byte == '\n') {
+			process_smp();
+		}
+	}
 	uart_irq_rx_enable(uart);
 	return 0;
 }
@@ -122,6 +212,44 @@ static int transport_write(const struct shell_transport *transport, const void *
 	k_spin_unlock(&lock, key);
 	uart_irq_tx_enable(uart);
 	return 0;
+}
+
+static int smp_write(const void *data, int length)
+{
+	const uint8_t *bytes = data;
+	while (length) {
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		bool valid = occupied && generation == shell_generation;
+		size_t sent = valid ? ring_buf_put(&transmit_buffer, bytes, length) : 0;
+		if (sent) {
+			tx_idle = false;
+		}
+		k_spin_unlock(&lock, key);
+		if (!valid) {
+			return -ENOTCONN;
+		}
+		uart_irq_tx_enable(uart);
+		bytes += sent;
+		length -= sent;
+		if (!sent) {
+			k_sem_take(&smp_tx_ready, K_FOREVER);
+		}
+	}
+	return 0;
+}
+
+static int smp_output(struct net_buf *packet)
+{
+	int result = mcumgr_serial_tx_pkt(packet->data, packet->len, smp_write);
+	smp_packet_free(packet);
+	return result ? MGMT_ERR_EUNKNOWN : MGMT_ERR_EOK;
+}
+
+static uint16_t smp_mtu(const struct net_buf *packet)
+{
+	/* The serial codec fragments a complete SMP packet into 127-byte lines.
+	 * SMP itself must not split it into separately framed partial messages. */
+	return CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE;
 }
 
 static const struct shell_transport_api transport_api = {
@@ -196,6 +324,7 @@ static void host_thread(void *a, void *b, void *c)
 				}
 				shell_initialized = false;
 			}
+			smp_shell_rx_reset(&smp_input, &smp_serial);
 			protocol = (struct host_protocol){0};
 			reply_length = 0;
 			session_generation = current_generation;
@@ -282,10 +411,15 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 	if (!device_is_ready(uart)) {
 		return -ENODEV;
 	}
+	k_fifo_init(&smp_input.buf_ready);
+	smp_transport.functions.output = smp_output;
+	smp_transport.functions.get_mtu = smp_mtu;
 	int err = uart_irq_callback_user_data_set(uart, uart_callback, NULL);
 	if (err) {
 		return err;
 	}
+	mgmt_callback_register(&command_access);
+	mgmt_callback_register(&settings_access);
 	k_thread_create(&host_worker, host_stack, K_THREAD_STACK_SIZEOF(host_stack),
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&host_worker, "host_usb");
@@ -319,6 +453,7 @@ void host_connection_changed(bool open)
 	k_spin_unlock(&lock, key);
 	uart_irq_rx_enable(uart);
 	k_sem_give(&wake);
+	k_sem_give(&smp_tx_ready);
 }
 
 void host_interface_status(uint8_t state[8])

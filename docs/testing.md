@@ -15,6 +15,8 @@ uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
 uv run --locked pytest -q
 ```
 
@@ -96,6 +98,21 @@ available throughout; follow [recovery](recovery.md). Do not infer power removal
 from the disappearance of a serial port alone.
 
 ## Local checks
+
+`tests/management` runs the production Shell/SMP transport and LittleFS/Settings
+stack behind a native UART pseudoterminal. Unmodified `smpclient` and `smpmgr`
+exercise negotiation, multi-line echo, RAM changes, explicit save, invalid values,
+Shell reads, and persistence across process restart. The fixture waits for the
+Shell prompt before opening a client and supplies a permanent management session
+because the native UART has no USB DTR. The separate `tests/host` UART-emulator
+checks exercise actual session transitions, including disconnect during an
+accepted SMP operation and isolation of incomplete commands and old responses.
+
+`tests/storage` runs the actual LittleFS/Settings stack over simulated flash.
+It checks explicit save versus RAM-only changes, reload, file compaction,
+incompatible values and truncated records. A second boot starts with foreign
+contents and checks that rejected storage remains byte-for-byte unchanged.
+The backing files are temporary; no test opens a physical hub.
 
 The host simulation also exercises runtime power settings through the production
 Shell/Settings path: rejected values preserve state, source timers are independent,

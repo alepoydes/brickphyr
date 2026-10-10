@@ -8,10 +8,14 @@
 #include <string.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/kernel.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zephyr/mgmt/mcumgr/transport/serial.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
+#include <zcbor_decode.h>
 
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static unsigned int calls;
@@ -204,6 +208,184 @@ ZTEST(host, test_owner_command_handover)
 	receive_until("brickphyr> ", output, sizeof(output));
 	send("host_mode invalid\r", strlen("host_mode invalid\r"));
 	receive_until("Usage:", output, sizeof(output));
+	close_session();
+}
+
+static struct net_buf *receive_smp(void)
+{
+	struct mcumgr_serial_rx_ctxt context = {0};
+	uint8_t line[MCUMGR_SERIAL_MAX_FRAME + 64];
+	size_t length = 0;
+	struct net_buf *packet = NULL;
+	int64_t deadline = k_uptime_get() + 1000;
+
+	while (k_uptime_get() < deadline) {
+		uint8_t byte;
+		if (!uart_emul_get_tx_data(uart, &byte, 1)) {
+			k_msleep(1);
+			continue;
+		}
+		zassert_true(length < sizeof(line));
+		line[length++] = byte;
+		if (byte == '\n') {
+			/* A startup prompt may precede the first SMP response. */
+			uint8_t *start = memchr(line, context.nb ? MCUMGR_SERIAL_HDR_FRAG_1 :
+					       MCUMGR_SERIAL_HDR_PKT_1, length);
+			if (start) {
+				packet = mcumgr_serial_process_frag(&context, start,
+					length - (start - line));
+				if (packet) {
+					return packet;
+				}
+			}
+			length = 0;
+		}
+	}
+	zassert_unreachable("No complete SMP response");
+	return NULL;
+}
+
+ZTEST(host, test_smp_before_shell_prompt)
+{
+	zassert_ok(host_interface_select(HOST_SHELL));
+	k_sched_lock();
+	host_connection_changed(true);
+	/* Send as soon as DTR rises, without waiting for a human Shell prompt. */
+	const char echo[] = "\x06\tABcKAAANAAAAAKFhZGlicmlja3BoeXJYww==\n";
+	send(echo, sizeof(echo) - 1);
+	k_sched_unlock();
+	struct net_buf *packet = receive_smp();
+	zassert_equal(packet->data[0], 0x0b);
+	smp_packet_free(packet);
+	close_session();
+}
+
+K_SEM_DEFINE(management_entered, 0, 1);
+K_SEM_DEFINE(management_release, 0, 1);
+static unsigned int management_calls;
+
+static int blocking_management(struct smp_streamer *stream)
+{
+	management_calls++;
+	k_sem_give(&management_entered);
+	zassert_ok(k_sem_take(&management_release, K_SECONDS(1)));
+	return 0;
+}
+
+static int send_smp(const void *data, int length)
+{
+	send(data, length);
+	return 0;
+}
+
+ZTEST(host, test_smp_inflight_disconnect)
+{
+	/* A synthetic slow operation exercises the real SMP processor and teardown. */
+	static const struct mgmt_handler handlers[] = { { .mh_write = blocking_management } };
+	static struct mgmt_group group = {
+		.mg_handlers = handlers, .mg_handlers_count = ARRAY_SIZE(handlers),
+		.mg_group_id = MGMT_GROUP_ID_PERUSER,
+	};
+	char output[512];
+
+	mgmt_register_group(&group);
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	/* Two standard SMP v2 WRITE requests, each carrying an empty CBOR map. */
+	const uint8_t requests[] = {
+		0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 1, 0, 0xa0,
+		0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 2, 0, 0xa0,
+	};
+	zassert_ok(mcumgr_serial_tx_pkt(requests, sizeof(requests), send_smp));
+	zassert_ok(k_sem_take(&management_entered, K_SECONDS(1)));
+	host_connection_changed(false);
+	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
+	host_connection_changed(true);
+	k_sem_give(&management_release);
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_equal(management_calls, 1, "Old queued request executed after disconnect");
+	zassert_is_null(memchr(output, MCUMGR_SERIAL_HDR_PKT_1, strlen(output)),
+			"Old SMP response leaked into the new session");
+	/* The next session must admit a fresh operation. */
+	k_sem_give(&management_release);
+	zassert_ok(mcumgr_serial_tx_pkt(requests, 9, send_smp));
+	struct net_buf *packet = receive_smp();
+
+	zassert_equal(packet->data[6], 1);
+	zassert_equal(management_calls, 2);
+	smp_packet_free(packet);
+	close_session();
+	mgmt_unregister_group(&group);
+}
+
+ZTEST(host, test_smp_settings_and_session_reset)
+{
+	char output[512];
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	/* Wire vectors from smpclient 7.3.0 requests + smp.packet.encode(). */
+	const char echo[] = "\x06\tABcKAAANAAAAAKFhZGlicmlja3BoeXJYww==\n";
+	const char write[] = "\x06\tACoKAAAgAAMBAKJjdmFsRBEAAABkbmFtZXBwb3dlci91c2JfaWRsZV9zKbs=\n";
+	const char read[] = "\x06\tACEIAAAXAAMCAKFkbmFtZXBwb3dlci91c2JfaWRsZV9zM6E=\n";
+	const char save[] = "\x06\tAAsKAAABAAMDA6CIDQ==\n";
+	send(echo, sizeof(echo) - 1);
+	struct net_buf *packet = receive_smp();
+	zcbor_state_t state[4];
+	struct zcbor_string text;
+	zcbor_new_decode_state(state, ARRAY_SIZE(state), packet->data + 8, packet->len - 8, 1, NULL, 0);
+	zassert_true(zcbor_map_start_decode(state));
+	zassert_true(zcbor_tstr_expect_lit(state, "r"));
+	zassert_true(zcbor_tstr_decode(state, &text));
+	zassert_equal(text.len, strlen("brickphyr"));
+	zassert_mem_equal(text.value, "brickphyr", text.len);
+	smp_packet_free(packet);
+	send(write, sizeof(write) - 1);
+	packet = receive_smp();
+	zassert_equal(packet->data[6], 1, "Wrong reply sequence");
+	smp_packet_free(packet);
+	uint8_t value[4];
+	zassert_equal(settings_runtime_get("power/usb_idle_s", value, sizeof(value)), 4);
+	zassert_equal(sys_get_le32(value), 17);
+	send(read, sizeof(read) - 1);
+	packet = receive_smp();
+	zassert_equal(packet->data[6], 2);
+	zcbor_new_decode_state(state, ARRAY_SIZE(state), packet->data + 8, packet->len - 8, 1, NULL, 0);
+	zassert_true(zcbor_map_start_decode(state));
+	zassert_true(zcbor_tstr_expect_lit(state, "val"));
+	zassert_true(zcbor_bstr_decode(state, &text));
+	zassert_equal(text.len, 4);
+	zassert_equal(sys_get_le32(text.value), 17);
+	smp_packet_free(packet);
+	/* No storage in this configuration: save must report an error. */
+	send(save, sizeof(save) - 1);
+	packet = receive_smp();
+	zcbor_new_decode_state(state, ARRAY_SIZE(state), packet->data + 8, packet->len - 8, 1, NULL, 0);
+	zassert_true(zcbor_map_start_decode(state));
+	zassert_true(zcbor_tstr_expect_lit(state, "rc"));
+	uint32_t result;
+	zassert_true(zcbor_uint32_decode(state, &result));
+	zassert_not_equal(result, 0);
+	smp_packet_free(packet);
+	send("config get power/usb_idle_s\r", strlen("config get power/usb_idle_s\r"));
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_not_null(strstr(output, "17 s (selected and effective)"));
+	send("config set power/usb_idle_s 0\r", strlen("config set power/usb_idle_s 0\r"));
+	receive_until("brickphyr> ", output, sizeof(output));
+	send(write, 9);
+	k_msleep(5);
+	close_session();
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send(write + 9, sizeof(write) - 1 - 9);
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_equal(settings_runtime_get("power/usb_idle_s", value, sizeof(value)), 4);
+	zassert_equal(sys_get_le32(value), 0, "Partial SMP command crossed session boundary");
+	send(echo, sizeof(echo) - 1);
+	packet = receive_smp();
+	zassert_equal(packet->data[6], 0);
+	smp_packet_free(packet);
 	close_session();
 }
 

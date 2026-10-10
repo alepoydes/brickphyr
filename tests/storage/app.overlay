@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+&flash0 {
+	partitions {
+		/delete-node/ partition@fc000;
+		settings_partition: partition@fc000 {
+			label = "settings";
+			reg = <0xfc000 0x4000>;
+		};
+	};
+};

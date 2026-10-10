@@ -20,6 +20,31 @@
 		zephyr,code-partition = &firmware_partition;
 		zephyr,console = &cdc_acm_uart;
 		zephyr,shell-uart = &cdc_acm_uart;
+		zephyr,settings-partition = &settings_partition;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	pinctrl-0 = <&spi2_sck_pb13 &spi2_miso_pc2 &spi2_mosi_pc3>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 GPIO_ACTIVE_LOW>;
+
+	external_flash: flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <12000000>;
+		/* SFDP selects 4-byte address mode, as used by the LEGO loader. */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			/* Tail of Pybricks' 512..768 KiB user-storage region. */
+			settings_partition: partition@b8000 {
+				label = "settings";
+				reg = <0xb8000 0x8000>;
+			};
+		};
 	};
 };
 

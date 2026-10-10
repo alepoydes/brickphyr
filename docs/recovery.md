@@ -63,6 +63,17 @@ means use the available space after these constraints, not erase the chip.
 Restoring LEGO firmware and restoring every original user project are separate
 claims; document any required backup and data loss explicitly.
 
+The experimental F4 settings store uses the last 32 KiB of the reference
+Pybricks user-storage region: external flash `0xb8000..0xbffff`. The owning
+[Pybricks configuration](https://github.com/pybricks/pybricks-micropython/blob/2d62eb45e879075d63ace7728f8626437d3a683b/lib/pbio/platform/prime_hub_f4/pbdrvconfig.h)
+reserves `0x80000..0xbffff` away from LEGO bootloader data and its filesystem.
+Brickphyr initializes only a completely erased settings partition; it refuses to
+format nonempty contents that LittleFS cannot mount. `storage info` identifies
+the device/partition, and `storage read` produces an offset/hex dump for backup.
+This does not preserve settings against another firmware reusing that region:
+large Pybricks programs can overwrite it. Do not assume cross-firmware settings
+persistence or erase old Pybricks data to make mounting succeed.
+
 ## Current image and installation boundary
 
 The `spike_prime_f4` devicetree limits the image to the main-firmware partition.

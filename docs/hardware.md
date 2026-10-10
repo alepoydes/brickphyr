@@ -8,13 +8,17 @@ Inventor or SPIKE Prime revision, LEGO restoration, or interrupted-update recove
 The new [USB interface selector](host.md) and minimal Pybricks endpoint are
 checked in simulation and over Linux USB on that Inventor F4. The round trip
 preserves uptime; occupied-session rejection, terminal editing/history and
-partial-input isolation are verified. Other host operating systems remain unverified.
+partial-input isolation are verified. The local pybricksdev CDC client identifies
+the hub, receives status, reconnects, and returns to Shell. Standard SMP clients
+exercise fragmented echo and Settings read/write/save. Shell and SMP settings
+persist across software reboot, including saves that trigger file compaction.
+Other host operating systems and physical idle-timeout shutdown remain unverified.
 
 ## Target matrix
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |
 | --- | --- | --- | --- |
-| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB shell, buttons, button lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU, Pybricks restoration and return; operator-observed battery start/retention and long-press shutdown |
+| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB Shell/SMP, Pybricks identification, persistent settings, buttons, lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU, Pybricks restoration and return; operator-observed battery start/retention and long-press shutdown |
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |

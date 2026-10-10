@@ -1,9 +1,12 @@
 # Settings and power policy
 
 The F4 build implements runtime power settings through Zephyr Settings, USB VBUS
-detection, and inactivity shutdown. Persistence is not implemented yet: changes
-apply in RAM and `config save` returns unsupported before touching storage.
-The common contract below also covers future persistent and deferred settings.
+detection, and inactivity shutdown. Experimental persistence uses Zephyr's file
+backend on LittleFS in external SPI flash. Changes apply in RAM; `config save`
+persists them explicitly. Save, reboot restoration, and file compaction are
+verified on the Inventor F4 over Linux USB through Shell and SMP. Physical
+automatic shutdown and power-source transitions remain unverified. The common
+contract below also covers future deferred settings.
 
 ## Common settings contract
 
@@ -37,10 +40,19 @@ generic configuration framework or transactional storage for unrelated values.
 Do not claim that saving several keys is atomic unless the chosen representation
 and backend actually guarantee it.
 
-The storage backend and partition remain to be selected under the
-[recovery constraints](recovery.md). The current board description has no settings
-partition and the build enables neither a flash driver nor external SPI storage.
-Enabling Settings alone does not provide persistence on the hub.
+The F4 settings partition occupies 32 KiB at external flash offset `0xb8000`,
+inside Pybricks' user-storage region; see the [recovery constraints](recovery.md).
+Zephyr SPI NOR discovers geometry through SFDP and uses four-byte address mode.
+An entirely erased partition is initialized as LittleFS. Existing contents must
+mount successfully with automatic formatting disabled; unknown or corrupt data
+is reported, never replaced with a fresh filesystem. Storage failure leaves RAM
+configuration available and prevents `config save` from claiming success.
+
+Settings use `/settings/values`, with standard backend compaction. Saving several
+keys is not atomic as a group. Reads report the actual stored value, so a partial
+save cannot mark unrelated RAM changes as persisted. Loading passes known values
+through the same runtime validation; incompatible lengths and truncated files
+are errors. This requires the [dependency corrections](upstream.md#settings-storage-prerequisites).
 
 ## Current runtime settings
 
@@ -58,11 +70,14 @@ the previous value intact. Selected and effective values are currently identical
 config get power/battery_idle_s
 config set power/battery_idle_s 300
 config set power/usb_idle_s 60
+config save
+config get power/usb_idle_s
 power
 ```
 
-The commands report RAM-only changes explicitly. Reboot restores defaults until
-a persistent backend is installed. An open terminal or Pybricks USB session
+The commands distinguish the selected/effective RAM value from the saved value.
+Reboot restores saved values, or defaults for missing keys. Without a working
+storage backend, saving fails explicitly. An open terminal or Pybricks USB session
 inhibits automatic shutdown even with a short timeout; explicit shutdown still works.
 
 ## Explicit power control

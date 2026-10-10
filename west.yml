@@ -16,5 +16,7 @@ manifest:
         name-allowlist:
           - cmsis_6
           - hal_stm32
+          - littlefs
+          - zcbor
   self:
     path: brickphyr
