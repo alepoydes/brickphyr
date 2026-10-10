@@ -180,6 +180,22 @@ input, allocation/output failures and exactly-once completion. These local chang
 are not included in the published manifest pin.
 
 
+## HCI timeout prerequisite
+
+The Bluetooth profile uses a local Zephyr command-lifetime correction outside the
+published manifest pin. Synchronous HCI commands return `-ETIMEDOUT` on a missing
+completion instead of asserting. Completion and timeout arbitrate access to the
+caller's semaphore and state update; a late reply cannot use an expired stack.
+Commands still queued at timeout are removed without restoring controller credits.
+Buffer allocation inside the synchronous API is also bounded.
+
+The Zephyr native checks use a synthetic HCI controller and the production command
+path to cover completion/error replies, late replies, repeated queued cancellation,
+buffer exhaustion, and calls from the system workqueue. Both TX scheduling options
+are exercised. This is a transaction-lifetime change, not automatic controller
+recovery; other Bluetooth APIs can still wait on their own resources. Publish and
+pin the reviewed dependency change before claiming clean-checkout reproducibility.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

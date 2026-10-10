@@ -31,6 +31,8 @@ the README and the owning subsystem documents.
 Pybricks Code discovery, connection and reconnection pass through real Chromium
 Web Bluetooth; the website warns about the newer profile version. See
 [browser compatibility](../docs/bluetooth.md#pybricks-code) for the verified scope.
+The local [HCI timeout correction](../docs/upstream.md#hci-timeout-prerequisite)
+passes native checks and normal hub connections; radio-fault recovery remains open.
 
 The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
 breathing on a three-second cycle. BT opens/cancels the interface menu, arrows

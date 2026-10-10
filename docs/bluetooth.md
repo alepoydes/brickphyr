@@ -100,9 +100,12 @@ does not implement that handshake. No BTstack host code is included; see
 [artifact licensing](licensing.md).
 
 The fixed script is validated before its commands run; Zephyr owns command/reply
-correlation and its HCI timeout. An unresponsive controller currently triggers
-Zephyr's timeout assertion rather than a recoverable radio-only error. Keep the
-[independent recovery path](recovery.md) available. Bluetooth throughput, pairing,
+correlation and its HCI timeout. The local [HCI timeout change](upstream.md#hci-timeout-prerequisite)
+returns an error instead of asserting, detaches caller-local state from late
+replies, and cancels commands still queued. It does not reset the controller or
+establish recovery after a radio fault during a connection. After a failed radio
+operation, reboot before trying again; keep the [independent recovery path](recovery.md)
+available. Silent-controller recovery on hardware, Bluetooth throughput, pairing,
 controller input, and behavior under combined application traffic remain unverified.
 
 ## Boundaries
