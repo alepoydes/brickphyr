@@ -39,7 +39,9 @@ Pybricks Code discovery, connection and reconnection pass through real Chromium
 Web Bluetooth; the website warns about the newer profile version. See
 [browser compatibility](../docs/bluetooth.md#pybricks-code) for the verified scope.
 The local [HCI timeout correction](../docs/upstream.md#hci-timeout-prerequisite)
-passes native checks and normal hub connections; radio-fault recovery remains open.
+passes native checks and normal hub connections. With the controller held in reset
+at startup, USB, all four buttons and long-press shutdown still work on the Inventor
+F4; active-session controller loss and radio recovery remain open.
 H:4 transport cleanup also passes UART-emulator checks and normal hub on/off cycles;
 full host-stack cleanup after controller failure is still outstanding.
 
@@ -79,9 +81,15 @@ on the Inventor F4; see [settings](../docs/settings.md) and
 [host connections](../docs/host.md). Policy boundaries pass host simulation.
 USB power detection, runtime changes, and inhibition beyond a one-second timeout
 are verified on the Inventor F4 with an open terminal.
-USB idle shutdown disconnects USB and the operator observed lights off; subsequent
-startup restores saved zero timeouts. Battery idle expiry, residual current
-and charger/battery source transitions still need checking.
+USB and battery idle shutdown have operator-confirmed lights off; battery button
+startup restores saved zero timeouts. BLE holds battery power beyond the idle
+timeout without commands; USB/battery transitions preserve that session and uptime.
+Shutdown keeps the ADC button driver running if USB retains processor power;
+a valid release/new press reboots the hub. Native checks and physical USB restart
+after command/long-press shutdown pass on the Inventor F4. Battery shutdown/start
+and the subsequent BLE terminal also pass.
+See [settings](../docs/settings.md#inactivity-shutdown). Residual current, charging,
+and wake initiated by a USB host remain unverified.
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 

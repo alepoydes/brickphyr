@@ -12,5 +12,7 @@ struct resistor_ladder_sample {
 
 /* Last conversion, including errors; does not start another ADC transaction. */
 struct resistor_ladder_sample resistor_ladder_get_sample(const struct device *dev);
+/* Debounced key: 0 released, 1 pressed, negative errno if unreadable or unstable. */
+int resistor_ladder_get_key(const struct device *dev, uint16_t code);
 
 #endif

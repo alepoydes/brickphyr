@@ -12,7 +12,9 @@ partial-input isolation are verified. The local pybricksdev CDC client identifie
 the hub, receives status, reconnects, and returns to Shell. Standard SMP clients
 exercise fragmented echo and Settings read/write/save. Shell and SMP settings
 persist across software reboot, including saves that trigger file compaction.
-Other host operating systems and physical idle-timeout shutdown remain unverified.
+USB and battery inactivity shutdown and startup are checked; see
+[power verification](settings.md#inactivity-shutdown). Other host operating systems
+remain unverified.
 
 The optional [Bluetooth controller profile](bluetooth.md#experimental-f4-controller)
 initializes the CC2564C through Zephyr and advertises as `Brickphyr`. Two
@@ -21,7 +23,8 @@ pass on the same Inventor F4 with Linux discovery. The Pybricks GATT endpoint
 also passes Linux pybricksdev identification/status, reconnect, return to Shell
 and USB/BLE exclusion checks. Standard SMP BLE clients pass discovery, echo,
 fragmented packets, settings read/write/save and incomplete-packet isolation.
-An active BLE owner inhibits a one-second USB-power idle timeout.
+An active BLE owner inhibits idle shutdown on USB and battery power. USB/battery
+source changes preserve the session and uptime.
 
 ## Target matrix
 
@@ -133,7 +136,9 @@ of this normal installation cycle. The operator observed battery-only startup
 and operation after USB removal, and the lights extinguishing after a two-second center hold with USB
 and on battery. Subsequent center-button startup and `shutdown` were also checked;
 the latter removed the hub from USB enumeration. These are functional observations,
-not measurements of residual current or proof of USB wake support. See
+not measurements of residual current or proof of wake initiated by the USB host.
+Button restart with USB left attached is checked after both command shutdown and
+a long center hold. See [power behavior](settings.md#inactivity-shutdown) and
 [testing](testing.md#hub-input-and-lighting).
 
 ## A support claim must be reproducible

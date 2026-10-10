@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
@@ -53,6 +54,7 @@ static void shutdown(void)
 	/* Use the same context registry as Zephyr's USB shell, including the
 	 * standard automatically initialized CDC device. No private CDC symbols.
 	 */
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 	STRUCT_SECTION_FOREACH(usbd_context, ctx) {
 		if (ctx->dev == DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0))) {
 			int err = usbd_disable(ctx);
@@ -62,12 +64,33 @@ static void shutdown(void)
 			}
 		}
 	}
-	hub_shutdown();
+#endif
+#if defined(CONFIG_BT)
+	host_ble_shutdown();
+#endif
+	hub_power_release();
+	/* USB may keep the MCU powered. Keep the existing ADC/input driver alive,
+	 * require a valid release, then reboot on a fresh debounced press. */
+	bool released = false;
+	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
+
+	for (;;) {
+		int pressed = device_is_ready(center) ?
+			resistor_ladder_get_key(center, INPUT_KEY_ENTER) : -ENODEV;
+		if (pressed == 0) {
+			released = true;
+		} else if (pressed == 1 && released) {
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+		k_sem_take(&button_changed,
+			K_MSEC(DT_PROP(DT_NODELABEL(center_keys), sample_period_ms)));
+	}
 }
 
 static int cmd_shutdown(const struct shell *shell, size_t argc, char **argv)
 {
-	shutdown();
+	hub_power_request_shutdown();
+	k_sem_give(&button_changed);
 	return 0;
 }
 
@@ -166,6 +189,7 @@ void hub_run(void)
 		}
 		center_presses = count;
 		if (pressed_at >= 0 && now - pressed_at >= 2000) {
+			hub_power_request_shutdown();
 			shutdown();
 		}
 		enum host_mode current = host_interface_current();

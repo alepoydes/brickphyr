@@ -1,9 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include "hub.h"
 
 LOG_MODULE_REGISTER(hub_bluetooth);
+
+int hub_bluetooth_power_off(void)
+{
+	const struct gpio_dt_spec reset =
+		GPIO_DT_SPEC_GET(DT_CHOSEN(zephyr_bt_hci), reset_gpios);
+
+	/* Also silence a controller whose HCI shutdown failed. Only reboot may
+	 * release it after this terminal operation. */
+	return gpio_pin_configure_dt(&reset, GPIO_OUTPUT_ACTIVE);
+}
 
 /* H:4 calls this hook before asserting/releasing the controller reset GPIO.
  * The F4 board supplies the required slow clock through TIM8/PC9. */

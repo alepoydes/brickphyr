@@ -214,7 +214,9 @@ Interface colors blend over 300 ms. Brightness peaks clip individual channels,
 which can shift the perceived hue. Both central LEDs update together with native
 16-bit duty. See [lighting behavior](hardware.md#f4-buttons-lighting-and-power) for details.
 Holding the central button for two seconds requests power-off; release it to
-allow the power latch to switch off. Left, right, center, and Bluetooth presses,
+allow the power latch to switch off. A new short center press starts the hub,
+including with USB left attached; see
+[power behavior](settings.md#inactivity-shutdown). Left, right, center, and Bluetooth presses,
 including combinations, appear in `buttons`. Press Bluetooth to open the
 connection menu: its button lights white at full corrected duty and the central
 button previews the selection. Either arrow cycles the two interfaces.
@@ -297,9 +299,9 @@ fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercis
 on the initial Inventor F4. USB interface selection also passes the Linux round
 trip on that hub. Runtime power settings and idle policy are implemented; explicit
 save, reboot restoration, compaction, and SMP management pass Linux USB checks.
-USB idle shutdown and restart are checked; battery expiry and source transitions
-remain to be checked. LEGO transitions and
-interrupted-transfer recovery remain separate checks.
+USB and battery idle shutdown and restart are checked. USB/battery transitions
+preserve an active BLE session and uptime; see [power verification](settings.md#inactivity-shutdown).
+LEGO transitions and interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package
    and installation tools, resolve their metadata interface for a Zephyr image,

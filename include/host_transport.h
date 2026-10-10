@@ -20,6 +20,8 @@ int host_interface_select(uint16_t mode);
 int host_ble_acquire(void);
 void host_ble_release(bool exit_compatibility);
 uint16_t host_hub_variant(void);
+/* Terminal shutdown: stop asynchronously; no later radio enable until reboot. */
+void host_ble_shutdown(void);
 
 /* Packet callbacks run on one processing thread; only that thread may perform
  * settings operations under the BLE grant, even while disconnect is draining. */

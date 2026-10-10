@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_protocol.h"
 #include "host_transport.h"
+#include "hub.h"
 
 #include <string.h>
 #include <pbio/protocol.h>
@@ -30,6 +31,7 @@ static bool shell_retired;
 static K_MUTEX_DEFINE(radio_lock);
 enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
 static atomic_t radio_state;
+static atomic_t shutting_down;
 static int radio_error;
 static const char *failed_operation;
 static struct k_work_q radio_queue;
@@ -347,6 +349,10 @@ static int radio_failed(const char *operation, int error)
 static int set_radio(bool enable)
 {
 	k_mutex_lock(&radio_lock, K_FOREVER);
+	if (enable && atomic_get(&shutting_down)) {
+		k_mutex_unlock(&radio_lock);
+		return -ESHUTDOWN;
+	}
 	int state = atomic_get(&radio_state);
 	int err = state == RADIO_FAILED ? radio_error : 0;
 	if (!err && state != (enable ? RADIO_ON : RADIO_OFF)) {
@@ -355,7 +361,7 @@ static int set_radio(bool enable)
 		err = enable ? bt_enable(NULL) : bt_le_adv_stop();
 		if (!err) {
 			operation = enable ? "advertising start" : "controller shutdown";
-			err = enable ? advertise() : bt_disable();
+			err = enable ? (atomic_get(&shutting_down) ? 0 : advertise()) : bt_disable();
 		}
 		if (err) {
 			radio_failed(operation, err);
@@ -376,7 +382,7 @@ static K_WORK_DEFINE(startup_work, start_radio);
 static void resume_advertising(struct k_work *work)
 {
 	k_mutex_lock(&radio_lock, K_FOREVER);
-	if (atomic_get(&radio_state) == RADIO_ON) {
+	if (!atomic_get(&shutting_down) && atomic_get(&radio_state) == RADIO_ON) {
 		int err = advertise();
 		if (err) {
 			radio_failed("advertising resume", err);
@@ -385,6 +391,28 @@ static void resume_advertising(struct k_work *work)
 	k_mutex_unlock(&radio_lock);
 }
 static K_WORK_DEFINE(advertising_work, resume_advertising);
+
+static void stop_radio(struct k_work *work)
+{
+	set_radio(false);
+	/* Serialized after any pending initialization; never wait for HCI on the
+	 * hub thread that must still service the power button. */
+	int err = hub_bluetooth_power_off();
+	if (err) {
+		LOG_ERR("Bluetooth power off failed: %d", err);
+	}
+}
+static K_WORK_DEFINE(shutdown_work, stop_radio);
+
+void host_ble_shutdown(void)
+{
+	if (!atomic_cas(&shutting_down, 0, 1)) {
+		return;
+	}
+	k_work_cancel(&startup_work);
+	k_work_cancel(&advertising_work);
+	k_work_submit_to_queue(&radio_queue, &shutdown_work);
+}
 
 static void recycled(void)
 {
@@ -419,7 +447,9 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 	k_work_cancel_sync(&startup_work, &sync);
 	k_work_cancel_sync(&advertising_work, &sync);
 	int err = set_radio(enable);
-	if (err) {
+	if (err == -ESHUTDOWN) {
+		shell_error(shell, "Hub is shutting down.");
+	} else if (err) {
 		shell_error(shell, "Bluetooth %s failed: %d; reboot required", failed_operation, err);
 	} else {
 		shell_print(shell, "%s", enable ?
@@ -437,17 +467,17 @@ static int setup(void)
 		sizeof(command_uuid.val));
 	sys_memcpy_swap(capabilities_uuid.val, pbio_pybricks_hub_capabilities_char_uuid,
 		sizeof(capabilities_uuid.val));
+	/* Keep shutdown available even when profile registration fails. Radio waits
+	 * stay below USB/UI priority, outside the system device workqueue. */
+	const struct k_work_queue_config config = {.name = "host_ble"};
+	k_work_queue_start(&radio_queue, radio_stack, K_THREAD_STACK_SIZEOF(radio_stack),
+		K_LOWEST_APPLICATION_THREAD_PRIO, &config);
 #if defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	int err = smp_bt_register_request_callbacks(&request_callbacks);
 	if (err) {
 		return radio_failed("SMP callback registration", err);
 	}
 #endif
-	/* Radio waits have no UI deadline. Keep them below USB and hub service,
-	 * outside the system queue used by unrelated device work. */
-	const struct k_work_queue_config config = {.name = "host_ble"};
-	k_work_queue_start(&radio_queue, radio_stack, K_THREAD_STACK_SIZEOF(radio_stack),
-		K_LOWEST_APPLICATION_THREAD_PRIO, &config);
 	k_work_submit_to_queue(&radio_queue, &startup_work);
 	return 0;
 }

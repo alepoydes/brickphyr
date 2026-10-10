@@ -25,6 +25,7 @@ After [workspace setup](builds.md), including the experimental
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
@@ -110,6 +111,14 @@ with USB and with battery power separately. Check `reboot dfu`, a standard
 Pybricks reinstall, and the returning console. Keep independent factory DFU entry
 available throughout; follow [recovery](recovery.md). Do not infer power removal
 from the disappearance of a serial port alone.
+
+`tests/poweroff` runs the production hub loop, power policy and button driver with
+an emulated ADC. It checks that explicit shutdown rejects new ownership and
+releases the power latch once. A held button, ADC errors, contact bounce and other
+keys cannot trigger restart; a valid center release followed by a new press does.
+The board outputs and reset are substituted; this does not prove physical power
+removal or USB restart. On hardware, check command and long-press shutdown followed
+by a fresh center press with USB left attached, then repeat on battery power.
 
 ## Local checks
 

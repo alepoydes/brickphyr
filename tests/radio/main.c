@@ -11,8 +11,16 @@ static K_SEM_DEFINE(enable_entered, 0, 1);
 static K_SEM_DEFINE(enable_continue, 0, 1);
 static K_SEM_DEFINE(probe_done, 0, 1);
 static K_SEM_DEFINE(off_done, 0, 1);
+static K_SEM_DEFINE(power_off_done, 0, 1);
 static unsigned int enables, disables, starts, stops;
 static int enable_error, off_result;
+
+int hub_bluetooth_power_off(void)
+{
+	zassert_not_equal(k_current_get(), &k_sys_work_q.thread);
+	k_sem_give(&power_off_done);
+	return 0;
+}
 
 int __wrap_bt_enable(bt_ready_cb_t cb)
 {
@@ -155,6 +163,14 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_equal(starts, 2);
 	zassert_equal(stops, 2);
 	zassert_equal(disables, 2);
+
+	host_ble_shutdown();
+	zassert_ok(k_sem_take(&power_off_done, K_SECONDS(1)), "Failed radio prevented power off");
+	host_ble_shutdown();
+	zassert_equal(k_sem_take(&power_off_done, K_MSEC(1)), -EAGAIN);
+	expect_status("initialization failed:");
+	zassert_equal(shell_execute_cmd(shell, "bluetooth on"), -ESHUTDOWN);
+	zassert_equal(enables, 3);
 }
 
 ZTEST_SUITE(radio, NULL, NULL, NULL, NULL, NULL);

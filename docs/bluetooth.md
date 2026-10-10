@@ -116,7 +116,17 @@ returns an error instead of asserting, detaches caller-local state from late
 replies, and cancels commands still queued. It does not reset the controller or
 establish recovery after a radio fault during a connection. After a failed radio
 operation, reboot before trying again; keep the [independent recovery path](recovery.md)
-available. Silent-controller recovery on hardware, Bluetooth throughput, pairing,
+available.
+
+Startup failure with the controller held in reset is checked on the Inventor F4
+(PCB revision unknown), using the experimental profile on Zephyr 4.4.2. USB Shell
+responds during the HCI wait and after the initialization timeout; subsequent
+radio commands preserve the first error. All four buttons still register, and
+a long center press disconnects USB with operator-confirmed lights off. See
+[power behavior](settings.md#inactivity-shutdown) for button restart with USB attached.
+USB DFU entry and normal-image restoration with the Pybricks installer succeed
+after this startup fault; USB and BLE terminals work in the restored image.
+Controller loss during an active BLE session, radio recovery, Bluetooth throughput, pairing,
 controller input, and behavior under combined application traffic remain unverified.
 
 The local H:4 close-path correction discards partial framing and releases pending

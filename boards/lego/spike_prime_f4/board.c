@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <stdint.h>
 #include <cmsis_core.h>
-#include <zephyr/irq.h>
 #include <zephyr/sys/reboot.h>
 #include "hub.h"
 #include <stm32_ll_bus.h>
@@ -54,14 +53,10 @@ int hub_reboot_dfu(void)
 	CODE_UNREACHABLE;
 }
 
-void hub_shutdown(void)
+void hub_power_release(void)
 {
 	/* A held center button may keep power on until released, as in Pybricks. */
-	irq_lock();
 	LL_GPIO_ResetOutputPin(GPIOA, BIT(DT_GPIO_HOG_PIN_BY_IDX(DT_NODELABEL(power_hold), 0)));
-	for (;;) {
-		__WFI();
-	}
 }
 
 void board_early_init_hook(void)

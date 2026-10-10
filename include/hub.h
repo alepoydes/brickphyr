@@ -4,7 +4,8 @@
 
 /* Privileged F4 board operations; not an application ABI. */
 int hub_reboot_dfu(void);
-void hub_shutdown(void);
+void hub_power_release(void);
+int hub_bluetooth_power_off(void);
 void hub_run(void);
 
 #endif

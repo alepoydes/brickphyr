@@ -115,6 +115,13 @@ bool hub_power_connection(bool open)
 	return allowed;
 }
 
+void hub_power_request_shutdown(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	shutting_down = true;
+	k_spin_unlock(&lock, key);
+}
+
 bool hub_power_update(int vbus, bool activity, int64_t now)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);

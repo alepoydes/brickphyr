@@ -4,11 +4,11 @@ The F4 build implements runtime power settings through Zephyr Settings, USB VBUS
 detection, and inactivity shutdown. Experimental persistence uses Zephyr's file
 backend on LittleFS in external SPI flash. Changes apply in RAM; `config save`
 persists them explicitly. Save, reboot restoration, and file compaction are
-verified on the Inventor F4 over Linux USB through Shell and SMP. With USB power,
-idle expiry disconnects USB and the operator observed the lights go off;
-restart restores the saved settings. Battery idle expiry and power-source
-transitions remain unverified. The common contract below also covers future
-deferred settings.
+verified on the Inventor F4 over Linux USB through Shell and SMP. Inactivity
+shutdown and subsequent startup are checked on USB and battery power, including
+operator-observed lights off. USB/battery transitions preserve an active BLE
+session and uptime; battery startup restores saved settings. These checks do not
+measure residual current. The common contract below also covers future deferred settings.
 
 ## Common settings contract
 
@@ -84,8 +84,11 @@ inhibits automatic shutdown even with a short timeout; explicit shutdown still w
 
 ## Explicit power control
 
-On F4, `shutdown` and a two-second central-button hold turn off the button
-lights, disconnect USB, and release the PA13 power latch. A held button may keep power on until released. An active host session
+On F4, `shutdown` and a two-second central-button hold request the same shutdown
+on the hub thread: turn off button lights, disconnect USB, stop Bluetooth and
+release the PA13 power latch. Radio shutdown runs independently of the button
+loop; a failed HCI operation cannot prevent the power latch from being released.
+A held button may keep power on until released. An active host session
 inhibits automatic inactivity shutdown, but does not veto an explicit power-off.
 Neither power-off nor reboot implicitly saves settings.
 
@@ -133,9 +136,26 @@ are checked with synthetic time, including disconnect during an accepted SMP
 operation. BLE inhibition beyond a one-second USB-power timeout is also verified
 on the Inventor F4. With a three-second USB timeout, closing the terminal releases
 ownership and triggers shutdown, including USB disconnection and observed lights
-off. The same terminal holds power beyond that timeout while open. Battery idle
-expiry and source transitions remain separate checks; USB disappearance and
-lights off do not measure residual current.
+off. The same terminal holds power beyond that timeout while open.
+
+The native BLE terminal also holds battery power for over 13 seconds without
+commands with a three-second battery timeout. USB removal and reconnection change
+the reported source without interrupting BLE or resetting uptime. After a second
+USB removal, closing BLE allows battery idle shutdown; the operator observed
+lights off and subsequent button startup. Both RAM-only test timeouts return to
+their saved zero values on startup. With the battery timeout disabled, the hub
+continues advertising after the owner closes. These are functional checks on the
+Inventor F4, not measurements of residual current or exact physical cutoff timing.
+
+If USB keeps the processor powered after shutdown, the existing ADC button driver
+continues running. A debounced center release followed by a new press performs a
+full reboot; the shutdown hold itself, ADC errors and contact bounce cannot wake
+the hub. No USB connection or menu is active in this state. USB-attached restart
+after both command shutdown and a long center hold is checked on the Inventor F4.
+Holding the button through shutdown does not restart it. Battery-only long-press
+shutdown and subsequent button startup are also checked, followed by a working
+BLE terminal and unchanged saved settings. These checks do not measure off-state
+current or establish wake initiated by the USB host.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.

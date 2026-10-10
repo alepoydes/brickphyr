@@ -20,8 +20,9 @@ struct ladder_config {
 struct ladder_data {
 	struct k_work_delayable work;
 	const struct device *dev;
-	uint8_t previous;
+	int8_t previous;
 	uint8_t reported;
+	bool stable;
 	struct k_spinlock lock;
 	struct resistor_ladder_sample last;
 };
@@ -34,6 +35,24 @@ struct resistor_ladder_sample resistor_ladder_get_sample(const struct device *de
 
 	k_spin_unlock(&data->lock, key);
 	return last;
+}
+
+int resistor_ladder_get_key(const struct device *dev, uint16_t code)
+{
+	const struct ladder_config *cfg = dev->config;
+	struct ladder_data *data = dev->data;
+
+	for (size_t i = 0; i < ARRAY_SIZE(cfg->codes); i++) {
+		if (code && code == cfg->codes[i]) {
+			k_spinlock_key_t key = k_spin_lock(&data->lock);
+			int result = data->last.error ? data->last.error :
+				!data->stable ? -EAGAIN :
+				!!(data->reported & BIT(i));
+			k_spin_unlock(&data->lock, key);
+			return result;
+		}
+	}
+	return -ENOENT;
 }
 
 static void sample(struct k_work *work)
@@ -66,22 +85,24 @@ static void sample(struct k_work *work)
 		}
 		/* Never keep a shutdown button pressed across an unreadable sample. */
 		flags = 0;
-		data->previous = 0;
 	}
-
-	k_spin_unlock(&data->lock, key);
 
 	/* Two matching samples reject contact bounce; startup waits for settling. */
-	if (flags == data->previous) {
-		for (int i = 0; i < 3; i++) {
-			if (cfg->codes[i] && ((flags ^ data->reported) & BIT(i))) {
-				input_report_key(data->dev, cfg->codes[i], !!(flags & BIT(i)),
-						 true, K_NO_WAIT);
-			}
-		}
+	uint8_t changed = 0;
+
+	data->stable = !err && flags == data->previous;
+	if (data->stable || err) {
+		changed = flags ^ data->reported;
 		data->reported = flags;
 	}
-	data->previous = flags;
+	data->previous = err ? -1 : flags;
+	k_spin_unlock(&data->lock, key);
+	for (int i = 0; i < 3; i++) {
+		if (cfg->codes[i] && (changed & BIT(i))) {
+			input_report_key(data->dev, cfg->codes[i], !!(flags & BIT(i)),
+					 true, K_NO_WAIT);
+		}
+	}
 	k_work_schedule(&data->work, K_MSEC(cfg->period_ms));
 }
 
@@ -100,6 +121,7 @@ static int ladder_init(const struct device *dev)
 	}
 	data->dev = dev;
 	data->last.error = -EAGAIN;
+	data->previous = -1;
 	k_work_init_delayable(&data->work, sample);
 	/* Pybricks observes tens of milliseconds of invalid ladder voltage at boot. */
 	k_work_schedule(&data->work, K_MSEC(50));
