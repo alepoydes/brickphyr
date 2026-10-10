@@ -62,7 +62,9 @@ mechanisms beyond the unchanged Pybricks client's capabilities.
 The experimental [USB endpoint](host.md#implemented-pybricks-subset) implements
 identification and explicit unsupported-command errors, without Python execution.
 The optional [BLE endpoint](bluetooth.md#experimental-f4-controller) exposes the
-same subset to pybricksdev; Web Bluetooth remains unverified.
+same subset to pybricksdev. Pybricks Code discovery, connection and reconnection
+also pass on the Inventor F4 through Chromium Web Bluetooth; see the
+[tested browser and profile limitation](bluetooth.md#pybricks-code).
 
 ## Initial coverage plan
 

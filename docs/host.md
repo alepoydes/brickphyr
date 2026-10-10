@@ -181,8 +181,9 @@ The rule grants USB access to the active local user and matches the Brickphyr
 manufacturer string as well as the development IDs. It does not replace the CDC
 driver or change access for other Zephyr devices. The serial port still needs its
 normal access permissions. Headless installations need an administrator's device
-access policy. Windows/macOS driver access and unchanged Pybricks Code discovery
-are unverified.
+access policy. Windows/macOS driver access and Pybricks Code discovery over USB
+are unverified. Browser discovery over BLE is covered in
+[Bluetooth integration](bluetooth.md#pybricks-code).
 
 ### Implemented Pybricks subset
 

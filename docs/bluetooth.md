@@ -67,7 +67,23 @@ subscribe to it; stdin writes are rejected until an execution engine exists.
 The Brickphyr exit command `0x80`, written with response to the Pybricks command
 characteristic, selects USB Shell after disconnection. Initial subscription
 reports BLE ownership and no running program; dynamic application status awaits
-the application supervisor. Pybricks Code/Web Bluetooth remains unverified.
+the application supervisor.
+
+### Pybricks Code
+
+Discovery, connection and reconnection through [Pybricks Code](https://code.pybricks.com)
+are verified on the Inventor F4 using Chromium 154 on Linux with experimental web
+platform features enabled. After `bluetooth on`, close the USB terminal, click the
+website's Bluetooth button and select `Brickphyr`. The connected hub name appears
+in the status bar. Disconnecting or closing the browser releases the management
+session so USB can reconnect.
+
+The tested website supports profile 1.5.0 and warns about the hub's 1.7.0 profile,
+but completes the connection. This verifies discovery and identification only:
+program upload, execution and REPL are not implemented. Do not install different
+firmware merely to dismiss the profile warning.
+
+### Controller lifecycle
 
 After closing BLE, open USB Shell and run `bluetooth off` to stop advertising and
 disable the controller. Boot does not automatically enable the radio. Initialization

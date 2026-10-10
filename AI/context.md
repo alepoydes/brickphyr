@@ -28,6 +28,9 @@ and USB/BLE exclusion checks on the same Inventor F4. Standard SMP BLE discovery
 fragmented echo and Settings read/write/save also pass. Application loading and
 Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
+Pybricks Code discovery, connection and reconnection pass through real Chromium
+Web Bluetooth; the website warns about the newer profile version. See
+[browser compatibility](../docs/bluetooth.md#pybricks-code) for the verified scope.
 
 The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
 breathing on a three-second cycle. BT opens/cancels the interface menu, arrows
