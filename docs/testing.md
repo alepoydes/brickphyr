@@ -97,6 +97,12 @@ from the disappearance of a serial port alone.
 
 ## Local checks
 
+The host simulation also exercises runtime power settings through the production
+Shell/Settings path: rejected values preserve state, source timers are independent,
+zero disables expiry, activity restarts the deadline, unknown source and an active
+USB owner inhibit expiry, and an expiry claim excludes later ownership. Time is
+synthetic; these checks do not prove physical power removal or VBUS wiring.
+
 Use short upstream tests and focused Brickphyr behavior tests in the default
 check set. Suitable cases include format/ABI rejection, loader failure cleanup,
 buffer lifetime, resource ownership, state transitions, bounded queues, timing

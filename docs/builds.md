@@ -143,6 +143,8 @@ hub revision.
 | `shutdown` | F4: release the hub's power latch |
 | `buttons` | F4: button states, press counters, latest ADC samples and error counts |
 | `host_mode pybricks` | F4: select compatibility mode after this terminal closes |
+| `power` | F4: power source, management owner, idle policy, and inhibition reason |
+| `config get NAME` / `config set NAME SECONDS` | F4: read/change [runtime power settings](settings.md#current-runtime-settings) |
 | `led center R G B` | F4: stop breathing and set both central-button LEDs, each component 0–255 |
 | `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
 
@@ -261,7 +263,8 @@ Continue from the existing F4 image, USB shell, image/package checks, and native
 simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
 fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercised
 on the initial Inventor F4. USB interface selection also passes the Linux round
-trip on that hub; settings and power policy are next. LEGO
+trip on that hub. Runtime power settings and idle policy are implemented; persistent
+storage and complete physical timeout/source checks remain next. LEGO
 transitions and interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package

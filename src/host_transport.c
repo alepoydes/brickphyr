@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_protocol.h"
 #include "host_transport.h"
+#include "hub_power.h"
 
 #include <errno.h>
 #include <string.h>
@@ -296,6 +297,10 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 void host_connection_changed(bool open)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (!hub_power_connection(open)) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
 	if (open != occupied) {
 		occupied = open;
 		ready = false;

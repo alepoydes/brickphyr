@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/input/input.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
@@ -10,6 +11,7 @@
 #include "hub.h"
 #include "hub_light.h"
 #include "hub_menu.h"
+#include "hub_power.h"
 #include "input_resistor_ladder.h"
 
 LOG_MODULE_REGISTER(hub);
@@ -127,6 +129,8 @@ SHELL_CMD_ARG_REGISTER(led, NULL, "led <center|bluetooth> <red> <green> <blue> (
 
 void hub_run(void)
 {
+	const struct gpio_dt_spec vbus = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), vbus_gpios);
+	int vbus_error = gpio_is_ready_dt(&vbus) ? gpio_pin_configure_dt(&vbus, GPIO_INPUT) : -ENODEV;
 	int64_t pressed_at = -1;
 	atomic_val_t center_presses = 0;
 	atomic_val_t observed[ARRAY_SIZE(codes)] = {0};
@@ -138,6 +142,7 @@ void hub_run(void)
 
 	for (;;) {
 		int64_t now = k_uptime_get();
+		bool activity = false;
 		bool down = atomic_test_bit(&buttons, 0);
 		atomic_val_t count = atomic_get(&presses[0]);
 
@@ -159,6 +164,7 @@ void hub_run(void)
 			size_t i = order[j];
 			atomic_val_t presses_now = atomic_get(&presses[i]);
 			bool pressed = presses_now != observed[i];
+			activity |= pressed;
 			observed[i] = presses_now;
 			if (pressed) {
 				hub_menu_input(&menu, codes[i], true, current);
@@ -178,6 +184,9 @@ void hub_run(void)
 			}
 		}
 		center_was_down = down;
+		if (hub_power_update(vbus_error ? vbus_error : gpio_pin_get_dt(&vbus), activity, now)) {
+			shutdown();
+		}
 		if (menu.open) {
 			/* Refresh completion while presenting the selection menu. */
 			uint8_t status[8];

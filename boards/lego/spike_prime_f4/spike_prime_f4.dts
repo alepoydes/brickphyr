@@ -10,6 +10,9 @@
 / {
 	model = "LEGO SPIKE Prime F4";
 	compatible = "lego,spike-prime-f4";
+	zephyr,user {
+		vbus-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
+	};
 
 	chosen {
 		zephyr,sram = &sram0;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_transport.h"
 #include "host_protocol.h"
+#include "hub_power.h"
 #include <pbio/protocol.h>
 
 #include <errno.h>
@@ -8,6 +9,8 @@
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
@@ -202,6 +205,49 @@ ZTEST(host, test_owner_command_handover)
 	send("host_mode invalid\r", strlen("host_mode invalid\r"));
 	receive_until("Usage:", output, sizeof(output));
 	close_session();
+}
+
+ZTEST(host, test_zpower_settings_and_idle_claim)
+{
+	char output[512];
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	const char *set = "config set power/usb_idle_s 2\r";
+	send(set, strlen(set));
+	receive_until("Applied in RAM", output, sizeof(output));
+	const char *invalid = "config set power/usb_idle_s -1\r";
+	send(invalid, strlen(invalid));
+	receive_until("Use integer seconds", output, sizeof(output));
+	send("config get power\r", strlen("config get power\r"));
+	receive_until("Setting operation failed", output, sizeof(output));
+	send("config save\r", strlen("config save\r"));
+	receive_until("not available", output, sizeof(output));
+	uint8_t value[4];
+	zassert_equal(settings_runtime_get("power/usb_idle_s", value, sizeof(value)), 4);
+	zassert_equal(sys_get_le32(value), 2, "Rejected write changed the setting");
+	zassert_equal(settings_runtime_set("power/usb_idle_s", value, 3), -EINVAL);
+	zassert_equal(settings_runtime_get("power/unknown", value, sizeof(value)), -ENOENT);
+	zassert_equal(settings_runtime_get("power/usb_idle_s", value, 3), -ENOSPC);
+	/* Synthetic time exercises the policy; host acquisition is the real DTR path. */
+	int64_t base = k_uptime_get();
+	zassert_false(hub_power_update(1, false, base));
+	zassert_false(hub_power_update(1, false, base + 10000), "Owner must inhibit expiry");
+	close_session();
+	base = k_uptime_get();
+	zassert_false(hub_power_update(1, false, base + 1000));
+	zassert_false(hub_power_update(1, true, base + 1500));
+	zassert_false(hub_power_update(1, false, base + 3000), "Activity restarts idle time");
+	zassert_false(hub_power_update(0, false, base + 10000), "Battery timeout is independent");
+	zassert_false(hub_power_update(0, false, base + 100000), "Zero disables expiry");
+	sys_put_le32(UINT32_MAX, value);
+	zassert_ok(settings_runtime_set("power/battery_idle_s", value, sizeof(value)));
+	zassert_false(hub_power_update(0, false, base + 100000), "Seconds conversion overflowed");
+	zassert_false(hub_power_update(-EIO, false, base + 1000000));
+	zassert_false(hub_power_update(1, false, base + 1001000));
+	zassert_false(hub_power_update(1, false, base + 1002999));
+	zassert_true(hub_power_update(1, false, base + 1003000));
+	zassert_false(hub_power_connection(true), "A claimed shutdown must reject a late owner");
 }
 
 ZTEST_SUITE(host, NULL, setup, NULL, NULL, NULL);

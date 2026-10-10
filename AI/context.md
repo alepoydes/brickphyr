@@ -43,6 +43,12 @@ in [upstream integration](../docs/upstream.md#usb-experiment-prerequisites).
 Owner commands also select the next interface when their session closes:
 Shell `host_mode pybricks` and the Brickphyr-specific Pybricks exit command.
 The in-band round trip passes host simulation and Linux USB on the Inventor F4.
+Runtime power settings use Zephyr Settings; independent USB/battery timeouts
+default to disabled. PA9 detects USB power, and active USB ownership inhibits
+expiry. Storage/save remains unsupported. Policy boundaries pass host simulation.
+USB power detection, runtime changes, and inhibition beyond a one-second timeout
+are verified on the Inventor F4 with an open terminal.
+Physical automatic power-off and charger/battery source transitions need checking.
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 

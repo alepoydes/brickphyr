@@ -1,8 +1,9 @@
 # Settings and power policy
 
-This is the selected behavior for user-configurable settings. It is not
-implemented yet. The current F4 build holds power on and provides a diagnostic
-shell and explicit power-off; it has no settings store or inactivity shutdown policy.
+The F4 build implements runtime power settings through Zephyr Settings, USB VBUS
+detection, and inactivity shutdown. Persistence is not implemented yet: changes
+apply in RAM and `config save` returns unsupported before touching storage.
+The common contract below also covers future persistent and deferred settings.
 
 ## Common settings contract
 
@@ -41,6 +42,29 @@ The storage backend and partition remain to be selected under the
 partition and the build enables neither a flash driver nor external SPI storage.
 Enabling Settings alone does not provide persistence on the hub.
 
+## Current runtime settings
+
+| Name | Type and units | Default | Effect |
+| --- | --- | --- | --- |
+| `power/battery_idle_s` | Unsigned 32-bit seconds | 0 | Battery inactivity timeout |
+| `power/usb_idle_s` | Unsigned 32-bit seconds | 0 | USB-power inactivity timeout |
+
+Zero disables the corresponding timer. Both defaults preserve indefinite power
+retention during bring-up. All unsigned 32-bit values are accepted; binary Settings
+values use four little-endian bytes. Invalid names, lengths, and shell values leave
+the previous value intact. Selected and effective values are currently identical.
+
+```text
+config get power/battery_idle_s
+config set power/battery_idle_s 300
+config set power/usb_idle_s 60
+power
+```
+
+The commands report RAM-only changes explicitly. Reboot restores defaults until
+a persistent backend is installed. An open terminal or Pybricks USB session
+inhibits automatic shutdown even with a short timeout; explicit shutdown still works.
+
 ## Explicit power control
 
 On F4, `shutdown` and a two-second central-button hold turn off the button
@@ -73,11 +97,20 @@ USB power presence, USB enumeration, and an active management session are distin
 states. Define session acquisition and release with the [host interface](host.md);
 do not infer an active owner from the cable alone. After a session ends, apply the
 relevant idle policy. Normal disconnection does not stop an autonomous application.
-Critical-battery protection remains effective when automatic shutdown is disabled.
+Future critical-battery protection must remain independent of automatic shutdown;
+battery-voltage monitoring is not implemented in this build.
 
 Diagnostics must expose the power source, configured timeout, remaining idle time,
-and the reason shutdown is inhibited. Timeout defaults and the exact events that
-restart the idle timer remain to be specified when the policy is implemented.
+and the reason shutdown is inhibited. `power` reports these values. The F4 reads
+VBUS on PA9 independently of enumeration and DTR. Source changes, button presses,
+changes to either timeout, and management acquisition/release restart idle time.
+Polling shares the light/UI loop's 20 ms period. An unreadable power source
+inhibits automatic shutdown and appears as an error in diagnostics.
+
+Expiry and host acquisition serialize on the same lock: a live owner prevents
+expiry, and a claimed shutdown rejects a later acquisition. No user application
+runs yet; application activity must join this policy before an execution engine
+is enabled. Bluetooth ownership remains unimplemented.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.
