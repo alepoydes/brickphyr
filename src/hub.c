@@ -2,18 +2,17 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <zephyr/drivers/led.h>
 #include <zephyr/input/input.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
+#include "hub_light.h"
 #include "input_resistor_ladder.h"
 
 LOG_MODULE_REGISTER(hub);
 
-static const struct device *const leds = DEVICE_DT_GET(DT_NODELABEL(hub_leds));
 static const uint16_t codes[] = {INPUT_KEY_ENTER, INPUT_KEY_LEFT, INPUT_KEY_RIGHT,
 				 INPUT_KEY_BLUETOOTH};
 static const char *const names[] = {"center", "left", "right", "bluetooth"};
@@ -41,23 +40,12 @@ static void button_event(struct input_event *event, void *user_data)
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(center_keys)), button_event, NULL, center);
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)), button_event, NULL, arrows);
 
-static int center_color(const uint8_t color[3])
-{
-	int err = led_set_color(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)), 3, color);
-
-	if (err) {
-		return err;
-	}
-	return led_set_color(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)), 3, color);
-}
-
 static void shutdown(void)
 {
-	if (device_is_ready(leds)) {
-		const uint8_t off[] = {0, 0, 0};
+	int err = hub_light_off();
 
-		center_color(off);
-		led_set_color(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)), 3, off);
+	if (err) {
+		LOG_ERR("Lights off failed: %d", err);
 	}
 	/* Use the same context registry as Zephyr's USB shell, including the
 	 * standard automatically initialized CDC device. No private CDC symbols.
@@ -124,12 +112,7 @@ static int cmd_led(const struct shell *shell, size_t argc, char **argv)
 		}
 		color[i] = value;
 	}
-	if (!device_is_ready(leds)) {
-		shell_error(shell, "LED driver unavailable.");
-		return -ENODEV;
-	}
-	int err = center ? center_color(color) :
-		led_set_color(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)), 3, color);
+	int err = hub_light_manual(center, color);
 
 	if (err) {
 		shell_error(shell, "LED write failed: %d", err);
@@ -143,20 +126,11 @@ SHELL_CMD_ARG_REGISTER(led, NULL, "led <center|bluetooth> <red> <green> <blue> (
 
 void hub_run(void)
 {
-	if (device_is_ready(leds)) {
-		const uint8_t ready[] = {0, 16, 0};
-		int err = center_color(ready);
-
-		if (err) {
-			LOG_ERR("Startup light failed: %d", err);
-		}
-	} else {
-		LOG_ERR("LED driver unavailable");
-	}
 	int64_t pressed_at = -1;
 	atomic_val_t center_presses = 0;
 
 	for (;;) {
+		int64_t now = k_uptime_get();
 		bool down = atomic_test_bit(&buttons, 0);
 		atomic_val_t count = atomic_get(&presses[0]);
 
@@ -164,14 +138,18 @@ void hub_run(void)
 		if (!down) {
 			pressed_at = -1;
 		} else if (pressed_at < 0 || count != center_presses) {
-			pressed_at = k_uptime_get();
+			pressed_at = now;
 		}
 		center_presses = count;
-		int64_t remaining = pressed_at < 0 ? 2000 : 2000 - (k_uptime_get() - pressed_at);
-
-		if (pressed_at >= 0 && remaining <= 0) {
+		if (pressed_at >= 0 && now - pressed_at >= 2000) {
 			shutdown();
 		}
-		k_sem_take(&button_changed, pressed_at < 0 ? K_FOREVER : K_MSEC(remaining));
+		int64_t deadline = hub_light_update(now);
+
+		if (pressed_at >= 0) {
+			deadline = MIN(deadline, pressed_at + 2000);
+		}
+		k_sem_take(&button_changed, deadline == INT64_MAX ? K_FOREVER :
+			   K_TIMEOUT_ABS_MS(deadline));
 	}
 }

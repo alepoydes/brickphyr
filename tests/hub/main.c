@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/emul.h>
@@ -10,6 +11,8 @@
 #include <zephyr/ztest.h>
 #include <zephyr/fff.h>
 #include "input_resistor_ladder.h"
+#include "hub_light.h"
+#include "led_tlc5955.h"
 
 DEFINE_FFF_GLOBALS;
 
@@ -67,7 +70,6 @@ ZTEST(hub, test_led_frames)
 	const uint8_t rgb[] = {0x12, 0x34, 0x56};
 
 	zassert_true(device_is_ready(led));
-	zassert_equal(writes, 3);
 	zassert_mem_equal(frames[0], frames[1], 97);
 	/* TI control-register fields for 3.2 mA and the Pybricks display mode. */
 	const uint8_t control_fields[] = {0x06, 0x7f, 0xff, 0xfe, 0x00};
@@ -90,8 +92,18 @@ ZTEST(hub, test_led_frames)
 	zassert_equal(last_frame[30], 0xff);
 	unsigned int before = writes;
 
-	zassert_equal(led_set_color(led, 1, 3, rgb), -EINVAL);
+	zassert_equal(led_set_color(led, 3, 3, rgb), -EINVAL);
 	zassert_equal(led_set_color(led, 0, 2, rgb), -EINVAL);
+	zassert_equal(writes, before);
+	const uint16_t rgb16[] = {0x1234, 0x5678, 0x9abc};
+	const uint8_t wire16[] = {0x9a, 0xbc, 0x56, 0x78, 0x12, 0x34};
+
+	zassert_ok(tlc5955_set_colors16(led, 0, 1, rgb16));
+	zassert_mem_equal(&last_frame[7], wire16, sizeof(wire16));
+	before = writes;
+	zassert_equal(tlc5955_set_colors16(led, 2, 2, rgb16), -EINVAL);
+	zassert_equal(tlc5955_set_colors16(led, UINT32_MAX, 1, rgb16), -EINVAL);
+	zassert_equal(tlc5955_set_colors16(led, 0, 0, rgb16), -EINVAL);
 	zassert_equal(writes, before);
 	spi_error = -EIO;
 	zassert_equal(led_set_color(led, 0, 3, rgb), -EIO);
@@ -99,6 +111,79 @@ ZTEST(hub, test_led_frames)
 	zassert_ok(led_set_brightness(led, 0, 0));
 	zassert_equal(last_frame[29], 0xff);
 	zassert_equal(last_frame[30], 0xff);
+}
+
+static uint16_t duty(unsigned int channel)
+{
+	return ((uint16_t)last_frame[1 + 2 * channel] << 8) | last_frame[2 + 2 * channel];
+}
+
+ZTEST(hub, test_readiness_light_and_manual_override)
+{
+	zassert_equal(hub_light_update(0), 20);
+	zassert_equal(duty(5), 0);
+	zassert_equal(duty(4), 0);
+	zassert_equal(duty(3), 0);
+	hub_light_update(600);
+	zassert_true(duty(5) > 0 && duty(5) < 4095);
+	zassert_equal(duty(5), duty(4));
+	hub_light_update(1200);
+	zassert_equal(duty(5), 4095);
+	zassert_equal(duty(4), 4095);
+	zassert_equal(duty(3), 4095);
+	unsigned int before = writes;
+
+	zassert_equal(hub_light_update(1210), 1220);
+	zassert_equal(writes, before, "Early wake must not send another frame");
+	uint16_t previous[] = {duty(5), duty(4), duty(3)};
+	const uint8_t bt[] = {0, 0, 16};
+
+	zassert_ok(hub_light_manual(false, bt));
+	/* Synthetic time runs a whole breath through the production SPI path. */
+	for (int64_t now = 1220; now <= 7200; now += 20) {
+		before = writes;
+		zassert_equal(hub_light_update(now), now + 20);
+		zassert_equal(writes, before + 1, "Both center LEDs must latch together");
+		for (int i = 0; i < 3; i++) {
+			uint16_t value = duty(5 - i);
+
+			zassert_equal(value, duty(8 - i));
+			zassert_true(value > 0 && value <= 4095);
+			zassert_true(abs((int)value - previous[i]) <= 128, "Visible brightness jump");
+			if (i < 2) {
+				zassert_true(now <= 4200 ? value <= previous[i] : value >= previous[i]);
+			}
+			previous[i] = value;
+		}
+		if (now == 4200) {
+			zassert_true(duty(3) > 4 * duty(4) && duty(4) > 4 * duty(5));
+		}
+		zassert_equal(duty(14), UINT16_MAX, "Charging must remain disabled");
+		zassert_equal(duty(18), 16 * 257, "Breathing must preserve Bluetooth color");
+	}
+	zassert_equal(duty(5), 4095, "No jump at the cycle boundary");
+	hub_light_update(100000);
+	zassert_equal(writes, before + 2, "Delayed frames must not cause catch-up bursts");
+	const uint8_t manual[] = {7, 19, 31};
+
+	zassert_ok(hub_light_manual(true, manual));
+	before = writes;
+	zassert_equal(hub_light_update(200000), INT64_MAX);
+	zassert_equal(writes, before);
+	zassert_equal(duty(5), 7 * 257);
+	zassert_equal(duty(4), 19 * 257);
+	zassert_equal(duty(3), 31 * 257);
+	zassert_ok(hub_light_off());
+	before = writes;
+	zassert_equal(hub_light_update(300000), INT64_MAX);
+	zassert_equal(hub_light_manual(true, manual), -ESHUTDOWN);
+	zassert_equal(hub_light_manual(false, bt), -ESHUTDOWN);
+	zassert_equal(writes, before, "No relighting after shutdown");
+	for (int channel = 3; channel <= 8; channel++) {
+		zassert_equal(duty(channel), 0);
+	}
+	zassert_equal(duty(18), 0);
+	zassert_equal(duty(14), UINT16_MAX);
 }
 
 static int bad_adc(const struct device *dev, unsigned int channel, void *data, uint32_t *result)

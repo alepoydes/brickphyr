@@ -26,6 +26,11 @@ updates remain unverified. Bluetooth, application loading, and Python/WASM
 execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
+The current build adds white/blue readiness breathing with a startup fade.
+Manual central color stops it until reboot; shutdown prevents relighting.
+The SPI-emulator checks pass; the operator confirmed smooth transitions and
+acceptable colors/brightness on the Inventor F4.
+
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See
 [the downstream delta](../docs/upstream.md#current-downstream-delta). The next step

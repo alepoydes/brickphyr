@@ -7,6 +7,7 @@
 #include <zephyr/drivers/led.h>
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/spi.h>
+#include "led_tlc5955.h"
 
 struct tlc_config {
 	struct spi_dt_spec spi;
@@ -44,23 +45,37 @@ static int transfer(const struct tlc_config *cfg, const uint8_t *frame)
 	return gpio_pin_set_dt(&cfg->latch, 0);
 }
 
-static int set_color(const struct device *dev, uint32_t led, uint8_t count,
-		     const uint8_t *colors)
+int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t count,
+			const uint16_t *colors)
 {
 	const struct tlc_config *cfg = dev->config;
 	struct tlc_data *data = dev->data;
 
-	if (led >= cfg->led_count || count != 3) {
+	if (first >= cfg->led_count || !count || count > cfg->led_count - first) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&data->lock, K_FOREVER);
-	for (int i = 0; i < 3; i++) {
-		pbdrv_tlc5955_set_duty(data->frame, cfg->channels[led][i], colors[i] * 257U);
+	for (uint32_t led = 0; led < count; led++) {
+		for (int i = 0; i < 3; i++) {
+			pbdrv_tlc5955_set_duty(data->frame, cfg->channels[first + led][i],
+					       colors[3 * led + i]);
+		}
 	}
 	int err = transfer(cfg, data->frame);
 
 	k_mutex_unlock(&data->lock);
 	return err;
+}
+
+static int set_color(const struct device *dev, uint32_t led, uint8_t count,
+		     const uint8_t *colors)
+{
+	if (count != 3) {
+		return -EINVAL;
+	}
+	const uint16_t rgb[] = {colors[0] * 257U, colors[1] * 257U, colors[2] * 257U};
+
+	return tlc5955_set_colors16(dev, led, 1, rgb);
 }
 
 static int set_brightness(const struct device *dev, uint32_t led, uint8_t value)

@@ -141,7 +141,7 @@ hub revision.
 | `reboot dfu` | F4: reset into the installed mboot for the standard Pybricks installer |
 | `shutdown` | F4: release the hub's power latch |
 | `buttons` | F4: button states, press counters, latest ADC samples and error counts |
-| `led center R G B` | F4: set both central-button LEDs, each component 0–255 |
+| `led center R G B` | F4: stop breathing and set both central-button LEDs, each component 0–255 |
 | `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
 
 `info` reports the **build target**, not an independently detected board revision.
@@ -173,7 +173,10 @@ Backspace/Delete, Tab completion, and Up/Down command history. History is held
 in RAM and is cleared on firmware reboot. `--raw` lets the host terminal interpret
 the shell's cursor-control sequences without miniterm filtering them.
 
-The F4 build lights the central button dim green after LED initialization.
+The F4 build softly fades in the central button over 1.2 seconds, then breathes
+between white and blue on a six-second cycle. This indicates firmware readiness,
+not Bluetooth connection or DFU progress. The animation uses native 16-bit LED
+duty with perceptual correction and updates both central LEDs together.
 Holding the central button for two seconds requests power-off; release it to
 allow the power latch to switch off. Left, right, center, and Bluetooth presses,
 including combinations, appear in `buttons`. Bluetooth lighting is diagnostic:
@@ -188,6 +191,7 @@ led bluetooth 0 0 16
 led bluetooth 0 0 0
 ```
 
+`led center` stops the animation until reboot; `led bluetooth` leaves it running.
 The RGB values are raw intensity commands, not Pybricks color calibration.
 The shell remains available if a device fails to initialize and reports errors.
 Charging control is not implemented; the LED controller's charger-enable output

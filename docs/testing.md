@@ -75,8 +75,15 @@ failure release, TLC5955 initialization, RGB channel ordering, invalid LED
 requests, SPI errors, and preservation of the charger-disable channel. These
 checks use synthetic inputs; they do not verify electrical behavior or a bootloader.
 
-On F4, check the startup color, each button and combinations with `buttons`,
-and both lighting commands. Then check `shutdown` and the two-second center hold
+The same SPI path checks the readiness animation with synthetic time: startup
+fade, a complete white/blue cycle, bounded frame-to-frame changes, simultaneous
+central LED updates, and skipped late frames. It also checks that manual central
+color persists, Bluetooth color is independent, and shutdown prevents relighting.
+
+On F4, visually check the fade-in and smooth white/blue breathing, each button and
+combinations with `buttons`, and both lighting commands. Confirm that setting the
+central color stops breathing until reboot, while a Bluetooth color command does
+not interrupt it. Then check `shutdown` and the two-second center hold
 with USB and with battery power separately. Check `reboot dfu`, a standard
 Pybricks reinstall, and the returning console. Keep independent factory DFU entry
 available throughout; follow [recovery](recovery.md). Do not infer power removal
