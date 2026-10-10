@@ -62,8 +62,7 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-The next work is publishing the packaging dependency change and verifying
-restoration and battery operation on the initial F4 target. The
+The next work is verifying restoration on the initial F4 target. The
 [acceptance milestones](docs/builds.md#acceptance-milestones) place interface
 selection, settings/power, and separate applications after that hardware bring-up.
 Subsystem contracts and implementation boundaries are linked in

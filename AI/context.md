@@ -25,12 +25,12 @@ Bluetooth, application loading, and
 Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
-The F4 build uses local, unpublished Pybricks helper and host-tool changes;
-the public manifest still pins their upstream base. See
-[the downstream delta](../docs/upstream.md#current-downstream-delta). Complete
-reproducible dependency integration and the boot/restoration cycle before the USB
-selection experiment. [Acceptance milestones](../docs/builds.md#acceptance-milestones)
-give the development order from the existing build.
+The F4 build uses published Pybricks helper and host-tool changes pinned to our
+fork in the manifest. See
+[the downstream delta](../docs/upstream.md#current-downstream-delta). Complete the
+restoration cycle before the USB selection experiment.
+[Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
+order from the existing build.
 
 Everything tracked by Git is public documentation or project source. Keep local
 development handoffs, device observations, experiment results, and pending session

@@ -32,9 +32,9 @@ workspace is created. See [west workspaces](https://docs.zephyrproject.org/lates
 
 The manifest pins immutable Zephyr and Pybricks commits and imports only CMSIS 6
 and STM32 HAL from Zephyr's manifest. The firmware uses unmodified Zephyr modules;
-Pybricks supplies host tools and shared button/LED helpers. The F4 build and
-packaging currently require the unpublished [Pybricks changes](upstream.md#current-downstream-delta). Keep
-dependencies in separate repositories and pin any explicit overrides.
+the pinned Pybricks fork supplies host tools and shared button/LED helpers. See
+[the downstream delta](upstream.md#current-downstream-delta). Keep dependencies
+in separate repositories and pin any explicit overrides.
 Do not put invented SHAs or floating `main` / `master` refs in a runnable manifest.
 
 Python and WASM dependencies are not part of this bring-up build. Pybricks already
@@ -85,9 +85,9 @@ Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
 
-Apply the reviewed [Pybricks helper changes](upstream.md#current-downstream-delta)
-in its separate checkout before building; `west update` alone does not provide
-them yet. Build the Prime F4 target and check the resulting image:
+`west update` checks out the Pybricks helper changes from the pinned fork; no
+manual dependency patches are needed. Build the Prime F4 target and check the
+resulting image:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
@@ -107,9 +107,8 @@ see [recovery](recovery.md) for the remaining identification and writer audit.
 
 ### Experimental firmware package
 
-Packaging requires the [Pybricks host-tool extension](upstream.md#current-downstream-delta),
-which is not yet included in the public dependency pin. After reviewing and
-applying that extension in the separate Pybricks checkout:
+Packaging uses the [Pybricks host-tool extension](upstream.md#current-downstream-delta)
+included in the pinned fork. After building the F4 image:
 
 ```sh
 uv run --locked west build -d build/prime -t firmware_package
@@ -243,9 +242,9 @@ compiler settings, and instrumentation.
 ## Acceptance milestones
 
 Continue from the existing F4 image, USB shell, image/package checks, and native
-simulation. Packaging works with the unpublished dependency extension; making it
-reproducible from public pins and verifying physical installation remain immediate
-work. Protocol selection is not the first hardware milestone.
+simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
+fork. Installation and reinstallation have been exercised; the complete restoration
+cycle remains immediate work. Protocol selection follows that hardware milestone.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package
    and installation tools, resolve their metadata interface for a Zephyr image,

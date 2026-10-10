@@ -3,8 +3,8 @@ manifest:
   version: "1.2"
   projects:
     - name: pybricks
-      url: https://github.com/pybricks/pybricks-micropython
-      revision: 8aa9986cd0666fb610225de05440fb6d1f99c4ab # v4.1.0b4
+      url: https://github.com/alepoydes/pybricks-micropython
+      revision: 832dc9befb5a65541830ce5fd703967382be708a # Brickphyr helpers on v4.1.0b4
       path: modules/pybricks
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr

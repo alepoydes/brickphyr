@@ -17,9 +17,10 @@ Do not create an independent PBIO repository before the integration demonstrates
 that extracting it would help both consumers and the upstream maintainers agree.
 
 In a working fork, `origin` is our fork and `upstream` is the original project.
-For an unmodified dependency, its normal upstream remote is sufficient. Fork
-hosting/organization names have not been chosen and no remote fork exists as part
-of this foundation.
+For an unmodified dependency, its normal upstream remote is sufficient. The
+Pybricks fork is [alepoydes/pybricks-micropython](https://github.com/alepoydes/pybricks-micropython),
+with [pybricks/pybricks-micropython](https://github.com/pybricks/pybricks-micropython)
+as upstream. No Zephyr fork is currently needed.
 
 ## Put the change in its owning project
 
@@ -98,12 +99,12 @@ the same revision in west, a shell script, and a prose installation command.
 
 ## Current downstream delta
 
-The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and Pybricks.
+The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and our Pybricks fork.
 The board lives out of tree in Brickphyr; Zephyr and its imported modules remain
 unmodified. Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
 The firmware adapters use Zephyr ADC, Input, SPI, PWM, GPIO, and LED APIs.
 
-Experimental packaging uses local changes in the independent Pybricks repository:
+The pinned Pybricks fork includes these changes on the upstream v4.1.0b4 base:
 
 | Owning file | Change and reason |
 | --- | --- |
@@ -112,15 +113,12 @@ Experimental packaging uses local changes in the independent Pybricks repository
 | `lib/pbio/include/pbdrv/tlc5955.h`, `drv/pwm/pwm_tlc5955_stm32.c` | Share control-frame definitions and grayscale encoding without the STM32/PBIO scheduler adapter |
 | `tests/tools/` | Short metadata/package checks and factory-loader preservation checks through the unchanged DFU writer |
 
-These changes are not yet published. The manifest still references the unchanged
-upstream base; a fresh `west update` does not provide the extension. Firmware compilation and packaging
-therefore require the reviewed local topic branch until a public upstream or
-downstream commit is available. Do not replace that base with
-an unpublished commit or claim clean-checkout reproducibility for the extensions.
-The installer and its DFU implementation remain unmodified.
-No fork URL or PR has been assigned. Follow the acceptance procedure above before
-publishing a runnable dependency pin; remove the downstream delta when equivalent
-upstream functionality is adopted.
+These changes are published in
+[the integration commit](https://github.com/alepoydes/pybricks-micropython/commit/832dc9befb5a65541830ce5fd703967382be708a).
+`west update` obtains them through the manifest without manual patches. The
+installer and its DFU implementation remain unmodified. No upstream PR has been
+submitted yet; remove the downstream delta when equivalent upstream functionality
+is adopted.
 
 ## Contribution certification
 
