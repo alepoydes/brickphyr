@@ -1,9 +1,10 @@
 # Firmware installation and recovery
 
-**No hardware-verified Brickphyr flashing procedure is available yet.** The F4
-image builds and its layout is checked locally. This document contains
-source-derived bounds and the remaining installation work, not commands to
-execute on an unidentified hub.
+**The complete restoration cycle remains unverified.** The F4 image has been
+installed through the standard Pybricks CLI on a Robot Inventor F4, with a working
+USB shell and software reboot. See [hardware](hardware.md) for the verified scope.
+The constraints below also cover recovery checks still required before a
+supported installation procedure can be published.
 
 ## Required property
 
@@ -92,7 +93,7 @@ The reference's [CLI](https://github.com/pybricks/pybricks-micropython/blob/8aa9
 already handles firmware packages and includes paths for entering update mode
 from Pybricks and supported official SPIKE Prime firmware. Pybricks Code also
 documents [custom firmware ZIP installation](https://pybricks.com/learn/getting-started/install-pybricks/).
-These are integration starting points, not evidence of a Brickphyr installation.
+The CLI is used directly for the experimental F4 installation.
 The reference's
 [metadata generator](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/tools/metadata.py)
 normally expects Pybricks linker-map sections. The experimental extension accepts
@@ -105,7 +106,9 @@ console and the restored firmware's ordinary connection. Also verify cold boot,
 `reboot`, and USB disconnection/reconnection while running from the battery;
 uptime must continue across host loss. Motor outputs remain inactive. Test the
 remaining LEGO transitions and interrupted-transfer recovery separately after
-ordinary recovery is established. No such cycle has been performed yet.
+ordinary recovery is established. Installation and console checks are complete
+on the initial Inventor F4; restoration, cold boot, and physical cable removal
+remain to be checked.
 
 ## Bring-up sequence
 

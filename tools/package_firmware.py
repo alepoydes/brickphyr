@@ -78,4 +78,4 @@ if __name__ == "__main__":
         output = package(args.build.resolve(), args.version, args.sdk.resolve())
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Packaging failed: {error}\n")
-    print(f"Created {output}; installation on hardware remains unverified")
+    print(f"Created {output}")

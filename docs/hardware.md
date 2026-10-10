@@ -1,13 +1,15 @@
 # Hardware support
 
-No hub has been physically verified with Brickphyr. An experimental Prime F4
-image builds locally; physical availability and successful use under LEGO/Pybricks
-firmware do not establish that this image runs on a given hub.
+The experimental Prime F4 image boots and provides a USB diagnostic shell on one
+Robot Inventor F4 hub identified through its factory DFU loader. The PCB revision
+has not been established. These results do not establish support for every
+Inventor or SPIKE Prime revision, battery operation, or completed recovery.
 
 ## Target matrix
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |
 | --- | --- | --- | --- |
+| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB diagnostic shell | Installation through factory DFU, shell commands, terminal reopen, software reboot |
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell compile; shell logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
@@ -18,8 +20,10 @@ firmware do not establish that this image runs on a given hub.
 The family name is not a board ID. Do not assume all Prime-family hardware uses
 the same MCU, radio, boot chain, or flash layout. Add revision-specific rows as
 hardware is identified; do not mark an entire family verified from one board.
-Inventor shares relevant upstream F4 code; Brickphyr compatibility remains
-unverified. Other hubs are outside the current implementation target list.
+Inventor shares the relevant upstream F4 code. The verified scope above covers
+Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; Bluetooth, motor outputs, battery
+power retention, and application isolation have not been physically verified.
+Other hubs are outside the current implementation target list.
 
 For each implemented revision, extend its entry with separate results for boot /
 recovery, USB, Bluetooth, ports and motors, IMU, power/UI, runtime engines, and
@@ -46,7 +50,8 @@ USB pins, and motor bridge pins come from
 The both-inputs-low coast state follows
 [`motor_driver_hbridge_pwm.c`](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c).
 Zephyr supplies the SoC/drivers; Brickphyr supplies the devicetree, early power
-hold, and loader metadata. These are source-derived choices awaiting board tests.
+hold, and loader metadata. USB boot and shell behavior have been exercised on
+the Inventor F4 above; power and motor pin behavior still require physical tests.
 
 Exact firmware/bootloader regions and the verification still needed are in
 [recovery](recovery.md). Derive pins, power sequencing, clocking, calibration

@@ -57,9 +57,9 @@ to resume work without access to a previous conversation or a personal rules fil
   out of Git. Small curated regression fixtures need provenance and a purpose.
 - Agents must not invent human authorship or add human DCO sign-offs. Follow the
   destination project's current AI attribution rules for upstream submissions.
-- At handoff, prepare an English commit-message draft in Git metadata, without
-  committing. Use a short list: `+` for additions, `-` for removals, and `*` for
-  changes, with a few words per item.
+- At handoff, print an English commit-message draft in chat, without committing
+  or saving the draft to files or Git metadata. Use a short list: `+` for additions,
+  `-` for removals, and `*` for changes, with a few words per item.
 
 ## Hardware and handoff
 

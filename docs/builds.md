@@ -3,8 +3,9 @@
 The experimental `spike_prime_f4` target builds a diagnostic firmware image.
 Zephyr, CMSIS, STM32 HAL, and Pybricks revisions are resolved through [west.yml](../west.yml);
 Python tools are locked in [uv.lock](../uv.lock). The SDK version comes from the
-pinned Zephyr checkout's `SDK_VERSION`. No hardware installation has been verified.
-Runtime profiles below remain selected designs.
+pinned Zephyr checkout's `SDK_VERSION`. The current
+[hardware results](hardware.md) cover installation and USB shell behavior on one
+Inventor F4. Runtime profiles below remain selected designs.
 
 ## Repository layout
 
@@ -110,7 +111,7 @@ the installer cannot patch a name into a Zephyr image. A short test opens the
 package through the Pybricks reader and checks that the binary is unchanged.
 
 The target packages only the existing F4 build and performs no USB operation.
-It does not add H5 support or establish installation/recovery on hardware.
+It does not add H5 support. Building a package does not verify recovery on hardware.
 
 ### Diagnostic shell
 
@@ -134,11 +135,33 @@ binary and its checksum when recording an experiment. The shell is a privileged
 firmware diagnostic, not a user application or Python REPL. User mode and MPU are
 enabled in the F4 build, but application isolation is not yet exercised.
 
-After installation and USB enumeration are verified, pyserial's
-`serial.tools.list_ports` and `serial.tools.miniterm` are available through
-`uv run --locked python -m ...` to locate and open the CDC device. Local console
-behavior can already be exercised with the native simulator; the exact build
-and test commands are in [testing](testing.md).
+Run these commands from the Brickphyr repository. First list serial ports:
+
+```sh
+uv run --locked python -m serial.tools.list_ports -v
+```
+
+Find `Brickphyr bring-up console` (`2fe3:0004`) and open its device. For
+`/dev/ttyACM0`, use:
+
+```sh
+uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+```
+
+Replace `/dev/ttyACM0` if the port listing shows another device. Press Enter to
+display `brickphyr> `. Type `info` to identify the firmware, or call `uptime`
+twice to check that it advances. Exit miniterm with **Ctrl+]**. After `reboot`,
+open the port again; its device name may change. Only one terminal may own it.
+
+The shell uses Zephyr's standard line editing: Left/Right, Home/End,
+Backspace/Delete, Tab completion, and Up/Down command history. History is held
+in RAM and is cleared on firmware reboot. `--raw` lets the host terminal interpret
+the shell's cursor-control sequences without miniterm filtering them.
+
+The diagnostic build does not yet drive the hub's lights or handle its buttons;
+a dark display is not a power-state indicator. USB commands are the current
+way to check that firmware is running. Local console behavior is also exercised
+with the native simulator; see [testing](testing.md).
 
 ## Firmware profiles
 

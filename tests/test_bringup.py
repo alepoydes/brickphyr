@@ -40,9 +40,9 @@ def test_console():
                     output.extend(chunk)
                 return match[1].decode()
 
-            def response(console, command):
-                console.write(command.encode() + b"\n")
-                echo = command.encode() + b"\r\n"
+            def response(console, command, keys=None):
+                console.write((command.encode() if keys is None else keys) + b"\n")
+                echo = command.encode() + b"\r\n" if keys is None else b"\r\n"
                 output = console.read_until(echo)
                 assert output.endswith(echo), output.decode()
                 output = console.read_until(b"brickphyr> ")
@@ -59,7 +59,19 @@ def test_console():
                     info = response(console, "info")
                     assert "Brickphyr " in info and "Zephyr " in info
                     assert "Target native_sim/native/64" in info
+                    # Execute the edited line, not just check echoed characters.
+                    for keys in (
+                        b"infX\x08o",
+                        b"infX\x7fo",
+                        b"ino\x1b[Df",
+                        b"inXfo\x1b[H\x1b[C\x1b[C\x1b[3~\x1b[F",
+                        b"inf\t",
+                        b"discard\x15info",
+                    ):
+                        assert "Brickphyr " in response(console, "info", keys), keys
                     first = uptime(console)
+                    # Up/Up/Down selects the last uptime after visiting info.
+                    assert "Uptime:" in response(console, "uptime", b"\x1b[A\x1b[A\x1b[B")
                     assert "Uptime:" not in response(console, "uptime extra")
                     assert "not found" in response(console, "unknown_command")
                 time.sleep(0.2)

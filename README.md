@@ -8,10 +8,11 @@ application runs at a time. Hardware services remain responsive independently
 of the application's interpreter, garbage collection, or willingness to yield.
 
 **Status: experimental board bring-up.** The Prime F4 target builds a Zephyr
-image with a USB diagnostic shell. The same shell runs in Zephyr's native
-simulator. No hub has been flashed with Brickphyr; USB, power, and recovery on
-physical hardware remain unverified. There is no application loader, SDK, or
-supported installation procedure yet. See [builds](docs/builds.md) for commands.
+image with a USB diagnostic shell. Installation, shell commands, terminal
+reconnection, and software reboot have been exercised on one Robot Inventor F4
+hub. Battery operation and restoration remain unverified. The same shell runs
+in Zephyr's native simulator. There is no application loader, SDK, or supported
+recovery procedure yet. See [builds](docs/builds.md) for commands.
 
 The first target is the Inventor / SPIKE Prime family, starting with an identified
 physical board revision. Other hubs follow when their memory, peripherals, and
@@ -58,7 +59,7 @@ do not belong in this firmware.
 
 Read the architecture and the document owning the subsystem you want to change.
 The next work is publishing the packaging dependency change and verifying
-installation, the USB shell, and restoration on an identified board and loader. The
+restoration and battery operation on the initial F4 target. The
 [acceptance milestones](docs/builds.md#acceptance-milestones) place interface
 selection, settings/power, and separate applications after that hardware bring-up.
 Subsystem contracts and implementation boundaries are linked in

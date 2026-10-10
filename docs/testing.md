@@ -2,7 +2,7 @@
 
 The short bring-up checks exercise the compiled console in Zephyr's native
 simulator, inspect the linked ARM image, and open its firmware package through
-Pybricks. Brickphyr has not yet been verified on hardware.
+Pybricks. Physical checks and their limits are listed in [hardware](hardware.md).
 Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
 
 ## Run the bring-up checks
@@ -24,6 +24,10 @@ new pseudoterminal and checks reset uptime and identity. Response failures have
 bounded timeouts; serial links close and the simulator process terminates on exit.
 This exercises terminal disconnection in the host serial driver, not STM32 USB
 disconnection or battery power retention.
+
+The same console test sends actual editing keys: both common Backspace codes,
+cursor movement, Home/End, Delete, Tab, line clearing, and Up/Down history. It
+checks the resulting command output rather than matching escape sequences.
 
 The image test uses [the image checker](../tools/check_image.py) on the built ELF
 and binary, then checks rejection of a reset into the preserved loader, a truncated
@@ -52,7 +56,7 @@ For interactive local use, run `build/native/zephyr/zephyr.exe`, then open its
 printed pseudoterminal path in another terminal:
 
 ```sh
-uv run --locked python -m serial.tools.miniterm /dev/pts/N 115200
+uv run --locked python -m serial.tools.miniterm --raw /dev/pts/N 115200
 ```
 
 Replace `/dev/pts/N` with the printed path. Exit miniterm with Ctrl+], and stop
