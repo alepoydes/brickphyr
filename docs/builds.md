@@ -178,13 +178,20 @@ unfinished input. `--raw` lets the host terminal interpret
 the shell's cursor-control sequences without miniterm filtering them.
 
 The F4 build softly fades in the central button over 1.2 seconds, then breathes
-between white and blue on a six-second cycle. This indicates firmware readiness,
-not Bluetooth connection or DFU progress. The animation uses native 16-bit LED
+on a three-second cycle: white/blue for Pybricks, yellow/pink for Brickphyr Shell
+and future SMP. This indicates the selected interface, not a radio connection or
+DFU progress. Palette changes blend over 300 ms without restarting the breath.
+The animation uses native 16-bit LED
 duty with perceptual correction and updates both central LEDs together.
 Holding the central button for two seconds requests power-off; release it to
 allow the power latch to switch off. Left, right, center, and Bluetooth presses,
-including combinations, appear in `buttons`. Bluetooth lighting is diagnostic:
-it does not indicate a functioning radio. The 5×5 display is not implemented.
+including combinations, appear in `buttons`. Press Bluetooth to open the
+connection menu: its button lights white and the central button previews the
+selection. Either arrow cycles the two interfaces. Release a short center press
+to confirm; Bluetooth cancels. Center hold still switches power off. An occupied
+interface cannot be displaced: confirmation briefly extinguishes the white BT
+light and leaves the menu open. In normal operation BT lighting is off.
+The 5×5 display and Bluetooth radio are not implemented.
 
 For a short check, press each button briefly, then run:
 
@@ -195,7 +202,8 @@ led bluetooth 0 0 16
 led bluetooth 0 0 0
 ```
 
-`led center` stops the animation until reboot; `led bluetooth` leaves it running.
+`led center` stops the animation; `led bluetooth` leaves it running. Interface or
+menu changes restore automatic lighting, as does reboot.
 The RGB values are raw intensity commands, not Pybricks color calibration.
 The shell remains available if a device fails to initialize and reports errors.
 Charging control is not implemented; the LED controller's charger-enable output

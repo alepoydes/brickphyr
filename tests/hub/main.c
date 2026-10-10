@@ -12,6 +12,7 @@
 #include <zephyr/fff.h>
 #include "input_resistor_ladder.h"
 #include "hub_light.h"
+#include "hub_menu.h"
 #include "led_tlc5955.h"
 
 DEFINE_FFF_GLOBALS;
@@ -140,7 +141,7 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 
 	zassert_ok(hub_light_manual(false, bt));
 	/* Synthetic time runs a whole breath through the production SPI path. */
-	for (int64_t now = 1220; now <= 7200; now += 20) {
+	for (int64_t now = 1220; now <= 4200; now += 20) {
 		before = writes;
 		zassert_equal(hub_light_update(now), now + 20);
 		zassert_equal(writes, before + 1, "Both center LEDs must latch together");
@@ -151,19 +152,35 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 			zassert_true(value > 0 && value <= 4095);
 			zassert_true(abs((int)value - previous[i]) <= 128, "Visible brightness jump");
 			if (i < 2) {
-				zassert_true(now <= 4200 ? value <= previous[i] : value >= previous[i]);
+				zassert_true(now <= 2700 ? value <= previous[i] : value >= previous[i]);
 			}
 			previous[i] = value;
 		}
-		if (now == 4200) {
+		if (now == 2700) {
 			zassert_true(duty(3) > 4 * duty(4) && duty(4) > 4 * duty(5));
 		}
 		zassert_equal(duty(14), UINT16_MAX, "Charging must remain disabled");
 		zassert_equal(duty(18), 16 * 257, "Breathing must preserve Bluetooth color");
 	}
 	zassert_equal(duty(5), 4095, "No jump at the cycle boundary");
+	zassert_ok(hub_light_select(HOST_SHELL, true, 4200));
+	for (int channel = 18; channel <= 20; channel++) {
+		zassert_equal(duty(channel), 4095, "Menu must show white BT lighting");
+	}
+	/* The transition starts from the previous palette without resetting phase. */
+	hub_light_update(4220);
+	zassert_true(duty(4) > 4000 && duty(3) > 3900);
+	hub_light_update(7200);
+	zassert_true(duty(5) > duty(4) && duty(4) > 10 * duty(3), "Expected yellow");
+	hub_light_update(8700);
+	zassert_true(duty(5) > duty(3) && duty(3) > 4 * duty(4), "Expected pink");
+	zassert_ok(hub_light_select(HOST_SHELL, false, 8700));
+	zassert_equal(duty(18), 0);
+	zassert_equal(duty(19), 0);
+	zassert_equal(duty(20), 0);
+	before = writes;
 	hub_light_update(100000);
-	zassert_equal(writes, before + 2, "Delayed frames must not cause catch-up bursts");
+	zassert_equal(writes, before + 1, "Delayed frames must not cause catch-up bursts");
 	const uint8_t manual[] = {7, 19, 31};
 
 	zassert_ok(hub_light_manual(true, manual));
@@ -178,12 +195,39 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 	zassert_equal(hub_light_update(300000), INT64_MAX);
 	zassert_equal(hub_light_manual(true, manual), -ESHUTDOWN);
 	zassert_equal(hub_light_manual(false, bt), -ESHUTDOWN);
+	zassert_equal(hub_light_select(HOST_PYBRICKS, true, 300000), -ESHUTDOWN);
 	zassert_equal(writes, before, "No relighting after shutdown");
 	for (int channel = 3; channel <= 8; channel++) {
 		zassert_equal(duty(channel), 0);
 	}
 	zassert_equal(duty(18), 0);
 	zassert_equal(duty(14), UINT16_MAX);
+}
+
+ZTEST(hub, test_menu_selection_and_cancel)
+{
+	struct hub_menu menu = {0};
+	zassert_false(hub_menu_input(&menu, INPUT_KEY_LEFT, true, HOST_SHELL));
+	zassert_false(menu.open);
+	zassert_false(hub_menu_input(&menu, INPUT_KEY_BLUETOOTH, true, HOST_SHELL));
+	zassert_true(menu.open);
+	zassert_equal(menu.selected, HOST_SHELL);
+	/* A center key held before menu entry must not confirm on release. */
+	zassert_false(hub_menu_input(&menu, INPUT_KEY_ENTER, false, HOST_SHELL));
+	hub_menu_input(&menu, INPUT_KEY_LEFT, true, HOST_SHELL);
+	zassert_equal(menu.selected, HOST_PYBRICKS);
+	zassert_false(hub_menu_input(&menu, INPUT_KEY_ENTER, true, HOST_SHELL));
+	zassert_true(hub_menu_input(&menu, INPUT_KEY_ENTER, false, HOST_SHELL));
+	/* A busy transport leaves the preview open; release cannot retry by itself. */
+	zassert_true(menu.open);
+	zassert_false(hub_menu_input(&menu, INPUT_KEY_ENTER, false, HOST_SHELL));
+	hub_menu_input(&menu, INPUT_KEY_BLUETOOTH, true, HOST_SHELL);
+	zassert_false(menu.open);
+	zassert_equal(menu.selected, HOST_SHELL);
+	hub_menu_input(&menu, INPUT_KEY_BLUETOOTH, true, HOST_PYBRICKS);
+	zassert_equal(menu.selected, HOST_PYBRICKS);
+	hub_menu_input(&menu, INPUT_KEY_RIGHT, true, HOST_PYBRICKS);
+	zassert_equal(menu.selected, HOST_SHELL);
 }
 
 static int bad_adc(const struct device *dev, unsigned int channel, void *data, uint32_t *result)

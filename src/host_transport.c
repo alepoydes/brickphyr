@@ -344,3 +344,11 @@ int host_interface_select(uint16_t requested)
 	k_spin_unlock(&lock, key);
 	return result;
 }
+
+enum host_mode host_interface_current(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	enum host_mode current = mode;
+	k_spin_unlock(&lock, key);
+	return current;
+}

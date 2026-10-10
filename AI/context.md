@@ -26,10 +26,12 @@ updates remain unverified. Bluetooth, application loading, and Python/WASM
 execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
-The current build adds white/blue readiness breathing with a startup fade.
-Manual central color stops it until reboot; shutdown prevents relighting.
-The SPI-emulator checks pass; the operator confirmed smooth transitions and
-acceptable colors/brightness on the Inventor F4.
+The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
+breathing on a three-second cycle. BT opens/cancels the interface menu, arrows
+preview, and a short center release confirms; white BT lighting marks the menu.
+Manual central color stops animation until an interface/menu change or reboot;
+shutdown prevents relighting. Menu and SPI-emulator checks pass; visual assessment
+of these new palettes/timing remains outstanding.
 
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See

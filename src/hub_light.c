@@ -12,6 +12,9 @@ static K_MUTEX_DEFINE(lock);
 static enum { BREATHING, MANUAL, OFF } mode = BREATHING;
 static int64_t started = -1;
 static int64_t next_frame;
+static uint32_t palette_from;
+static uint32_t palette_target;
+static int64_t palette_changed;
 
 BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)) ==
 	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 1);
@@ -31,6 +34,35 @@ static uint32_t ease(uint32_t time, uint32_t duration)
 	return (uint64_t)x * x * (3 * 4095 - 2 * x) / (4095U * 4095U);
 }
 
+static uint32_t palette_blend(int64_t now)
+{
+	uint32_t blend = ease(CLAMP(now - palette_changed, 0, 300), 300);
+	return (palette_from * (4095 - blend) + palette_target * blend + 2047) / 4095;
+}
+
+int hub_light_select(enum host_mode selected, bool menu, int64_t now)
+{
+	if (selected != HOST_PYBRICKS && selected != HOST_SHELL) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&lock, K_FOREVER);
+	int err = mode == OFF ? -ESHUTDOWN : !device_is_ready(leds) ? -ENODEV : 0;
+	if (!err) {
+		uint16_t level = menu ? 4095 : 0;
+		const uint16_t white[] = {level, level, level};
+		err = tlc5955_set_colors16(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)),
+			1, white);
+		if (!err) {
+			palette_from = palette_blend(now);
+			palette_target = selected == HOST_SHELL ? 4095 : 0;
+			palette_changed = now;
+			mode = BREATHING;
+		}
+	}
+	k_mutex_unlock(&lock);
+	return err;
+}
+
 int64_t hub_light_update(int64_t now)
 {
 	k_mutex_lock(&lock, K_FOREVER);
@@ -39,14 +71,19 @@ int64_t hub_light_update(int64_t now)
 			started = now;
 		}
 		int64_t elapsed = now - started;
-		uint32_t phase = MAX(elapsed - 1200, 0) % 6000;
-		uint32_t blend = ease(phase <= 3000 ? phase : 6000 - phase, 3000);
+		uint32_t phase = MAX(elapsed - 1200, 0) % 3000;
+		uint32_t blend = ease(phase <= 1500 ? phase : 3000 - phase, 1500);
 		uint32_t fade = ease(MIN(elapsed, 1200), 1200);
 		const uint16_t blue[] = {512, 1792, 4095};
+		const uint16_t yellow[] = {4095, 3584, 512};
+		const uint16_t pink[] = {4095, 1024, 3072};
+		uint32_t palette = palette_blend(now);
 		uint16_t rgb[3];
 
 		for (int i = 0; i < 3; i++) {
 			uint32_t level = 4095 - ((4095 - blue[i]) * blend + 2047) / 4095;
+			uint32_t warm = (yellow[i] * (4095 - blend) + pink[i] * blend + 2047) / 4095;
+			level = (level * (4095 - palette) + warm * palette + 2047) / 4095;
 
 			level = (level * fade + 2047) / 4095;
 			/* Gamma 2 approximation; peak duty is 4095/65535 (6.25%). */

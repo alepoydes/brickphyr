@@ -84,14 +84,17 @@ encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
 the Pybricks disabled value; this step does not implement charging or the matrix.
 
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
-central LEDs in one transfer. The six-second white/blue cycle uses eased color
+central LEDs in one transfer. The three-second cycle uses eased color
 interpolation, a gamma-2 approximation, and at most 6.25% channel duty. Frames
 follow an absolute 20 ms schedule in the existing hub thread; delayed frames are
 skipped. Manual color and shutdown operations serialize with animation writes.
 Shutdown stops animation before extinguishing the lights. See
 [shell usage](builds.md#diagnostic-shell) for manual control.
 The operator confirmed smooth white/blue transitions and acceptable brightness
-on the Inventor F4; this is a visual assessment, not a photometric calibration.
+for the earlier six-second animation on the Inventor F4. The new three-second
+cycle, yellow/pink palette, and menu indication pass SPI-emulator checks; visual
+assessment of these changes remains outstanding. Neither check is photometric
+calibration. See [interface indication](builds.md#diagnostic-shell).
 
 Four individual button presses and green central/blue Bluetooth lighting have
 been checked on the Inventor F4 above. Software DFU entry, standard Pybricks

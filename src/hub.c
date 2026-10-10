@@ -9,6 +9,7 @@
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
+#include "hub_menu.h"
 #include "input_resistor_ladder.h"
 
 LOG_MODULE_REGISTER(hub);
@@ -128,6 +129,12 @@ void hub_run(void)
 {
 	int64_t pressed_at = -1;
 	atomic_val_t center_presses = 0;
+	atomic_val_t observed[ARRAY_SIZE(codes)] = {0};
+	struct hub_menu menu = {0};
+	bool center_was_down = false;
+	int shown = -1;
+	bool menu_shown = false;
+	int64_t busy_until = 0;
 
 	for (;;) {
 		int64_t now = k_uptime_get();
@@ -144,7 +151,51 @@ void hub_run(void)
 		if (pressed_at >= 0 && now - pressed_at >= 2000) {
 			shutdown();
 		}
+		enum host_mode current = host_interface_current();
+		/* Menu entry/cancel precedes navigation. Center confirms on release,
+		 * leaving its entire hold interval available for power-off. */
+		const uint8_t order[] = {3, 1, 2, 0};
+		for (size_t j = 0; j < ARRAY_SIZE(order); j++) {
+			size_t i = order[j];
+			atomic_val_t presses_now = atomic_get(&presses[i]);
+			bool pressed = presses_now != observed[i];
+			observed[i] = presses_now;
+			if (pressed) {
+				hub_menu_input(&menu, codes[i], true, current);
+			}
+			if (i == 0 && !down && (center_was_down || pressed) &&
+			    hub_menu_input(&menu, codes[i], false, current)) {
+				int err = menu.selected == current ? 0 : host_interface_select(menu.selected);
+				if (!err) {
+					menu.open = false;
+					current = menu.selected;
+				} else {
+					busy_until = now + 150;
+					if (err != -EBUSY) {
+						LOG_ERR("Interface selection failed: %d", err);
+					}
+				}
+			}
+		}
+		center_was_down = down;
+		if (menu.open) {
+			/* Refresh completion while presenting the selection menu. */
+			uint8_t status[8];
+			host_interface_status(status);
+		}
+		enum host_mode selected = menu.open ? menu.selected : current;
+		bool white = menu.open && now >= busy_until;
+		if (selected != shown || white != menu_shown) {
+			int err = hub_light_select(selected, white, now);
+			if (err) {
+				LOG_ERR("Interface lighting failed: %d", err);
+			}
+			shown = selected;
+			menu_shown = white;
+		}
 		int64_t deadline = hub_light_update(now);
+		/* Manual LED overrides must not stop tracking remotely selected modes. */
+		deadline = MIN(deadline, now + 20);
 
 		if (pressed_at >= 0) {
 			deadline = MIN(deadline, pressed_at + 2000);

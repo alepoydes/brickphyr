@@ -77,14 +77,19 @@ requests, SPI errors, and preservation of the charger-disable channel. These
 checks use synthetic inputs; they do not verify electrical behavior or a bootloader.
 
 The same SPI path checks the readiness animation with synthetic time: startup
-fade, a complete white/blue cycle, bounded frame-to-frame changes, simultaneous
+fade, a complete three-second white/blue cycle, yellow/pink endpoints, menu white
+and normal unlit BT indication, bounded frame-to-frame changes, simultaneous
 central LED updates, and skipped late frames. It also checks that manual central
 color persists, Bluetooth color is independent, and shutdown prevents relighting.
+The menu checks exercise entry, preview, cancellation, release confirmation, and
+retention after rejected selection through the production transition handler.
 
 On F4, visually check the fade-in and smooth white/blue breathing, each button and
 combinations with `buttons`, and both lighting commands. Confirm that setting the
-central color stops breathing until reboot, while a Bluetooth color command does
-not interrupt it. Then check `shutdown` and the two-second center hold
+central color stops breathing, while a Bluetooth color command does not interrupt
+it. Open the menu, preview both palettes, cancel, then select the other interface;
+interface/menu changes restore automatic lighting. Check busy rejection with a
+terminal open. Then check `shutdown` and the two-second center hold
 with USB and with battery power separately. Check `reboot dfu`, a standard
 Pybricks reinstall, and the returning console. Keep independent factory DFU entry
 available throughout; follow [recovery](recovery.md). Do not infer power removal
