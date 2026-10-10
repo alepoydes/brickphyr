@@ -203,6 +203,15 @@ the production driver and an emulated UART to exercise partial and oversized
 packets, pending transmission, teardown failure and repeated open/close. This is
 transport cleanup, not complete host-stack recovery after controller failure.
 
+The local disable-error correction adapts
+[upstream's readiness fix](https://github.com/zephyrproject-rtos/zephyr/commit/709a1b354b88)
+to the 4.4.2 lifecycle: reject a missing driver close operation before teardown,
+and never restore readiness after a failed close. It retains this base's
+`-ENOTSUP` result and failure latch until reboot; a rejected enable cannot clear
+that latch. Newer upstream supports retry with additional lifecycle changes that
+are not part of this backport. Synthetic HCI tests cover both missing close and
+close failure; normal on/off operation is checked on the Inventor F4.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

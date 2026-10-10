@@ -277,7 +277,8 @@ fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercis
 on the initial Inventor F4. USB interface selection also passes the Linux round
 trip on that hub. Runtime power settings and idle policy are implemented; explicit
 save, reboot restoration, compaction, and SMP management pass Linux USB checks.
-Physical timeout/source transitions remain to be checked. LEGO transitions and
+USB idle shutdown and restart are checked; battery expiry and source transitions
+remain to be checked. LEGO transitions and
 interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package

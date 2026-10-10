@@ -4,9 +4,11 @@ The F4 build implements runtime power settings through Zephyr Settings, USB VBUS
 detection, and inactivity shutdown. Experimental persistence uses Zephyr's file
 backend on LittleFS in external SPI flash. Changes apply in RAM; `config save`
 persists them explicitly. Save, reboot restoration, and file compaction are
-verified on the Inventor F4 over Linux USB through Shell and SMP. Physical
-automatic shutdown and power-source transitions remain unverified. The common
-contract below also covers future deferred settings.
+verified on the Inventor F4 over Linux USB through Shell and SMP. With USB power,
+idle expiry disconnects USB and the operator observed the lights go off;
+restart restores the saved settings. Battery idle expiry and power-source
+transitions remain unverified. The common contract below also covers future
+deferred settings.
 
 ## Common settings contract
 
@@ -129,7 +131,11 @@ is enabled. The optional Bluetooth profile acquires the same power hold. USB ope
 attempts rejected during BLE ownership cannot release it. These policy boundaries
 are checked with synthetic time, including disconnect during an accepted SMP
 operation. BLE inhibition beyond a one-second USB-power timeout is also verified
-on the Inventor F4; automatic power-off and source transitions remain separate checks.
+on the Inventor F4. With a three-second USB timeout, closing the terminal releases
+ownership and triggers shutdown, including USB disconnection and observed lights
+off. The same terminal holds power beyond that timeout while open. Battery idle
+expiry and source transitions remain separate checks; USB disappearance and
+lights off do not measure residual current.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.

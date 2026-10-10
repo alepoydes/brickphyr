@@ -68,7 +68,9 @@ on the Inventor F4; see [settings](../docs/settings.md) and
 [host connections](../docs/host.md). Policy boundaries pass host simulation.
 USB power detection, runtime changes, and inhibition beyond a one-second timeout
 are verified on the Inventor F4 with an open terminal.
-Physical automatic power-off and charger/battery source transitions need checking.
+USB idle shutdown disconnects USB and the operator observed lights off; subsequent
+startup restores saved zero timeouts. Battery idle expiry, residual current
+and charger/battery source transitions still need checking.
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 
