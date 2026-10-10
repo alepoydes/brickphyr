@@ -196,6 +196,13 @@ are exercised. This is a transaction-lifetime change, not automatic controller
 recovery; other Bluetooth APIs can still wait on their own resources. Publish and
 pin the reviewed dependency change before claiming clean-checkout reproducibility.
 
+The H:4 transport also needs its local close-path correction: release partial RX,
+pending TX and queued buffers even if board teardown fails, and reset framing
+before reopening. Transport setup preserves its original error. Native tests use
+the production driver and an emulated UART to exercise partial and oversized
+packets, pending transmission, teardown failure and repeated open/close. This is
+transport cleanup, not complete host-stack recovery after controller failure.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

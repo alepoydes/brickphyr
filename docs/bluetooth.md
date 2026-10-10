@@ -118,6 +118,11 @@ operation, reboot before trying again; keep the [independent recovery path](reco
 available. Silent-controller recovery on hardware, Bluetooth throughput, pairing,
 controller input, and behavior under combined application traffic remain unverified.
 
+The local H:4 close-path correction discards partial framing and releases pending
+buffers even when board teardown reports an error. UART-emulator checks cover
+reopening after partial RX/TX and teardown failure. This does not make a failed
+controller ready or provide automatic recovery of the Bluetooth host stack.
+
 ## Boundaries
 
 | Part | Owner / work |

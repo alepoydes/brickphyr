@@ -34,6 +34,8 @@ Web Bluetooth; the website warns about the newer profile version. See
 [browser compatibility](../docs/bluetooth.md#pybricks-code) for the verified scope.
 The local [HCI timeout correction](../docs/upstream.md#hci-timeout-prerequisite)
 passes native checks and normal hub connections; radio-fault recovery remains open.
+H:4 transport cleanup also passes UART-emulator checks and normal hub on/off cycles;
+full host-stack cleanup after controller failure is still outstanding.
 
 The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
 breathing on a three-second cycle. BT opens/cancels the interface menu, arrows
