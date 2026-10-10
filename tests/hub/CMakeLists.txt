@@ -6,4 +6,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hub_drivers)
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/drivers/input_resistor_ladder.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c)
-target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${WEST_TOPDIR}/modules/pybricks/lib/pbio/include)
+target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)

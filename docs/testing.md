@@ -44,7 +44,7 @@ does not open a USB connection. Focused tests for the dependency extension run
 in its owning repository through the workspace environment:
 
 ```sh
-uv run --locked --group flash python -m unittest discover -s ../modules/pybricks/tests/tools
+uv run --locked --group flash python -m unittest discover -s ../pybricks-micropython/tests/tools
 ```
 
 Those tests cover unchanged name customization, checksum generation without a

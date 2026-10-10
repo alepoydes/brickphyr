@@ -5,7 +5,7 @@ manifest:
     - name: pybricks
       url: https://github.com/alepoydes/pybricks-micropython
       revision: 2d62eb45e879075d63ace7728f8626437d3a683b # Brickphyr helpers on v4.1.0b6
-      path: modules/pybricks
+      path: pybricks-micropython
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
       revision: dccb09599635bdff17633fa7e9dab014b91dce90 # v4.4.2

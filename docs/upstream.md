@@ -52,8 +52,8 @@ For example, after configuring `origin` as a writable Pybricks fork and `upstrea
 as the original project, these commands run from the workspace root:
 
 ```sh
-git -C modules/pybricks fetch upstream
-git -C modules/pybricks switch --create topic/port-wait upstream/master
+git -C pybricks-micropython fetch upstream
+git -C pybricks-micropython switch --create topic/port-wait upstream/master
 ```
 
 The branch name is illustrative. Choose the actual target upstream base required
@@ -61,8 +61,8 @@ by the change; an older maintained release may be appropriate. Develop and commi
 there, then inspect the portable delta:
 
 ```sh
-git -C modules/pybricks diff upstream/master...HEAD
-git -C modules/pybricks log --oneline upstream/master..HEAD
+git -C pybricks-micropython diff upstream/master...HEAD
+git -C pybricks-micropython log --oneline upstream/master..HEAD
 ```
 
 Run the affected upstream checks and build, then the Brickphyr integration checks

@@ -18,9 +18,9 @@ brickphyr-workspace/
   .west/
   brickphyr/             # this repository, including west.yml
   zephyr/                # upstream checkout, or a justified thin fork
+  pybricks-micropython/  # Pybricks checkout/fork with its original history
   modules/
-    pybricks/            # Pybricks checkout/fork with its original history
-    ...                  # modules resolved by the selected manifests
+    hal/                 # CMSIS and STM32 HAL resolved by the Zephyr manifest
 babybot/                 # separate application repository
 ```
 
@@ -199,7 +199,7 @@ the USB disconnect before exiting miniterm with Ctrl+]. Wait for the DFU device
 to appear in `lsusb` before running the existing installer from the repository:
 
 ```sh
-uv run --locked --group flash python ../modules/pybricks/tools/flash build/prime/zephyr/firmware.zip
+uv run --locked --group flash python ../pybricks-micropython/tools/flash build/prime/zephyr/firmware.zip
 ```
 
 `reboot dfu` does not write flash. The installer handles the firmware package and
