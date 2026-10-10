@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Thresholds use the Pybricks three-input resistor-ladder decoder.
+description: LEGO three-input resistor ladder
+compatible: "lego,resistor-ladder"
+include: base.yaml
+properties:
+  io-channels:
+    type: phandle-array
+    required: true
+  thresholds:
+    type: array
+    required: true
+    description: Eight descending thresholds in raw 12-bit ADC counts.
+  key-codes:
+    type: array
+    required: true
+    description: Three input codes in resistor order; zero skips a non-button input.
+  sample-period-ms:
+    type: int
+    default: 10

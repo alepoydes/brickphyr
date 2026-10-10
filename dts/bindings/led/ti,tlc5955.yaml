@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+description: TI TLC5955 LED controller with an external grayscale clock
+compatible: "ti,tlc5955"
+include: spi-device.yaml
+properties:
+  latch-gpios:
+    type: phandle-array
+    required: true
+  pwms:
+    type: phandle-array
+    required: true
+    description: External GSCLK; the period must be exactly representable by the timer.
+  initial-full-channels:
+    type: array
+    description: Channels held at full duty from initialization, including non-LED loads.
+child-binding:
+  properties:
+    channels:
+      type: array
+      required: true
+      description: RGB channel indices in the Pybricks wire ordering (0..47).

@@ -17,12 +17,15 @@ Read [AGENTS.md](../AGENTS.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and
 - [Upstream](../docs/upstream.md): dependency changes and contributions.
 
 The experimental F4 build boots on an Inventor F4 and provides a verified USB
-diagnostic shell, terminal reconnection, and software reboot. Restoration and
-battery operation remain unverified. Bluetooth, application loading, and
+diagnostic shell, terminal reconnection, software reboot, four buttons, central/
+Bluetooth button lighting, and software DFU followed by a standard reinstall.
+The operator observed battery operation, long-press shutdown, and subsequent
+button startup; `shutdown` also disconnected USB. Restoration remains unverified.
+Bluetooth, application loading, and
 Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
-Experimental packaging uses local, unpublished Pybricks host-tool extensions;
+The F4 build uses local, unpublished Pybricks helper and host-tool changes;
 the public manifest still pins their upstream base. See
 [the downstream delta](../docs/upstream.md#current-downstream-delta). Complete
 reproducible dependency integration and the boot/restoration cycle before the USB

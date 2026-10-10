@@ -20,7 +20,10 @@ def package(build: Path, version: str, sdk: Path) -> Path:
     pybricks = Path(manifest.get_projects(["pybricks"])[0].abspath)
     output = build / "firmware.zip"
     root = Path(__file__).resolve().parents[1]
-    notices = [("Brickphyr", root / "LICENSE")]
+    notices = [
+        ("Brickphyr", root / "LICENSE"),
+        ("Pybricks MIT helpers", root / "LICENSES/Pybricks-MIT.txt"),
+    ]
     for project_name, license_path in (
         ("zephyr", "LICENSE"),
         ("cmsis_6", "LICENSE"),

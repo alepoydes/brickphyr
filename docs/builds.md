@@ -32,8 +32,8 @@ workspace is created. See [west workspaces](https://docs.zephyrproject.org/lates
 
 The manifest pins immutable Zephyr and Pybricks commits and imports only CMSIS 6
 and STM32 HAL from Zephyr's manifest. The firmware uses unmodified Zephyr modules;
-Pybricks supplies host tools. Experimental packaging currently requires the
-unpublished [host-tool changes](upstream.md#current-downstream-delta). Keep
+Pybricks supplies host tools and shared button/LED helpers. The F4 build and
+packaging currently require the unpublished [Pybricks changes](upstream.md#current-downstream-delta). Keep
 dependencies in separate repositories and pin any explicit overrides.
 Do not put invented SHAs or floating `main` / `master` refs in a runnable manifest.
 
@@ -76,7 +76,9 @@ Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
 
-Build the source-derived Prime F4 target and check the resulting image:
+Apply the reviewed [Pybricks helper changes](upstream.md#current-downstream-delta)
+in its separate checkout before building; `west update` alone does not provide
+them yet. Build the Prime F4 target and check the resulting image:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
@@ -128,6 +130,11 @@ hub revision.
 | `info` | Firmware version, source revision, Zephyr version, and build target |
 | `uptime` | Monotonic milliseconds since boot |
 | `reboot` | Cold restart through Zephyr's reboot API |
+| `reboot dfu` | F4: reset into the installed mboot for the standard Pybricks installer |
+| `shutdown` | F4: release the hub's power latch |
+| `buttons` | F4: button states, press counters, latest ADC samples and error counts |
+| `led center R G B` | F4: set both central-button LEDs, each component 0–255 |
+| `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
 
 `info` reports the **build target**, not an independently detected board revision.
 The source revision identifies the base commit for uncommitted work; retain the
@@ -158,10 +165,40 @@ Backspace/Delete, Tab completion, and Up/Down command history. History is held
 in RAM and is cleared on firmware reboot. `--raw` lets the host terminal interpret
 the shell's cursor-control sequences without miniterm filtering them.
 
-The diagnostic build does not yet drive the hub's lights or handle its buttons;
-a dark display is not a power-state indicator. USB commands are the current
-way to check that firmware is running. Local console behavior is also exercised
-with the native simulator; see [testing](testing.md).
+The F4 build lights the central button dim green after LED initialization.
+Holding the central button for two seconds requests power-off; release it to
+allow the power latch to switch off. Left, right, center, and Bluetooth presses,
+including combinations, appear in `buttons`. Bluetooth lighting is diagnostic:
+it does not indicate a functioning radio. The 5×5 display is not implemented.
+
+For a short check, press each button briefly, then run:
+
+```text
+buttons
+led center 0 16 0
+led bluetooth 0 0 16
+led bluetooth 0 0 0
+```
+
+The RGB values are raw intensity commands, not Pybricks color calibration.
+The shell remains available if a device fails to initialize and reports errors.
+Charging control is not implemented; the LED controller's charger-enable output
+is held disabled. See [hardware](hardware.md) for physical verification and
+[testing](testing.md) for local driver checks.
+
+To update from this build, run `reboot dfu` in the hub terminal and wait for
+the USB disconnect before exiting miniterm with Ctrl+]. Then run the existing
+installer from the repository:
+
+```sh
+uv run --locked --group flash python ../modules/pybricks/tools/flash build/prime/zephyr/firmware.zip
+```
+
+`reboot dfu` does not write flash. The installer handles the firmware package and
+existing bootloaders. If the console is unavailable, independent factory DFU entry remains the recovery
+path: disconnect USB and remove/reinsert the battery, then hold Bluetooth while
+connecting USB and release it after the colored blink. See the
+[recovery constraints](recovery.md) before installing.
 
 ## Firmware profiles
 

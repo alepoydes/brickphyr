@@ -21,7 +21,9 @@ or Pybricks, without requiring an intermediate Pybricks installation. Updating
 Brickphyr and restoring LEGO or Pybricks must use the same maintained installation
 mechanisms. Entering the existing bootloader with the hub's buttons is a valid
 installation path; automatic entry depends on the installed firmware and must
-not be assumed for every version.
+not be assumed for every version. The current F4 build provides `reboot dfu`;
+its mboot entry and subsequent standard reinstall have been exercised on the
+initial Inventor F4.
 
 Reuse Pybricks host tools and their firmware package format. Brickphyr owns its
 Zephyr build and the integration needed to package its image. Hub identification,
@@ -107,8 +109,9 @@ console and the restored firmware's ordinary connection. Also verify cold boot,
 uptime must continue across host loss. Motor outputs remain inactive. Test the
 remaining LEGO transitions and interrupted-transfer recovery separately after
 ordinary recovery is established. Installation and console checks are complete
-on the initial Inventor F4; restoration, cold boot, and physical cable removal
-remain to be checked.
+on the initial Inventor F4. The operator has since observed battery cold start
+and continued operation after cable removal; restoration and interrupted-transfer
+recovery remain to be checked.
 
 ## Bring-up sequence
 

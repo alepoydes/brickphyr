@@ -3,14 +3,14 @@
 The experimental Prime F4 image boots and provides a USB diagnostic shell on one
 Robot Inventor F4 hub identified through its factory DFU loader. The PCB revision
 has not been established. These results do not establish support for every
-Inventor or SPIKE Prime revision, battery operation, or completed recovery.
+Inventor or SPIKE Prime revision or completed recovery.
 
 ## Target matrix
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |
 | --- | --- | --- | --- |
-| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB diagnostic shell | Installation through factory DFU, shell commands, terminal reopen, software reboot |
-| SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell compile; shell logic tested on host | None |
+| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB shell, buttons, button lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU and reinstall; operator-observed battery start/retention and long-press shutdown |
+| SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
 | Technic | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
@@ -21,8 +21,10 @@ The family name is not a board ID. Do not assume all Prime-family hardware uses
 the same MCU, radio, boot chain, or flash layout. Add revision-specific rows as
 hardware is identified; do not mark an entire family verified from one board.
 Inventor shares the relevant upstream F4 code. The verified scope above covers
-Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; Bluetooth, motor outputs, battery
-power retention, and application isolation have not been physically verified.
+Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; Bluetooth, motor outputs, and
+application isolation have not been physically verified. Battery retention and
+center-button start/shutdown have operator
+observations on this hub, not current-consumption measurements.
 Other hubs are outside the current implementation target list.
 
 For each implemented revision, extend its entry with separate results for boot /
@@ -51,12 +53,40 @@ The both-inputs-low coast state follows
 [`motor_driver_hbridge_pwm.c`](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c).
 Zephyr supplies the SoC/drivers; Brickphyr supplies the devicetree, early power
 hold, and loader metadata. USB boot and shell behavior have been exercised on
-the Inventor F4 above; power and motor pin behavior still require physical tests.
+the Inventor F4 above; motor pin behavior still requires physical tests.
 
 Exact firmware/bootloader regions and the verification still needed are in
 [recovery](recovery.md). Derive pins, power sequencing, clocking, calibration
 locations, and port circuitry from the platform sources and available hardware
 evidence; do not fill gaps with plausible constants.
+
+## F4 buttons, lighting, and power
+
+The four buttons use two ADC resistor ladders: PC4/ADC14 contains the center
+button together with non-button inputs; PA1/ADC1 contains left, right, and
+Bluetooth. The decoder and nominal resistor-ladder cutoffs come from Pybricks.
+With charging disabled, the measured center-button level on the Inventor F4
+was 3141–3147 ADC counts, straddling Pybricks' loaded-ladder cutoff of 3142.
+This build uses the nominal ladder cutoffs for both ladders; adding charger
+control requires rechecking these levels. The Zephyr Input adapter
+samples every 10 ms after startup settling and requires two matching samples.
+An invalid sample releases reported keys so it cannot sustain a shutdown hold.
+
+The TLC5955 drives both central RGB LEDs and the Bluetooth RGB LED over SPI1,
+with a TIM12 clock and PA15 latch. The driver reuses Pybricks control/grayscale
+encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
+3.2 mA setting matches Pybricks. The shared charger-control channel remains at
+the Pybricks disabled value; this step does not implement charging or the matrix.
+
+Four individual button presses and green central/blue Bluetooth lighting have
+been checked on the Inventor F4 above. Software DFU entry, standard Pybricks
+reinstallation through mboot, and the returning USB console have also been
+checked. The operator observed battery-only startup and operation after USB
+removal, and the lights extinguishing after a two-second center hold with USB
+and on battery. Subsequent center-button startup and `shutdown` were also checked;
+the latter removed the hub from USB enumeration. These are functional observations,
+not measurements of residual current or proof of USB wake support. See
+[testing](testing.md#hub-input-and-lighting).
 
 ## A support claim must be reproducible
 

@@ -100,18 +100,21 @@ the same revision in west, a shell script, and a prose installation command.
 
 The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and Pybricks.
 The board lives out of tree in Brickphyr; Zephyr and its imported modules remain
-unmodified. Pybricks currently supplies host tools only, not firmware libraries.
+unmodified. Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
+The firmware adapters use Zephyr ADC, Input, SPI, PWM, GPIO, and LED APIs.
 
 Experimental packaging uses local changes in the independent Pybricks repository:
 
 | Owning file | Change and reason |
 | --- | --- |
 | `tools/metadata.py` | `--no-custom-name` permits checksum-free images without Pybricks-specific linker sections |
+| `lib/pbio/include/pbdrv/resistor_ladder.h`, `drv/resistor_ladder/` | Extract the existing decoder from ADC access for reuse with Zephyr |
+| `lib/pbio/include/pbdrv/tlc5955.h`, `drv/pwm/pwm_tlc5955_stm32.c` | Share control-frame definitions and grayscale encoding without the STM32/PBIO scheduler adapter |
 | `tests/tools/` | Short metadata/package checks and factory-loader preservation checks through the unchanged DFU writer |
 
 These changes are not yet published. The manifest still references the unchanged
-upstream base; a fresh `west update` does not provide the extension. Packaging
-therefore requires the reviewed local topic branch until a public upstream or
+upstream base; a fresh `west update` does not provide the extension. Firmware compilation and packaging
+therefore require the reviewed local topic branch until a public upstream or
 downstream commit is available. Do not replace that base with
 an unpublished commit or claim clean-checkout reproducibility for the extensions.
 The installer and its DFU implementation remain unmodified.

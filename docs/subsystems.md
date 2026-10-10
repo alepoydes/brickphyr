@@ -1,9 +1,9 @@
 # Subsystem ownership
 
 The table selects code sources and integration boundaries. The experimental
-Prime F4 build integrates clock/power setup and a Zephyr USB diagnostic shell;
-physical behavior remains unverified. Application services and runtime integrations
-below remain unimplemented. This is not a claim that every chip has a Zephyr driver.
+Prime F4 build integrates clock/power setup, buttons, lighting, and a Zephyr USB
+diagnostic shell. See [hardware](hardware.md) for physical verification.
+Application services and runtime integrations below remain unimplemented. This is not a claim that every chip has a Zephyr driver.
 
 | Subsystem | Preferred source | Brickphyr work / boundary |
 | --- | --- | --- |

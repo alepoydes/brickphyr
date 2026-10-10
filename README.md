@@ -10,7 +10,9 @@ of the application's interpreter, garbage collection, or willingness to yield.
 **Status: experimental board bring-up.** The Prime F4 target builds a Zephyr
 image with a USB diagnostic shell. Installation, shell commands, terminal
 reconnection, and software reboot have been exercised on one Robot Inventor F4
-hub. Battery operation and restoration remain unverified. The same shell runs
+hub. Four buttons, button lighting, and software DFU/reinstallation have also been
+exercised; battery operation and long-press shutdown have operator observations.
+The restoration cycle remains unverified. The same shell runs
 in Zephyr's native simulator. There is no application loader, SDK, or supported
 recovery procedure yet. See [builds](docs/builds.md) for commands.
 

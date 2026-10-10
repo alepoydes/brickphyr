@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/* Pybricks resistor values and ladder-1 thresholds. With charging disabled,
+ * the observed center voltage is 3141..3147, on the ladder-0 cutoff of 3142.
+ * Use the nominal ladder cutoffs here; reassess when adding charger control.
+ */
+/ {
+	center_keys: center-keys {
+		compatible = "lego,resistor-ladder";
+		io-channels = <&adc1 14>;
+		thresholds = <3872 3394 3009 2755 2538 2327 2141 1969>;
+		key-codes = <0 INPUT_KEY_ENTER 0>;
+	};
+	arrow_keys: arrow-keys {
+		compatible = "lego,resistor-ladder";
+		io-channels = <&adc1 1>;
+		thresholds = <3872 3394 3009 2755 2538 2327 2141 1969>;
+		key-codes = <INPUT_KEY_LEFT INPUT_KEY_RIGHT INPUT_KEY_BLUETOOTH>;
+	};
+};
+
+&adc1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
+	channel@e {
+		reg = <14>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
+};
+

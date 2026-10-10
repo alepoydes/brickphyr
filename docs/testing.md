@@ -13,6 +13,7 @@ After [workspace setup](builds.md), including the experimental
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
 uv run --locked pytest -q
 ```
 
@@ -63,6 +64,23 @@ Replace `/dev/pts/N` with the printed path. Exit miniterm with Ctrl+], and stop
 the simulator with Ctrl+C. The `reboot` command creates a new pseudoterminal;
 reopen the newly printed path. This is a host simulation with simulated time
 paced against the host clock, not a hub emulator.
+
+## Hub input and lighting
+
+The short `tests/hub` Zephyr test uses the production input/LED drivers and
+Pybricks helpers over Zephyr's ADC, SPI, GPIO emulators and a fake PWM timer.
+It uses the F4 button configuration and exercises the observed 3141–3147 center
+voltage range, all resistor-ladder button combinations, invalid voltage and ADC
+failure release, TLC5955 initialization, RGB channel ordering, invalid LED
+requests, SPI errors, and preservation of the charger-disable channel. These
+checks use synthetic inputs; they do not verify electrical behavior or a bootloader.
+
+On F4, check the startup color, each button and combinations with `buttons`,
+and both lighting commands. Then check `shutdown` and the two-second center hold
+with USB and with battery power separately. Check `reboot dfu`, a standard
+Pybricks reinstall, and the returning console. Keep independent factory DFU entry
+available throughout; follow [recovery](recovery.md). Do not infer power removal
+from the disappearance of a serial port alone.
 
 ## Local checks
 

@@ -19,8 +19,9 @@ their notices; selecting Apache for Brickphyr does not erase those obligations.
 ## Planned dependency audit
 
 Dependencies remain separate west checkouts. The bring-up build uses Zephyr,
-CMSIS 6, STM32 HAL, and SDK libraries; it contains no Pybricks, MicroPython, WAMR,
-or radio service-pack binary. The following is a preliminary platform inventory,
+CMSIS 6, STM32 HAL, SDK libraries, and MIT-licensed Pybricks resistor-ladder and
+TLC5955 helpers. Their [license notice](../LICENSES/Pybricks-MIT.txt) accompanies
+the source. The build contains no MicroPython, WAMR, or radio service-pack binary. The following is a preliminary platform inventory,
 not a completed distribution audit of a firmware image:
 
 | Component | Known main license | Work still required before distribution |

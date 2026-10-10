@@ -2,6 +2,9 @@
 
 /dts-v1/;
 #include <st/f4/stm32f413Xg.dtsi>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
 #include <st/f4/stm32f413v(g-h)tx-pinctrl.dtsi>
 
 / {
@@ -106,5 +109,55 @@ zephyr_udc0: &usbotg_fs {
 			label = "firmware";
 			reg = <0x10000 DT_SIZE_K(960)>;
 		};
+	};
+};
+
+#include "buttons.dtsi"
+
+&adc1 {
+	pinctrl-0 = <&adc1_in1_pa1 &adc1_in14_pc4>;
+	pinctrl-names = "default";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+
+&timers12 {
+	status = "okay";
+	gsclk: pwm {
+		pinctrl-0 = <&tim12_ch2_pb15>;
+		pinctrl-names = "default";
+		status = "okay";
+	};
+};
+
+&spi1 {
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	hub_leds: leds@0 {
+		compatible = "ti,tlc5955";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+		latch-gpios = <&gpioa 15 GPIO_ACTIVE_HIGH>;
+		pwms = <&gsclk 2 104 PWM_POLARITY_NORMAL>;
+		/* MODE: full duty disables charging until a charger driver owns it. */
+		initial-full-channels = <14>;
+		status_top: status-top { channels = <5 4 3>; };
+		status_bottom: status-bottom { channels = <8 7 6>; };
+		bluetooth_led: bluetooth { channels = <20 19 18>; };
+	};
+};
+
+/* Keep the reboot request above the RAM used by the existing bootloaders. */
+&sram0 {
+	reg = <0x20000000 DT_SIZE_K(319)>;
+};
+
+/ {
+	boot_request: memory@2004fc00 {
+		compatible = "zephyr,memory-region";
+		reg = <0x2004fc00 DT_SIZE_K(1)>;
+		zephyr,memory-region = "BOOT_REQUEST";
 	};
 };

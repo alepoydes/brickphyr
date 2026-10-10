@@ -74,6 +74,8 @@ def test_console():
                     assert "Uptime:" in response(console, "uptime", b"\x1b[A\x1b[A\x1b[B")
                     assert "Uptime:" not in response(console, "uptime extra")
                     assert "not found" in response(console, "unknown_command")
+                    assert "Usage:" in response(console, "reboot invalid")
+                    assert "not supported" in response(console, "reboot dfu")
                 time.sleep(0.2)
                 with serial.Serial(port, timeout=3, write_timeout=3, exclusive=True) as console:
                     before_reboot = uptime(console)
@@ -103,3 +105,14 @@ def test_image():
     corrupt[0x264] = 0xFF
     with pytest.raises(ValueError, match="boot info"):
         check_image(elf, corrupt)
+
+
+def test_hub_drivers():
+    result = subprocess.run(
+        [BUILD / "hub-tests/zephyr/zephyr.exe"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    assert "PROJECT EXECUTION SUCCESSFUL" in result.stdout, result.stdout

@@ -2,7 +2,7 @@
 
 This is the selected behavior for user-configurable settings. It is not
 implemented yet. The current F4 build holds power on and provides a diagnostic
-shell; it has no settings store or inactivity shutdown policy.
+shell and explicit power-off; it has no settings store or inactivity shutdown policy.
 
 ## Common settings contract
 
@@ -40,6 +40,22 @@ The storage backend and partition remain to be selected under the
 [recovery constraints](recovery.md). The current board description has no settings
 partition and the build enables neither a flash driver nor external SPI storage.
 Enabling Settings alone does not provide persistence on the hub.
+
+## Explicit power control
+
+On F4, `shutdown` and a two-second central-button hold turn off the button
+lights, disconnect USB, and release the PA13 power latch. A held button may keep power on until released. An active host session
+inhibits automatic inactivity shutdown, but does not veto an explicit power-off.
+Neither power-off nor reboot implicitly saves settings.
+
+`reboot` restarts Brickphyr. `reboot dfu` enters the existing second-stage loader
+for installation through Pybricks. These are privileged diagnostic commands;
+future application shutdown must quiesce application-owned devices before the
+same final power operation. No application or motor driver runs in this build.
+
+The physical effects of USB power, charging, and wake-up need separate tests;
+USB disconnection alone is not proof that battery power was cut. Charging remains
+disabled while the charger driver is absent.
 
 ## Inactivity shutdown
 
