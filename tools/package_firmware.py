@@ -31,6 +31,9 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         ("hal_stm32", "stm32cube/stm32f4xx/soc/LICENSE.md"),
         ("littlefs", "LICENSE.md"),
         ("zcbor", "LICENSE"),
+        ("mbedtls", "LICENSE"),
+        ("tf-psa-crypto", "LICENSE"),
+        ("ti-bt-service-packs", "LICENSE"),
     ):
         project = manifest.get_projects([project_name])[0]
         notices.append((f"{project_name}: {license_path}", Path(project.abspath) / license_path))

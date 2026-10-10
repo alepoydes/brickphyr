@@ -201,7 +201,9 @@ selection. Either arrow cycles the two interfaces. Release a short center press
 to confirm; Bluetooth cancels. Center hold still switches power off. An occupied
 interface cannot be displaced: confirmation briefly extinguishes the white BT
 light and leaves the menu open. In normal operation BT lighting is off.
-The 5×5 display and Bluetooth radio are not implemented.
+The 5×5 display is not implemented. An optional
+[Bluetooth controller profile](bluetooth.md#experimental-f4-controller) provides
+radio initialization and advertising; Bluetooth management is not implemented yet.
 
 For a short check, press each button briefly, then run:
 

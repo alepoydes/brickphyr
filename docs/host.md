@@ -197,6 +197,11 @@ and closing the terminal, identify the hub without uploading or starting a progr
 uv run --locked python -m pybricksdev usb-info /dev/ttyACM0
 ```
 
+On the Inventor F4, this transport identifies both Brickphyr and official
+Pybricks 4.1.0b6 over Linux USB. The official image also passes STOP/status and
+reconnection checks. Program upload and execution through this transport remain
+unverified.
+
 The library entry point is `pybricksdev.connections.serial.PybricksHubSerial`.
 Use its `connect()`, inherited command methods and status/stdout observables, and
 `disconnect()`. The port is explicit; the client does not change Brickphyr's

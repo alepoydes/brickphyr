@@ -1,0 +1,7 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+&usart2 { status = "okay"; };
+&bt_hci { status = "okay"; };
+&timers8 { status = "okay"; };
+&bt_pwm { status = "okay"; };
+&bt_slow_clock { status = "okay"; };
+&rng { status = "okay"; };

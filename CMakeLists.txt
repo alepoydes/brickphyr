@@ -24,6 +24,12 @@ endif()
 target_sources(app PRIVATE src/main.c)
 
 if(CONFIG_BOARD_SPIKE_PRIME_F4)
+  if(CONFIG_BT_HCI_SETUP)
+    target_sources(app PRIVATE drivers/ti_cc2564c.c src/hub_bluetooth.c)
+    generate_inc_file_for_target(app
+      ${WEST_TOPDIR}/modules/lib/ti-bt-service-packs/initscripts/TIInit_6.12.26.bts
+      ${ZEPHYR_BINARY_DIR}/include/generated/ti_cc2564c_bts.inc)
+  endif()
   target_sources(app PRIVATE src/host_usb.c src/host_transport.c src/host_protocol.c
     ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
     ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c

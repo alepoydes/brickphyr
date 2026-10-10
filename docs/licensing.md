@@ -21,7 +21,9 @@ their notices; selecting Apache for Brickphyr does not erase those obligations.
 Dependencies remain separate west checkouts. The bring-up build uses Zephyr,
 CMSIS 6, STM32 HAL, SDK libraries, and MIT-licensed Pybricks resistor-ladder and
 TLC5955 helpers. Their [license notice](../LICENSES/Pybricks-MIT.txt) accompanies
-the source. The build contains no MicroPython, WAMR, or radio service-pack binary. The following is a preliminary platform inventory,
+the source. The optional Bluetooth build adds Mbed TLS, TF-PSA-Crypto and the
+CC2564C service pack described below. Neither build contains MicroPython or WAMR.
+The following is a preliminary platform inventory,
 not a completed distribution audit of a firmware image:
 
 | Component | Known main license | Work still required before distribution |
@@ -31,10 +33,18 @@ not a completed distribution audit of a firmware image:
 | MicroPython | MIT for core code | Inspect selected port and libraries |
 | WAMR | Apache-2.0 WITH LLVM-exception | Preserve applicable license and notices |
 | BTstack used by Pybricks | Noncommercial restriction without separate permission | Excluded from the default Brickphyr distribution |
-| TI controller initialization/service pack | Not yet established for the actual included artifact | Identify source/version and redistribution terms |
+| TI CC2564C service pack | TI text file license; binary use on TI devices only | Preserve the unmodified artifact and supplied notices |
+| Mbed TLS / TF-PSA-Crypto | Apache-2.0 OR GPL-2.0-or-later; Apache-2.0 selected | Preserve license texts in the firmware package |
 
-Using Zephyr Bluetooth avoids depending on BTstack; it does not answer the TI
-binary licensing question. Likewise, reusing a flashing protocol does not grant
+The Bluetooth build embeds `initscripts/TIInit_6.12.26.bts` from the pinned
+[official TI service-packs repository](https://git.ti.com/cgit/ti-bt/service-packs/tree/?id=3aa1d75f3c2ae77f6e4d36194e3d281b899ab149).
+The artifact remains unchanged; runtime platform configuration disables eHCILL
+deep sleep because the selected H:4 transport does not implement it. The
+[TI license](https://git.ti.com/cgit/ti-bt/service-packs/tree/LICENSE?id=3aa1d75f3c2ae77f6e4d36194e3d281b899ab149)
+and cryptographic-library licenses accompany the firmware in `ReadMe_OSS.txt`.
+No BTstack code is linked.
+
+Reusing a flashing protocol does not grant
 permission to redistribute LEGO firmware. Use legitimate existing restoration
 tools and acquisition paths rather than putting proprietary images in Git.
 

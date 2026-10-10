@@ -21,6 +21,43 @@
 		zephyr,console = &cdc_acm_uart;
 		zephyr,shell-uart = &cdc_acm_uart;
 		zephyr,settings-partition = &settings_partition;
+		zephyr,bt-hci = &bt_hci;
+	};
+
+	bt_slow_clock: bt-slow-clock {
+		compatible = "pwm-clock";
+		#clock-cells = <1>;
+		/* 96 MHz / 2930 = 32764.5 Hz, matching the Pybricks F4 setup. */
+		pwms = <&bt_pwm 4 30521 PWM_POLARITY_NORMAL>;
+		status = "disabled";
+	};
+};
+
+&usart2 {
+	current-speed = <115200>;
+	hw-flow-control;
+	pinctrl-0 = <&usart2_cts_pd3 &usart2_rts_pd4 &usart2_tx_pd5 &usart2_rx_pd6>;
+	pinctrl-names = "default";
+	bt_hci: bt-hci {
+		compatible = "zephyr,bt-hci-uart";
+		reset-gpios = <&gpioa 2 GPIO_ACTIVE_LOW>;
+		reset-assert-duration-ms = <5>;
+		status = "disabled";
+	};
+};
+
+&usart2_cts_pd3 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&usart2_rx_pd6 { bias-pull-up; };
+
+&timers8 {
+	bt_pwm: pwm {
+		pinctrl-0 = <&tim8_ch4_pc9>;
+		pinctrl-names = "default";
+		status = "disabled";
 	};
 };
 
