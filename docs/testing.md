@@ -15,6 +15,7 @@ uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
 uv run --locked pytest -q
@@ -216,7 +217,8 @@ They check real identification, zero application capabilities, tagged errors,
 subscription status and malformed/oversized frame recovery. A host C compiler is
 required. No check inspects source contents.
 
-The host test also drives the production BLE ownership entry points: USB/BLE
+The host test first acquires BLE ownership without preceding USB status requests.
+It also drives the production BLE ownership entry points: USB/BLE
 exclusion, power inhibition, rejected USB input and fresh-open requirements. This
 simulates ownership transitions, not radio traffic. The optional Bluetooth profile
 is checked on the Inventor F4 with pybricksdev discovery, identity, status,
@@ -227,6 +229,16 @@ and rejection of a queued stale packet through the production processor. On BLE,
 standard SMP clients exercise fragmented echo, RAM changes versus saved values,
 incomplete-packet isolation and inhibition of a one-second USB-power timeout; see
 [Bluetooth usage](bluetooth.md#experimental-f4-controller).
+
+`tests/radio` exercises the production radio workqueue and Shell commands with
+synthetic Bluetooth lifecycle operations. It checks that stalled initialization
+leaves status and the system queue responsive, off during startup remains off,
+recycled connection notifications cannot undo off, repeated commands are
+idempotent, and the first error prevents reinitialization until reboot. This does
+not simulate RF or the HCI controller. Run `build/radio-tests/zephyr/zephyr.exe`;
+its clock is accelerated by default. On the Inventor F4, automatic boot discovery,
+Pybricks identification, subsequent SMP connection and repeated on/off are checked
+without opening USB before the first BLE connection.
 
 On an authorized F4 hub, follow the [USB round trip](host.md#usage). Also attempt
 selection while the terminal is open, close it with a partial command, and verify

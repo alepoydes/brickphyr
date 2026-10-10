@@ -74,6 +74,14 @@ static void close_session(void)
 static void *setup(void)
 {
 	zassert_ok(host_transport_init(uart, 1));
+	/* BLE must be usable before any USB selection/status call refreshes TX. */
+	int64_t deadline = k_uptime_get() + 100;
+	int result;
+	while ((result = host_ble_acquire()) == -EBUSY && k_uptime_get() < deadline) {
+		k_msleep(1);
+	}
+	zassert_ok(result, "BLE could not acquire the first session after boot");
+	host_ble_release(false);
 	wait_idle();
 	return NULL;
 }

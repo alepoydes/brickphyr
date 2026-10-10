@@ -24,8 +24,14 @@ static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 static struct bt_conn *owner;
 static struct k_spinlock session_lock;
 static bool exit_compatibility;
-K_MUTEX_DEFINE(radio_lock);
-static bool advertising_enabled;
+static K_MUTEX_DEFINE(radio_lock);
+enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
+static atomic_t radio_state;
+static int radio_error;
+static const char *failed_operation;
+static struct k_work_q radio_queue;
+/* F4 startup/re-advertising measured 548 bytes; 1 KiB leaves 960 usable with MPU. */
+static K_THREAD_STACK_DEFINE(radio_stack, 1024);
 
 static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, uint16_t len, uint16_t offset)
@@ -127,7 +133,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	if (err) {
 		return;
 	}
-	if (host_ble_acquire()) {
+	if (atomic_get(&radio_state) == RADIO_FAILED || host_ble_acquire()) {
 		int result = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		if (result) {
 			LOG_ERR("Reject occupied BLE connection failed: %d", result);
@@ -201,22 +207,65 @@ static int advertise(void)
 		response, ARRAY_SIZE(response));
 }
 
+/* Serialized by radio_lock after setup. Keep the first failure until reboot:
+ * a failed HCI operation does not establish that the controller is stopped or reset. */
+static int radio_failed(const char *operation, int error)
+{
+	radio_error = error;
+	failed_operation = operation;
+	atomic_set(&radio_state, RADIO_FAILED);
+	LOG_ERR("Bluetooth %s failed: %d; reboot required", operation, error);
+	return error;
+}
+
+static int set_radio(bool enable)
+{
+	k_mutex_lock(&radio_lock, K_FOREVER);
+	int state = atomic_get(&radio_state);
+	int err = state == RADIO_FAILED ? radio_error : 0;
+	if (!err && state != (enable ? RADIO_ON : RADIO_OFF)) {
+		atomic_set(&radio_state, enable ? RADIO_STARTING : RADIO_STOPPING);
+		const char *operation = enable ? "initialization" : "advertising stop";
+		err = enable ? bt_enable(NULL) : bt_le_adv_stop();
+		if (!err) {
+			operation = enable ? "advertising start" : "controller shutdown";
+			err = enable ? advertise() : bt_disable();
+		}
+		if (err) {
+			radio_failed(operation, err);
+		} else {
+			atomic_set(&radio_state, enable ? RADIO_ON : RADIO_OFF);
+		}
+	}
+	k_mutex_unlock(&radio_lock);
+	return err;
+}
+
+static void start_radio(struct k_work *work)
+{
+	set_radio(true);
+}
+static K_WORK_DEFINE(startup_work, start_radio);
+
 static void resume_advertising(struct k_work *work)
 {
 	k_mutex_lock(&radio_lock, K_FOREVER);
-	if (advertising_enabled) {
+	if (atomic_get(&radio_state) == RADIO_ON) {
 		int err = advertise();
 		if (err) {
-			LOG_ERR("Resume advertising failed: %d", err);
+			radio_failed("advertising resume", err);
 		}
 	}
 	k_mutex_unlock(&radio_lock);
 }
-K_WORK_DEFINE(advertising_work, resume_advertising);
+static K_WORK_DEFINE(advertising_work, resume_advertising);
 
 static void recycled(void)
 {
-	k_work_submit(&advertising_work);
+	int state = atomic_get(&radio_state);
+	if (state == RADIO_ON || state == RADIO_STARTING) {
+		k_work_submit_to_queue(&radio_queue, &advertising_work);
+	}
 }
 
 BT_CONN_CB_DEFINE(host_ble_callbacks) = {
@@ -225,37 +274,34 @@ BT_CONN_CB_DEFINE(host_ble_callbacks) = {
 
 static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 1) {
+		const char *const names[] = {"off", "starting", "on", "stopping", "failed"};
+		int state = atomic_get(&radio_state);
+		shell_print(shell, "Bluetooth: %s", names[state]);
+		if (state == RADIO_FAILED) {
+			shell_print(shell, "%s failed: %d; reboot required", failed_operation, radio_error);
+		}
+		return 0;
+	}
 	bool enable = !strcmp(argv[1], "on");
 	if (!enable && strcmp(argv[1], "off")) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&radio_lock, K_FOREVER);
-	int err;
-	if (enable) {
-		err = bt_enable(NULL);
-		if (!err || err == -EALREADY) {
-			err = advertising_enabled ? 0 : advertise();
-			if (!err) {
-				advertising_enabled = true;
-			}
-		}
-	} else {
-		advertising_enabled = false;
-		err = bt_le_adv_stop();
-		if (!err) {
-			err = bt_disable();
-		}
-	}
-	k_mutex_unlock(&radio_lock);
+	/* An explicit choice supersedes a queued boot request. Join an already
+	 * running startup before applying it; never let a late boot job undo off. */
+	struct k_work_sync sync;
+	k_work_cancel_sync(&startup_work, &sync);
+	k_work_cancel_sync(&advertising_work, &sync);
+	int err = set_radio(enable);
 	if (err) {
-		shell_error(shell, "Bluetooth %s failed: %d", argv[1], err);
+		shell_error(shell, "Bluetooth %s failed: %d; reboot required", failed_operation, err);
 	} else {
 		shell_print(shell, "%s", enable ?
 			"Bluetooth on. Close USB before connecting over BLE." : "Bluetooth off.");
 	}
 	return err;
 }
-SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth management: on | off.", cmd_bluetooth, 2, 0);
+SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth status, or on | off.", cmd_bluetooth, 1, 1);
 
 static int setup(void)
 {
@@ -266,9 +312,17 @@ static int setup(void)
 	sys_memcpy_swap(capabilities_uuid.val, pbio_pybricks_hub_capabilities_char_uuid,
 		sizeof(capabilities_uuid.val));
 #if defined(CONFIG_MCUMGR_TRANSPORT_BT)
-	return smp_bt_register_request_callbacks(&request_callbacks);
-#else
-	return 0;
+	int err = smp_bt_register_request_callbacks(&request_callbacks);
+	if (err) {
+		return radio_failed("SMP callback registration", err);
+	}
 #endif
+	/* Radio waits have no UI deadline. Keep them below USB and hub service,
+	 * outside the system queue used by unrelated device work. */
+	const struct k_work_queue_config config = {.name = "host_ble"};
+	k_work_queue_start(&radio_queue, radio_stack, K_THREAD_STACK_SIZEOF(radio_stack),
+		K_LOWEST_APPLICATION_THREAD_PRIO, &config);
+	k_work_submit_to_queue(&radio_queue, &startup_work);
+	return 0;
 }
 SYS_INIT(setup, APPLICATION, 90);

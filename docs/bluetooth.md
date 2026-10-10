@@ -23,11 +23,12 @@ uv run --locked west build -b spike_prime_f4 -d build/bluetooth-controller -t fi
 ```
 
 Install `build/bluetooth-controller/zephyr/firmware.zip` with the same
-[Pybricks installer](builds.md#experimental-firmware-package), then open the
-[USB terminal](host.md#usage) and run:
+[Pybricks installer](builds.md#experimental-firmware-package). This profile starts
+Bluetooth and advertises automatically after boot; no USB command is required.
+To inspect its state, open the [USB terminal](host.md#usage) and run:
 
 ```text
-bluetooth on
+bluetooth
 ```
 
 Close the terminal before connecting over BLE. The hub advertises the Pybricks
@@ -73,8 +74,8 @@ the application supervisor.
 
 Discovery, connection and reconnection through [Pybricks Code](https://code.pybricks.com)
 are verified on the Inventor F4 using Chromium 154 on Linux with experimental web
-platform features enabled. After `bluetooth on`, close the USB terminal, click the
-website's Bluetooth button and select `Brickphyr`. The connected hub name appears
+platform features enabled. Close any USB terminal, click the website's Bluetooth
+button and select `Brickphyr`. The connected hub name appears
 in the status bar. Disconnecting or closing the browser releases the management
 session so USB can reconnect.
 
@@ -86,10 +87,19 @@ firmware merely to dismiss the profile warning.
 ### Controller lifecycle
 
 After closing BLE, open USB Shell and run `bluetooth off` to stop advertising and
-disable the controller. Boot does not automatically enable the radio. Initialization
-runs synchronously on the Shell thread and does not reload settings. The optional
-profile does not expose Zephyr's independent `bt` diagnostic shell, so radio
-lifecycle has one command path.
+disable the controller until `bluetooth on` or reboot. Repeating either command is
+idempotent. `bluetooth` reports off, starting, on, stopping or failed; querying it
+does not wait for initialization. On means enabled, including while a peer is
+connected and advertising is stopped.
+
+Boot initialization and advertising restart run on a dedicated Zephyr workqueue
+below hub and USB service priority. Controller waits therefore do not occupy the
+button/power loop or system workqueue. Explicit on/off commands wait for their
+operation to finish and supersede pending boot work. The first lifecycle failure
+retains its operation and error until reboot; later commands do not repeat a
+partially completed initialization. The optional profile does not expose Zephyr's
+independent `bt` shell, so radio lifecycle has one command path. Radio operations
+do not reload or save settings.
 
 The board supplies the required slow clock on TIM8 channel 4 / PC9, starts USART2
 at 115200 baud with RTS/CTS, and uses PA2 for controller reset. The 2930-cycle

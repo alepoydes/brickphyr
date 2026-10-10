@@ -36,6 +36,8 @@ to resume work without access to a previous conversation or a personal rules fil
 - Test meaningful behavior, boundaries, and regressions through the production
   path. Do not test placeholders, file layout, or an implementation's own formula
   against a copied formula. Keep long hardware/soak tests separate from fast checks.
+  Exercise cold start before diagnostic reads or warm-up commands can establish
+  prerequisites that ordinary first use must not need.
 - For performance changes, account for the entire affected path, including
   allocation, logging, interrupts, queues, driver waits, and measurement overhead.
   Derive budgets; do not choose periods, priorities, or buffers to hide failures.

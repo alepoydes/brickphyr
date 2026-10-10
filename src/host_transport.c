@@ -431,6 +431,9 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&host_worker, "host_usb");
 	uart_irq_rx_enable(uart);
+	/* Establish initial completion in the UART callback without requiring
+	 * a USB status request before the first Bluetooth connection. */
+	uart_irq_tx_enable(uart);
 	k_sem_give(&wake);
 	return 0;
 }

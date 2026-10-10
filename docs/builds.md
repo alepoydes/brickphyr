@@ -149,6 +149,7 @@ hub revision.
 | `shutdown` | F4: release the hub's power latch |
 | `buttons` | F4: button states, press counters, latest ADC samples and error counts |
 | `host_mode pybricks` | F4: select compatibility mode after this terminal closes |
+| `bluetooth [on\|off]` | F4 BLE profile: report radio state, or enable/disable it until reboot |
 | `power` | F4: power source, management owner, idle policy, and inhibition reason |
 | `config get NAME` / `config set NAME SECONDS` | F4: read/change [runtime power settings](settings.md#current-runtime-settings) |
 | `config save` | F4: explicitly persist settings; report unavailable or failed storage |

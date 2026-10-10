@@ -72,8 +72,9 @@ Use the port reported by `python -m serial.tools.list_ports -v`. The unchanged
 `smpmgr` command and `smpclient` library are checked against a native Zephyr build
 over a pseudoterminal and Linux USB on the Inventor F4. The optional
 [Bluetooth profile](bluetooth.md#experimental-f4-controller) also passes standard
-SMP BLE discovery, echo, fragmented packets and Settings read/write/save. After
-`bluetooth on` in the terminal, close USB and use:
+SMP BLE discovery, echo, fragmented packets and Settings read/write/save. It starts
+advertising at boot; if stopped explicitly, run `bluetooth on` in the terminal.
+Close USB before using:
 
 ```sh
 uv run --locked smpmgr --ble Brickphyr --timeout 10 os echo Brickphyr

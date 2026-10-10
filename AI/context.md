@@ -24,7 +24,8 @@ button startup; `shutdown` also disconnected USB. Return to official Pybricks
 4.1.0b4/b6 and back to Brickphyr is verified over USB. LEGO restoration and interrupted
 updates remain unverified. The optional [Bluetooth controller profile](../docs/bluetooth.md)
 passes initialization and Pybricks BLE identity/status, reconnect, return to Shell
-and USB/BLE exclusion checks on the same Inventor F4. Standard SMP BLE discovery,
+and USB/BLE exclusion checks on the same Inventor F4. It now starts advertising
+automatically; first BLE connection needs no USB preparation. Standard SMP BLE discovery,
 fragmented echo and Settings read/write/save also pass. Application loading and
 Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
