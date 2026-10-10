@@ -20,15 +20,16 @@ The experimental F4 build boots on an Inventor F4 and provides a verified USB
 diagnostic shell, terminal reconnection, software reboot, four buttons, central/
 Bluetooth button lighting, and software DFU followed by a standard reinstall.
 The operator observed battery operation, long-press shutdown, and subsequent
-button startup; `shutdown` also disconnected USB. Restoration remains unverified.
-Bluetooth, application loading, and
-Python/WASM execution are not implemented yet. Current availability belongs in
+button startup; `shutdown` also disconnected USB. Return to official Pybricks
+4.1.0b4/b6 and back to Brickphyr is verified over USB. LEGO restoration and interrupted
+updates remain unverified. Bluetooth, application loading, and Python/WASM
+execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See
-[the downstream delta](../docs/upstream.md#current-downstream-delta). Complete the
-restoration cycle before the USB selection experiment.
+[the downstream delta](../docs/upstream.md#current-downstream-delta). The next step
+is the USB selection experiment.
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 

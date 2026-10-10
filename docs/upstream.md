@@ -104,7 +104,7 @@ The board lives out of tree in Brickphyr; Zephyr and its imported modules remain
 unmodified. Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
 The firmware adapters use Zephyr ADC, Input, SPI, PWM, GPIO, and LED APIs.
 
-The pinned Pybricks fork includes these changes on the upstream v4.1.0b4 base:
+The pinned Pybricks fork includes these changes on the upstream v4.1.0b6 base:
 
 | Owning file | Change and reason |
 | --- | --- |
@@ -114,7 +114,7 @@ The pinned Pybricks fork includes these changes on the upstream v4.1.0b4 base:
 | `tests/tools/` | Short metadata/package checks and factory-loader preservation checks through the unchanged DFU writer |
 
 These changes are published in
-[the integration commit](https://github.com/alepoydes/pybricks-micropython/commit/832dc9befb5a65541830ce5fd703967382be708a).
+[the integration commit](https://github.com/alepoydes/pybricks-micropython/commit/2d62eb45e879075d63ace7728f8626437d3a683b).
 `west update` obtains them through the manifest without manual patches. The
 installer and its DFU implementation remain unmodified. No upstream PR has been
 submitted yet; remove the downstream delta when equivalent upstream functionality

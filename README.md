@@ -14,8 +14,10 @@ image with a USB diagnostic shell. Installation, shell commands, terminal
 reconnection, and software reboot have been exercised on one Robot Inventor F4
 hub. Four buttons, button lighting, and software DFU/reinstallation have also been
 exercised; battery operation and long-press shutdown have operator observations.
-The restoration cycle remains unverified. The same shell runs
-in Zephyr's native simulator. There is no application loader, SDK, or supported
+Return to official Pybricks 4.1.0b4/b6 and subsequent Brickphyr reinstallation are
+verified over USB; LEGO restoration and interrupted-transfer recovery remain
+unverified. The same shell runs in Zephyr's native simulator.
+There is no application loader, SDK, or supported
 recovery procedure yet. See [builds](docs/builds.md) for commands.
 
 The first target is the Inventor / SPIKE Prime family, starting with an identified
@@ -62,7 +64,7 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-The next work is verifying restoration on the initial F4 target. The
+The next work is the USB interface-selection experiment on the initial F4 target. The
 [acceptance milestones](docs/builds.md#acceptance-milestones) place interface
 selection, settings/power, and separate applications after that hardware bring-up.
 Subsystem contracts and implementation boundaries are linked in

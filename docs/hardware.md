@@ -3,13 +3,13 @@
 The experimental Prime F4 image boots and provides a USB diagnostic shell on one
 Robot Inventor F4 hub identified through its factory DFU loader. The PCB revision
 has not been established. These results do not establish support for every
-Inventor or SPIKE Prime revision or completed recovery.
+Inventor or SPIKE Prime revision, LEGO restoration, or interrupted-update recovery.
 
 ## Target matrix
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |
 | --- | --- | --- | --- |
-| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB shell, buttons, button lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU and reinstall; operator-observed battery start/retention and long-press shutdown |
+| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB shell, buttons, button lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU, Pybricks restoration and return; operator-observed battery start/retention and long-press shutdown |
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
@@ -81,8 +81,11 @@ the Pybricks disabled value; this step does not implement charging or the matrix
 Four individual button presses and green central/blue Bluetooth lighting have
 been checked on the Inventor F4 above. Software DFU entry, standard Pybricks
 reinstallation through mboot, and the returning USB console have also been
-checked. The operator observed battery-only startup and operation after USB
-removal, and the lights extinguishing after a two-second center hold with USB
+checked. Return to official Pybricks 4.1.0b4 and 4.1.0b6 verified USB identification,
+STOP/status, and reconnection. Its automatic DFU entry then allowed Brickphyr
+reinstallation with a working console. See [recovery](recovery.md) for the limits
+of this normal installation cycle. The operator observed battery-only startup
+and operation after USB removal, and the lights extinguishing after a two-second center hold with USB
 and on battery. Subsequent center-button startup and `shutdown` were also checked;
 the latter removed the hub from USB enumeration. These are functional observations,
 not measurements of residual current or proof of USB wake support. See

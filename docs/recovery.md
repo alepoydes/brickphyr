@@ -1,10 +1,11 @@
 # Firmware installation and recovery
 
-**The complete restoration cycle remains unverified.** The F4 image has been
-installed through the standard Pybricks CLI on a Robot Inventor F4, with a working
-USB shell and software reboot. See [hardware](hardware.md) for the verified scope.
-The constraints below also cover recovery checks still required before a
-supported installation procedure can be published.
+**Normal Pybricks restoration and return to Brickphyr are verified on one Robot
+Inventor F4.** The standard Pybricks CLI installed both images; Pybricks USB
+identification, STOP/status, reconnection, and the returning Brickphyr shell
+were checked. LEGO restoration and interrupted-transfer recovery remain unverified.
+See [hardware](hardware.md) for the verified scope. The constraints below also
+cover checks still required before a supported recovery procedure can be published.
 
 ## Required property
 
@@ -108,10 +109,15 @@ console and the restored firmware's ordinary connection. Also verify cold boot,
 `reboot`, and USB disconnection/reconnection while running from the battery;
 uptime must continue across host loss. Motor outputs remain inactive. Test the
 remaining LEGO transitions and interrupted-transfer recovery separately after
-ordinary recovery is established. Installation and console checks are complete
-on the initial Inventor F4. The operator has since observed battery cold start
-and continued operation after cable removal; restoration and interrupted-transfer
-recovery remain to be checked.
+ordinary recovery is established. Normal installation, return to official
+Pybricks 4.1.0b4 and 4.1.0b6, and subsequent Brickphyr reinstallation are verified on the
+initial Inventor F4. Pybricks reported its firmware and protocol versions over
+USB, acknowledged STOP, and reported no running program on two connections.
+Its automatic DFU entry then allowed the standard installer to return Brickphyr;
+the shell remained responsive and uptime advanced across terminal reconnection.
+The operator has also observed battery cold start and continued operation after
+cable removal. LEGO restoration and interrupted-transfer recovery remain to be
+checked; normal reinstallation does not establish either.
 
 ## Bring-up sequence
 

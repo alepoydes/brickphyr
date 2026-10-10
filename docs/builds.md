@@ -195,8 +195,8 @@ is held disabled. See [hardware](hardware.md) for physical verification and
 [testing](testing.md) for local driver checks.
 
 To update from this build, run `reboot dfu` in the hub terminal and wait for
-the USB disconnect before exiting miniterm with Ctrl+]. Then run the existing
-installer from the repository:
+the USB disconnect before exiting miniterm with Ctrl+]. Wait for the DFU device
+to appear in `lsusb` before running the existing installer from the repository:
 
 ```sh
 uv run --locked --group flash python ../modules/pybricks/tools/flash build/prime/zephyr/firmware.zip
@@ -243,8 +243,9 @@ compiler settings, and instrumentation.
 
 Continue from the existing F4 image, USB shell, image/package checks, and native
 simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
-fork. Installation and reinstallation have been exercised; the complete restoration
-cycle remains immediate work. Protocol selection follows that hardware milestone.
+fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercised
+on the initial Inventor F4. The next step is USB interface selection; LEGO
+transitions and interrupted-transfer recovery remain separate checks.
 
 1. **Package the existing image.** Integrate with the maintained Pybricks package
    and installation tools, resolve their metadata interface for a Zephyr image,
