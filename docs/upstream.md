@@ -124,18 +124,27 @@ is adopted.
 
 ## USB experiment prerequisites
 
-The experimental USB selector additionally requires two portable dependency
+The experimental USB path additionally requires portable dependency
 changes, not yet included in the published manifest pins:
 
 - Pybricks COBS decoding must reject truncated blocks and reserved wire bytes.
 - Zephyr's next-stack CDC ACM driver must implement `uart_irq_tx_complete()`,
   including pending USB packets and the terminating zero-length packet. A FIFO
   alone cannot establish that the previous protocol's output has drained.
+- pybricksdev needs a Profile 1.6+ CDC transport, tagged replies, characteristic
+  reads, and bounded exchange/cleanup. Its existing command and event handlers
+  remain shared with BLE and the older USB transport. The Python COBS codec moves
+  from the Pybricks flashing tool to `pybricksdev.usb.cobs`; the flashing tool
+  imports that single implementation. Keep the coordinated client/tool changes
+  together until they can be published and their dependency requirements finalized.
 
 Keep these changes in their owning repositories, run their focused tests, and
 publish reviewed dependency commits before updating the manifest. A clean
 checkout of the current pins does not yet reproduce the complete USB experiment.
 Do not substitute timing delays or inspect private driver buffers in Brickphyr.
+The manifest includes the published pybricksdev base in a sibling checkout, and
+uv installs that checkout as an editable dependency for the coordinated experiment.
+The published base alone does not supply the new CDC client or shared codec.
 
 ## Contribution certification
 

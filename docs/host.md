@@ -2,7 +2,9 @@
 
 The experimental F4 image implements selectable USB CDC ACM interfaces: Zephyr
 Shell and a minimal Pybricks identification endpoint. The stream handler is
-checked with Zephyr's UART emulator and the upstream Pybricks Python client.
+checked with Zephyr's UART emulator and the Pybricks Python clients. The local
+pybricksdev CDC extension also identifies the compiled firmware protocol handler
+through a pseudoterminal; physical pybricksdev validation remains outstanding.
 The Shell/Pybricks round trip is verified over Linux USB on one Robot Inventor F4
 (PCB revision unknown), including busy rejection, terminal editing/history,
 partial-input isolation and uninterrupted uptime. Bluetooth, SMP, application loading,
@@ -150,6 +152,31 @@ The upstream `tools/flash/serdev/pybricks.py` client supplies host reads.
 
 This is identification interoperability, not full Pybricks Code or Python
 compatibility. The returned firmware version does not impersonate Pybricks.
+Its build label uses PEP 440 local-version notation (`0.1.0+bringup`) for Python
+clients; the terminal retains Zephyr's `0.1.0-bringup` display format.
+
+### pybricksdev CDC client
+
+The coordinated local pybricksdev topic provides a CDC transport using the existing
+`PybricksHub` command/event implementation. It requires the client changes listed
+in [upstream integration](upstream.md#usb-experiment-prerequisites); the released
+pybricksdev package does not yet supply this transport. After selecting Pybricks
+and closing the terminal, identify the hub without uploading or starting a program:
+
+```sh
+uv run --locked python -m pybricksdev usb-info /dev/ttyACM0
+```
+
+The library entry point is `pybricksdev.connections.serial.PybricksHubSerial`.
+Use its `connect()`, inherited command methods and status/stdout observables, and
+`disconnect()`. The port is explicit; the client does not change Brickphyr's
+selected interface. A timeout or canceled exchange closes the session to exclude
+ambiguous late replies. A rejected command leaves a healthy connection available.
+Disconnection does not stop a user program.
+
+The same transport supports `pybricksdev run usb --port PORT SCRIPT` for hubs that
+advertise a supported execution engine. Brickphyr currently advertises none, so
+this is not evidence that Python programs can be loaded or run here.
 
 ### Experimental control requests
 

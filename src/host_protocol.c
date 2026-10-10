@@ -39,6 +39,14 @@ static size_t read_characteristic(const uint8_t *request, uint16_t variant, uint
 		length = HOST_PROTOCOL_PAYLOAD_MAX - 3;
 	}
 	memcpy(value, text, length);
+	if (request[0] == PBIO_PYBRICKS_READ_SERVICE_GATT &&
+	    id == PBIO_GATT_FIRMWARE_VERSION_CHAR_UUID) {
+		/* PEP 440 clients accept our bring-up label as local version metadata. */
+		uint8_t *separator = memchr(value, '-', length);
+		if (separator) {
+			*separator = '+';
+		}
+	}
 	return length;
 }
 

@@ -4,6 +4,7 @@
 
 int main(void)
 {
+	setvbuf(stdout, NULL, _IONBF, 0);
 	struct host_protocol protocol = {0};
 	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
 	int byte;

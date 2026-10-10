@@ -19,6 +19,7 @@ brickphyr-workspace/
   brickphyr/             # this repository, including west.yml
   zephyr/                # upstream checkout, or a justified thin fork
   pybricks-micropython/  # Pybricks checkout/fork with its original history
+  pybricksdev/          # host library and CLI; coordinated CDC topic during bring-up
   modules/
     hal/                 # CMSIS and STM32 HAL resolved by the Zephyr manifest
 babybot/                 # separate application repository
@@ -30,8 +31,8 @@ workspace is created. See [west workspaces](https://docs.zephyrproject.org/lates
 
 ## Dependency resolution
 
-The manifest pins immutable Zephyr and Pybricks commits and imports only CMSIS 6
-and STM32 HAL from Zephyr's manifest. The firmware uses unmodified Zephyr modules;
+The manifest pins immutable Zephyr, Pybricks, and pybricksdev commits and imports
+CMSIS 6 and STM32 HAL from Zephyr's manifest. The firmware uses Zephyr modules;
 the pinned Pybricks fork supplies host tools and shared button/LED helpers. See
 [the downstream delta](upstream.md#current-downstream-delta). Keep dependencies
 in separate repositories and pin any explicit overrides.
@@ -73,9 +74,9 @@ cd brickphyr
 For a standalone checkout whose parent is not yet a west workspace:
 
 ```sh
+uvx west init -l .
+uvx west update --narrow -o=--depth=1
 uv sync --locked --group sdk
-uv run --locked west init -l .
-uv run --locked west update --narrow -o=--depth=1
 uv run --locked --group sdk west sdk install --gnu-toolchains arm-zephyr-eabi --install-base ../toolchains
 ```
 
@@ -84,9 +85,14 @@ siblings of Brickphyr, as shown above; the parent itself is not a Git repository
 Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
+Bootstrap west fetches the sibling checkouts before uv resolves the editable
+pybricksdev dependency. During the USB experiment, the coordinated
+[dependency changes](upstream.md#usb-experiment-prerequisites) must be present
+before synchronizing Python tools; the published pins alone remain insufficient.
 
-`west update` checks out the Pybricks helper changes from the pinned fork; no
-manual dependency patches are needed. Build the Prime F4 target and check the
+`west update` checks out the published Pybricks helper changes from the pinned fork.
+It does not publish or supply the pending USB dependency corrections.
+Build the Prime F4 target and check the
 resulting image:
 
 ```sh

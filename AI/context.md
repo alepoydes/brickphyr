@@ -43,6 +43,10 @@ in [upstream integration](../docs/upstream.md#usb-experiment-prerequisites).
 Owner commands also select the next interface when their session closes:
 Shell `host_mode pybricks` and the Brickphyr-specific Pybricks exit command.
 The in-band round trip passes host simulation and Linux USB on the Inventor F4.
+The local pybricksdev CDC transport reuses its existing command/event API and the
+Python COBS codec shared with the flashing tool. Its identity CLI and reconnect
+pass against the compiled Brickphyr handler over a PTY; physical client validation
+remains outstanding. See the [client prerequisites](../docs/upstream.md#usb-experiment-prerequisites).
 Runtime power settings use Zephyr Settings; independent USB/battery timeouts
 default to disabled. PA9 detects USB power, and active USB ownership inhibits
 expiry. Storage/save remains unsupported. Policy boundaries pass host simulation.

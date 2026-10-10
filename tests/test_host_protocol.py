@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Use the upstream Python USB client against the production C protocol handler."""
 
+import asyncio
 import io
+import os
+import pty
 import subprocess
+import sys
+import tty
 from pathlib import Path
 
 import pytest
@@ -14,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
-def protocol(tmp_path_factory):
+def protocol_bridge(tmp_path_factory):
     pybricks = Path(Manifest.from_topdir().get_projects(["pybricks"])[0].abspath)
     executable = tmp_path_factory.mktemp("protocol") / "bridge"
     subprocess.run(
@@ -36,11 +41,16 @@ def protocol(tmp_path_factory):
         ],
         check=True,
     )
+    return executable
+
+
+@pytest.fixture(scope="module")
+def protocol(protocol_bridge):
     client = protocol_client()
 
     def exchange(request):
         output = subprocess.run(
-            [executable], input=request, capture_output=True, check=True, timeout=2
+            [protocol_bridge], input=request, capture_output=True, check=True, timeout=2
         ).stdout
         stream = io.BytesIO(output)
         replies = []
@@ -49,6 +59,54 @@ def protocol(tmp_path_factory):
         return replies
 
     return client, exchange
+
+
+def test_pybricksdev_serial_client(protocol_bridge):
+    from pybricksdev.ble.pybricks import PYBRICKS_COMMAND_EVENT_UUID, SW_REV_UUID
+    from pybricksdev.connections.serial import PybricksHubSerial
+
+    master, slave = pty.openpty()
+    tty.setraw(slave)
+    process = subprocess.Popen([protocol_bridge], stdin=master, stdout=master)
+
+    async def check():
+        hub = PybricksHubSerial(os.ttyname(slave), timeout=0.5)
+        try:
+            for _ in range(2):
+                await hub.connect()
+                assert hub.name == "Brickphyr"
+                assert hub.fw_version.local == "bringup"
+                assert hub.hub_kind == 0x81
+                status = asyncio.Event()
+                with hub.status_observable.subscribe(
+                    lambda flags: status.set() if int(flags) == 1 << 12 else None
+                ):
+                    await asyncio.wait_for(status.wait(), 0.5)
+                with pytest.raises(RuntimeError, match="Write failed: 128"):
+                    await hub.stop_user_program()
+                assert await hub.read_gatt_char(SW_REV_UUID) == b"1.7.0"
+                # Brickphyr's explicit extension, sent through the public client API.
+                await hub.write_gatt_char(PYBRICKS_COMMAND_EVENT_UUID, b"\x80", True)
+                await hub.disconnect()
+        finally:
+            await hub.disconnect()
+
+    try:
+        asyncio.run(check())
+        result = subprocess.run(
+            [sys.executable, "-m", "pybricksdev", "usb-info", os.ttyname(slave)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Name: Brickphyr" in result.stdout
+        assert "Firmware: 0.1.0+bringup" in result.stdout
+    finally:
+        process.terminate()
+        process.wait(timeout=2)
+        os.close(master)
+        os.close(slave)
 
 
 def test_identification_and_unavailable_capabilities(protocol):
