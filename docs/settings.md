@@ -132,9 +132,11 @@ expiry, and a claimed shutdown rejects a later acquisition. No user application
 runs yet; application activity must join this policy before an execution engine
 is enabled. The optional Bluetooth profile acquires the same power hold. USB open/close
 attempts rejected during BLE ownership cannot release it. These policy boundaries
-are checked with synthetic time, including disconnect during an accepted SMP
-operation. BLE inhibition beyond a one-second USB-power timeout is also verified
-on the Inventor F4. With a three-second USB timeout, closing the terminal releases
+are checked with synthetic time, including USB disconnect during an accepted
+Shell command and BLE disconnect during an accepted SMP operation. Both retain
+the power hold through completion. BLE inhibition beyond a one-second USB-power
+timeout is also verified on the Inventor F4. With a three-second USB timeout,
+closing the terminal releases
 ownership and triggers shutdown, including USB disconnection and observed lights
 off. The same terminal holds power beyond that timeout while open.
 

@@ -232,6 +232,11 @@ alone cannot establish recovery, isolation, or compatibility on other hubs.
 emulator. It checks Shell → Pybricks → Shell without reboot, real editing/history,
 unknown selections, occupied-session rejection, output draining and partial-line
 isolation, including rapid reopen. This does not exercise a physical USB driver.
+Deferred UART delivery also checks that old driver FIFO input cannot cross a DTR
+boundary. Accepted USB commands retain the power hold during teardown, and unread
+USB output cannot prevent a subsequent BLE terminal session. The UART emulator
+runs below the dispatcher and Shell priorities to expose delayed input; this is a scheduling
+test, not a measured USB timing result.
 
 The Python protocol checks compile the production C handler with the selected
 Pybricks sources and exchange frames using the unchanged upstream Python client.
@@ -256,8 +261,12 @@ incomplete-packet isolation and inhibition of a one-second USB-power timeout; se
 synthetic Bluetooth lifecycle operations. It checks that stalled initialization
 leaves status and the system queue responsive, off during startup remains off,
 recycled connection notifications cannot undo off, repeated commands are
-idempotent, and the first error prevents reinitialization until reboot. This does
-not simulate RF or the HCI controller. Run `build/radio-tests/zephyr/zephyr.exe`;
+idempotent, and the first error prevents reinitialization until reboot. Synthetic
+GATT output failure and rejected connections check that disconnect waits leave
+the system queue responsive, retain the connection reference and management
+ownership correctly, and preserve the first lifecycle error. This does
+not simulate RF or the HCI controller. The standard pytest run executes this suite;
+it can also run directly as `build/radio-tests/zephyr/zephyr.exe`;
 its clock is accelerated by default. On the Inventor F4, automatic boot discovery,
 Pybricks identification, subsequent SMP connection and repeated on/off are checked
 without opening USB before the first BLE connection.

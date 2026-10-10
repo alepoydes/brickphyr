@@ -93,9 +93,14 @@ idempotent. `bluetooth` reports off, starting, on, stopping or failed; querying 
 does not wait for initialization. On means enabled, including while a peer is
 connected and advertising is stopped.
 
-Boot initialization and advertising restart run on a dedicated Zephyr workqueue
-below hub and USB service priority. Controller waits therefore do not occupy the
-button/power loop or system workqueue. Explicit on/off commands wait for their
+Boot initialization, advertising restart, and requested peer disconnection run on
+a dedicated Zephyr workqueue below hub and USB service priority. This includes
+rejection of an occupied connection and cleanup after terminal output failure.
+Controller waits therefore do not occupy the button/power loop, Bluetooth RX
+callbacks, or system workqueue. A disconnect request retains its connection
+reference until completion; only the actual disconnection event releases the
+management session. A failed disconnect retains the first lifecycle error and
+requires reboot. Explicit on/off commands wait for their
 operation to finish and supersede pending boot work. The first lifecycle failure
 retains its operation and error until reboot; later commands do not repeat a
 partially completed initialization. The optional profile does not expose Zephyr's

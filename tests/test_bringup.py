@@ -107,7 +107,7 @@ def test_image():
         check_image(elf, corrupt)
 
 
-@pytest.mark.parametrize("suite", ["hub-tests", "poweroff-tests"])
+@pytest.mark.parametrize("suite", ["hub-tests", "poweroff-tests", "radio-tests"])
 def test_hub_drivers(suite):
     result = subprocess.run(
         [BUILD / suite / "zephyr/zephyr.exe"],

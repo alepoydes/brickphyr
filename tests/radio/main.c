@@ -2,6 +2,7 @@
 #include "host_transport.h"
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/shell/shell_dummy.h>
 #include <zephyr/ztest.h>
 
@@ -14,6 +15,15 @@ static K_SEM_DEFINE(off_done, 0, 1);
 static K_SEM_DEFINE(power_off_done, 0, 1);
 static unsigned int enables, disables, starts, stops;
 static int enable_error, off_result;
+static K_SEM_DEFINE(disconnect_entered, 0, 1);
+static K_SEM_DEFINE(disconnect_continue, 0, 1);
+static K_SEM_DEFINE(peer_released, 0, 1);
+static uintptr_t fake_peer;
+static struct bt_conn *const peer = (void *)&fake_peer;
+static atomic_t peer_refs;
+static bool management_owned, terminal_closed;
+static void (*terminal_output_ready)(void);
+static int disconnect_error;
 
 int hub_bluetooth_power_off(void)
 {
@@ -58,25 +68,71 @@ int __wrap_bt_le_adv_stop(void)
 	return 0;
 }
 
-/* No connection callbacks are generated here; ownership has its own tests. */
+struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	atomic_inc(&peer_refs);
+	return conn;
+}
+
+void __wrap_bt_conn_unref(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	atomic_val_t previous = atomic_dec(&peer_refs);
+	zassert_true(previous > 0);
+	if (previous == 1) {
+		k_sem_give(&peer_released);
+	}
+}
+
+int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
+{
+	zassert_equal(conn, peer);
+	zassert_not_equal(k_current_get(), &k_sys_work_q.thread);
+	k_sem_give(&disconnect_entered);
+	zassert_ok(k_sem_take(&disconnect_continue, K_SECONDS(1)));
+	return disconnect_error;
+}
+
+bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
+	const struct bt_gatt_attr *attr, uint16_t ccc)
+{
+	zassert_equal(conn, peer);
+	return true;
+}
+
+int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params *params)
+{
+	zassert_equal(conn, peer);
+	return -EIO;
+}
+
+/* Ownership itself has production-transport tests; this fixture drives the
+ * GATT adapter and its scheduling with a synthetic connection/controller. */
 int host_ble_acquire(void)
 {
-	zassert_unreachable("Unexpected connection");
-	return -EBUSY;
+	zassert_false(management_owned);
+	management_owned = true;
+	return 0;
 }
 
 void host_ble_release(bool exit_compatibility)
 {
-	zassert_unreachable("Unexpected disconnection");
+	zassert_true(management_owned);
+	management_owned = false;
 }
 
-/* This radio lifecycle fixture never opens a terminal or emits GATT input. */
 int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session)
 {
-	zassert_unreachable("Unexpected terminal subscription");
-	return -ENOTCONN;
+	terminal_output_ready = tx_ready;
+	*session = 1;
+	return 0;
 }
-void host_ble_shell_close(uint32_t session) { zassert_unreachable(); }
+void host_ble_shell_close(uint32_t session)
+{
+	zassert_equal(session, 1);
+	terminal_closed = true;
+}
 int host_ble_shell_receive(uint32_t session, const void *data, size_t length)
 {
 	zassert_unreachable();
@@ -84,8 +140,10 @@ int host_ble_shell_receive(uint32_t session, const void *data, size_t length)
 }
 size_t host_ble_shell_peek(uint32_t session, void *data, size_t capacity)
 {
-	zassert_unreachable();
-	return 0;
+	zassert_equal(session, 1);
+	zassert_true(capacity > 0);
+	*(uint8_t *)data = 'x';
+	return 1;
 }
 void host_ble_shell_consume(uint32_t session, size_t length) { zassert_unreachable(); }
 
@@ -118,6 +176,22 @@ static void expect_status(const char *text)
 	zassert_not_null(strstr(reply, text), "%s", reply);
 }
 
+static void connect_peer(void)
+{
+	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
+		if (callback->connected) {
+			callback->connected(peer, 0);
+		}
+	}
+}
+
+static void expect_responsive_disconnect(void)
+{
+	zassert_ok(k_sem_take(&disconnect_entered, K_SECONDS(1)));
+	k_work_submit(&probe_work);
+	zassert_ok(k_sem_take(&probe_done, K_MSEC(100)), "Disconnect blocked button/system work");
+}
+
 ZTEST(radio, test_startup_control_and_failure)
 {
 	const struct shell *shell = shell_backend_dummy_get_ptr();
@@ -145,6 +219,25 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_ok(shell_execute_cmd(shell, "bluetooth on"));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth on"));
 	expect_status("Bluetooth: on");
+	connect_peer();
+	extern const struct bt_gatt_service_static brickphyr_terminal;
+	const struct bt_gatt_attr *ccc = &brickphyr_terminal.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	terminal_output_ready();
+	expect_responsive_disconnect();
+	zassert_true(terminal_closed);
+	zassert_true(management_owned, "A disconnect request cannot release the session");
+	/* An actual disconnect may arrive while the command still waits for HCI. */
+	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
+		if (callback->disconnected) {
+			callback->disconnected(peer, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		}
+	}
+	zassert_false(management_owned);
+	zassert_equal(atomic_get(&peer_refs), 1, "Worker must retain the disconnected peer");
+	k_sem_give(&disconnect_continue);
+	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
 	k_msleep(1);
@@ -163,6 +256,16 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_equal(starts, 2);
 	zassert_equal(stops, 2);
 	zassert_equal(disables, 2);
+
+	/* Failed-radio rejection uses the same asynchronous path and cannot
+	 * replace the first lifecycle error with a disconnect failure. */
+	disconnect_error = -EIO;
+	connect_peer();
+	expect_responsive_disconnect();
+	k_sem_give(&disconnect_continue);
+	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
+	expect_status("initialization failed: -110");
+	zassert_false(management_owned);
 
 	host_ble_shutdown();
 	zassert_ok(k_sem_take(&power_off_done, K_SECONDS(1)), "Failed radio prevented power off");

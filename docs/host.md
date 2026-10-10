@@ -181,10 +181,13 @@ requests on endpoint 0. Boot selects Pybricks; the selection survives closing th
 port and changes only through an explicit request or reboot. No protocol is
 guessed from data. USB IDs remain the experimental `2fe3:0004`.
 
-DTR acquires the data session. Closing it releases ownership after the old shell
-has finished and pending USB output has drained. Selection while occupied or
-closing fails; a control request cannot evict an owner. The operating system must
-also enforce exclusive access to the serial port: firmware cannot distinguish
+DTR acquires the data session after discarding buffered UART input from the
+previous port session. Closing it retains the power hold until accepted commands
+and Shell teardown finish. USB interface selection additionally waits for pending
+USB output to drain; an independent BLE session does not depend on that output.
+Selection while occupied or closing fails; a control request cannot evict an owner.
+The operating system must also enforce exclusive access to the serial port:
+firmware cannot distinguish
 two processes writing through the same host driver. USB reset releases the
 session without selecting another interface.
 

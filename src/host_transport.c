@@ -369,6 +369,9 @@ static void host_thread(void *a, void *b, void *c)
 				ble_shell = false;
 				ble_tx_ready = NULL;
 				finish_ble_session();
+				if (!ble_occupied) {
+					hub_power_connection(false);
+				}
 			}
 			k_spin_unlock(&lock, key);
 			continue;
@@ -493,8 +496,22 @@ void host_connection_changed(bool open)
 		k_spin_unlock(&lock, key);
 		return;
 	}
+	if (open) {
+		/* DTR is delivered before this port's new input. Drain the driver's
+		 * FIFO synchronously: its deferred IRQ callback may still be pending.
+		 * poll_in is the public nonblocking API outside that callback; the
+		 * same lock excludes our IRQ reader until admission is complete. */
+		unsigned char stale;
+		int err;
+		while ((err = uart_poll_in(uart, &stale)) == 0) {
+		}
+		if (err != -1 && !first_error) {
+			first_error = err;
+		}
+	}
 	usb_open = open;
-	if (!ble_occupied && hub_power_connection(open) && open != occupied) {
+	if (!ble_occupied && open != occupied &&
+	    (!open || (!first_error && hub_power_connection(true)))) {
 		stream_changed(open);
 	}
 	k_spin_unlock(&lock, key);
@@ -542,7 +559,8 @@ int host_ble_acquire(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = 0;
-	if (usb_open || occupied || ble_occupied || !ready || !tx_idle || first_error) {
+	/* Old USB output still gates a USB protocol switch, not a BLE session. */
+	if (usb_open || occupied || ble_occupied || !ready || first_error) {
 		err = -EBUSY;
 	} else if (!hub_power_connection(true)) {
 		err = -ESHUTDOWN;

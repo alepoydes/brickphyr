@@ -23,7 +23,9 @@ static struct bt_uuid_128 command_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 /* Connection and GATT callbacks execute on the Bluetooth RX workqueue. */
 static struct bt_conn *owner;
+static struct bt_conn *disconnect_pending;
 static struct k_spinlock session_lock;
+static void request_disconnect(struct bt_conn *conn);
 static bool exit_compatibility;
 static uint32_t shell_session;
 static int64_t shell_tx_deadline;
@@ -245,10 +247,7 @@ static void shell_output(struct k_work *work)
 	k_spin_unlock(&session_lock, key);
 	if (current && !retry) {
 		LOG_ERR("BLE terminal output failed: %d; closing link", err);
-		int close_err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		if (close_err) {
-			LOG_ERR("BLE terminal disconnect failed: %d", close_err);
-		}
+		request_disconnect(conn);
 	}
 	bt_conn_unref(conn);
 }
@@ -259,10 +258,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 	if (atomic_get(&radio_state) == RADIO_FAILED || host_ble_acquire()) {
-		int result = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		if (result) {
-			LOG_ERR("Reject occupied BLE connection failed: %d", result);
-		}
+		request_disconnect(conn);
 		return;
 	}
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
@@ -339,11 +335,47 @@ static int advertise(void)
  * a failed HCI operation does not establish that the controller is stopped or reset. */
 static int radio_failed(const char *operation, int error)
 {
+	if (atomic_get(&radio_state) == RADIO_FAILED) {
+		return radio_error;
+	}
 	radio_error = error;
 	failed_operation = operation;
 	atomic_set(&radio_state, RADIO_FAILED);
 	LOG_ERR("Bluetooth %s failed: %d; reboot required", operation, error);
 	return error;
+}
+
+static void disconnect_peer(struct k_work *work)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	struct bt_conn *conn = disconnect_pending;
+	k_spin_unlock(&session_lock, key);
+
+	k_mutex_lock(&radio_lock, K_FOREVER);
+	int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	if (err && err != -ENOTCONN) {
+		radio_failed("disconnect", err);
+	}
+	k_mutex_unlock(&radio_lock);
+
+	key = k_spin_lock(&session_lock);
+	disconnect_pending = NULL;
+	k_spin_unlock(&session_lock, key);
+	bt_conn_unref(conn);
+}
+static K_WORK_DEFINE(disconnect_work, disconnect_peer);
+
+static void request_disconnect(struct bt_conn *conn)
+{
+	/* One connection slot, retained until the worker finishes. HCI waits must
+	 * not block either the system/button queue or Bluetooth RX callbacks.
+	 * Only the real disconnection callback releases management ownership. */
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	if (!disconnect_pending) {
+		disconnect_pending = bt_conn_ref(conn);
+		k_work_submit_to_queue(&radio_queue, &disconnect_work);
+	}
+	k_spin_unlock(&session_lock, key);
 }
 
 static int set_radio(bool enable)

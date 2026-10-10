@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/drivers/serial/uart_emul.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
@@ -663,6 +664,82 @@ ZTEST(host, test_ble_usb_exclusion)
 	send("\r", 1);
 	receive_until("brickphyr> ", output, sizeof(output));
 	zassert_equal(calls, before, "Rejected USB input reached a later session");
+	close_session();
+}
+
+ZTEST(host, test_usb_rx_generation)
+{
+	char output[512];
+	wait_idle();
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("probe wait\r", strlen("probe wait\r"));
+	zassert_ok(k_sem_take(&probe_entered, K_SECONDS(1)));
+	unsigned int before = calls;
+
+	/* Leave old input in the real UART emulator FIFO until after DTR changes.
+	 * Its lower-priority worker runs after the new Shell has initialized. */
+	k_sched_lock();
+	uart_irq_rx_disable(uart);
+	send("mark\r", strlen("mark\r"));
+	host_connection_changed(false);
+	host_connection_changed(true);
+	k_sem_give(&probe_continue);
+	k_sched_unlock();
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("probe fresh\r", strlen("probe fresh\r"));
+	receive_until("PROBE fresh", output, sizeof(output));
+	zassert_equal(calls, before, "Old driver input executed in a new session");
+	close_session();
+}
+
+ZTEST(host, test_usb_output_then_ble)
+{
+	char output[512];
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("probe pending\r", strlen("probe pending\r"));
+	k_msleep(10);
+	/* Stop reading before close, as when USB is unplugged during output. */
+	host_connection_changed(false);
+	int64_t deadline = k_uptime_get() + 100;
+	int result;
+	while ((result = host_ble_acquire()) == -EBUSY && k_uptime_get() < deadline) {
+		k_msleep(1);
+	}
+	zassert_ok(result, "Old USB output blocked BLE admission");
+	zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_is_null(strstr(output, "pending"), "USB output leaked into BLE");
+	send("probe fresh\r", strlen("probe fresh\r"));
+	receive_until("PROBE fresh", output, sizeof(output));
+	host_ble_release(false);
+	terminal_session = 0;
+	uart_emul_flush_tx_data(uart);
+	wait_idle();
+}
+
+ZTEST(host, test_usb_power_during_teardown)
+{
+	char output[512];
+	uint8_t seconds[4];
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	sys_put_le32(1, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	int64_t now = k_uptime_get();
+	zassert_false(hub_power_update(1, false, now));
+	send("probe wait\r", strlen("probe wait\r"));
+	zassert_ok(k_sem_take(&probe_entered, K_SECONDS(1)));
+	host_connection_changed(false);
+	zassert_false(hub_power_update(1, false, now + 2000), "Accepted USB work lost power hold");
+	zassert_equal(host_ble_acquire(), -EBUSY);
+	sys_put_le32(0, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	k_sem_give(&probe_continue);
 	close_session();
 }
 

@@ -67,6 +67,10 @@ in [upstream integration](../docs/upstream.md#usb-experiment-prerequisites).
 Owner commands also select the next interface when their session closes:
 Shell `host_mode pybricks` and the Brickphyr-specific Pybricks exit command.
 The in-band round trip passes host simulation and Linux USB on the Inventor F4.
+Native checks also cover delayed UART input across USB reopen, power retention
+through accepted USB work, BLE admission with unread USB output, and nonblocking
+BLE error cleanup for the system/button queue. These fault boundaries still need
+physical USB/radio checks; the radio lifecycle suite runs in the default pytest set.
 The local pybricksdev CDC transport reuses its existing command/event API and the
 Python COBS codec shared with the flashing tool. Its identity CLI and reconnect
 pass against the compiled Brickphyr handler over a PTY and over Linux USB on the

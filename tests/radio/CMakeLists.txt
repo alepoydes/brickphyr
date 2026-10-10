@@ -10,4 +10,6 @@ target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_ble.c
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
 zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
-  -Wl,--wrap=bt_le_adv_start -Wl,--wrap=bt_le_adv_stop)
+  -Wl,--wrap=bt_le_adv_start -Wl,--wrap=bt_le_adv_stop
+  -Wl,--wrap=bt_conn_ref -Wl,--wrap=bt_conn_unref -Wl,--wrap=bt_conn_disconnect
+  -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb)
