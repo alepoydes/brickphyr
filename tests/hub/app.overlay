@@ -20,8 +20,6 @@ adc1: &adc0 {
 		latch-gpios = <&gpio0 1 GPIO_ACTIVE_HIGH>;
 		pwms = <&test_pwm 0 104>;
 		initial-full-channels = <14>;
-		status_top: status-top { channels = <5 4 3>; };
-		status_bottom: status-bottom { channels = <8 7 6>; };
-		bluetooth_led: bluetooth { channels = <20 19 18>; };
 	};
 };
+#include "../../boards/lego/spike_prime_f4/lights.dtsi"

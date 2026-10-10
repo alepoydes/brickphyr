@@ -154,8 +154,22 @@ hub revision.
 | `config get NAME` / `config set NAME SECONDS` | F4: read/change [runtime power settings](settings.md#current-runtime-settings) |
 | `config save` | F4: explicitly persist settings; report unavailable or failed storage |
 | `storage info` / `storage read` | F4: inspect or dump the settings partition without raw write access |
-| `led center R G B` | F4: stop breathing and set both central-button LEDs, each component 0–255 |
-| `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
+| `led center R G B` | F4: stop animation and set both central-button LEDs, corrected RGB 0–255 |
+| `led bluetooth R G B` | F4: set the Bluetooth-button LED, corrected RGB 0–255 |
+| `led pwm center R G B` / `led pwm bluetooth R G B` | F4: direct channel duty 0–65535, bypassing gamma and white balance |
+
+RGB commands use gamma 2 followed by the board's white-balance coefficients.
+The provisional F4 channel weights are `255:47:64`; see [color handling](hardware.md).
+For example, these commands produce the same PWM for the central button:
+
+```text
+led center 255 255 255
+led pwm center 65535 12079 16448
+```
+
+Both forms stop central animation when targeting `center`; Bluetooth writes leave
+it running. A mode/menu change or reboot restores the animation. RGB commands now
+describe colors; use `led pwm` for electrical duty experiments.
 
 `info` reports the **build target**, not an independently detected board revision.
 The source revision identifies the base commit for uncommitted work; retain the
@@ -188,17 +202,21 @@ in RAM for the terminal session. Closing the session clears its history and
 unfinished input. `--raw` lets the host terminal interpret
 the shell's cursor-control sequences without miniterm filtering them.
 
-The F4 build softly fades in the central button over 1.2 seconds, then breathes
-on a three-second cycle: white/blue for Pybricks, yellow/pink for Brickphyr Shell
-and experimental SMP. This indicates the selected interface, not a radio connection or
-DFU progress. Palette changes blend over 300 ms without restarting the breath.
-The animation uses native 16-bit LED
-duty with perceptual correction and updates both central LEDs together.
+The F4 build softly fades in the central button over 1.2 seconds, then shows a
+steady saturated color with continuous small brightness fluctuations and rare
+surges: cyan for Pybricks, yellow for Brickphyr Shell and experimental SMP.
+The yellow base uses
+95% of the strongest channel, cyan 40%. This experimental reactor effect
+indicates the selected interface, not a radio connection or DFU progress.
+Interface colors blend over 300 ms. Brightness peaks clip individual channels,
+which can shift the perceived hue. Both central LEDs update together with native
+16-bit duty. See [lighting behavior](hardware.md#f4-buttons-lighting-and-power) for details.
 Holding the central button for two seconds requests power-off; release it to
 allow the power latch to switch off. Left, right, center, and Bluetooth presses,
 including combinations, appear in `buttons`. Press Bluetooth to open the
-connection menu: its button lights white and the central button previews the
-selection. Either arrow cycles the two interfaces. Release a short center press
+connection menu: its button lights white at full corrected duty and the central
+button previews the selection. Either arrow cycles the two interfaces.
+Release a short center press
 to confirm; Bluetooth cancels. Center hold still switches power off. An occupied
 interface cannot be displaced: confirmation briefly extinguishes the white BT
 light and leaves the menu open. In normal operation BT lighting is off.
@@ -217,7 +235,7 @@ led bluetooth 0 0 0
 
 `led center` stops the animation; `led bluetooth` leaves it running. Interface or
 menu changes restore automatic lighting, as does reboot.
-The RGB values are raw intensity commands, not Pybricks color calibration.
+RGB values pass through the shared correction; `led pwm` sets raw duty instead.
 The base build reports device initialization errors through the shell. The optional
 Bluetooth profile still has the [HCI timeout limitation](bluetooth.md#experimental-f4-controller).
 Charging control is not implemented; the LED controller's charger-enable output

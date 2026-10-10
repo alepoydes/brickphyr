@@ -37,12 +37,17 @@ passes native checks and normal hub connections; radio-fault recovery remains op
 H:4 transport cleanup also passes UART-emulator checks and normal hub on/off cycles;
 full host-stack cleanup after controller failure is still outstanding.
 
-The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink
-breathing on a three-second cycle. BT opens/cancels the interface menu, arrows
-preview, and a short center release confirms; white BT lighting marks the menu.
-Manual central color stops animation until an interface/menu change or reboot;
-shutdown prevents relighting. Menu and SPI-emulator checks pass; visual assessment
-of these new palettes/timing remains outstanding.
+The experimental readiness animation uses saturated cyan for Pybricks and yellow
+for Brickphyr, with continuous small fluctuations and rare additive surges above
+a steady level (95% for yellow, 40% for cyan). Native SPI checks and the installed
+Inventor F4 USB console pass; visual assessment of the effect and brighter BT
+menu white is pending. BT opens/cancels the interface menu, arrows preview, and a
+short center release confirms; white BT lighting marks the menu. Manual central
+color stops animation until an interface/menu change or reboot; shutdown prevents
+relighting. The operator confirmed menu operation. RGB commands share gamma-2
+conversion and provisional F4 channel gains `255:47:64`; these are hardware gains,
+not palette colors. `led pwm` provides direct 16-bit duty. See
+[lighting](../docs/hardware.md) for the animation and calibration limits.
 
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See

@@ -98,24 +98,34 @@ static int cmd_buttons(const struct shell *shell, size_t argc, char **argv)
 
 static int cmd_led(const struct shell *shell, size_t argc, char **argv)
 {
-	bool center = !strcmp(argv[1], "center");
-	uint8_t color[3];
+	bool raw = !strcmp(argv[1], "pwm");
+	size_t target = raw ? 2 : 1;
+	unsigned int maximum = raw ? UINT16_MAX : UINT8_MAX;
+	uint16_t values[3];
 
-	if (!center && strcmp(argv[1], "bluetooth")) {
+	if (argc != target + 4) {
+		shell_error(shell, "Usage: led [pwm] <center|bluetooth> <red> <green> <blue>");
+		return -EINVAL;
+	}
+	bool center = !strcmp(argv[target], "center");
+
+	if (!center && strcmp(argv[target], "bluetooth")) {
 		shell_error(shell, "Use center or bluetooth.");
 		return -EINVAL;
 	}
 	for (int i = 0; i < 3; i++) {
 		int err = 0;
-		unsigned long value = shell_strtoul(argv[i + 2], 10, &err);
+		unsigned long value = shell_strtoul(argv[target + 1 + i], 10, &err);
 
-		if (err || value > UINT8_MAX) {
-			shell_error(shell, "RGB values must be integers from 0 to 255.");
+		if (err || value > maximum) {
+			shell_error(shell, "%s values must be integers from 0 to %u.",
+				    raw ? "PWM" : "RGB", maximum);
 			return -EINVAL;
 		}
-		color[i] = value;
+		values[i] = value;
 	}
-	int err = hub_light_manual(center, color);
+	const uint8_t color[] = {values[0], values[1], values[2]};
+	int err = raw ? hub_light_pwm(center, values) : hub_light_manual(center, color);
 
 	if (err) {
 		shell_error(shell, "LED write failed: %d", err);
@@ -125,7 +135,9 @@ static int cmd_led(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(shutdown, NULL, "Switch off hub power.", cmd_shutdown, 1, 0);
 SHELL_CMD_ARG_REGISTER(buttons, NULL, "Button states and press counters since boot.", cmd_buttons, 1, 0);
-SHELL_CMD_ARG_REGISTER(led, NULL, "led <center|bluetooth> <red> <green> <blue> (0..255).", cmd_led, 5, 0);
+SHELL_CMD_ARG_REGISTER(led, NULL,
+	"led [pwm] <center|bluetooth> <red> <green> <blue>. RGB: 0..255; raw PWM: 0..65535.",
+	cmd_led, 5, 1);
 
 void hub_run(void)
 {

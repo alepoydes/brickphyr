@@ -97,17 +97,31 @@ encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
 the Pybricks disabled value; this step does not implement charging or the matrix.
 
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
-central LEDs in one transfer. The three-second cycle uses eased color
-interpolation, a gamma-2 approximation, and at most 6.25% channel duty. Frames
-follow an absolute 20 ms schedule in the existing hub thread; delayed frames are
-skipped. Manual color and shutdown operations serialize with animation writes.
-Shutdown stops animation before extinguishing the lights. See
-[shell usage](builds.md#diagnostic-shell) for manual control.
-The operator confirmed smooth white/blue transitions and acceptable brightness
-for the earlier six-second animation on the Inventor F4. The new three-second
-cycle, yellow/pink palette, and menu indication pass SPI-emulator checks; visual
-assessment of these changes remains outstanding. Neither check is photometric
-calibration. See [interface indication](builds.md#diagnostic-shell).
+central LEDs in one transfer. The experimental reactor animation has a saturated
+cyan base for Pybricks (40% dominant-channel duty) and yellow for Brickphyr (95%).
+Small independent pulses add 2–5% each, starting every 60–100 ms. Their
+60–80 ms attack and 80–100 ms decay overlap into continuous irregular motion.
+A separate 10–20% surge starts every 2.5–5 seconds, rises over 80–120 ms and
+falls over 60–100 ms. All envelopes sum before individual channel clipping;
+clipping can shift the hue without adding another color channel. Startup fades
+in over 1.2 seconds, and interface changes blend over 300 ms.
+Frames follow an absolute 20 ms schedule in the existing hub thread; delayed
+frames are skipped. Three small-pulse slots cover the maximum 180 ms lifetime
+at a minimum 60 ms onset spacing. The surge has its own slot; no active envelope
+is overwritten. Each update evaluates at most four envelopes and schedules at
+most one event of each kind. A local libc PRNG needs no hardware entropy or
+allocation.
+Manual color and shutdown operations serialize with animation writes; shutdown
+prevents relighting. See [shell usage](builds.md#diagnostic-shell).
+
+The F4 board configuration holds provisional channel weights `255:47:64`, selected
+visually using RGB pairs on the central button of the tested Inventor F4. These
+are hardware gains, not palette colors: yellow is logical RGB `255 255 0`.
+RGB commands and lighting apply gamma 2 followed by these gains. Animation then
+normalizes the strongest channel and applies its brightness envelope; menu white
+uses full-range corrected duty. Direct `led pwm` commands bypass conversion and
+accept the full 16-bit duty range. Perceived colors, flare character, and menu white still
+need operator acceptance; no photometric calibration has been performed.
 
 Four individual button presses and green central/blue Bluetooth lighting have
 been checked on the Inventor F4 above. Software DFU entry, standard Pybricks

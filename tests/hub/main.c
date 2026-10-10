@@ -126,75 +126,129 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 	zassert_equal(duty(4), 0);
 	zassert_equal(duty(3), 0);
 	hub_light_update(600);
-	zassert_true(duty(5) > 0 && duty(5) < 4095);
-	zassert_equal(duty(5), duty(4));
+	zassert_equal(duty(5), 0);
+	zassert_true(duty(3) > 0 && duty(3) < 25000);
 	hub_light_update(1200);
-	zassert_equal(duty(5), 4095);
-	zassert_equal(duty(4), 4095);
-	zassert_equal(duty(3), 4095);
+	zassert_equal(duty(5), 0);
+	zassert_within(duty(3), 26214, 1);
+	zassert_true(duty(4) > 18000 && duty(4) < duty(3));
 	unsigned int before = writes;
 
 	zassert_equal(hub_light_update(1210), 1220);
 	zassert_equal(writes, before, "Early wake must not send another frame");
-	uint16_t previous[] = {duty(5), duty(4), duty(3)};
-	const uint8_t bt[] = {0, 0, 16};
+	const uint16_t bt[] = {0, 0, 4112};
 
-	zassert_ok(hub_light_manual(false, bt));
-	/* Synthetic time runs a whole breath through the production SPI path. */
-	for (int64_t now = 1220; now <= 4200; now += 20) {
-		before = writes;
-		zassert_equal(hub_light_update(now), now + 20);
-		zassert_equal(writes, before + 1, "Both center LEDs must latch together");
-		for (int i = 0; i < 3; i++) {
-			uint16_t value = duty(5 - i);
+	zassert_ok(hub_light_pwm(false, bt));
+	/* Synthetic time exercises both colors through real animation/SPI code.
+	 * Check visible behavior, without depending on libc's random sequence.
+	 */
+	for (int palette = 0; palette < 2; palette++) {
+		int dominant = palette ? 5 : 3;
+		int absent = palette ? 3 : 5;
+		unsigned int peaks = 0, quiet = 0, changing = 0;
+		bool active = false, varied = false, saturated = false;
+		uint16_t previous = 0;
+		int64_t last_peak = 0, last_gap = 0;
+		int64_t start = palette ? 21600 : 1220;
 
-			zassert_equal(value, duty(8 - i));
-			zassert_true(value > 0 && value <= 4095);
-			zassert_true(abs((int)value - previous[i]) <= 128, "Visible brightness jump");
-			if (i < 2) {
-				zassert_true(now <= 2700 ? value <= previous[i] : value >= previous[i]);
+		if (palette) {
+			zassert_ok(hub_light_select(HOST_SHELL, true, 21200));
+			zassert_equal(duty(20), UINT16_MAX, "Menu white must use full corrected PWM");
+			zassert_equal(duty(19), 12079);
+			zassert_equal(duty(18), 16448);
+			hub_light_update(21220);
+			zassert_true(duty(3) > duty(5), "Mode transition must start near cyan");
+		}
+		for (int64_t now = start; now < start + 20000; now += 20) {
+			before = writes;
+			zassert_equal(hub_light_update(now), now + 20);
+			zassert_equal(writes, before + 1, "Both center LEDs must latch together");
+			for (int i = 0; i < 3; i++) {
+				zassert_equal(duty(5 - i), duty(8 - i));
 			}
-			previous[i] = value;
+			zassert_equal(duty(absent), 0, "Flares must not add an absent channel");
+			zassert_true(duty(dominant) >= (palette ? 62000 : 26000),
+				     "Steady light must remain visible");
+			zassert_true(duty(4) > 0);
+			/* Observe green for yellow because red clips near the base level. */
+			uint16_t level = duty(palette ? 4 : 3);
+			bool peak = level > (palette ? 13000 : 33000);
+
+			if (peak && !active) {
+				int64_t gap = now - last_peak;
+
+				varied |= last_gap && gap != last_gap;
+				last_gap = last_peak ? gap : 0;
+				last_peak = now;
+				peaks++;
+			}
+			active = peak;
+			quiet += !peak;
+			changing += level != previous;
+			previous = level;
+			zassert_true(level < (palette ? 16000 : 50000), "Surges must stay restrained");
+			if (palette && level > 12500) {
+				saturated = true;
+				zassert_equal(duty(5), UINT16_MAX,
+					      "Clip red only; green must keep accumulating");
+			}
+			zassert_equal(duty(14), UINT16_MAX, "Charging must remain disabled");
+			if (!palette) {
+				zassert_equal(duty(18), 4112, "Animation must preserve Bluetooth color");
+			}
 		}
-		if (now == 2700) {
-			zassert_true(duty(3) > 4 * duty(4) && duty(4) > 4 * duty(5));
+		zassert_true(peaks >= 3 && peaks <= 12 && quiet > 800, "Expected rare surges");
+		zassert_true(changing > 850, "Small fluctuations must continue between surges");
+		zassert_true(varied, "Surges must not follow a fixed period");
+		if (palette) {
+			zassert_true(saturated, "Expected per-channel clipping during surges");
 		}
-		zassert_equal(duty(14), UINT16_MAX, "Charging must remain disabled");
-		zassert_equal(duty(18), 16 * 257, "Breathing must preserve Bluetooth color");
 	}
-	zassert_equal(duty(5), 4095, "No jump at the cycle boundary");
-	zassert_ok(hub_light_select(HOST_SHELL, true, 4200));
-	for (int channel = 18; channel <= 20; channel++) {
-		zassert_equal(duty(channel), 4095, "Menu must show white BT lighting");
-	}
-	/* The transition starts from the previous palette without resetting phase. */
-	hub_light_update(4220);
-	zassert_true(duty(4) > 4000 && duty(3) > 3900);
-	hub_light_update(7200);
-	zassert_true(duty(5) > duty(4) && duty(4) > 10 * duty(3), "Expected yellow");
-	hub_light_update(8700);
-	zassert_true(duty(5) > duty(3) && duty(3) > 4 * duty(4), "Expected pink");
-	zassert_ok(hub_light_select(HOST_SHELL, false, 8700));
+	zassert_ok(hub_light_select(HOST_SHELL, false, 41600));
 	zassert_equal(duty(18), 0);
 	zassert_equal(duty(19), 0);
 	zassert_equal(duty(20), 0);
 	before = writes;
 	hub_light_update(100000);
 	zassert_equal(writes, before + 1, "Delayed frames must not cause catch-up bursts");
-	const uint8_t manual[] = {7, 19, 31};
+	/* The same board gains must apply to both kinds of RGB lights. */
+	const uint8_t manual[] = {255, 255, 255};
+	const uint16_t white_pwm[] = {65535, 12079, 16448};
 
 	zassert_ok(hub_light_manual(true, manual));
+	zassert_ok(hub_light_manual(false, manual));
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(5 - i), white_pwm[i]);
+		zassert_equal(duty(8 - i), white_pwm[i]);
+		zassert_equal(duty(20 - i), white_pwm[i]);
+	}
+	const uint8_t half[] = {128, 128, 128};
+
+	zassert_ok(hub_light_manual(true, half));
+	for (int i = 0; i < 3; i++) {
+		zassert_true(duty(5 - i) > white_pwm[i] * 24 / 100 &&
+			     duty(5 - i) < white_pwm[i] * 26 / 100,
+			     "Half RGB should give approximately quarter duty with gamma 2");
+	}
+	const uint16_t raw[] = {0, 32768, 65535};
+
+	zassert_ok(hub_light_pwm(true, raw));
+	zassert_ok(hub_light_pwm(false, raw));
 	before = writes;
 	zassert_equal(hub_light_update(200000), INT64_MAX);
 	zassert_equal(writes, before);
-	zassert_equal(duty(5), 7 * 257);
-	zassert_equal(duty(4), 19 * 257);
-	zassert_equal(duty(3), 31 * 257);
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(5 - i), raw[i]);
+		zassert_equal(duty(8 - i), raw[i]);
+		zassert_equal(duty(20 - i), raw[i]);
+	}
 	zassert_ok(hub_light_off());
 	before = writes;
 	zassert_equal(hub_light_update(300000), INT64_MAX);
 	zassert_equal(hub_light_manual(true, manual), -ESHUTDOWN);
-	zassert_equal(hub_light_manual(false, bt), -ESHUTDOWN);
+	zassert_equal(hub_light_manual(false, manual), -ESHUTDOWN);
+	zassert_equal(hub_light_pwm(true, raw), -ESHUTDOWN);
+	zassert_equal(hub_light_pwm(false, raw), -ESHUTDOWN);
 	zassert_equal(hub_light_select(HOST_PYBRICKS, true, 300000), -ESHUTDOWN);
 	zassert_equal(writes, before, "No relighting after shutdown");
 	for (int channel = 3; channel <= 8; channel++) {

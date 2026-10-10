@@ -3,6 +3,9 @@ description: TI TLC5955 LED controller with an external grayscale clock
 compatible: "ti,tlc5955"
 include: spi-device.yaml
 properties:
+  white-balance:
+    type: array
+    description: RGB duty weights (0..255) for the attached LEDs at logical white.
   latch-gpios:
     type: phandle-array
     required: true

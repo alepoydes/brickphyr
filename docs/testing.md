@@ -80,16 +80,18 @@ requests, SPI errors, and preservation of the charger-disable channel. These
 checks use synthetic inputs; they do not verify electrical behavior or a bootloader.
 
 The same SPI path checks the readiness animation with synthetic time: startup
-fade, a complete three-second white/blue cycle, yellow/pink endpoints, menu white
-and normal unlit BT indication, bounded frame-to-frame changes, simultaneous
-central LED updates, and skipped late frames. It also checks that manual central
-color persists, Bluetooth color is independent, and shutdown prevents relighting.
+fade, visible steady levels, continuous small fluctuations, rare bounded surges,
+and cyan/yellow channel exclusion. Green keeps increasing after red saturates.
+It also checks menu lighting, simultaneous central LED updates, skipped late frames, persistent manual central color, independent
+Bluetooth color, and prevention of relighting after shutdown. RGB checks cover
+board gains, gamma response, and exact raw PWM including zero and full duty.
+These checks establish output behavior, not perceived color or visual quality.
 The menu checks exercise entry, preview, cancellation, release confirmation, and
 retention after rejected selection through the production transition handler.
 
-On F4, visually check the fade-in and smooth white/blue breathing, each button and
+On F4, visually check the fade-in and cyan/yellow reactor flares, each button and
 combinations with `buttons`, and both lighting commands. Confirm that setting the
-central color stops breathing, while a Bluetooth color command does not interrupt
+central color stops animation, while a Bluetooth color command does not interrupt
 it. Open the menu, preview both palettes, cancel, then select the other interface;
 interface/menu changes restore automatic lighting. Check busy rejection with a
 terminal open. Then check `shutdown` and the two-second center hold
