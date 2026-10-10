@@ -7,10 +7,11 @@ using the Pybricks API, and WebAssembly applications on LEGO hubs. One user
 application runs at a time. Hardware services remain responsive independently
 of the application's interpreter, garbage collection, or willingness to yield.
 
-**Status: architecture and repository foundation.** There is no Brickphyr firmware
-image, board port, SDK, or supported installation procedure yet. No hub has been
-flashed with Brickphyr. The documents distinguish selected designs from tested
-implementations; upstream support alone is not a Brickphyr hardware result.
+**Status: experimental board bring-up.** The Prime F4 target builds a Zephyr
+image with a USB diagnostic shell. The same shell runs in Zephyr's native
+simulator. No hub has been flashed with Brickphyr; USB, power, and recovery on
+physical hardware remain unverified. There is no application loader, SDK, or
+supported installation procedure yet. See [builds](docs/builds.md) for commands.
 
 The first target is the Inventor / SPIKE Prime family, starting with an identified
 physical board revision. Other hubs follow when their memory, peripherals, and
@@ -48,19 +49,20 @@ do not belong in this firmware.
 | Validate software or hardware | [Testing](docs/testing.md) |
 | Contribute and exchange upstream changes | [Contributing](CONTRIBUTING.md), [upstream workflow](docs/upstream.md) |
 | Understand licensing | [Licensing](docs/licensing.md) |
-| Resume development in a new session | [Current development context](AI/context.md), [agent instructions](AGENTS.md) |
+| Orient a contributor or agent | [Project orientation](AI/context.md), [agent instructions](AGENTS.md) |
 
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-The next work is a reproducible Zephyr workspace and a recovery-preserving board
-bring-up, followed by an isolated native application using real sensor and motor
-services. Implementation steps and unresolved choices are in
-[the development context](AI/context.md).
+The next hardware step is identifying a Prime board revision and verifying
+installation, the USB shell, and restoration to Pybricks. An isolated native
+application using real sensor and motor services follows that bring-up.
+Subsystem contracts and implementation boundaries are linked in
+[the project orientation](AI/context.md).
 
-The repository currently needs only a Markdown reader and Git. Dependency pins,
-build commands, and runnable examples will be added with the first actual build;
-there are no placeholder commands that claim to compile or flash a hub.
+Build dependencies are separate west checkouts; host Python tools are locked with
+uv. [Builds](docs/builds.md) describes setup and [testing](docs/testing.md) describes
+the short checks of executable behavior and the linked image.
 
 ## License
 

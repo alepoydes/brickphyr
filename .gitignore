@@ -1,7 +1,6 @@
 # Local build and measurement output.
 /build/
 /recordings/
-/reports/
 /dist/
 /.venv/
 /.west/
@@ -11,6 +10,9 @@ __pycache__/
 /.pytest_cache/
 /.ruff_cache/
 /site/
+
+# Private development reports and session handoffs.
+/reports/
 
 # Local editor and machine configuration.
 /.idea/

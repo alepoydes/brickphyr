@@ -1,8 +1,9 @@
 # Firmware installation and recovery
 
-**No Brickphyr flashing procedure is available yet.** This document is the design
-constraint for board bring-up. It contains source-derived addresses, not commands
-to execute on an unidentified hub.
+**No hardware-verified Brickphyr flashing procedure is available yet.** The F4
+image builds and its layout is checked locally. This document contains
+source-derived bounds and the remaining installation work, not commands to
+execute on an unidentified hub.
 
 ## Required property
 
@@ -11,6 +12,20 @@ Bluetooth implementation must not remove the independent way to reinstall
 firmware. Preserve the existing hub boot chain and reuse the Pybricks installation
 and restoration mechanisms where compatible. Do not introduce a new bootloader
 merely because Zephyr commonly uses one.
+
+Installation must accept a supported hub running either original LEGO firmware
+or Pybricks, without requiring an intermediate Pybricks installation. Updating
+Brickphyr and restoring LEGO or Pybricks must use the same maintained installation
+mechanisms. Entering the existing bootloader with the hub's buttons is a valid
+installation path; automatic entry depends on the installed firmware and must
+not be assumed for every version.
+
+Reuse Pybricks host tools and their firmware package format. Brickphyr owns its
+Zephyr build and the integration needed to package its image. Hub identification,
+USB/Bluetooth flashing protocols, checksums, and restoration mechanisms belong in
+the existing Pybricks tooling. Extend that tooling when an actual missing capability
+prevents reuse, following [the upstream workflow](upstream.md); do not create a
+second implementation or a wrapper that merely renames the same commands.
 
 The supported fault model must include a bad main firmware and interruption of
 main-firmware transfer. It does not promise recovery from every hardware failure,
@@ -40,6 +55,51 @@ identity/calibration data before expanding application storage. "Use all flash"
 means use the available space after these constraints, not erase the chip.
 Restoring LEGO firmware and restoring every original user project are separate
 claims; document any required backup and data loss explicitly.
+
+## Current image and installation boundary
+
+The `spike_prime_f4` devicetree limits the image to the main-firmware partition.
+Its linker fragment places the mboot information records at offsets `0x1f0` and
+`0x264` from the image start. [The image checker](../tools/check_image.py) checks
+the resulting ELF and binary against the external F4 memory/boot contract. The
+build enables no application flash-write API and packages neither bootloader.
+Devicetree `read-only` labels describe ownership; they do not establish physical
+flash write protection.
+
+The source reference's
+[DFU writer](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/tools/flash/dfu.py)
+distinguishes F4/H5 and frozen/second-stage DFU using device properties and flash
+geometry. For F4 already running mboot it writes at `0x08010000`, with the initial
+stack word committed last. Its frozen-F4 path can instead install a second-stage
+loader. That second path must not be invoked as an incidental Brickphyr update.
+Prime product ID alone is insufficient to select a writer path.
+
+Package integration and focused host-tool checks can be developed without a hub.
+Before an actual firmware write, the installer must identify the connected hub
+and loader and validate the selected image. Establish the independent button
+entry, protection/preserved-data constraints, and restoration artifact for the
+physical experiment. Reuse a maintained writer through a documented interface
+that supports the required bounds and interrupted-transfer ordering. Do not use
+a generic mass erase or treat an ordinary binary download as evidence of that
+ordering. The current repository has no flash runner or writer.
+
+The reference's [CLI](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/tools/flash/__main__.py)
+already handles firmware packages and includes paths for entering update mode
+from Pybricks and supported official SPIKE Prime firmware. Pybricks Code also
+documents [custom firmware ZIP installation](https://pybricks.com/learn/getting-started/install-pybricks/).
+These are integration starting points, not evidence that the current Brickphyr
+binary has been packaged or installed successfully. The reference's
+[metadata generator](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/tools/metadata.py)
+expects Pybricks linker-map sections; Zephyr package integration still needs to
+resolve that interface without fabricating Pybricks sections or copying its
+hardware/format tables.
+
+The first physical cycle is Pybricks → Brickphyr → Pybricks, checking a working
+console and the restored firmware's ordinary connection. Also verify cold boot,
+`reboot`, and USB disconnection/reconnection while running from the battery;
+uptime must continue across host loss. Motor outputs remain inactive. Test the
+remaining LEGO transitions and interrupted-transfer recovery separately after
+ordinary recovery is established. No such cycle has been performed yet.
 
 ## Bring-up sequence
 

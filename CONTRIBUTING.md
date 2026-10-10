@@ -4,9 +4,8 @@ Brickphyr should remain understandable to someone who knows embedded systems
 but has not followed its development. Prefer a small, coherent implementation
 with clear ownership and measured costs over layers that merely rename calls.
 
-The [README](README.md) describes current availability. This repository does not
-yet contain firmware or a build environment. The procedures below also govern
-the code added during bring-up.
+The [README](README.md) describes current availability. The experimental board
+image and simulator can be built using [the workspace procedure](docs/builds.md).
 
 ## Making a change
 
@@ -63,7 +62,13 @@ prose and `brickphyr` in repository, package, and command identifiers.
 Each large question has one owning document. Link to it instead of reproducing
 the decision elsewhere. The short architecture document describes relationships;
 it is not a second copy of every subsystem specification. `AI/context.md` is a
-development handoff, not a source of public API contracts.
+short public orientation guide.
+
+Everything tracked by Git is public. Keep technical reports, development handoffs,
+device/session observations, workstation paths, and experiment logs in `reports/`,
+which must remain ignored and untracked. Public documentation contains design,
+usage, supported configurations, and limitations; it must be readable without
+the development history. Do not link public instructions to private reports.
 
 Distinguish these claims explicitly:
 
@@ -91,10 +96,10 @@ Use [testing](docs/testing.md) to select checks proportional to the change. Long
 soak tests and hardware tests are explicit jobs. Passing a host simulation is not
 evidence of interrupt latency, USB behavior, or physical motor stopping.
 
-For this documentation-only foundation, review local links, terminology,
-cross-document consistency, and whitespace. There is no firmware test suite to
-claim as passing. Add executable examples and CI checks with the implementation
-they exercise; do not create tests that only assert a scaffold exists.
+For documentation changes, review local links, terminology, cross-document
+consistency, and whitespace. For firmware changes, run the affected build and
+short behavior checks. Tests must exercise executable behavior or produced
+artifacts, not inspect source text or assert that a scaffold exists.
 
 A pull request explains the problem, resulting behavior, validation, and remaining
 limitations. Include dependency PRs or commit links for cross-repository work.

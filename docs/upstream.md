@@ -27,12 +27,18 @@ of this foundation.
 | --- | --- |
 | Generic Zephyr driver, kernel, or LLEXT improvement | Zephyr, with its required tests |
 | Portable LEGO protocol, calibration, or control fix | Pybricks, independent of Zephyr integration |
+| Reusable firmware packaging, hub identification, installation, or restoration extension | The existing Pybricks host-tool repository owning that operation |
 | Missing reusable MicroPython/WAMR behavior | That runtime's project |
 | Brickphyr lifecycle, SDK, glue, application storage policy | Brickphyr |
 
 A portable change and its OS-specific integration should be separate commits or
 PRs. Explain the upstream use case without requiring the reviewer to adopt
 Brickphyr. Follow that project's license, style, and contribution requirements.
+
+For firmware installation, first use the existing Pybricks tool and package
+interface directly. Add dependency changes only for a demonstrated missing
+capability; keep Zephyr build integration in Brickphyr. Original LEGO firmware
+is a required starting state, as specified in [recovery](recovery.md).
 
 ## Developing a dependency change
 
@@ -92,8 +98,10 @@ the same revision in west, a shell script, and a prose installation command.
 
 ## Current downstream delta
 
-There are no downstream patches, fork URLs, or dependency pins yet. When the first
-patch is needed, record its owning repository, reason, commit/PR link, and condition
+The [manifest](../west.yml) pins unmodified upstream Zephyr and imports its CMSIS 6
+and STM32 HAL revisions. The board lives out of tree in Brickphyr. There are no
+downstream patches or fork URLs. When the first patch is needed, record its
+owning repository, reason, commit/PR link, and condition
 for removal here. Keep this list about remaining divergence; Git and upstream PRs
 hold the detailed change history.
 

@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: Apache-2.0
+
+/dts-v1/;
+#include <st/f4/stm32f413Xg.dtsi>
+#include <st/f4/stm32f413v(g-h)tx-pinctrl.dtsi>
+
+/ {
+	model = "LEGO SPIKE Prime F4";
+	compatible = "lego,spike-prime-f4";
+
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &firmware_partition;
+		zephyr,console = &cdc_acm_uart;
+		zephyr,shell-uart = &cdc_acm_uart;
+	};
+};
+
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(16)>;
+	status = "okay";
+};
+
+&pll {
+	div-m = <8>;
+	mul-n = <96>;
+	div-p = <2>;
+	div-q = <4>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(96)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <2>;
+	apb2-prescaler = <1>;
+};
+
+&gpioa {
+	power_hold: power-hold {
+		gpio-hog;
+		gpios = <13 GPIO_ACTIVE_HIGH>;
+		output-high;
+	};
+};
+
+/* Both H-bridge inputs low is coast in the reference Pybricks driver. */
+&gpiob {
+	motors-off {
+		gpio-hog;
+		gpios = <1 GPIO_ACTIVE_HIGH>, <6 GPIO_ACTIVE_HIGH>,
+			<7 GPIO_ACTIVE_HIGH>, <8 GPIO_ACTIVE_HIGH>, <9 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+
+&gpioc {
+	motors-off {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>, <7 GPIO_ACTIVE_HIGH>, <8 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+
+&gpioe {
+	motors-off {
+		gpio-hog;
+		gpios = <9 GPIO_ACTIVE_HIGH>, <11 GPIO_ACTIVE_HIGH>,
+			<13 GPIO_ACTIVE_HIGH>, <14 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+
+zephyr_udc0: &usbotg_fs {
+	pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	cdc_acm_uart: cdc-acm-uart {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		factory_boot_partition: partition@0 {
+			label = "factory-dfu";
+			reg = <0 DT_SIZE_K(32)>;
+			read-only;
+		};
+
+		mboot_partition: partition@8000 {
+			label = "mboot";
+			reg = <0x8000 DT_SIZE_K(32)>;
+			read-only;
+		};
+
+		firmware_partition: partition@10000 {
+			label = "firmware";
+			reg = <0x10000 DT_SIZE_K(960)>;
+		};
+	};
+};

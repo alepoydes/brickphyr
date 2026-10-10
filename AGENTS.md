@@ -68,6 +68,8 @@ to resume work without access to a previous conversation or a personal rules fil
 - At handoff, report hardware state and any live diagnostic process. Close links
   unless the operator requested an ongoing session; never claim a dead process is
   keeping a hub awake.
-- Keep [AI/context.md](AI/context.md) short and current: actual implementation,
-  verified results, next work, and unresolved decisions. Keep lasting contracts
-  in their owning documents, not in a growing conversation transcript.
+- Everything tracked by Git is public. Keep technical reports, session handoffs,
+  device observations, and local work notes in ignored `reports/`; never force-add
+  them. Keep [AI/context.md](AI/context.md) a short public orientation guide.
+  Public documents own lasting contracts, usage, support status, and limitations,
+  not the history of development sessions.

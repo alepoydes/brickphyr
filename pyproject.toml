@@ -1,0 +1,35 @@
+[project]
+name = "brickphyr-tools"
+version = "0.1.0"
+description = "Build and verification tools for Brickphyr firmware"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "cmake>=3.20.5",
+    "jsonschema>=4.26.0",
+    "ninja",
+    "packaging",
+    "pyelftools>=0.29",
+    "pykwalify",
+    "pyserial",
+    "pytest>=8",
+    "pyyaml>=6",
+    "ruff>=0.16,<1",
+    "west>=1.5",
+]
+sdk = ["patool>=2", "requests>=2.32.4", "semver", "tqdm>=4.67.1"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

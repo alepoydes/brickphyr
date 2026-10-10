@@ -1,8 +1,47 @@
 # Validation
 
-No Brickphyr firmware tests or hardware results exist yet. This document assigns
-evidence to the claim it can establish and defines the small tests to add during
-implementation. It is not a request for a large test framework before working code.
+The short bring-up checks exercise the compiled console in Zephyr's native
+simulator and inspect the linked ARM image. There are no hardware results yet.
+Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
+
+## Run the bring-up checks
+
+After [workspace setup](builds.md), run from this repository:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/prime &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
+uv run --locked pytest -q
+```
+
+The simulator compiles the same application and Zephyr shell. The test opens its
+pseudoterminal with pyserial and checks command echo, help/identity, rejected
+arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,
+and checks that uptime continued to advance. After a reboot it connects to the
+new pseudoterminal and checks reset uptime and identity. Response failures have
+bounded timeouts; serial links close and the simulator process terminates on exit.
+This exercises terminal disconnection in the host serial driver, not STM32 USB
+disconnection or battery power retention.
+
+The image test uses [the image checker](../tools/check_image.py) on the built ELF
+and binary, then checks rejection of a reset into the preserved loader, a truncated
+image, and corrupted boot metadata. The checked constants are the external Prime
+F4 boot contract, independent of the linker configuration. No test reads source
+text. Both builds must succeed before running tests on their artifacts; the
+sequence above stops on a build failure. Missing artifacts cause failure rather
+than a skip.
+
+For interactive local use, run `build/native/zephyr/zephyr.exe`, then open its
+printed pseudoterminal path in another terminal:
+
+```sh
+uv run --locked python -m serial.tools.miniterm /dev/pts/N 115200
+```
+
+Replace `/dev/pts/N` with the printed path. Exit miniterm with Ctrl+], and stop
+the simulator with Ctrl+C. The `reboot` command creates a new pseudoterminal;
+reopen the newly printed path. This is a host simulation with simulated time
+paced against the host clock, not a hub emulator.
 
 ## Local checks
 
@@ -26,7 +65,7 @@ independent reference; do not validate a dead scalar fallback instead.
 
 Use an identified hub attached over USB with a known set of motors and sensors.
 Secure or raise driven parts for motion tests and record wiring/directions. The
-exact fixture is not selected yet; do not assume babybot's mounting is universal.
+fixture must match the behavior being checked.
 
 Bring up small applications, each proving a specific contract:
 
@@ -51,11 +90,8 @@ replacement. Keeping a host connected may prevent an existing firmware's idle
 shutdown; charging alone and an off hub are different cases. Recheck the actual
 transport rather than relying on a product name or an old process handle.
 
-The prior Inventor/Pybricks v4.1.0b4 environment used USB CDC ACM, not the older
-vendor-specific adapter selected by some desktop tools. Inspect the current
-interface descriptors; reuse a compatible public transport instead of detaching
-an OS driver or patching private APIs. This observation does not describe the
-future Brickphyr USB interface, which still needs its own implementation and test.
+Inspect interface descriptors and select a compatible public transport. Product
+names alone do not distinguish USB CDC ACM from vendor-specific USB interfaces.
 
 ## Performance evidence
 
@@ -81,9 +117,10 @@ toolchain, attached devices, workload, instrumentation, commands, and observed
 result. Separate source inspection, build success, simulation, and hardware data.
 List untested parts instead of promoting a narrow result into platform support.
 
-Keep raw logs/captures in ignored `build/`, `recordings/`, or `reports/`; publish
-relevant summaries and reproducible procedures. Small curated regression fixtures
-may be versioned with their source and interpretation. Long stress, soak, and
+Keep technical reports, session notes, and experiment results in ignored
+`reports/`; generated builds and captures also remain outside Git. Public documents
+describe support, reproducible procedures, and limitations. Small curated regression
+fixtures may be versioned with their source and interpretation. Long stress, soak, and
 robot mechanics tests run explicitly rather than slowing every documentation edit.
 
 Python compatibility programs compare Brickphyr with the selected Pybricks

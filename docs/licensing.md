@@ -18,8 +18,10 @@ their notices; selecting Apache for Brickphyr does not erase those obligations.
 
 ## Planned dependency audit
 
-No dependency source or binary is bundled in this foundation. The following is
-a preliminary inventory, not a completed license audit of a firmware image:
+Dependencies remain separate west checkouts. The bring-up build uses Zephyr,
+CMSIS 6, STM32 HAL, and SDK libraries; it contains no Pybricks, MicroPython, WAMR,
+or radio service-pack binary. The following is a preliminary platform inventory,
+not a completed distribution audit of a firmware image:
 
 | Component | Known main license | Work still required before distribution |
 | --- | --- | --- |

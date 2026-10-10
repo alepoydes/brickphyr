@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+board:
+  name: spike_prime_f4
+  full_name: LEGO SPIKE Prime (STM32F413VG)
+  vendor: lego
+  socs:
+    - name: stm32f413xx
