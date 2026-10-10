@@ -1,0 +1,19 @@
+# Local build and measurement output.
+/build/
+/recordings/
+/reports/
+/dist/
+/.venv/
+/.west/
+/.cache/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.ruff_cache/
+/site/
+
+# Local editor and machine configuration.
+/.idea/
+/.vscode/
+/.env
+/.env.local
