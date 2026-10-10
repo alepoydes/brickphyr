@@ -6,6 +6,21 @@ list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(brickphyr)
 
+# Zephyr otherwise tracks its own Git index for both version headers.
+# Use its application-version dependency hook, including in Git worktrees.
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --path-format=absolute
+      --git-path index --git-path HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE revision_result OUTPUT_VARIABLE revision_dependencies
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(revision_result EQUAL 0)
+    string(REPLACE "\n" ";" revision_dependencies "${revision_dependencies}")
+    set_property(TARGET app_version_h PROPERTY APP_VERSION_DEPENDS ${revision_dependencies})
+  endif()
+endif()
+
 target_sources(app PRIVATE src/main.c)
 
 if(CONFIG_BOARD_SPIKE_PRIME_F4)
