@@ -12,11 +12,20 @@ Read [AGENTS.md](../AGENTS.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and
 - [Compatibility](../docs/compatibility.md) and [Bluetooth](../docs/bluetooth.md):
   Pybricks behavior, host interaction, and radio integration.
 - [Applications](../docs/applications.md): native, Python, and WASM lifecycle.
+- [Host connections](../docs/host.md): interface selection and one management session.
+- [Settings and power](../docs/settings.md): runtime changes, explicit save, and shutdown.
 - [Upstream](../docs/upstream.md): dependency changes and contributions.
 
 The experimental F4 build provides a USB diagnostic shell. Bluetooth, application
 loading, and Python/WASM execution are not implemented yet. Current availability
 belongs in the README and the owning subsystem documents.
+
+Experimental packaging uses local, unpublished Pybricks host-tool extensions;
+the public manifest still pins their upstream base. See
+[the downstream delta](../docs/upstream.md#current-downstream-delta). Complete
+reproducible dependency integration and the boot/restoration cycle before the USB
+selection experiment. [Acceptance milestones](../docs/builds.md#acceptance-milestones)
+give the development order from the existing build.
 
 Everything tracked by Git is public documentation or project source. Keep local
 development handoffs, device observations, experiment results, and pending session

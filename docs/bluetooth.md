@@ -35,6 +35,11 @@ control loop. Report disconnects and dropped diagnostics explicitly. Do not filt
 legitimate repeated notifications by payload equality or let multiple desktop
 clients compete for the same hub's control channel.
 
+Follow the [single management session](host.md#one-management-session) rule across
+Bluetooth and USB. Pybricks discovery and client compatibility are defined in
+[compatibility](compatibility.md#existing-host-clients); interface selection does
+not create a second application supervisor.
+
 Connection policy belongs at the appropriate boundary: a program may choose
 autonomy after controller loss, while a manual motor test may require stopping.
 Do not hardwire babybot's button assignments or waking rules into the Bluetooth

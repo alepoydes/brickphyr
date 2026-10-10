@@ -98,12 +98,26 @@ the same revision in west, a shell script, and a prose installation command.
 
 ## Current downstream delta
 
-The [manifest](../west.yml) pins unmodified upstream Zephyr and imports its CMSIS 6
-and STM32 HAL revisions. The board lives out of tree in Brickphyr. There are no
-downstream patches or fork URLs. When the first patch is needed, record its
-owning repository, reason, commit/PR link, and condition
-for removal here. Keep this list about remaining divergence; Git and upstream PRs
-hold the detailed change history.
+The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and Pybricks.
+The board lives out of tree in Brickphyr; Zephyr and its imported modules remain
+unmodified. Pybricks currently supplies host tools only, not firmware libraries.
+
+Experimental packaging uses local changes in the independent Pybricks repository:
+
+| Owning file | Change and reason |
+| --- | --- |
+| `tools/metadata.py` | `--no-custom-name` permits checksum-free images without Pybricks-specific linker sections |
+| `tests/tools/` | Short metadata/package checks and factory-loader preservation checks through the unchanged DFU writer |
+
+These changes are not yet published. The manifest still references the unchanged
+upstream base; a fresh `west update` does not provide the extension. Packaging
+therefore requires the reviewed local topic branch until a public upstream or
+downstream commit is available. Do not replace that base with
+an unpublished commit or claim clean-checkout reproducibility for the extensions.
+The installer and its DFU implementation remain unmodified.
+No fork URL or PR has been assigned. Follow the acceptance procedure above before
+publishing a runnable dependency pin; remove the downstream delta when equivalent
+upstream functionality is adopted.
 
 ## Contribution certification
 

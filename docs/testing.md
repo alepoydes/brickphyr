@@ -1,12 +1,14 @@
 # Validation
 
 The short bring-up checks exercise the compiled console in Zephyr's native
-simulator and inspect the linked ARM image. There are no hardware results yet.
+simulator, inspect the linked ARM image, and open its firmware package through
+Pybricks. Brickphyr has not yet been verified on hardware.
 Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
 
 ## Run the bring-up checks
 
-After [workspace setup](builds.md), run from this repository:
+After [workspace setup](builds.md), including the experimental
+[packaging prerequisite](builds.md#experimental-firmware-package), run from this repository:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
@@ -30,6 +32,21 @@ F4 boot contract, independent of the linker configuration. No test reads source
 text. Both builds must succeed before running tests on their artifacts; the
 sequence above stops on a build failure. Missing artifacts cause failure rather
 than a skip.
+
+The package test checks an actual compiled F4 image through the Pybricks package
+reader and rejects a corrupted image without replacing a previous package. It
+does not open a USB connection. Focused tests for the dependency extension run
+in its owning repository through the workspace environment:
+
+```sh
+uv run --locked --group flash python -m unittest discover -s ../modules/pybricks/tests/tools
+```
+
+Those tests cover unchanged name customization, checksum generation without a
+custom name, and both standard F4 installation paths. The unchanged writer must
+leave the factory region untouched and commit the main image's initial stack
+word last. The writer tests substitute the DFU-device boundary; their erase/write
+sequence is simulated and is not evidence of a physical flash operation.
 
 For interactive local use, run `build/native/zephyr/zephyr.exe`, then open its
 printed pseudoterminal path in another terminal:

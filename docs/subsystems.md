@@ -18,12 +18,13 @@ below remain unimplemented. This is not a claim that every chip has a Zephyr dri
 | Bluetooth host, connections, GATT | Zephyr | Hub radio transport/init, service integration; see [Bluetooth](bluetooth.md) |
 | Xbox and other input devices | Existing suitable stack support + Pybricks device-specific behavior | Map input consistently; retain connection/error semantics |
 | Flash and storage primitives | Zephyr | Board partitioning and application/settings lifecycle; storage format undecided |
+| User settings and inactivity shutdown | Zephyr Settings + board power support | Shared validation/application, explicit save, and [power policy](settings.md) |
 | Native execution | Zephyr LLEXT + user mode | SDK boundary, manifest checks, loading, resource cleanup |
 | Python execution | MicroPython + Pybricks C bindings and libraries | Zephyr scheduling/device integration and API compatibility |
 | WASM execution | WAMR Zephyr integration | Bounded runtime configuration and shared hardware imports |
 | Application selection, start/stop, fault reporting | Brickphyr | One supervisor, one application, explicit resource ownership |
 | Firmware install / factory restoration | Existing hub bootloaders and Pybricks tooling | Compatible image packaging and verified address/type selection |
-| Desktop upload, run, logs, later monitoring | Public pybricksdev functionality where compatible | Additional protocol/SDK tooling only where existing contracts cannot serve |
+| Desktop upload, run, logs, later monitoring | Public Pybricks tools, Zephyr Shell, standard management mechanisms | One [host session](host.md); evaluate SMP for extensions; reuse application lifecycle |
 
 ## Sharing with Pybricks
 

@@ -46,6 +46,8 @@ the implementation uses:
 
 The privileged supervisor must be able to terminate an application that never
 yields. User cleanup is optional assistance, not a prerequisite for stopping.
+This applies to native code and both interpreted engines. Pybricks-compatible
+multitasking must not reproduce system hangs; see [compatibility](compatibility.md).
 Recovery from a fault is only reported after the corresponding platform action
 succeeds; an unconfirmed actuator stop cannot be presented as a clean idle state.
 The board implementation must define its actual stop/inhibit mechanism.
@@ -85,9 +87,9 @@ and stops treating stale commands as fresh input.
 
 Use one controlling desktop connection owner per hub, including uploads and
 diagnostics. Other local tools must use that owner or receive a useful busy result.
-Supporting multiple observers later requires explicit semantics, not competing
-uncoordinated subscribers. This host ownership does not prohibit a simultaneous
-Xbox connection through the firmware's Bluetooth stack.
+The limit applies across USB and Bluetooth; see [host connections](host.md).
+This host ownership does not prohibit a simultaneous Xbox connection through the
+firmware's Bluetooth stack.
 
 Provide upload, start, explicit stop, capabilities, and logs first. Add equipment
 monitoring when needed. Reuse public desktop transport/flashing APIs where they

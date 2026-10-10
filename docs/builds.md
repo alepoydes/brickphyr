@@ -1,7 +1,7 @@
 # Workspace and builds
 
 The experimental `spike_prime_f4` target builds a diagnostic firmware image.
-Zephyr, CMSIS, and STM32 HAL revisions are resolved through [west.yml](../west.yml);
+Zephyr, CMSIS, STM32 HAL, and Pybricks revisions are resolved through [west.yml](../west.yml);
 Python tools are locked in [uv.lock](../uv.lock). The SDK version comes from the
 pinned Zephyr checkout's `SDK_VERSION`. No hardware installation has been verified.
 Runtime profiles below remain selected designs.
@@ -29,9 +29,11 @@ workspace is created. See [west workspaces](https://docs.zephyrproject.org/lates
 
 ## Dependency resolution
 
-The manifest pins an immutable Zephyr commit and imports only CMSIS 6 and STM32
-HAL from its manifest. No dependency patches or copied source trees are needed.
-Keep this pattern as dependencies are added; pin any explicit overrides.
+The manifest pins immutable Zephyr and Pybricks commits and imports only CMSIS 6
+and STM32 HAL from Zephyr's manifest. The firmware uses unmodified Zephyr modules;
+Pybricks supplies host tools. Experimental packaging currently requires the
+unpublished [host-tool changes](upstream.md#current-downstream-delta). Keep
+dependencies in separate repositories and pin any explicit overrides.
 Do not put invented SHAs or floating `main` / `master` refs in a runnable manifest.
 
 Python and WASM dependencies are not part of this bring-up build. Pybricks already
@@ -88,8 +90,29 @@ bootloader's metadata. Passing it does not establish physical board compatibilit
 
 The artifacts are `build/prime/zephyr/zephyr.{elf,bin,hex}` and the linker map in
 the same directory. The raw binary contains only main firmware; neither bootloader
-is bundled. There is deliberately no `west flash` runner or firmware writer yet:
+is bundled. There is no `west flash` runner or Brickphyr firmware writer:
 see [recovery](recovery.md) for the remaining identification and writer audit.
+
+### Experimental firmware package
+
+Packaging requires the [Pybricks host-tool extension](upstream.md#current-downstream-delta),
+which is not yet included in the public dependency pin. After reviewing and
+applying that extension in the separate Pybricks checkout:
+
+```sh
+uv run --locked west build -d build/prime -t firmware_package
+```
+
+This checks the linked F4 image and produces `build/prime/zephyr/firmware.zip`
+using Pybricks' metadata generator. The package contains the main binary,
+metadata, and component license texts. Hub-name customization is disabled so
+the installer cannot patch a name into a Zephyr image. A short test opens the
+package through the Pybricks reader and checks that the binary is unchanged.
+
+The target packages only the existing F4 build and performs no USB operation.
+It does not add H5 support or establish installation/recovery on hardware.
+
+### Diagnostic shell
 
 The firmware starts the standard Zephyr USB CDC ACM shell without waiting for a
 terminal. Its intended hardware behavior is to keep battery power on and hold
@@ -150,13 +173,42 @@ compiler settings, and instrumentation.
 
 ## Acceptance milestones
 
-The board bring-up milestone precedes application loading: install the image on
-an identified revision, exercise the console and reboot, disconnect/reconnect the
-host without resetting uptime, and restore the starting Pybricks firmware.
-The current build and simulator checks complete only its local preparation.
+Continue from the existing F4 image, USB shell, image/package checks, and native
+simulation. Packaging works with the unpublished dependency extension; making it
+reproducible from public pins and verifying physical installation remain immediate
+work. Protocol selection is not the first hardware milestone.
 
-For the subsequent native-application milestone, the same checkout and locked
-dependencies must reproduce a board image and its SDK. The image must respect
-[recovery](recovery.md); the SDK must load a separate
-test application through the production loader. Add the actual commands and
-examples here only after they run. A no-op firmware scaffold is not that milestone.
+1. **Package the existing image.** Integrate with the maintained Pybricks package
+   and installation tools, resolve their metadata interface for a Zephyr image,
+   check writer bounds, and prepare restoration artifacts. Reuse or extend the
+   owning upstream tools; do not build a second flasher. See [recovery](recovery.md).
+2. **Verify boot and restoration.** Identify the actual board and loader, establish
+   independent recovery, then verify Pybricks → Brickphyr → Pybricks on authorized
+   hardware. Exercise the existing console, cold boot, reboot, and USB reconnection
+   without resetting battery-powered uptime. Keep motor outputs inactive. Verify
+   the original LEGO transitions and interrupted-transfer recovery separately;
+   the first ordinary cycle does not establish them.
+3. **Evaluate USB interface selection.** Run the [host-interface experiment](host.md#usb-selection-experiment)
+   on the working USB foundation: select Shell and Pybricks identification from
+   the computer and return without buttons or reboot. Reject the mechanism if
+   host-driver access or session ownership cannot meet the contract.
+4. **Implement settings and power policy.** Start with actual power/session state,
+   runtime settings, and controlled inactivity shutdown. Add a storage driver and
+   a recovery-compatible partition before enabling explicit save. Verify effective
+   values, invalid-input rejection, persistence across reboot, and physical power
+   behavior under the [common settings contract](settings.md).
+5. **Add application management and a native application.** Evaluate standard
+   management/transfer mechanisms, with SMP as the preferred candidate. Use one
+   lifecycle for Shell and protocol operations. Reproduce the firmware and SDK
+   from the same checkout; load a separate application through the real loader.
+   Verify output, stop, disconnect/reconnect, rejection, and fault cleanup before
+   expanding to sensor and motor access.
+6. **Integrate Python and WASM through that lifecycle.** Verify supported Pybricks
+   client/API behavior and WAMR execution incrementally, including cancellation
+   and system responsiveness. Preserve their shared service requirements during
+   native development; neither engine is an incompatible later fork.
+
+USB wake after shutdown is a separate experiment after reliable power control,
+not a prerequisite for automated tests. Full compatibility and broader hardware
+coverage grow from executable results. Add installation and application commands
+only after they work; keep local measurements and handoffs in ignored reports.

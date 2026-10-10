@@ -17,9 +17,11 @@ dev = [
     "pytest>=8",
     "pyyaml>=6",
     "ruff>=0.16,<1",
+    "semver>=3",
     "west>=1.5",
 ]
-sdk = ["patool>=2", "requests>=2.32.4", "semver", "tqdm>=4.67.1"]
+sdk = ["patool>=2", "requests>=2.32.4", "tqdm>=4.67.1"]
+flash = ["argcomplete>=3.6", "bleak>=3", "hidapi>=0.15", "pyusb>=1.3", "tqdm>=4.67.1"]
 
 [tool.uv]
 package = false

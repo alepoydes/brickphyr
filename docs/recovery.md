@@ -9,9 +9,11 @@ execute on an unidentified hub.
 
 An invalid user application, failed application transfer, or broken Brickphyr
 Bluetooth implementation must not remove the independent way to reinstall
-firmware. Preserve the existing hub boot chain and reuse the Pybricks installation
-and restoration mechanisms where compatible. Do not introduce a new bootloader
-merely because Zephyr commonly uses one.
+firmware. Preserve the factory LEGO bootloader and its independent recovery entry.
+Use the standard Pybricks installer, including installation or replacement of the
+second-stage mboot when that installer requires it. Brickphyr adds no separate
+bootloader implementation; hardware detection and installation paths belong in
+the maintained Pybricks tooling.
 
 Installation must accept a supported hub running either original LEGO firmware
 or Pybricks, without requiring an intermediate Pybricks installation. Updating
@@ -27,10 +29,11 @@ the existing Pybricks tooling. Extend that tooling when an actual missing capabi
 prevents reuse, following [the upstream workflow](upstream.md); do not create a
 second implementation or a wrapper that merely renames the same commands.
 
-The supported fault model must include a bad main firmware and interruption of
-main-firmware transfer. It does not promise recovery from every hardware failure,
-corrupt privileged flash driver, changed protection option, or erased bootloader.
-An unrestricted privileged image cannot be made harmless by documentation alone.
+Bad main firmware and an interrupted update, including a second-stage update,
+must remain recoverable through factory DFU without a functioning application.
+Neither installation nor application execution may erase the factory loader or
+change its protection. Hardware faults are outside this firmware recovery contract.
+Physical recovery checks are required before claiming the contract is verified.
 
 ## Initial Prime F4 source map
 
@@ -40,7 +43,7 @@ describes:
 | Internal region | Start | Size | Treatment |
 | --- | --- | --- | --- |
 | Factory DFU loader | `0x08000000` | 32 KiB | Preserve; upstream calls it non-erasable, verify the actual protection |
-| Second-stage DFU loader | `0x08008000` | 32 KiB | Preserve its role in official firmware compatibility |
+| Second-stage DFU loader | `0x08008000` | 32 KiB | May be installed or replaced by the standard Pybricks installer |
 | Main firmware | `0x08010000` | 960 KiB | Candidate Brickphyr executable region for this layout only |
 
 This map is not universal across hub families or revisions. Product identification,
@@ -71,8 +74,10 @@ The source reference's
 distinguishes F4/H5 and frozen/second-stage DFU using device properties and flash
 geometry. For F4 already running mboot it writes at `0x08010000`, with the initial
 stack word committed last. Its frozen-F4 path can instead install a second-stage
-loader. That second path must not be invoked as an incidental Brickphyr update.
-Prime product ID alone is insufficient to select a writer path.
+loader starting at `0x08008000`. Both are supported installer paths; neither
+erases the factory loader. Device detection and path selection remain owned by
+Pybricks. Short tests exercise both paths with a simulated DFU device, checking
+factory-region exclusion and first-word-last ordering without changing the writer.
 
 Package integration and focused host-tool checks can be developed without a hub.
 Before an actual firmware write, the installer must identify the connected hub
@@ -87,12 +92,13 @@ The reference's [CLI](https://github.com/pybricks/pybricks-micropython/blob/8aa9
 already handles firmware packages and includes paths for entering update mode
 from Pybricks and supported official SPIKE Prime firmware. Pybricks Code also
 documents [custom firmware ZIP installation](https://pybricks.com/learn/getting-started/install-pybricks/).
-These are integration starting points, not evidence that the current Brickphyr
-binary has been packaged or installed successfully. The reference's
+These are integration starting points, not evidence of a Brickphyr installation.
+The reference's
 [metadata generator](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/tools/metadata.py)
-expects Pybricks linker-map sections; Zephyr package integration still needs to
-resolve that interface without fabricating Pybricks sections or copying its
-hardware/format tables.
+normally expects Pybricks linker-map sections. The experimental extension accepts
+images without a customizable name, allowing [Zephyr packaging](builds.md#experimental-firmware-package)
+without fabricated sections or duplicate hardware/format tables. The resulting
+F4 package round-trips through the Pybricks reader with its binary unchanged.
 
 The first physical cycle is Pybricks → Brickphyr → Pybricks, checking a working
 console and the restored firmware's ordinary connection. Also verify cold boot,
@@ -111,7 +117,7 @@ ordinary recovery is established. No such cycle has been performed yet.
 3. Establish the existing loader connection before testing new firmware. Select
    and review the exact image type, bounds, metadata, and writer behavior.
 4. On explicitly authorized hardware, install the minimal board image while
-   preserving the boot chain. Verify recovery when the main application provides
+   preserving the factory loader. Verify recovery when the main application provides
    no Bluetooth service. Test the retained USB DFU path on the first capable hub.
 5. Verify the paths from LEGO and Pybricks to Brickphyr and back to each, with
    named hardware/builds. Test transfer interruption only after the recovery
@@ -127,8 +133,8 @@ reports; do not claim all-board recovery from a single successful restoration.
   options. Firmware updates are a separate privileged operation.
 - Image validation must reject wrong target, bad length/range, and incompatible
   format before erasing. Preserve existing bootloader integrity requirements.
-- Do not replace factory/second-stage loaders or alter readout/debug protection
-  as an incidental step in a radio, storage, or runtime change.
+- Never erase or overwrite the factory LEGO loader or change its protection.
+  Second-stage installation and replacement use the standard Pybricks workflow.
 - An image must not be selected solely from a marketing name or USB product
   string. Match the actual descriptors and supported hardware identification.
 - Before replacing a running application or firmware, confirm STOP. A command

@@ -1,7 +1,7 @@
 # Architecture
 
 This is the selected design. Implementation status belongs in
-[hardware](hardware.md), [builds](builds.md), and [development context](../AI/context.md).
+[hardware](hardware.md) and [builds](builds.md).
 
 ## Purpose and boundaries
 
@@ -19,6 +19,11 @@ One user application runs at a time. This does not mean one system thread:
 hardware, communication, and lifecycle services must continue independently.
 General-purpose multi-process scheduling and simultaneous native/Python/WASM
 applications are outside the initial scope.
+
+One Zephyr system serves all execution engines and host interfaces. Selecting a
+Pybricks-compatible or extended management interface does not switch operating
+systems. Use useful POSIX APIs where they help portability; full POSIX conformance,
+a Unix process model, and a POSIX shell are not project goals.
 
 ## Execution and ownership
 
@@ -101,6 +106,10 @@ is experimental and paired with a matching SDK; application format and required
 capabilities determine admission. A firmware build selects available engines;
 source language alone does not select a runtime. Unsupported formats do not cause
 an implicit firmware replacement.
+
+[Host connections](host.md) define a single computer management session and
+interface selection. [Settings and power](settings.md) define shared configuration,
+explicit persistence, and inactivity shutdown independently of user programs.
 
 Keep future extensions local to an existing boundary. Add a controller protocol,
 device driver, or transport when there is concrete hardware and a test, not a

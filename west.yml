@@ -2,6 +2,10 @@
 manifest:
   version: "1.2"
   projects:
+    - name: pybricks
+      url: https://github.com/pybricks/pybricks-micropython
+      revision: 8aa9986cd0666fb610225de05440fb6d1f99c4ab # v4.1.0b4
+      path: modules/pybricks
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
       revision: dccb09599635bdff17633fa7e9dab014b91dce90 # v4.4.2

@@ -15,6 +15,9 @@ to resume work without access to a previous conversation or a personal rules fil
   are useful only when they also reduce concepts, duplication, or execution cost.
 - Preserve agreed contracts. Discuss substantive changes before implementing
   them. Routine implementation choices within those contracts need no new vote.
+- Discuss proposed lasting decisions in chat before recording them in public
+  documentation. Record them after agreement; an explicit request to document
+  agreed decisions authorizes that update without another confirmation.
 - Reuse maintained code through documented interfaces. Do not copy dependencies,
   patch private host APIs, invent hardware facts, or fabricate measurements.
 - Keep helper functions local and the public interface small. Do not introduce
@@ -54,6 +57,9 @@ to resume work without access to a previous conversation or a personal rules fil
   out of Git. Small curated regression fixtures need provenance and a purpose.
 - Agents must not invent human authorship or add human DCO sign-offs. Follow the
   destination project's current AI attribution rules for upstream submissions.
+- At handoff, prepare an English commit-message draft in Git metadata, without
+  committing. Use a short list: `+` for additions, `-` for removals, and `*` for
+  changes, with a few words per item.
 
 ## Hardware and handoff
 

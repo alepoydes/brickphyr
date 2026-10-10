@@ -26,8 +26,9 @@ recovery paths are understood. See [hardware support](docs/hardware.md).
   interface. Applications are separate from the firmware and its source tree.
 - Installed runtime engines determine which application formats a firmware can
   load. The uploaded application's format selects its engine.
-- Existing bootloader and restoration mechanisms are preserved. Available flash
-  is used subject to actual hardware and recovery constraints, without the
+- The factory LEGO bootloader and independent recovery are preserved; Pybricks
+  manages second-stage updates. Available flash is used subject to actual
+  hardware and recovery constraints, without the
   inherited fixed division into five small program slots.
 
 The balancing robot project, babybot, remains an independent application and an
@@ -44,6 +45,8 @@ do not belong in this firmware.
 | Understand workspace, builds, and dependencies | [Builds](docs/builds.md) |
 | Write or load an application | [Applications](docs/applications.md) |
 | Check Pybricks compatibility | [Compatibility](docs/compatibility.md) |
+| Understand host interfaces and session ownership | [Host connections](docs/host.md) |
+| Understand settings and inactivity shutdown | [Settings and power](docs/settings.md) |
 | Work on Bluetooth | [Bluetooth](docs/bluetooth.md) |
 | Install or restore firmware | [Recovery design](docs/recovery.md) — no install commands yet |
 | Validate software or hardware | [Testing](docs/testing.md) |
@@ -54,9 +57,10 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-The next hardware step is identifying a Prime board revision and verifying
-installation, the USB shell, and restoration to Pybricks. An isolated native
-application using real sensor and motor services follows that bring-up.
+The next work is publishing the packaging dependency change and verifying
+installation, the USB shell, and restoration on an identified board and loader. The
+[acceptance milestones](docs/builds.md#acceptance-milestones) place interface
+selection, settings/power, and separate applications after that hardware bring-up.
 Subsystem contracts and implementation boundaries are linked in
 [the project orientation](AI/context.md).
 
