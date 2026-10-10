@@ -60,6 +60,32 @@ This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetoot
 GATT characteristic addresses distinguish services without guessing payloads;
 that does not relax the single-management-session rule.
 
+### Host CLI
+
+`brickphyrdev` provides the native Bluetooth terminal and USB interface commands.
+After [workspace setup](builds.md#setup-and-board-bring-up), run it from the repository:
+
+```sh
+uv run brickphyrdev --help
+```
+
+To use the installed command from any directory, activate the environment once:
+
+```sh
+source .venv/bin/activate
+brickphyrdev terminal
+```
+
+Runtime dependencies belong to the package; these commands need no `flash` group.
+Ordinary `uv run` uses the locked versions. `--locked` is useful for builds and
+validation: it rejects an outdated lockfile instead of updating it. See
+[uv locking](https://docs.astral.sh/uv/concepts/projects/sync/).
+
+The CLI currently targets Linux. USB identity and Pybricks-to-Shell handover use
+the local [pybricksdev CDC extension](upstream.md#usb-experiment-prerequisites).
+Keep that dependency until the extension is published; the installed CLI itself
+does not require west or firmware sources at runtime.
+
 ### Native Bluetooth terminal
 
 The shared Shell passes native stream/session tests and Linux BLE checks on the
@@ -70,7 +96,7 @@ not establish radio-fault recovery or cross-platform terminal support.
 Close the USB terminal or other controlling client. On Linux, from the repository:
 
 ```sh
-uv run --locked --group flash python -m tools.terminal
+uv run brickphyrdev terminal
 ```
 
 The client discovers `Brickphyr` and connects directly after boot, independently
@@ -106,8 +132,8 @@ same channel as the human Shell. It uses the same session owner and Settings
 handlers. Close the terminal before starting a management client:
 
 ```sh
-uv run --locked --group flash python -m tools.host select shell
-uv run --locked smpmgr --port /dev/ttyACM0 os echo Brickphyr
+uv run brickphyrdev usb select shell
+uv run smpmgr --port /dev/ttyACM0 os echo Brickphyr
 ```
 
 Use the port reported by `python -m serial.tools.list_ports -v`. The unchanged
@@ -119,7 +145,7 @@ advertising at boot; if stopped explicitly, run `bluetooth on` in the terminal.
 Close USB before using:
 
 ```sh
-uv run --locked smpmgr --ble Brickphyr --timeout 10 os echo Brickphyr
+uv run smpmgr --ble Brickphyr --timeout 10 os echo Brickphyr
 ```
 
 For multiple nearby hubs, specify the address reported by BLE discovery instead
@@ -182,36 +208,36 @@ specific to Brickphyr and must not be sent to an unidentified upstream hub.
 Close the current terminal or client before selection. From the repository:
 
 ```sh
-uv run --locked --group flash python -m tools.host status
-uv run --locked --group flash python -m tools.host select shell
-uv run --locked python -m serial.tools.list_ports -v
-uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+uv run brickphyrdev usb status
+uv run brickphyrdev usb select shell
+uv run python -m serial.tools.list_ports -v
+uv run python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
 Use the listed port instead of `/dev/ttyACM0` when different. Run `info` and
-`uptime`, then exit with **Ctrl+]**. Switch and identify through the unmodified
-client in the selected Pybricks checkout:
+`uptime`, then exit with **Ctrl+]**. Switch and identify through the installed
+pybricksdev client:
 
 ```sh
-uv run --locked --group flash python -m tools.host select pybricks
-uv run --locked --group flash python -m tools.host identify
-uv run --locked --group flash python -m tools.host select shell
-uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+uv run brickphyrdev usb select pybricks
+uv run brickphyrdev usb identify
+uv run brickphyrdev usb select shell
+uv run python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
 `uptime` must continue across the round trip. After reboot, select Shell again.
 To exercise the in-band commands instead of selecting through USB control requests:
 
 ```sh
-uv run --locked --group flash python -m tools.host handover shell
-uv run --locked --group flash python -m tools.host handover pybricks
+uv run brickphyrdev usb handover shell
+uv run brickphyrdev usb handover pybricks
 ```
 
 The tool opens the current interface exclusively, reads its acknowledgment,
 closes it, and checks that the requested interface became available.
 
-For several hubs, pass `--serial SERIAL_NUMBER` before the subcommand. Linux USB
-permissions must allow device control requests as well as opening the serial port.
+For several hubs, pass `--serial SERIAL_NUMBER` after `usb` and before its subcommand.
+Linux USB permissions must allow device control requests as well as opening the serial port.
 On a Linux desktop using systemd-logind, install the scoped udev rule once:
 
 ```sh
@@ -231,7 +257,7 @@ are unverified. Browser discovery over BLE is covered in
 ### Implemented Pybricks subset
 
 Reuse Pybricks' COBS codec, protocol constants, PnP and capability encoders.
-The upstream `tools/flash/serdev/pybricks.py` client supplies host reads.
+The installed pybricksdev client supplies host reads and command framing.
 
 - Read device name, actual Brickphyr firmware version, protocol version, factory
   hub variant and hub kind. Unknown characteristics return an empty value.

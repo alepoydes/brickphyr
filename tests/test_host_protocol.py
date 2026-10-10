@@ -13,8 +13,6 @@ from pathlib import Path
 import pytest
 from west.manifest import Manifest
 
-from tools.host import protocol_client
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,7 +44,10 @@ def protocol_bridge(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def protocol(protocol_bridge):
-    client = protocol_client()
+    pybricks = Path(Manifest.from_topdir().get_projects(["pybricks"])[0].abspath)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.syspath_prepend(str(pybricks / "tools/flash"))
+        from serdev import pybricks as client
 
     def exchange(request):
         output = subprocess.run(
@@ -61,9 +62,13 @@ def protocol(protocol_bridge):
     return client, exchange
 
 
-def test_pybricksdev_serial_client(protocol_bridge):
+def test_pybricksdev_serial_client(protocol_bridge, monkeypatch, capsys):
+    import usb.util
     from pybricksdev.ble.pybricks import PYBRICKS_COMMAND_EVENT_UUID, SW_REV_UUID
     from pybricksdev.connections.serial import PybricksHubSerial
+
+    from brickphyrdev import usb as brickphyr_usb
+    from brickphyrdev.cli import main
 
     master, slave = pty.openpty()
     tty.setraw(slave)
@@ -102,6 +107,32 @@ def test_pybricksdev_serial_client(protocol_bridge):
         assert result.returncode == 0, result.stderr
         assert "Name: Brickphyr" in result.stdout
         assert "Firmware: 0.1.0+bringup" in result.stdout
+
+        # Only USB enumeration/control is simulated; identity and handover use the
+        # installed client over the PTY against the production firmware handler.
+        hub = object()
+        released = []
+        monkeypatch.setattr(brickphyr_usb, "device", lambda serial: hub)
+        monkeypatch.setattr(brickphyr_usb, "serial_port", lambda hub: os.ttyname(slave))
+        monkeypatch.setattr(brickphyr_usb, "status", lambda hub: ("pybricks", False, True))
+        monkeypatch.setattr(usb.util, "dispose_resources", released.append)
+        monkeypatch.setattr(sys, "argv", ["brickphyrdev", "usb", "identify"])
+        main()
+        output = capsys.readouterr().out
+        assert "name: Brickphyr" in output
+        assert "protocol: 1.7.0" in output
+        assert released == [hub]
+
+        statuses = iter(
+            (("pybricks", False, True), ("pybricks", True, False), ("shell", False, True))
+        )
+        monkeypatch.setattr(
+            brickphyr_usb, "status", lambda hub: next(statuses, ("shell", False, True))
+        )
+        monkeypatch.setattr(sys, "argv", ["brickphyrdev", "usb", "handover", "shell"])
+        main()
+        assert "shell: idle, selectable" in capsys.readouterr().out
+        assert released == [hub, hub]
     finally:
         process.terminate()
         process.wait(timeout=2)

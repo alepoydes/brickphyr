@@ -11,6 +11,11 @@ instance on both paths. Additional checks cover stale input/output, USB rejectio
 during BLE ownership, and disconnect during an accepted command. These are native
 simulation checks, not evidence of Bluetooth radio behavior.
 
+The Python protocol checks also run `brickphyrdev` USB identity and handover through
+the installed pybricksdev library against the production C handler over a PTY.
+USB enumeration/control is simulated. Packaging can be checked with `uv build`;
+the resulting wheel contains the CLI, not firmware sources or development reports.
+
 ## Run the bring-up checks
 
 After [workspace setup](builds.md), including the experimental

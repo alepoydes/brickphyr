@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Open the hub's native BLE terminal; line editing runs entirely on the hub."""
 
-import argparse
 import asyncio
 import os
 import sys
@@ -95,15 +94,5 @@ async def terminal(target):
             raise RuntimeError("BLE terminal disconnected")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", nargs="?", default="Brickphyr", help="Hub name or BLE address")
-    args = parser.parse_args()
-    try:
-        asyncio.run(terminal(args.target))
-    except (Exception, KeyboardInterrupt) as error:
-        parser.exit(1, f"{error}\n")
-
-
-if __name__ == "__main__":
-    main()
+def run(args):
+    asyncio.run(terminal(args.target))

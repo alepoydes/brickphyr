@@ -30,8 +30,10 @@ fragmented echo and Settings read/write/save also pass. The native BLE terminal
 shares the exact USB Shell instance, parser, editor, history and command handlers.
 Cold-boot BLE entry, editing, long output, reconnection, the Linux terminal CLI,
 and return to USB/SMP/Pybricks are checked on the Inventor F4. See
-[terminal usage](../docs/host.md#native-bluetooth-terminal). Application loading and
-Python/WASM execution are not implemented yet. Current availability belongs in
+[terminal usage](../docs/host.md#native-bluetooth-terminal). The installed `brickphyrdev`
+CLI provides the BLE terminal and USB selection/identity commands; it uses
+pybricksdev for CDC operations without loading scripts from the firmware checkout.
+Application loading and Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 Pybricks Code discovery, connection and reconnection pass through real Chromium
 Web Bluetooth; the website warns about the newer profile version. See

@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Select the experimental USB interface without detaching the CDC driver."""
 
-import argparse
+import asyncio
+import contextlib
 import sys
 import time
-from pathlib import Path
 
 import serial
 import serial.tools.list_ports
-from west.manifest import Manifest
 
 REQUEST = 0x42
 MODES = ("pybricks", "shell")
@@ -76,37 +75,55 @@ def select(hub, mode):
             raise RuntimeError(f"Hub did not select {mode}")
 
 
-def protocol_client():
-    project = Manifest.from_topdir().get_projects(["pybricks"])[0]
-    sys.path.insert(0, str(Path(project.abspath) / "tools/flash"))
-    from serdev import pybricks
-
-    return pybricks
+@contextlib.asynccontextmanager
+async def _pybricks_connection(port):
+    try:
+        from pybricksdev.connections.serial import PybricksHubSerial
+    except ImportError as error:
+        raise RuntimeError(
+            "USB requires the Brickphyr pybricksdev CDC extension; see docs/upstream.md"
+        ) from error
+    client = PybricksHubSerial(port)
+    try:
+        await client.connect()
+        yield client
+    except BaseException:
+        # Report the failed operation even if releasing the port also fails.
+        with contextlib.suppress(Exception):
+            await client.disconnect()
+        raise
+    else:
+        await client.disconnect()
 
 
 def identify(hub):
     selected, occupied, ready = status(hub)
     if selected != "pybricks" or occupied or not ready:
         raise RuntimeError("Select pybricks and close other clients before identification")
-    client = protocol_client()
-    with serial.Serial(
-        serial_port(hub), 115200, timeout=1, write_timeout=1, exclusive=True
-    ) as port:
-        port.reset_input_buffer()
-        for name, service, characteristic in (
-            ("name", 1, 0x2A00),
-            ("firmware", 1, 0x2A26),
-            ("protocol", 1, 0x2A28),
-            ("pnp", 1, 0x2A50),
-            ("capabilities", 2, 3),
-        ):
-            client.send_read(port, service, characteristic)
-            reply = client.read_frame(port, timeout=1)
-            prefix = bytes((3, service)) + characteristic.to_bytes(2, "little")
-            if reply is None or not reply.startswith(prefix):
-                raise RuntimeError(f"Invalid {name} response: {reply!r}")
-            value = reply[4:]
-            print(f"{name}: {value.hex() if name in ('pnp', 'capabilities') else value.decode()}")
+
+    async def read():
+        from pybricksdev.ble.pybricks import (
+            DEVICE_NAME_UUID,
+            FW_REV_UUID,
+            PNP_ID_UUID,
+            PYBRICKS_HUB_CAPABILITIES_UUID,
+            SW_REV_UUID,
+        )
+
+        async with _pybricks_connection(serial_port(hub)) as client:
+            for name, characteristic in (
+                ("name", DEVICE_NAME_UUID),
+                ("firmware", FW_REV_UUID),
+                ("protocol", SW_REV_UUID),
+                ("pnp", PNP_ID_UUID),
+                ("capabilities", PYBRICKS_HUB_CAPABILITIES_UUID),
+            ):
+                value = await client.read_gatt_char(characteristic)
+                print(
+                    f"{name}: {value.hex() if name in ('pnp', 'capabilities') else value.decode()}"
+                )
+
+    asyncio.run(read())
 
 
 def handover(hub, mode):
@@ -115,25 +132,30 @@ def handover(hub, mode):
         raise RuntimeError("Close other clients before requesting a handover")
     if current == mode:
         return
-    with serial.Serial(
-        serial_port(hub), 115200, timeout=2, write_timeout=2, exclusive=True
-    ) as port:
-        if current == "shell":
+    if current == "shell":
+        with serial.Serial(
+            serial_port(hub), 115200, timeout=2, write_timeout=2, exclusive=True
+        ) as port:
             if not port.read_until(b"brickphyr> ").endswith(b"brickphyr> "):
                 raise TimeoutError("Shell did not become ready")
             port.write(b"host_mode pybricks\r")
             reply = port.read_until(b"brickphyr> ")
             if b"Pybricks selected for the next session." not in reply:
                 raise RuntimeError(f"Handover rejected: {reply!r}")
-        else:
-            client = protocol_client()
-            # Brickphyr-specific EXIT_COMPATIBILITY, correlated with tag 1.
-            client.send_frame(port, bytes((2, 1, 0x80)))
-            reply = client.read_frame(port, timeout=2)
-            if reply != bytes((1, 1, 0, 0, 0, 0)):
-                raise RuntimeError(f"Handover rejected: {reply!r}")
-        if status(hub)[0] != current:
-            raise RuntimeError("Interface changed before its owner closed the session")
+            if status(hub)[0] != current:
+                raise RuntimeError("Interface changed before its owner closed the session")
+    else:
+
+        async def leave():
+            from pybricksdev.ble.pybricks import PYBRICKS_COMMAND_EVENT_UUID
+
+            async with _pybricks_connection(serial_port(hub)) as client:
+                # Brickphyr-specific EXIT_COMPATIBILITY; the client correlates the reply.
+                await client.write_gatt_char(PYBRICKS_COMMAND_EVENT_UUID, b"\x80", True)
+                if status(hub)[0] != current:
+                    raise RuntimeError("Interface changed before its owner closed the session")
+
+        asyncio.run(leave())
     deadline = time.monotonic() + 2
     while status(hub) != (mode, False, True):
         if time.monotonic() >= deadline:
@@ -141,20 +163,9 @@ def handover(hub, mode):
         time.sleep(0.02)
 
 
-def main():
-    import usb.core
+def run(args):
     import usb.util
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--serial", help="USB serial number when several hubs are connected")
-    commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("status")
-    selection = commands.add_parser("select")
-    selection.add_argument("mode", choices=MODES)
-    switching = commands.add_parser("handover", help="Switch using the current protocol's command")
-    switching.add_argument("mode", choices=MODES)
-    commands.add_parser("identify", help="Read identity using the unmodified Pybricks client")
-    args = parser.parse_args()
     hub = None
     try:
         hub = device(args.serial)
@@ -169,12 +180,10 @@ def main():
         print(
             f"{mode}: {'occupied' if occupied else 'idle'}, {'selectable' if ready else 'selection blocked'}"
         )
-    except (RuntimeError, ValueError, TimeoutError, usb.core.USBError, serial.SerialException) as error:
-        parser.exit(1, f"{error}\n")
     finally:
         if hub is not None:
-            usb.util.dispose_resources(hub)
-
-
-if __name__ == "__main__":
-    main()
+            if sys.exception() is not None:
+                with contextlib.suppress(Exception):
+                    usb.util.dispose_resources(hub)
+            else:
+                usb.util.dispose_resources(hub)

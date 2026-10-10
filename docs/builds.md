@@ -47,8 +47,9 @@ have one owner in the resolved manifest. The reference firmware in
 
 Use upstream Zephyr CMake, Kconfig, devicetree, SDK, and west interfaces. Python
 tooling uses `pyproject.toml` and a committed `uv.lock`; use `uv run --locked`
-for reproducible project commands. Firmware, SDK, and Python package versions are
-different dependencies and must all be recorded where applicable.
+for reproducible builds and checks. For everyday hub interaction, use the installed
+[`brickphyrdev` CLI](host.md#host-cli) or `uv run brickphyrdev`. Firmware, SDK, and
+Python package versions are different dependencies and must all be recorded where applicable.
 
 At a release, retain the resolved manifest, toolchain identity, build configuration,
 partition map, resource report, and source licenses. Keep generated output in
@@ -180,15 +181,15 @@ enabled in the F4 build, but application isolation is not yet exercised.
 Run these commands from the Brickphyr repository. First list serial ports:
 
 ```sh
-uv run --locked python -m serial.tools.list_ports -v
+uv run python -m serial.tools.list_ports -v
 ```
 
 Find `Brickphyr bring-up console` (`2fe3:0004`) and open its device. For
 `/dev/ttyACM0`, use:
 
 ```sh
-uv run --locked --group flash python -m tools.host select shell
-uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
+uv run brickphyrdev usb select shell
+uv run python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
 Replace `/dev/ttyACM0` if the port listing shows another device. Press Enter to
