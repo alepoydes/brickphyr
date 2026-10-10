@@ -143,7 +143,7 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 	int64_t remaining = MAX((int64_t)seconds * 1000 - (k_uptime_get() - idle_since), 0);
 	k_spin_unlock(&lock, key);
 	shell_print(shell, "Source: %s; management owner: %s",
-		vbus < 0 ? "unknown" : vbus ? "USB" : "battery", owner ? "USB" : "none");
+		vbus < 0 ? "unknown" : vbus ? "USB" : "battery", owner ? "active" : "none");
 	shell_print(shell, "Idle timeout: battery %" PRIu32 " s, USB %" PRIu32 " s",
 		battery, usb);
 	const char *inhibit = stopping ? "shutdown pending" : owner ? "active management session" :

@@ -25,3 +25,9 @@ struct host_protocol {
  * Reset the structure between sessions. The caller owns all storage. */
 size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 			    uint16_t hub_variant, uint8_t output[HOST_PROTOCOL_FRAME_MAX]);
+
+/* Transport-independent values and command validation. The transport applies
+ * accepted session changes; application operations are not implemented yet. */
+size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
+			  uint16_t max_write, uint8_t value[HOST_PROTOCOL_PAYLOAD_MAX - 3]);
+uint8_t host_protocol_command(const uint8_t *command, size_t length);

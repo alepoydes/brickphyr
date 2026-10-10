@@ -203,7 +203,8 @@ interface cannot be displaced: confirmation briefly extinguishes the white BT
 light and leaves the menu open. In normal operation BT lighting is off.
 The 5×5 display is not implemented. An optional
 [Bluetooth controller profile](bluetooth.md#experimental-f4-controller) provides
-radio initialization and advertising; Bluetooth management is not implemented yet.
+Pybricks BLE identification/status and shared USB/BLE ownership. SMP over BLE
+is not implemented yet.
 
 For a short check, press each button briefly, then run:
 
@@ -217,7 +218,8 @@ led bluetooth 0 0 0
 `led center` stops the animation; `led bluetooth` leaves it running. Interface or
 menu changes restore automatic lighting, as does reboot.
 The RGB values are raw intensity commands, not Pybricks color calibration.
-The shell remains available if a device fails to initialize and reports errors.
+The base build reports device initialization errors through the shell. The optional
+Bluetooth profile still has the [HCI timeout limitation](bluetooth.md#experimental-f4-controller).
 Charging control is not implemented; the LED controller's charger-enable output
 is held disabled. See [hardware](hardware.md) for physical verification and
 [testing](testing.md) for local driver checks.

@@ -14,3 +14,9 @@ void host_connection_changed(bool open);
 void host_interface_status(uint8_t state[8]);
 enum host_mode host_interface_current(void);
 int host_interface_select(uint16_t mode);
+
+/* BLE claims the same management slot. Release only the successfully acquired
+ * session, after its accepted operations and callbacks have quiesced. */
+int host_ble_acquire(void);
+void host_ble_release(bool exit_compatibility);
+uint16_t host_hub_variant(void);

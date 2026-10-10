@@ -32,6 +32,8 @@ static struct k_spinlock lock;
 static uint8_t mode;
 static int next_mode = -1;
 static bool occupied;
+static bool usb_open;
+static bool ble_occupied;
 static bool ready;
 static bool tx_idle;
 static int first_error;
@@ -431,7 +433,12 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 void host_connection_changed(bool open)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (!hub_power_connection(open)) {
+	if (open && usb_open) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	usb_open = open;
+	if (ble_occupied || !hub_power_connection(open)) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
@@ -461,8 +468,8 @@ void host_interface_status(uint8_t state[8])
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	state[0] = 1;
 	state[1] = mode;
-	state[2] = occupied;
-	state[3] = ready && tx_idle && !first_error;
+	state[2] = occupied || ble_occupied;
+	state[3] = ready && tx_idle && !ble_occupied && !first_error;
 	sys_put_le32(first_error, state + 4);
 	k_spin_unlock(&lock, key);
 	/* Refresh completion in the UART callback, the API's required context. */
@@ -476,7 +483,7 @@ int host_interface_select(uint16_t requested)
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int result = 0;
-	if (occupied || !ready || !tx_idle || first_error) {
+	if (usb_open || occupied || ble_occupied || !ready || !tx_idle || first_error) {
 		result = -EBUSY;
 	} else {
 		mode = requested;
@@ -491,4 +498,39 @@ enum host_mode host_interface_current(void)
 	enum host_mode current = mode;
 	k_spin_unlock(&lock, key);
 	return current;
+}
+
+int host_ble_acquire(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = 0;
+	if (usb_open || occupied || ble_occupied || !ready || !tx_idle || first_error) {
+		err = -EBUSY;
+	} else if (!hub_power_connection(true)) {
+		err = -ESHUTDOWN;
+	} else {
+		ble_occupied = true;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+void host_ble_release(bool exit_compatibility)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (ble_occupied) {
+		ble_occupied = false;
+		hub_power_connection(false);
+		if (exit_compatibility) {
+			mode = HOST_SHELL;
+		}
+	}
+	/* A USB open rejected during BLE ownership must close and reopen. Never
+	 * inherit bytes or execute a command queued by the rejected contender. */
+	k_spin_unlock(&lock, key);
+}
+
+uint16_t host_hub_variant(void)
+{
+	return variant;
 }

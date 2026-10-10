@@ -19,6 +19,8 @@ verified over USB; LEGO restoration and interrupted-transfer recovery remain
 unverified. The same shell runs in Zephyr's native simulator.
 The new [USB interface selector](docs/host.md) and minimal Pybricks identification
 endpoint pass host simulations and the Linux USB round trip on that Inventor F4.
+An optional [Bluetooth profile](docs/bluetooth.md) also provides Pybricks BLE
+identity/status and mutually exclusive USB/BLE management on the same hub.
 There is no application loader, SDK, or supported
 recovery procedure yet. See [builds](docs/builds.md) for commands.
 

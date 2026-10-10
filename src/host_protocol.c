@@ -6,12 +6,12 @@
 #include <pbio/util.h>
 #include <zephyr/app_version.h>
 
-static size_t read_characteristic(const uint8_t *request, uint16_t variant, uint8_t *value)
+size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
+			  uint16_t max_write, uint8_t value[HOST_PROTOCOL_PAYLOAD_MAX - 3])
 {
 	const char *text = NULL;
-	uint16_t id = pbio_get_uint16_le(request + 1);
 
-	if (request[0] == PBIO_PYBRICKS_READ_SERVICE_GATT) {
+	if (service == PBIO_PYBRICKS_READ_SERVICE_GATT) {
 		switch (id) {
 		case PBIO_GATT_DEVICE_NAME_CHAR_UUID:
 			text = "Brickphyr";
@@ -26,9 +26,9 @@ static size_t read_characteristic(const uint8_t *request, uint16_t variant, uint
 			pbio_pybricks_pnp_id(value, PBIO_PYBRICKS_HUB_KIND_PRIME, variant);
 			return PBIO_PYBRICKS_PNP_ID_SIZE;
 		}
-	} else if (request[0] == PBIO_PYBRICKS_READ_SERVICE_PYBRICKS && id == 0x0003) {
+	} else if (service == PBIO_PYBRICKS_READ_SERVICE_PYBRICKS && id == 0x0003) {
 		/* No engines, user-program storage or program slots yet. */
-		pbio_pybricks_hub_capabilities(value, HOST_PROTOCOL_PAYLOAD_MAX - 1, 0, 0, 0);
+		pbio_pybricks_hub_capabilities(value, max_write, 0, 0, 0);
 		return PBIO_PYBRICKS_HUB_CAPABILITIES_VALUE_SIZE;
 	}
 	if (!text) {
@@ -39,7 +39,7 @@ static size_t read_characteristic(const uint8_t *request, uint16_t variant, uint
 		length = HOST_PROTOCOL_PAYLOAD_MAX - 3;
 	}
 	memcpy(value, text, length);
-	if (request[0] == PBIO_PYBRICKS_READ_SERVICE_GATT &&
+	if (service == PBIO_PYBRICKS_READ_SERVICE_GATT &&
 	    id == PBIO_GATT_FIRMWARE_VERSION_CHAR_UUID) {
 		/* PEP 440 clients accept our bring-up label as local version metadata. */
 		uint8_t *separator = memchr(value, '-', length);
@@ -48,6 +48,15 @@ static size_t read_characteristic(const uint8_t *request, uint16_t variant, uint
 		}
 	}
 	return length;
+}
+
+uint8_t host_protocol_command(const uint8_t *command, size_t length)
+{
+	/* No application supervisor yet: even STOP must not imply one. */
+	if (!length || command[0] != HOST_COMMAND_EXIT_COMPATIBILITY) {
+		return PBIO_PYBRICKS_ERROR_INVALID_COMMAND;
+	}
+	return length == 1 ? PBIO_PYBRICKS_ERROR_OK : PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED;
 }
 
 size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
@@ -76,20 +85,16 @@ size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 	uint8_t reply[HOST_PROTOCOL_PAYLOAD_MAX];
 	if (type == PBIO_PYBRICKS_OUT_EP_MSG_READ && length == 3) {
 		memcpy(reply, message, 3);
-		length = 3 + read_characteristic(message, hub_variant, reply + 3);
+		length = 3 + host_protocol_read(message[0], pbio_get_uint16_le(message + 1),
+			hub_variant, HOST_PROTOCOL_PAYLOAD_MAX - 1, reply + 3);
 		return pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_READ_REPLY,
 						reply, length, output);
 	}
 	if (type == PBIO_PYBRICKS_OUT_EP_MSG_COMMAND && length >= 2) {
 		reply[0] = message[0];
-		/* There is no application supervisor yet: even STOP must not imply one. */
-		uint32_t error = PBIO_PYBRICKS_ERROR_INVALID_COMMAND;
-		if (message[1] == HOST_COMMAND_EXIT_COMPATIBILITY) {
-			error = length == 2 ? PBIO_PYBRICKS_ERROR_OK :
-				PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED;
-			if (!error) {
-				protocol->exit_compatibility = true;
-			}
+		uint8_t error = host_protocol_command(message + 1, length - 1);
+		if (!error && message[1] == HOST_COMMAND_EXIT_COMPATIBILITY) {
+			protocol->exit_compatibility = true;
 		}
 		pbio_set_uint32_le(reply + 1, error);
 		return pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_RESPONSE,

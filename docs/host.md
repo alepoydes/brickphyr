@@ -10,8 +10,10 @@ The Shell/Pybricks round trip is verified over Linux USB on one Robot Inventor F
 (PCB revision unknown), including busy rejection, terminal editing/history,
 partial-input isolation and uninterrupted uptime. Experimental SMP management
 shares the Shell channel and passes native simulation and Linux USB checks with
-standard clients, including fragmented packets and persistent settings. Bluetooth, application loading, and Python/WASM
-execution remain outside this implementation.
+standard clients, including fragmented packets and persistent settings. The optional
+[Bluetooth profile](bluetooth.md#experimental-f4-controller) provides Pybricks BLE
+identification/status with the same USB/BLE ownership rule. Application loading
+and Python/WASM execution remain outside this implementation.
 
 ## One management session
 
@@ -68,7 +70,7 @@ uv run --locked smpmgr --port /dev/ttyACM0 os echo Brickphyr
 
 Use the port reported by `python -m serial.tools.list_ports -v`. The unchanged
 `smpmgr` command and `smpclient` library are checked against a native Zephyr build
-over a pseudoterminal and Linux USB on the Inventor F4. Bluetooth remains unverified.
+over a pseudoterminal and Linux USB on the Inventor F4. SMP over Bluetooth is not yet implemented.
 
 The enabled groups provide OS echo/reset and Settings read/write/commit/whole-store
 save. Read and write operate on RAM; save is explicit. Settings values and storage

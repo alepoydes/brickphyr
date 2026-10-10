@@ -9,10 +9,11 @@ host stack to transplant wholesale.
 ## Experimental F4 controller
 
 An optional build initializes the Inventor F4 CC2564C through Zephyr's H:4 driver
-and the official TI service pack. Controller identification, initialization and
-nonconnectable advertising have been checked on Linux with one Inventor F4 (PCB
-revision unknown). This is not yet a Pybricks or SMP Bluetooth endpoint: GATT
-management services and shared USB/BLE ownership remain to be implemented.
+and the official TI service pack. Its Pybricks GATT endpoint provides identity,
+capabilities, status and explicit unsupported-command errors. Linux pybricksdev
+identification, reconnection, return to Shell and USB/BLE exclusion are checked on
+one Inventor F4 (PCB revision unknown). SMP over Bluetooth, program execution,
+pairing and controller input are not implemented in this profile.
 
 Build this profile from the repository:
 
@@ -22,19 +23,54 @@ uv run --locked west build -b spike_prime_f4 -d build/bluetooth-controller -t fi
 
 Install `build/bluetooth-controller/zephyr/firmware.zip` with the same
 [Pybricks installer](builds.md#experimental-firmware-package), then open the
-[USB terminal](host.md#usage). Radio initialization is explicit:
+[USB terminal](host.md#usage) and run:
 
 ```text
-bt init sync no-settings-load
-bt id-show
-bt advertise nconn identity name-ad
-bt advertise off
+bluetooth on
 ```
 
-The initialization must report `Bluetooth initialized`. The nonconnectable
-advertisement carries the name `Brickphyr`; stop it after the check. `sync` keeps
-initialization off the system workqueue used by USB. `no-settings-load` avoids an
-unrequested bulk settings reload. Boot does not automatically advertise.
+Close the terminal before connecting over BLE. The hub advertises the Pybricks
+service, PnP identity and name `Brickphyr`, and resumes advertising after a
+connection closes. A live USB owner rejects a BLE contender by disconnecting it;
+a live BLE owner rejects USB selection and discards incoming USB data. A rejected
+USB port must close and reopen before it can acquire ownership. Closing a host
+client may precede the hub's disconnect event: wait for ownership to be released
+before opening the other transport.
+
+The existing pybricksdev BLE client can identify the hub without uploading code:
+
+```sh
+uv run --locked --group flash python - <<'PY'
+import asyncio
+from pybricksdev.ble import find_device
+from pybricksdev.connections.pybricks import PybricksHubBLE
+
+async def main():
+    hub = PybricksHubBLE(await find_device(name="Brickphyr", timeout=10))
+    try:
+        await hub.connect()
+        print(hub.fw_version, hub.hub_kind, hub.hub_variant)
+    finally:
+        await hub.disconnect()
+
+asyncio.run(main())
+PY
+```
+
+The Device Information and Pybricks services reuse the USB endpoint's identity
+and command validation. Capabilities report no engines, slots or program storage.
+The Nordic UART notification characteristic exists because current clients
+subscribe to it; stdin writes are rejected until an execution engine exists.
+The Brickphyr exit command `0x80`, written with response to the Pybricks command
+characteristic, selects USB Shell after disconnection. Initial subscription
+reports BLE ownership and no running program; dynamic application status awaits
+the application supervisor. Pybricks Code/Web Bluetooth remains unverified.
+
+After closing BLE, open USB Shell and run `bluetooth off` to stop advertising and
+disable the controller. Boot does not automatically enable the radio. Initialization
+runs synchronously on the Shell thread and does not reload settings. The optional
+profile does not expose Zephyr's independent `bt` diagnostic shell, so radio
+lifecycle has one command path.
 
 The board supplies the required slow clock on TIM8 channel 4 / PC9, starts USART2
 at 115200 baud with RTS/CTS, and uses PA2 for controller reset. The 2930-cycle
@@ -48,8 +84,7 @@ The fixed script is validated before its commands run; Zephyr owns command/reply
 correlation and its HCI timeout. An unresponsive controller currently triggers
 Zephyr's timeout assertion rather than a recoverable radio-only error. Keep the
 [independent recovery path](recovery.md) available. Bluetooth throughput, pairing,
-controller input, and shared management ownership are not established by this
-initialization/advertising check.
+controller input, and behavior under combined application traffic remain unverified.
 
 ## Boundaries
 

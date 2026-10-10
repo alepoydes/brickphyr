@@ -17,8 +17,9 @@ Other host operating systems and physical idle-timeout shutdown remain unverifie
 The optional [Bluetooth controller profile](bluetooth.md#experimental-f4-controller)
 initializes the CC2564C through Zephyr and advertises as `Brickphyr`. Two
 initialization/advertising cycles, including controller disable between them,
-pass on the same Inventor F4 with Linux discovery. Bluetooth management services
-and shared USB/BLE ownership are not yet implemented.
+pass on the same Inventor F4 with Linux discovery. The Pybricks GATT endpoint
+also passes Linux pybricksdev identification/status, reconnect, return to Shell
+and USB/BLE exclusion checks. SMP over BLE remains unimplemented.
 
 ## Target matrix
 
@@ -36,7 +37,7 @@ The family name is not a board ID. Do not assume all Prime-family hardware uses
 the same MCU, radio, boot chain, or flash layout. Add revision-specific rows as
 hardware is identified; do not mark an entire family verified from one board.
 Inventor shares the relevant upstream F4 code. The verified scope above covers
-Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; Bluetooth management, motor outputs, and
+Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; SMP over Bluetooth, motor outputs, and
 application isolation have not been physically verified. Battery retention and
 center-button start/shutdown have operator
 observations on this hub, not current-consumption measurements.

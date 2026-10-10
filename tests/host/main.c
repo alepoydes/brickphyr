@@ -389,6 +389,51 @@ ZTEST(host, test_smp_settings_and_session_reset)
 	close_session();
 }
 
+ZTEST(host, test_ble_usb_exclusion)
+{
+	char output[512];
+	uint8_t state[8];
+	uint8_t seconds[4];
+	wait_idle();
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_equal(host_ble_acquire(), -EBUSY);
+	close_session();
+	zassert_ok(host_ble_acquire());
+	zassert_equal(host_ble_acquire(), -EBUSY);
+	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
+	host_interface_status(state);
+	zassert_true(state[2]);
+	zassert_false(state[3]);
+	sys_put_le32(1, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	int64_t now = k_uptime_get();
+	zassert_false(hub_power_update(1, false, now));
+	/* A rejected USB open/close must not release the BLE power hold. */
+	host_connection_changed(true);
+	host_connection_changed(false);
+	zassert_false(hub_power_update(1, false, now + 2000));
+	host_connection_changed(true);
+	unsigned int before = calls;
+	send("mark\r", 5);
+	k_msleep(5);
+	host_ble_release(true);
+	zassert_equal(host_interface_current(), HOST_SHELL);
+	host_connection_changed(true); /* repeated DTR-high is not a fresh open */
+	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
+	zassert_equal(host_ble_acquire(), -EBUSY);
+	sys_put_le32(0, seconds);
+	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
+	close_session();
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("\r", 1);
+	receive_until("brickphyr> ", output, sizeof(output));
+	zassert_equal(calls, before, "Rejected USB input reached a later session");
+	close_session();
+}
+
 ZTEST(host, test_zpower_settings_and_idle_claim)
 {
 	char output[512];

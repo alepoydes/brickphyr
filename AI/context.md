@@ -23,9 +23,9 @@ The operator observed battery operation, long-press shutdown, and subsequent
 button startup; `shutdown` also disconnected USB. Return to official Pybricks
 4.1.0b4/b6 and back to Brickphyr is verified over USB. LEGO restoration and interrupted
 updates remain unverified. The optional [Bluetooth controller profile](../docs/bluetooth.md)
-passes initialization, restart, and nonconnectable advertising checks on the same
-Inventor F4. Bluetooth management, application loading, and Python/WASM execution
-are not implemented yet. Current availability belongs in
+passes initialization and Pybricks BLE identity/status, reconnect, return to Shell
+and USB/BLE exclusion checks on the same Inventor F4. BLE SMP, application loading,
+and Python/WASM execution are not implemented yet. Current availability belongs in
 the README and the owning subsystem documents.
 
 The current build indicates Pybricks with white/blue and Brickphyr with yellow/pink

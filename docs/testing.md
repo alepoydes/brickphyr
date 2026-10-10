@@ -216,6 +216,14 @@ They check real identification, zero application capabilities, tagged errors,
 subscription status and malformed/oversized frame recovery. A host C compiler is
 required. No check inspects source contents.
 
+The host test also drives the production BLE ownership entry points: USB/BLE
+exclusion, power inhibition, rejected USB input and fresh-open requirements. This
+simulates ownership transitions, not radio traffic. The optional Bluetooth profile
+is checked on the Inventor F4 with pybricksdev discovery, identity, status,
+unsupported-command rejection, reconnection and exit to Shell. Both directions
+of USB/BLE exclusion are exercised with actual host connections; see
+[Bluetooth usage](bluetooth.md#experimental-f4-controller).
+
 On an authorized F4 hub, follow the [USB round trip](host.md#usage). Also attempt
 selection while the terminal is open, close it with a partial command, and verify
 that the partial command never executes after reopening. Close all clients at

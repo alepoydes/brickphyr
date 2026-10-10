@@ -125,7 +125,10 @@ inhibits automatic shutdown and appears as an error in diagnostics.
 Expiry and host acquisition serialize on the same lock: a live owner prevents
 expiry, and a claimed shutdown rejects a later acquisition. No user application
 runs yet; application activity must join this policy before an execution engine
-is enabled. Bluetooth ownership remains unimplemented.
+is enabled. The optional Bluetooth profile acquires the same power hold. USB open/close
+attempts rejected during BLE ownership cannot release it. These policy boundaries
+are checked with synthetic time; physical BLE idle-timeout inhibition remains to
+be measured.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.
