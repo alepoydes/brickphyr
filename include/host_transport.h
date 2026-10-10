@@ -7,7 +7,8 @@
 
 enum host_mode { HOST_PYBRICKS, HOST_SHELL };
 
-/* One CDC session; a selection is permitted only between closed sessions. */
+/* One CDC session; external selection is permitted only between closed sessions.
+ * Owner commands can request the next mode, applied when their session closes. */
 int host_transport_init(const struct device *uart, uint16_t hub_variant);
 void host_connection_changed(bool open);
 void host_interface_status(uint8_t state[8]);

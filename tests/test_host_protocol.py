@@ -99,3 +99,14 @@ def test_framing_recovery_and_invalid_requests(protocol):
     assert exchange(b"\x02\x02\x01" + valid) == exchange(valid)
     # A final COBS block declares more bytes than are present. Never interpret it.
     assert exchange(bytes.fromhex("5b 00 00 06 29 02") + valid) == exchange(valid)
+
+
+def test_exit_compatibility_command(protocol):
+    client, exchange = protocol
+    requests = io.BytesIO()
+    client.send_frame(requests, bytes((2, 31, 0x80, 0)))
+    client.send_frame(requests, bytes((2, 32, 0x80)))
+    assert exchange(requests.getvalue()) == [
+        bytes((1, 31, 0x13, 0, 0, 0)),
+        bytes((1, 32, 0, 0, 0, 0)),
+    ]

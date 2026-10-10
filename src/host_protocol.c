@@ -75,7 +75,15 @@ size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 	if (type == PBIO_PYBRICKS_OUT_EP_MSG_COMMAND && length >= 2) {
 		reply[0] = message[0];
 		/* There is no application supervisor yet: even STOP must not imply one. */
-		pbio_set_uint32_le(reply + 1, PBIO_PYBRICKS_ERROR_INVALID_COMMAND);
+		uint32_t error = PBIO_PYBRICKS_ERROR_INVALID_COMMAND;
+		if (message[1] == HOST_COMMAND_EXIT_COMPATIBILITY) {
+			error = length == 2 ? PBIO_PYBRICKS_ERROR_OK :
+				PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED;
+			if (!error) {
+				protocol->exit_compatibility = true;
+			}
+		}
+		pbio_set_uint32_le(reply + 1, error);
 		return pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_RESPONSE,
 						reply, 5, output);
 	}

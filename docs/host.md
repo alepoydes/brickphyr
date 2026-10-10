@@ -74,6 +74,16 @@ recipient control requests without claiming or detaching the CDC interfaces.
 Session buffers, partial protocol frames, and the shell parser are reset at
 handover. Shell history currently belongs to one terminal session.
 
+The owner can also request the next interface through its current protocol.
+Shell command `host_mode pybricks` requests compatibility mode. Brickphyr's
+Pybricks command extension `0x80` (EXIT_COMPATIBILITY, no payload) requests Shell;
+it replies with the original correlation tag and the standard success result.
+Extra payload receives VALUE_NOT_ALLOWED. Other unsupported commands still fail.
+Read the acknowledgment, then close the port: only that session's release applies
+the selection. Until then, the existing parser remains active. Opening the next
+session uses the new interface without restarting the hub. This extension is
+specific to Brickphyr and must not be sent to an unidentified upstream hub.
+
 ### Usage
 
 Close the current terminal or client before selection. From the repository:
@@ -97,6 +107,16 @@ uv run --locked python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
 `uptime` must continue across the round trip. After reboot, select Shell again.
+To exercise the in-band commands instead of selecting through USB control requests:
+
+```sh
+uv run --locked --group flash python -m tools.host handover shell
+uv run --locked --group flash python -m tools.host handover pybricks
+```
+
+The tool opens the current interface exclusively, reads its acknowledgment,
+closes it, and checks that the requested interface became available.
+
 For several hubs, pass `--serial SERIAL_NUMBER` before the subcommand. Linux USB
 permissions must allow device control requests as well as opening the serial port.
 On a Linux desktop using systemd-logind, install the scoped udev rule once:
@@ -123,7 +143,7 @@ The upstream `tools/flash/serdev/pybricks.py` client supplies host reads.
   hub variant and hub kind. Unknown characteristics return an empty value.
 - Capabilities advertise no execution engines, program storage or program slots.
 - Subscribe emits current USB-connected status with no running program.
-- Commands, including upload, run, STOP and DFU, return `INVALID_COMMAND` with the
+- Application commands, including upload, run, STOP and DFU, return `INVALID_COMMAND` with the
   original correlation tag. Use the working Shell `reboot dfu` for update entry.
 - Malformed envelopes and oversized frames are discarded through the next frame
   delimiter. They never select another protocol or execute shell text.

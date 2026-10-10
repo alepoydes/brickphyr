@@ -10,10 +10,14 @@
 #define HOST_PROTOCOL_PAYLOAD_MAX 64
 #define HOST_PROTOCOL_FRAME_MAX PBIO_COBS_ENCODED_BUFFER_SIZE(HOST_PROTOCOL_PAYLOAD_MAX)
 
+/* Brickphyr extension, not an upstream Pybricks command. No payload. */
+#define HOST_COMMAND_EXIT_COMPATIBILITY 0x80
+
 struct host_protocol {
 	uint8_t frame[HOST_PROTOCOL_FRAME_MAX];
 	size_t length;
 	bool overflow;
+	bool exit_compatibility;
 	uint32_t rejected_frames;
 };
 

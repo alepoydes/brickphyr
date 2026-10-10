@@ -38,6 +38,9 @@ selection experiment passes host simulation and the Linux USB round trip on the
 Inventor F4: terminal editing/history, busy rejection, partial-input isolation,
 and continuous uptime. It requires the dependency changes listed
 in [upstream integration](../docs/upstream.md#usb-experiment-prerequisites).
+Owner commands also select the next interface when their session closes:
+Shell `host_mode pybricks` and the Brickphyr-specific Pybricks exit command.
+The in-band round trip passes host simulation and Linux USB on the Inventor F4.
 [Acceptance milestones](../docs/builds.md#acceptance-milestones) give the development
 order from the existing build.
 

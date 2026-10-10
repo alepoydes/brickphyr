@@ -3,6 +3,7 @@
 #include "host_transport.h"
 
 #include <errno.h>
+#include <string.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
@@ -17,6 +18,7 @@ K_SEM_DEFINE(wake, 0, 1);
 K_SEM_DEFINE(shell_closed, 0, 1);
 static struct k_spinlock lock;
 static uint8_t mode;
+static int next_mode = -1;
 static bool occupied;
 static bool ready;
 static bool tx_idle;
@@ -131,6 +133,29 @@ static const struct shell_transport_api transport_api = {
 static const struct shell_transport transport = { .api = &transport_api };
 SHELL_DEFINE(usb_shell, "brickphyr> ", &transport, 0, 0, SHELL_FLAG_OLF_CRLF);
 
+static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
+{
+	if (strcmp(argv[1], "pybricks")) {
+		shell_error(shell, "Usage: host_mode pybricks");
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool owner = occupied && running && mode == HOST_SHELL &&
+		generation == shell_generation;
+	if (owner) {
+		next_mode = HOST_PYBRICKS;
+	}
+	k_spin_unlock(&lock, key);
+	if (!owner) {
+		return -ENOTCONN;
+	}
+	shell_print(shell, "Pybricks selected for the next session. Close this port.");
+	return 0;
+}
+
+SHELL_CMD_ARG_REGISTER(host_mode, NULL, "host_mode pybricks: switch when this port closes.",
+		      cmd_host_mode, 2, 0);
+
 static void shell_uninitialized(const struct shell *shell, int result)
 {
 	shell_close_error = result;
@@ -233,6 +258,14 @@ static void host_thread(void *a, void *b, void *c)
 				break;
 			}
 			reply_length = host_protocol_receive(&protocol, byte, variant, reply);
+			if (protocol.exit_compatibility) {
+				key = k_spin_lock(&lock);
+				if (generation == session_generation) {
+					next_mode = HOST_SHELL;
+				}
+				k_spin_unlock(&lock, key);
+				protocol.exit_compatibility = false;
+			}
 		}
 		uart_irq_rx_enable(uart);
 	}
@@ -272,6 +305,10 @@ void host_connection_changed(bool open)
 		/* Wake a shell blocked waiting for output space before uninitializing it. */
 		if (running && mode == HOST_SHELL) {
 			shell_handler(SHELL_TRANSPORT_EVT_TX_RDY, shell_context);
+		}
+		if (!open && next_mode >= 0) {
+			mode = next_mode;
+			next_mode = -1;
 		}
 	}
 	k_spin_unlock(&lock, key);

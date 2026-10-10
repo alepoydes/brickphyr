@@ -142,6 +142,7 @@ hub revision.
 | `reboot dfu` | F4: reset into the installed mboot for the standard Pybricks installer |
 | `shutdown` | F4: release the hub's power latch |
 | `buttons` | F4: button states, press counters, latest ADC samples and error counts |
+| `host_mode pybricks` | F4: select compatibility mode after this terminal closes |
 | `led center R G B` | F4: stop breathing and set both central-button LEDs, each component 0–255 |
 | `led bluetooth R G B` | F4: set the Bluetooth-button LED, each component 0–255 |
 

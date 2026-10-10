@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_transport.h"
+#include "host_protocol.h"
+#include <pbio/protocol.h>
 
 #include <errno.h>
 #include <string.h>
@@ -75,7 +77,7 @@ ZTEST(host, test_interface_roundtrip)
 	uint8_t state[8];
 	int64_t before = k_uptime_get();
 	host_interface_status(state);
-	zassert_equal(state[1], HOST_PYBRICKS);
+	zassert_ok(host_interface_select(HOST_PYBRICKS));
 	zassert_equal(host_interface_select(2), -ENOTSUP);
 	zassert_ok(host_interface_select(HOST_SHELL));
 	host_connection_changed(true);
@@ -141,6 +143,64 @@ ZTEST(host, test_interface_roundtrip)
 	send("rk\r", 3);
 	receive_until("not found", output, sizeof(output));
 	zassert_equal(calls, 4);
+	close_session();
+}
+
+ZTEST(host, test_owner_command_handover)
+{
+	char output[512];
+	uint8_t state[8];
+	zassert_ok(host_interface_select(HOST_SHELL));
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("host_mode invalid\r", strlen("host_mode invalid\r"));
+	receive_until("Usage:", output, sizeof(output));
+	close_session();
+	host_interface_status(state);
+	zassert_equal(state[1], HOST_SHELL);
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("host_mode pybricks\r", strlen("host_mode pybricks\r"));
+	receive_until("Close this port.", output, sizeof(output));
+	host_interface_status(state);
+	zassert_equal(state[1], HOST_SHELL, "Never change a live stream's parser");
+	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
+	close_session();
+	host_interface_status(state);
+	zassert_equal(state[1], HOST_PYBRICKS);
+	host_connection_changed(true);
+	uint8_t frame[HOST_PROTOCOL_FRAME_MAX];
+	const uint8_t command[] = {17, HOST_COMMAND_EXIT_COMPATIBILITY};
+	size_t length = pbio_cobs_encode_prefixed(PBIO_PYBRICKS_OUT_EP_MSG_COMMAND,
+		command, sizeof(command), frame);
+	send(frame, length);
+	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
+	length = 0;
+	int64_t deadline = k_uptime_get() + 1000;
+	while ((!length || reply[length - 1] != PBIO_COBS_DELIMITER) &&
+	       k_uptime_get() < deadline) {
+		length += uart_emul_get_tx_data(uart, reply + length, sizeof(reply) - length);
+		k_msleep(1);
+	}
+	zassert_true(length > 1);
+	uint8_t type;
+	uint8_t decoded[16];
+	zassert_equal(pbio_cobs_decode_prefixed(reply, length - 1, &type,
+		decoded, sizeof(decoded)), 5);
+	const uint8_t expected[] = {17, 0, 0, 0, 0};
+	zassert_equal(type, PBIO_PYBRICKS_IN_EP_MSG_RESPONSE);
+	zassert_mem_equal(decoded, expected, sizeof(expected));
+	host_interface_status(state);
+	zassert_equal(state[1], HOST_PYBRICKS);
+	/* Trailing partial input belongs to the old stream and must be discarded. */
+	send(frame, 2);
+	close_session();
+	host_interface_status(state);
+	zassert_equal(state[1], HOST_SHELL);
+	host_connection_changed(true);
+	receive_until("brickphyr> ", output, sizeof(output));
+	send("host_mode invalid\r", strlen("host_mode invalid\r"));
+	receive_until("Usage:", output, sizeof(output));
 	close_session();
 }
 

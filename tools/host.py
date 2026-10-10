@@ -109,6 +109,38 @@ def identify(hub):
             print(f"{name}: {value.hex() if name in ('pnp', 'capabilities') else value.decode()}")
 
 
+def handover(hub, mode):
+    current, occupied, ready = status(hub)
+    if occupied or not ready:
+        raise RuntimeError("Close other clients before requesting a handover")
+    if current == mode:
+        return
+    with serial.Serial(
+        serial_port(hub), 115200, timeout=2, write_timeout=2, exclusive=True
+    ) as port:
+        if current == "shell":
+            if not port.read_until(b"brickphyr> ").endswith(b"brickphyr> "):
+                raise TimeoutError("Shell did not become ready")
+            port.write(b"host_mode pybricks\r")
+            reply = port.read_until(b"brickphyr> ")
+            if b"Pybricks selected for the next session." not in reply:
+                raise RuntimeError(f"Handover rejected: {reply!r}")
+        else:
+            client = protocol_client()
+            # Brickphyr-specific EXIT_COMPATIBILITY, correlated with tag 1.
+            client.send_frame(port, bytes((2, 1, 0x80)))
+            reply = client.read_frame(port, timeout=2)
+            if reply != bytes((1, 1, 0, 0, 0, 0)):
+                raise RuntimeError(f"Handover rejected: {reply!r}")
+        if status(hub)[0] != current:
+            raise RuntimeError("Interface changed before its owner closed the session")
+    deadline = time.monotonic() + 2
+    while status(hub) != (mode, False, True):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Requested interface did not become ready after close")
+        time.sleep(0.02)
+
+
 def main():
     import usb.core
     import usb.util
@@ -119,6 +151,8 @@ def main():
     commands.add_parser("status")
     selection = commands.add_parser("select")
     selection.add_argument("mode", choices=MODES)
+    switching = commands.add_parser("handover", help="Switch using the current protocol's command")
+    switching.add_argument("mode", choices=MODES)
     commands.add_parser("identify", help="Read identity using the unmodified Pybricks client")
     args = parser.parse_args()
     hub = None
@@ -126,6 +160,8 @@ def main():
         hub = device(args.serial)
         if args.command == "select":
             select(hub, args.mode)
+        elif args.command == "handover":
+            handover(hub, args.mode)
         elif args.command == "identify":
             identify(hub)
             return
