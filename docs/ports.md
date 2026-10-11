@@ -259,7 +259,10 @@ speed selects the model's rated limit. Angles use the current connection's
 accumulated encoder origin; reconnect resets that origin. The maximum single
 target displacement is less than `INT32_MAX / 2` millidegrees. Speeds above the
 model's rated limit and numerically unsafe angles are rejected without replacing
-the current command. Gear ratios and direction remapping are not applied.
+the current command. Position commands also reject a nonzero displacement whose
+speed rounds to zero in PBIO's 100 millidegrees/second trajectory units, or whose
+planned duration exceeds the trajectory representation. Gear ratios and direction
+remapping are not applied.
 
 Native code calls `bp_motor_control(port, &command)` with a
 `struct bp_motor_command` from the matching SDK. Set `mode` to `BP_MOTOR_SPEED`

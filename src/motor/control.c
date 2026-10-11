@@ -14,6 +14,7 @@
 #include <pbio/int_math.h>
 
 _Static_assert(PBIO_CONFIG_CONTROL_LOOP_TIME_MS == 5, "PUP models use a 5ms step");
+#define ACCELERATION_MDEG_S2 2000000
 
 struct defaults {
     uint16_t id;
@@ -235,7 +236,20 @@ int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_comman
     err = angle_from_mdeg(command->target_mdeg, &checked);
     if (err) return err;
     int64_t distance = command->target_mdeg - angle;
-    return distance <= -INT32_MAX / 2 || distance >= INT32_MAX / 2 ? -ERANGE : 0;
+    if (distance <= -INT32_MAX / 2 || distance >= INT32_MAX / 2) return -ERANGE;
+    /* Reject infeasible distance/speed combinations before queuing a command.
+     * The worker plans again from its live reference when applying it. */
+    pbio_trajectory_command_t trajectory_command = {
+        .position_end = checked,
+        .speed_target = command->speed_mdeg_s ? command->speed_mdeg_s : d->rated_max_speed * 1000,
+        .speed_max = d->rated_max_speed * 1000,
+        .acceleration = ACCELERATION_MDEG_S2,
+        .deceleration = ACCELERATION_MDEG_S2,
+        .continue_running = command->finish == BP_MOTOR_FINISH_CONTINUE,
+    };
+    angle_from_mdeg(angle, &trajectory_command.position_start);
+    pbio_trajectory_t trajectory;
+    return pbio_trajectory_new_angle_command(&trajectory, &trajectory_command) == PBIO_SUCCESS ? 0 : -ERANGE;
 }
 
 #define DEG_TO_MDEG(deg) ((deg) * 1000)
@@ -262,8 +276,8 @@ int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_m
         .speed_default = DEG_TO_MDEG(d->rated_max_speed),
         .speed_tolerance = DEG_TO_MDEG(50),
         .position_tolerance = DEG_TO_MDEG(precision_profile),
-        .acceleration = DEG_TO_MDEG(2000),
-        .deceleration = DEG_TO_MDEG(2000),
+        .acceleration = ACCELERATION_MDEG_S2,
+        .deceleration = ACCELERATION_MDEG_S2,
         .actuation_max = pbio_observer_voltage_to_torque(motor->observer.model, max_voltage),
         .actuation_max_temporary = pbio_observer_voltage_to_torque(motor->observer.model, max_voltage),
         // The nominal voltage is an indication for the nominal torque limit. To

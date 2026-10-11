@@ -97,4 +97,27 @@ ZTEST(motor_control, test_timed_completion_and_wrap)
 	}
 }
 
+ZTEST(motor_control, test_rejected_trajectory_preserves_motion)
+{
+	struct motor_control motor;
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	zassert_ok(motor_control_run(&motor, 0, 0, 300000, 1000, PBIO_CONTROL_ON_COMPLETION_COAST));
+	/* The angle is representable, but this move exceeds the planner's time
+	 * range. Rejection must not corrupt the running acceleration ramp. */
+	zassert_equal(motor_control_target(&motor, 0, 0, 1000000000, 1000,
+		PBIO_CONTROL_ON_COMPLETION_HOLD), -ERANGE);
+	struct motor_reference out;
+	zassert_ok(motor_control_step(&motor, 50, 0, &out));
+	zassert_true(out.active && out.speed_mdeg_s > 0);
+	zassert_equal(out.acceleration_mdeg_s2, 2000000);
+}
+
+ZTEST(motor_control, test_subresolution_position_speed)
+{
+	struct motor_control motor;
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	zassert_equal(motor_control_target(&motor, 0, 0, 360000, 1,
+		PBIO_CONTROL_ON_COMPLETION_HOLD), -ERANGE);
+}
+
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

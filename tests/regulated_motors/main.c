@@ -198,6 +198,14 @@ ZTEST(regulated_motors, test_control_lifetime)
 	command.speed_mdeg_s = INT32_MAX;
 	zassert_equal(hub_motor_control(BP_PORT_APPLICATION, 0, &command), -EINVAL);
 	zassert_equal(state().request, request, "Invalid command replaced motion");
+	command = (struct bp_motor_command){.mode = BP_MOTOR_POSITION,
+		.target_mdeg = 1000000000, .speed_mdeg_s = 1000,
+		.finish = BP_MOTOR_FINISH_HOLD};
+	zassert_equal(hub_motor_control(BP_PORT_APPLICATION, 0, &command), -ERANGE);
+	command.target_mdeg = 360000;
+	command.speed_mdeg_s = 1;
+	zassert_equal(hub_motor_control(BP_PORT_APPLICATION, 0, &command), -ERANGE);
+	zassert_equal(state().request, request, "Infeasible trajectory replaced motion");
 	/* Allow the acceleration ramp and error buildup before the model's
 	 * 200 ms stall persistence criterion can be met. */
 	k_msleep(600);

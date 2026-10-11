@@ -24,6 +24,7 @@ int32 application-unit conversion of the absolute origin. Unsupported models,
 out-of-range requests and unsafe arithmetic ranges return errors. A finite timed
 move must be shorter than PBIO's 300000 ms forever sentinel; zero requests an
 indefinite run. The native boundary does not expose PBIO structures.
+Trajectory rejection requires the [PBIO correction](../../docs/upstream.md#motor-trajectory-prerequisite).
 
 The existing port worker owns scheduling, acquisition validity, battery-to-duty
 conversion, output, observations and cleanup. See [external ports](../../docs/ports.md).

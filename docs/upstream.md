@@ -277,6 +277,18 @@ own IMU sample mutation, delayed orientation update and partial settings changes
 its regression checks exercise the original PBIO driver callbacks. These changes
 are independent of Brickphyr and introduce no extraction or platform adapter.
 
+## Motor trajectory prerequisite
+
+Motor control requires local Pybricks commit `986a1a2d2` on
+`topic/motor-trajectories`, pending publication and manifest integration. PBIO
+must reject durations before narrowing them and avoid dividing by a target speed
+that rounds to zero. Control replacements build a candidate trajectory before
+committing it, so a failed calculation preserves the ongoing maneuver.
+
+Focused upstream trajectory checks and Brickphyr's numerical ARM checks cover
+these boundaries. The complete upstream PBIO test application has not been built
+with this patch; its Bluetooth submodule is not present in the local checkout.
+
 ## Speaker DMA prerequisite
 
 The speaker profile requires local Zephyr commit `c26d83f5` on `topic/dma-stop`,
