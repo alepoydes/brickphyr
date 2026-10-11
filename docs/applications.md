@@ -32,7 +32,7 @@ a 1024-byte queue with counted overflow; writing never waits for a reader. The
 remains available without a host, including during LLEXT's deferred-log flush.
 
 The initial admission limits are 32 KiB of ELF and 64 KiB of loader allocation,
-borrowed from a shared 128 KiB pool. A future RAM transfer can coexist with the
+borrowed from a shared 128 KiB pool. A RAM upload can coexist with the
 loader inside this pool without a second permanent engine heap. Alignment,
 symbols and scratch space count against the loader budget; small images with
 large BSS can still exceed it. The application stack is 2048 bytes; compiler
@@ -47,7 +47,7 @@ cross-transport reconnection and power holds on one Robot Inventor F4 (PCB revis
 unknown). ARM QEMU additionally checks allocator capacity restoration, exhaustion,
 ABI/truncation rejection and command execution at the terminal priority. SMP checks
 use separately compiled EDK images through the actual protocol and CLI, both on
-ARM QEMU and the F4. Installed files remain the next step; see
+ARM QEMU and the F4. Both RAM and installed files use this lifecycle; see
 [build and SDK usage](builds.md#experimental-native-sdk).
 
 RAM upload and start are distinct operations. An upload never stops the running
@@ -57,6 +57,42 @@ complete image stays ready across sessions until started, discarded, replaced or
 rebooted. Starting it uses the same supervisor and releases the receive buffer
 after LLEXT has copied retained sections. `app discard` frees a waiting image
 without stopping the active one. See [host commands](host.md#native-applications).
+
+## Installed native files
+
+The F4 profile mounts a separate 224 KiB LittleFS partition at `/apps`. It shares
+neither files nor allocation with settings. The [recovery map](recovery.md) defines
+its bounds and initialization policy. A successful mount exposes existing files;
+only an entirely erased partition is initialized automatically.
+
+Standard SMP file management transfers `/apps/.incoming`. This reserved staging
+file is excluded from the application list. Installed names contain 1–32 ASCII
+letters, digits, dots, underscores or hyphens, with no leading dot. Other paths,
+including settings and traversal aliases, are denied. Installed files are readable
+through SMP but cannot be overwritten through the file-upload command.
+
+Publication closes the transfer, checks the declared size and the complete ELF
+using the same admission checks as RAM, then atomically renames the staging file.
+It does not execute code or stop the current instance. An interrupted or rejected
+update leaves the previous installed file intact. Partial staging data may survive
+a disconnect or reboot; the next installation closes and truncates it. LittleFS
+metadata and staging consume space, so reported free bytes are not a guarantee
+that a file of exactly that size can be installed. Capacity errors preserve
+previously installed applications.
+
+`app list`, `app run NAME`, and `app remove NAME` are available in the shared Shell.
+The host [CLI](host.md#native-applications) provides the same lifecycle over USB
+and BLE. Removal or replacement affects the stored image, not a running instance:
+LLEXT has already copied its execution sections into protected RAM. There is no
+autorun. Installed images retain their ABI identity; firmware/SDK changes can
+require rebuilding and reinstalling them.
+
+File runs use Zephyr's LLEXT file loader without reserving a full ELF receive
+buffer. File admission and loading hold the store lock so replacement cannot
+change the checked file. Both sources then enter the same protected supervisor.
+LittleFS installation, rejected partial updates, reboot/power-cycle persistence and USB/BLE
+Shell/CLI launches have been checked on the Inventor F4. ARM QEMU also exercises
+filesystem exhaustion and compares the loaded allocations of both sources.
 
 ## Application formats
 

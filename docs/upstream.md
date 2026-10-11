@@ -232,6 +232,16 @@ the MPU object suite passes its three applicable checks and skips eight images
 requiring more memory partitions. Brickphyr additionally exercises linked
 soft-float helpers and repeated protected loading on the Inventor F4.
 
+Installed application support additionally requires local Zephyr commit `d1fdd0b7`
+(on the same branch): `fs_mgmt_file_close()` exposes the standard file group's
+existing transfer cleanup. An application can close an incomplete transfer before
+validating and atomically publishing its staging file without accessing private
+MCUmgr state. The API retains filesystem errno, and the wire close command now
+returns an encoded group error instead of falsely reporting an encoding failure.
+A native simulator test exercises the actual SMP handler with an injected
+filesystem close failure; Brickphyr tests use real LittleFS. This commit is also
+pending publication; keep both prerequisites before building the native profile.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

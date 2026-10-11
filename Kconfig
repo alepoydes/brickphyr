@@ -18,3 +18,10 @@ config BRICKPHYR_NATIVE_FIXTURES
 	depends on BRICKPHYR_NATIVE
 	help
 	  Board acceptance fixture; not an application upload mechanism.
+
+config BRICKPHYR_APP_STORAGE
+	bool "Installed native applications in LittleFS"
+	depends on BRICKPHYR_NATIVE && FILE_SYSTEM_LITTLEFS && FLASH_MAP
+	depends on DT_HAS_FIXED_PARTITIONS_ENABLED
+	depends on FILE_SYSTEM_MKFS
+	depends on !MCUMGR || MCUMGR_GRP_FS_FILE_ACCESS_HOOK

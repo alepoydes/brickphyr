@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "native.h"
 #include "native_image.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+#include "app_store.h"
+#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
+#endif
 
 #include <brickphyr_abi.h>
 #include <errno.h>
@@ -93,6 +97,69 @@ static int discard_write(struct smp_streamer *stream)
 	return MGMT_ERR_EOK;
 }
 
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+static int file_arguments(struct smp_streamer *stream, char *name, size_t capacity,
+			  uint32_t *length)
+{
+	struct zcbor_string text = {0};
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("name", zcbor_tstr_decode, &text),
+		ZCBOR_MAP_DECODE_KEY_DECODER("size", zcbor_uint32_decode, length),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !text.value || text.len >= capacity || memchr(text.value, 0, text.len)) {
+		return -EINVAL;
+	}
+	memcpy(name, text.value, text.len);
+	name[text.len] = 0;
+	return 0;
+}
+
+static int list_read(struct smp_streamer *stream)
+{
+	char after[APP_NAME_MAX + 1];
+	uint32_t ignored = 0;
+	int err = file_arguments(stream, after, sizeof(after), &ignored);
+	struct app_file entry;
+	size_t available;
+	if (!err) {
+		err = app_store_next(after, &entry, &available);
+	}
+	if (err) {
+		return result(stream, err);
+	}
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = zcbor_tstr_put_lit(zs, "name") &&
+		zcbor_tstr_encode_ptr(zs, entry.name, strlen(entry.name)) &&
+		number(zs, "size", entry.size) && number(zs, "available", available);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int file_operation(struct smp_streamer *stream, unsigned int command)
+{
+	char name[APP_NAME_MAX + 1];
+	uint32_t length = UINT32_MAX;
+	int err = file_arguments(stream, name, sizeof(name), &length);
+	if (!err) {
+		if (command == 7) {
+			/* All file uploads and publication run serially on SMP's worker.
+			 * Close also cancels a partial standard upload before validation. */
+			err = fs_mgmt_file_close();
+			if (!err) {
+				err = app_store_publish(name, length);
+			}
+		} else {
+			err = command == 8 ? app_store_remove(name) : app_store_run(name);
+		}
+	}
+	return result(stream, err);
+}
+static int publish_write(struct smp_streamer *s) { return file_operation(s, 7); }
+static int remove_write(struct smp_streamer *s) { return file_operation(s, 8); }
+static int stored_run_write(struct smp_streamer *s) { return file_operation(s, 9); }
+#endif
+
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = status_read},
 	[1] = {.mh_write = upload_write},
@@ -100,6 +167,12 @@ static const struct mgmt_handler handlers[] = {
 	[3] = {.mh_write = stop_write},
 	[4] = {.mh_read = output_read},
 	[5] = {.mh_write = discard_write},
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	[6] = {.mh_read = list_read},
+	[7] = {.mh_write = publish_write},
+	[8] = {.mh_write = remove_write},
+	[9] = {.mh_write = stored_run_write},
+#endif
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

@@ -40,7 +40,16 @@ def main():
         ("upload", "Upload to RAM without starting"),
     ):
         app_commands.add_parser(command, help=help_text).add_argument("image")
-    for command in ("start", "status", "stop", "output", "discard"):
+    installation = app_commands.add_parser(
+        "install", help="Store a validated image without starting"
+    )
+    installation.add_argument("image")
+    installation.add_argument("--name", help="Installed name; default is the image filename stem")
+    app_commands.add_parser(
+        "start", help="Start an installed name or the current RAM upload"
+    ).add_argument("name", nargs="?")
+    app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
+    for command in ("list", "status", "stop", "output", "discard"):
         app_commands.add_parser(command)
 
     args = parser.parse_args()

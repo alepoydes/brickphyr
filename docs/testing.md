@@ -143,7 +143,10 @@ write. `tests/native_smp` adds the standard serial SMP stack. Its host check upl
 separately built EDK images and invokes the installed CLI through a QEMU PTY;
 it checks useful output, stop and the same rejection/fault paths. The simulated
 buttons are explicitly synthetic. Actual USB/BLE ownership and disconnect cleanup
-remain separate board checks; QEMU has no USB DTR or radio.
+remain separate board checks; QEMU has no USB DTR or radio. A synthetic 64 KiB
+LittleFS store additionally checks standard SMP file transfer, path restrictions,
+atomic replacement, partial and incompatible updates, capacity failure, and
+file-loader allocation parity with RAM. The physical F4 uses 224 KiB.
 
 `tests/management` runs the production Shell/SMP transport and LittleFS/Settings
 stack behind a native UART pseudoterminal. Unmodified `smpclient` and `smpmgr`

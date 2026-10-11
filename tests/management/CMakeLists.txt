@@ -11,7 +11,7 @@ target_sources(app PRIVATE main.c
   ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
   ${BRICKPHYR_ROOT}/src/hub_power.c
-  ${BRICKPHYR_ROOT}/src/storage.c
+  ${BRICKPHYR_ROOT}/src/storage.c ${BRICKPHYR_ROOT}/src/storage_mount.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include

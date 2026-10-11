@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from smp import error, message
 from smpclient import SMPClient, success
 from smpclient.generics import error_v2
+from smpclient.requests.file_management import FileClose
 from smpclient.transport.ble import SMPBLETransport
 from smpclient.transport.serial import SMPSerialTransport
 from usb.util import dispose_resources
@@ -113,6 +114,83 @@ class Discard(_Group, message.WriteRequest):
     _Response = Done
 
 
+class FileInfo(message.ReadResponse):
+    _GROUP_ID = GROUP
+    _COMMAND_ID = 6
+    name: str
+    size: int
+    available: int
+
+
+class ListFiles(_Group, message.ReadRequest):
+    _COMMAND_ID = 6
+    _Response = FileInfo
+    name: str
+
+
+class Publish(_Group, message.WriteRequest):
+    _COMMAND_ID = 7
+    _Response = Done
+    name: str
+    size: int
+
+
+class Remove(_Group, message.WriteRequest):
+    _COMMAND_ID = 8
+    _Response = Done
+    name: str
+
+
+class RunStored(_Group, message.WriteRequest):
+    _COMMAND_ID = 9
+    _Response = Done
+    name: str
+
+
+def installed_name(name):
+    if (
+        not 1 <= len(name) <= 32
+        or name.startswith(".")
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+            for c in name
+        )
+    ):
+        raise ValueError(
+            "Application names use 1–32 ASCII letters, digits, '.', '_' or '-'; no leading '.'"
+        )
+    return name
+
+
+async def install(client, image, name):
+    installed_name(name)
+    status = await checked(client, Status())
+    if status.api != 1:
+        raise RuntimeError(f"Unsupported application API {status.api}")
+    if not image or len(image) > status.limit:
+        raise ValueError(f"Image must contain 1 through {status.limit} bytes")
+    # Cancel a previous partial standard transfer before reusing its staging path.
+    await checked(client, FileClose())
+    previous = 0
+    async for offset in client.upload_file(image, "/apps/.incoming"):
+        if not previous < offset <= len(image):
+            raise RuntimeError(f"Invalid file upload offset {offset}")
+        previous = offset
+    await checked(client, Publish(name=name, size=len(image)))
+
+
+async def files(client):
+    after = ""
+    while True:
+        entry = await checked(client, ListFiles(name=after))
+        if not entry.name:
+            return
+        if entry.name <= after:
+            raise RuntimeError("File listing did not advance")
+        yield entry
+        after = entry.name
+
+
 async def checked(client, request):
     reply = await client.request(request)
     if (reply.header.group_id, reply.header.command_id, int(reply.header.op)) != (
@@ -195,9 +273,19 @@ async def execute(args):
         client,
         transport,
     ):
+        if args.command == "list":
+            async for entry in files(client):
+                print(f"{entry.name}\t{entry.size}")
+            return
+        if args.command == "install":
+            await install(client, Path(args.image).read_bytes(), args.name or Path(args.image).stem)
+        elif args.command == "remove":
+            await checked(client, Remove(name=installed_name(args.name)))
         if args.command in ("run", "upload"):
             await upload(client, transport, Path(args.image).read_bytes())
-        if args.command in ("run", "start"):
+        if args.command == "start" and args.name:
+            await checked(client, RunStored(name=installed_name(args.name)))
+        elif args.command in ("run", "start"):
             await checked(client, Start())
         elif args.command == "stop":
             await checked(client, Stop())

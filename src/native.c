@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "native.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+#include "app_store.h"
+#include <zephyr/llext/fs_loader.h>
+#endif
 #include "native_image.h"
 #include "native_private.h"
 #include "hub.h"
@@ -355,6 +359,36 @@ int native_run(const void *image, size_t length)
 	return err;
 }
 
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+int native_run_file(const char *path)
+{
+	struct fs_dirent info;
+	int err = fs_stat(path, &info);
+	if (err) {
+		return err;
+	}
+	if (info.type != FS_DIR_ENTRY_FILE) {
+		return -EINVAL;
+	}
+	struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
+	size_t heap;
+	err = loader.loader.prepare(&loader.loader);
+	if (err) {
+		return err;
+	}
+	err = native_image_check(&loader.loader, info.size, &heap);
+	loader.loader.finalize(&loader.loader);
+	/* The store lock keeps the checked path unchanged until loading finishes.
+	 * LLEXT owns prepare/finalize for the second pass; no full-image RAM copy. */
+	if (!err) {
+		k_mutex_lock(&lifecycle, K_FOREVER);
+		err = run_image(&loader.loader, info.size, heap);
+		k_mutex_unlock(&lifecycle);
+	}
+	return err;
+}
+#endif
+
 int native_upload(size_t offset, size_t total, const void *data, size_t length, size_t *next)
 {
 	if (!data || !next || !length || !total || offset > total || length > total - offset) {
@@ -453,6 +487,32 @@ size_t native_output(void *data, size_t capacity)
 
 static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 {
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (argc == 3 && (!strcmp(argv[1], "run") || !strcmp(argv[1], "remove"))) {
+		int err = !strcmp(argv[1], "run") ? app_store_run(argv[2]) : app_store_remove(argv[2]);
+		shell_print(shell, "%s: %d", argv[1], err);
+		return err;
+	}
+	if (argc == 2 && !strcmp(argv[1], "list")) {
+		struct app_file entry = {0};
+		size_t available;
+		for (;;) {
+			char after[sizeof(entry.name)];
+			strcpy(after, entry.name);
+			int err = app_store_next(after, &entry, &available);
+			if (err) {
+				shell_error(shell, "List: %d", err);
+				return err;
+			}
+			if (!entry.name[0]) {
+				shell_print(shell, "Available: %zu bytes", available);
+				return 0;
+			}
+			shell_print(shell, "%s: %zu bytes", entry.name, entry.size);
+		}
+	}
+#endif
+
 	if (argc == 2 && !strcmp(argv[1], "run")) {
 		int err = native_run_uploaded();
 		shell_print(shell, "Run: %d", err);
@@ -479,7 +539,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 		return 0;
 	}
 	if (argc != 1 && (argc != 2 || strcmp(argv[1], "status"))) {
-		shell_error(shell, "Usage: app [status | run | stop | output | discard]");
+		shell_error(shell, "Usage: app [status | run [name] | list | remove name | stop | output | discard]");
 		return -EINVAL;
 	}
 	struct native_status value;
@@ -496,4 +556,4 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_ARG_REGISTER(app, NULL, "Native application status, stop and output.", cmd_app, 1, 1);
+SHELL_CMD_ARG_REGISTER(app, NULL, "Native application status, stop and output.", cmd_app, 1, 2);

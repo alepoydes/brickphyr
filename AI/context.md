@@ -36,7 +36,8 @@ protected LLEXT execution, RAM uploads and lifecycle control through SMP,
 `brickphyrdev app` and the shared Shell. Separate SDK images, constructors,
 soft-float arithmetic, MPU fault recovery, forced stop, interrupted transfers,
 USB/BLE reconnection and application power holds pass on the Inventor F4.
-Installed applications and Python/WASM engines are not implemented.
+The profile also installs several applications in LittleFS through standard SMP
+and runs them from the same Shell/CLI lifecycle. Python/WASM engines are not implemented.
 
 USB/battery transitions preserve a BLE session and uptime. An active management
 session inhibits idle shutdown. USB and battery expiry, long-press shutdown, and
@@ -57,13 +58,14 @@ Pybricks, pybricksdev and Zephyr; [upstream integration](../docs/upstream.md) re
 their purpose and publication status. Never replace a pinned dependency with a
 source copy or silently discard local dependency work during `west update`.
 
-The [application milestone](../docs/builds.md#native-application-milestone) continues
-with several installed applications in LittleFS.
-Use the existing protected lifecycle for both image sources and both transports.
+The [application milestone](../docs/builds.md#native-application-milestone) now has
+both RAM and LittleFS image sources under one protected lifecycle and both
+transports. Installation validates a staging file before atomic replacement; it
+never starts or stops an application. Reboot and power-cycle persistence are checked on the F4.
 Completed RAM uploads can be started from a later session; incomplete uploads
 are discarded on disconnect without stopping the application.
-The native ABI is experimental. Fixture builds require the additional Zephyr
-LLEXT build fixes described in [upstream integration](../docs/upstream.md).
+The native ABI is experimental. Native builds require the additional Zephyr
+LLEXT build fixes and MCUmgr file-close API described in [upstream integration](../docs/upstream.md).
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

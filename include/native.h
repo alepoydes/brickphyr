@@ -27,6 +27,9 @@ struct native_status {
 /* Privileged lifecycle. All callers share this one instance. */
 #ifdef CONFIG_BRICKPHYR_NATIVE
 int native_run(const void *image, size_t length);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+int native_run_file(const char *path);
+#endif
 /* A complete upload remains available until run/discard/replacement or reboot.
  * Only incomplete uploads are discarded when their management session ends. */
 int native_upload(size_t offset, size_t total, const void *data, size_t length, size_t *next);

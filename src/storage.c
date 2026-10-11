@@ -9,6 +9,10 @@
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include "storage.h"
+#include "storage_mount.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+#include "app_store.h"
+#endif
 #include "hub_power.h"
 
 LOG_MODULE_REGISTER(storage);
@@ -30,35 +34,7 @@ int storage_status(void)
 
 static int storage_init(void)
 {
-	const struct flash_area *area;
-	status = flash_area_open(PARTITION_ID(settings_partition), &area);
-	if (status) {
-		return status;
-	}
-	/* Only an entirely erased partition may be formatted automatically. A failed
-	 * mount of existing data must never erase another firmware's user storage. */
-	uint8_t bytes[256];
-	bool empty = true;
-	for (size_t offset = 0; empty && offset < area->fa_size; offset += sizeof(bytes)) {
-		size_t length = MIN(sizeof(bytes), area->fa_size - offset);
-		status = flash_area_read(area, offset, bytes, length);
-		if (status) {
-			break;
-		}
-		for (size_t i = 0; i < length; i++) {
-			if (bytes[i] != flash_area_erased_val(area)) {
-				empty = false;
-				break;
-			}
-		}
-	}
-	flash_area_close(area);
-	if (!status && empty) {
-		status = fs_mkfs(FS_LITTLEFS, (uintptr_t)mount.storage_dev, &filesystem, 0);
-	}
-	if (!status) {
-		status = fs_mount(&mount);
-	}
+	status = storage_mount_preserved(&mount);
 	if (!status) {
 		status = settings_subsys_init();
 	}
@@ -75,14 +51,34 @@ SYS_INIT(storage_init, APPLICATION, 80);
 
 static int cmd_storage(const struct shell *shell, size_t argc, char **argv)
 {
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (argc == 3 && !strcmp(argv[1], "format") && !strcmp(argv[2], "apps")) {
+		int err = app_store_format();
+		shell_print(shell, "Format apps: %d", err);
+		return err;
+	}
+#endif
+
 	bool read = !strcmp(argv[1], "read");
 	if (!read && strcmp(argv[1], "info")) {
 		return -EINVAL;
 	}
+	const char *name = argc == 3 ? argv[2] : "settings";
+	uint8_t partition = PARTITION_ID(settings_partition);
+	if (strcmp(name, "settings")) {
+#if DT_NODE_EXISTS(DT_NODELABEL(apps_partition))
+		if (strcmp(name, "apps")) {
+			return -EINVAL;
+		}
+		partition = PARTITION_ID(apps_partition);
+#else
+		return -ENOTSUP;
+#endif
+	}
 	const struct flash_area *area;
-	int err = flash_area_open(PARTITION_ID(settings_partition), &area);
+	int err = flash_area_open(partition, &area);
 	if (err) {
-		shell_error(shell, "Open settings partition failed: %d", err);
+		shell_error(shell, "Open %s partition failed: %d", name, err);
 		return err;
 	}
 	if (!device_is_ready(area->fa_dev)) {
@@ -98,9 +94,15 @@ static int cmd_storage(const struct shell *shell, size_t argc, char **argv)
 			}
 		}
 		if (!err) {
-			shell_print(shell, "Settings: offset 0x%08lx, size %lu bytes",
+			shell_print(shell, "%s: offset 0x%08lx, size %lu bytes", name,
 				(long)area->fa_off, (unsigned long)area->fa_size);
-			shell_print(shell, "Settings initialization: %d", status);
+			if (partition == PARTITION_ID(settings_partition)) {
+				shell_print(shell, "Settings initialization: %d", status);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+			} else {
+				shell_print(shell, "Applications initialization: %d", app_store_status());
+#endif
+			}
 		}
 	} else {
 		uint8_t bytes[64];
@@ -124,5 +126,5 @@ out:
 	return err;
 }
 
-SHELL_CMD_ARG_REGISTER(storage, NULL, "storage info | read: inspect the settings partition.",
-		      cmd_storage, 2, 0);
+SHELL_CMD_ARG_REGISTER(storage, NULL, "storage info|read [settings|apps]; format apps: initialize unrecognized storage.",
+		      cmd_storage, 2, 1);

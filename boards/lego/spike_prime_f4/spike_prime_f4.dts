@@ -76,6 +76,12 @@
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			/* Remaining part of the same Pybricks user-storage reservation.
+			 * No application filesystem may format foreign contents. */
+			apps_partition: partition@80000 {
+				label = "applications";
+				reg = <0x80000 0x38000>;
+			};
 			/* Tail of Pybricks' 512..768 KiB user-storage region. */
 			settings_partition: partition@b8000 {
 				label = "settings";

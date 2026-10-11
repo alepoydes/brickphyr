@@ -24,7 +24,8 @@ F4, the firmware provides:
 Bluetooth is an optional [build profile](docs/bluetooth.md). One computer owns
 the management connection at a time. The experimental [native profile](docs/builds.md#experimental-native-sdk)
 adds a C SDK, protected execution and RAM uploads over USB/BLE with `brickphyrdev app`.
-Installed applications and Python/WASM execution remain unimplemented.
+The native profile also installs several applications in LittleFS and runs them
+through the same protected loader. Python/WASM execution remains unimplemented.
 LEGO restoration and interrupted-transfer recovery remain unverified. See
 [hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
 for setup and commands.

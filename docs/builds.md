@@ -339,9 +339,9 @@ only after they work; keep local measurements and handoffs in ignored reports.
 
 ## Native application milestone
 
-The SDK/protected-loader and RAM upload/run steps are implemented experimentally
-and checked on the Inventor F4 over USB and BLE. Persistent application storage
-remains to be implemented.
+The SDK/protected-loader, RAM transfers and LittleFS installation/run paths are
+implemented experimentally and checked on the Inventor F4 over USB and BLE.
+Dependency publication and a clean build from published pins remain release gates.
 The goal is to build a separate native application, run it without writing flash,
 or install it alongside other applications and start it after a power cycle.
 The [application contract](applications.md#storage-and-launch-operations) owns
@@ -430,10 +430,11 @@ diagnostics
 `native_fixture` loads an ELF embedded for board acceptance, not the separately
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
-use. The native/BLE acceptance build with four fixture images uses 329,572 bytes
+use. The native/BLE acceptance build with four fixture images uses 336,188 bytes
 of firmware flash and 207 KiB of statically reserved RAM, including the shared
 128 KiB heap (Zephyr SDK 1.0.1, F4, MPU enabled). Its separately built `hello`
 image is 3240 bytes and reserves 9824 bytes for LLEXT; the reported loaded allocation
 is 2419 bytes. During RAM loading, the receive buffer and loader reservation coexist;
-the receive buffer is then released. These are example sizes, not application
+the receive buffer is then released. File loading reserves no ELF receive buffer
+and reports the same loader/loaded allocation for the same image. These are example sizes, not application
 capacity guarantees.

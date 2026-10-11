@@ -86,6 +86,26 @@ Use `app discard` to free it. An interrupted upload is discarded automatically a
 does not stop an existing application. The hub rejects malformed or incompatible
 images; RAM exhaustion never silently switches to persistent storage.
 
+To keep several applications across power cycles:
+
+```sh
+uv run brickphyrdev app install build/native-examples/hello.elf
+uv run brickphyrdev app --ble Brickphyr install build/native-examples/counter.elf
+uv run brickphyrdev app list
+uv run brickphyrdev app start hello
+uv run brickphyrdev app output
+uv run brickphyrdev app --ble Brickphyr start counter
+uv run brickphyrdev app stop
+uv run brickphyrdev app remove counter
+```
+
+`install FILE --name NAME` overrides the filename stem. Installation never starts
+an application; `start NAME` selects an installed file, while `start` without a
+name uses the waiting RAM upload. In either hub terminal, use `app list`,
+`app run NAME`, `app output`, `app stop` and `app remove NAME`. Firmware/SDK ABI
+changes may require rebuilding stored applications. See
+[storage semantics](applications.md#installed-native-files).
+
 `--serial NUMBER` chooses among USB hubs; `--port PATH` selects an explicit serial
 port for an already selected Shell interface or a simulator. `--ble` accepts a
 Bluetooth name or address. The CLI reuses `smpclient` for both transports.
@@ -99,9 +119,16 @@ The experimental native management group is SMP group 65, API version 1:
 | 2 | Write start | Start the completed RAM image |
 | 3 | Write stop | Confirm application termination and release |
 | 4 | Read output | At most 128 bytes in `data` |
-| 5 | Write discard | Discard the waiting upload |
+| 5 | Write discard | Discard the waiting RAM upload |
+| 6 | Read installed files | `name`: lexical cursor (empty for first); returns next `name`, `size`, `available` bytes; empty name ends iteration |
+| 7 | Write publish | `name`, `size`: validate and atomically publish `/apps/.incoming` |
+| 8 | Write remove | `name`: remove an installed image |
+| 9 | Write stored start | `name`: start an installed image |
 
-Offset zero starts a new upload. Later fragments must be contiguous or exact
+Persistent file upload/download/status/close use standard SMP group 8. Only
+the application operations missing from that group are added above.
+
+Offset zero starts a new RAM upload. Later fragments must be contiguous or exact
 repeats of already accepted bytes. Group errors carry the positive Zephyr errno;
 malformed requests use standard SMP errors. This group adds application operations,
 not another framing or firmware-update protocol. The versioned definitions are

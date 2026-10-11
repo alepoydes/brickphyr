@@ -46,3 +46,7 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
   endforeach()
   target_sources(app PRIVATE ${BRICKPHYR_ROOT}/tests/native/fixtures.c)
 endif()
+
+if(CONFIG_BRICKPHYR_APP_STORAGE)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c)
+endif()

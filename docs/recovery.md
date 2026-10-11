@@ -74,6 +74,18 @@ This does not preserve settings against another firmware reusing that region:
 large Pybricks programs can overwrite it. Do not assume cross-firmware settings
 persistence or erase old Pybricks data to make mounting succeed.
 
+The native profile uses external flash `0x80000..0xb7fff` (224 KiB) for applications,
+inside the same audited Pybricks user-storage region. Settings remain at
+`0xb8000..0xbffff`; LEGO regions are excluded. This replaces Pybricks user-program
+storage, so firmware restoration does not restore those programs automatically.
+
+Before explicitly initializing an unrecognized application partition, capture
+`storage read apps` and verify the complete offset/hex dump is backed up. Inspect
+its bounds with `storage info apps`. Only after accepting loss of the previous
+contents, run `storage format apps`. The command initializes only that partition
+and refuses to erase an already mounted application store. Neither a failed mount
+nor an application upload implicitly formats foreign data.
+
 ## Current image and installation boundary
 
 The `spike_prime_f4` devicetree limits the image to the main-firmware partition.

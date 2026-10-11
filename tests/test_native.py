@@ -158,3 +158,117 @@ def test_native_smp_and_cli():
             assert result.returncode == 0 and expected in result.stdout, (
                 result.stdout + result.stderr
             )
+
+
+def test_installed_applications():
+    from smpclient.requests.file_management import FileClose, FileUpload
+
+    from brickphyrdev.application import (
+        ListFiles,
+        Publish,
+        Remove,
+        RunStored,
+        files,
+        install,
+    )
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+    examples = build.with_name("native-smp-examples")
+    hello = (examples / "hello.elf").read_bytes()
+    counter = (examples / "counter.elf").read_bytes()
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            assert not (await checked(client, ListFiles(name=""))).name
+            await install(client, hello, "hello")
+            await install(client, counter, "counter")
+            assert (await checked(client, Status())).state == 0, "Installation executed code"
+            assert [x.name async for x in files(client)] == ["counter", "hello"]
+            assert await client.download_file("/apps/hello") == hello
+            await checked(client, RunStored(name="counter"))
+            assert (await checked(client, Status())).state == 1
+            for path in ("/settings/values", "/apps/../settings/values", "/apps/hello"):
+                with pytest.raises(RuntimeError, match="FileUpload rejected"):
+                    await checked(client, FileUpload(name=path, off=0, len=1, data=b"x"))
+            # A truncated transfer must not replace the installed version or stop
+            # its running instance. Publication closes the standard open handle.
+            await checked(
+                client, FileUpload(name="/apps/.incoming", off=0, len=len(hello), data=hello[:64])
+            )
+            with pytest.raises(RuntimeError, match="Publish rejected"):
+                await checked(client, Publish(name="hello", size=len(hello)))
+            assert await client.download_file("/apps/hello") == hello
+            assert (await checked(client, Status())).state == 1
+            incompatible = hello.replace((await checked(client, Status())).abi.encode(), b"0" * 64)
+            with pytest.raises(RuntimeError, match="Publish rejected"):
+                await install(client, incompatible, "hello")
+            assert await client.download_file("/apps/hello") == hello
+            # Replacement while counter is running changes only its installed image.
+            await install(client, hello, "counter")
+            assert (await checked(client, Status())).state == 1
+            for _ in range(3):
+                await checked(client, RunStored(name="hello"))
+                async with asyncio.timeout(2):
+                    while (status := await checked(client, Status())).state == 1:
+                        await asyncio.sleep(0.01)
+                assert status.state == 2 and status.result == status.cleanup == 0
+            await upload(client, transport, hello)
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (ram := await checked(client, Status())).state == 1:
+                    await asyncio.sleep(0.01)
+            assert (ram.heap, ram.loaded, ram.image) == (status.heap, status.loaded, status.image)
+            # Standard file close supports an interrupted upload and a fresh one.
+            await checked(
+                client, FileUpload(name="/apps/.incoming", off=0, len=len(hello), data=b"bad")
+            )
+            await checked(client, FileClose())
+            await install(client, counter, "counter")
+            await checked(client, Remove(name="counter"))
+            assert [x.name async for x in files(client)] == ["hello"]
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+        cli = [Path(sys.executable).with_name("brickphyrdev"), "app", "--port", port]
+        for operation, expected in (
+            (["install", str(examples / "counter.elf")], '"state": "returned"'),
+            (["list"], "counter\t"),
+            (["start", "counter"], '"state": "running"'),
+            (["remove", "counter"], '"state": "running"'),
+            (["stop"], '"state": "stopped"'),
+        ):
+            result = subprocess.run([*cli, *operation], capture_output=True, text=True, timeout=8)
+            assert result.returncode == 0 and expected in result.stdout, (
+                result.stdout + result.stderr
+            )
+
+
+def test_application_store_capacity():
+    from smpclient.exceptions import SMPUploadError
+    from smpclient.requests.file_management import FileClose
+
+    from brickphyrdev.application import ListFiles, install
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+    hello = (build.with_name("native-smp-examples") / "hello.elf").read_bytes()
+
+    async def exercise(port):
+        async with connection(port=port) as (client, _):
+            await install(client, hello, "original")
+            # Synthetic maximum-size files exhaust the real LittleFS allocator.
+            padded = hello.ljust((await checked(client, Status())).limit, b"\0")
+            for index in range(3):
+                try:
+                    await install(client, padded, f"fill{index}")
+                except SMPUploadError as err:
+                    assert index > 0, str(err)
+                    break
+            else:
+                pytest.fail("Expected the bounded application partition to fill")
+            await checked(client, FileClose())
+            assert await client.download_file("/apps/original") == hello
+            assert (await checked(client, ListFiles(name=""))).available <= len(padded)
+            assert (await checked(client, Status())).state == 0
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
