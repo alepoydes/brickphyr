@@ -1,6 +1,6 @@
 [project]
 name = "brickphyrdev"
-version = "0.1.0"
+version = "0.1.1"
 description = "Host tools for Brickphyr hubs"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -37,7 +37,7 @@ sdk = ["patool>=2", "requests>=2.32.4", "tqdm>=4.67.1"]
 flash = ["argcomplete>=3.6", "hidapi>=0.15", "tqdm>=4.67.1"]
 
 [tool.uv.sources]
-# Coordinated local client changes; publication is tracked in docs/upstream.md.
+# The west manifest pins this editable workspace dependency.
 pybricksdev = { path = "../pybricksdev", editable = true }
 
 [tool.ruff]

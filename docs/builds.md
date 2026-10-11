@@ -19,7 +19,7 @@ brickphyr-workspace/
   brickphyr/             # this repository, including west.yml
   zephyr/                # upstream checkout, or a justified thin fork
   pybricks-micropython/  # Pybricks checkout/fork with its original history
-  pybricksdev/          # host library and CLI; coordinated CDC topic during bring-up
+  pybricksdev/          # host library and CLI with pinned CDC support
   modules/
     hal/                 # CMSIS and STM32 HAL resolved by the Zephyr manifest
 babybot/                 # separate application repository
@@ -87,13 +87,9 @@ Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
 Bootstrap west fetches the sibling checkouts before uv resolves the editable
-pybricksdev dependency. During the USB experiment, the coordinated
-[dependency changes](upstream.md#usb-experiment-prerequisites) must be present
-before synchronizing Python tools; the published pins alone remain insufficient.
-
-`west update` checks out the published Pybricks helper changes from the pinned fork.
-It does not publish or supply the pending USB/storage dependency corrections.
-Build the Prime F4 target and check the
+pybricksdev dependency. The published pins include the coordinated
+[dependency changes](upstream.md#current-downstream-delta); no manual patches or
+unpublished commits are needed. Build the Prime F4 target and check the
 resulting image:
 
 ```sh

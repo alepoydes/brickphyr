@@ -20,8 +20,10 @@ In a working fork, `origin` is our fork and `upstream` is the original project.
 For an unmodified dependency, its normal upstream remote is sufficient. The
 Pybricks fork is [alepoydes/pybricks-micropython](https://github.com/alepoydes/pybricks-micropython),
 with [pybricks/pybricks-micropython](https://github.com/pybricks/pybricks-micropython)
-as upstream. The USB experiment also needs a published Zephyr fork for the
-[CDC completion change](#usb-experiment-prerequisites).
+as upstream. The other integration forks are
+[alepoydes/zephyr](https://github.com/alepoydes/zephyr) and
+[alepoydes/pybricksdev](https://github.com/alepoydes/pybricksdev), preserving their
+respective upstream histories. All three publish branch `brickphyr/0.1.1`.
 
 ## Put the change in its owning project
 
@@ -100,10 +102,9 @@ the same revision in west, a shell script, and a prose installation command.
 
 ## Current downstream delta
 
-The [manifest](../west.yml) pins upstream Zephyr, CMSIS 6, STM32 HAL, and our Pybricks fork.
-The board lives out of tree in Brickphyr. The published pins still select
-unmodified Zephyr and its imported modules; the USB experiment has additional
-[prerequisites](#usb-experiment-prerequisites). Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
+The [manifest](../west.yml) pins published Zephyr, Pybricks and pybricksdev
+integration commits and imports Zephyr's module revisions. The board lives out of
+tree in Brickphyr. Pybricks supplies host tools and portable resistor-ladder/TLC5955 helpers.
 The firmware adapters use Zephyr ADC, Input, SPI, PWM, GPIO, and LED APIs.
 
 The pinned Pybricks fork includes these changes on the upstream v4.1.0b6 base:
@@ -113,19 +114,26 @@ The pinned Pybricks fork includes these changes on the upstream v4.1.0b6 base:
 | `tools/metadata.py` | `--no-custom-name` permits checksum-free images without Pybricks-specific linker sections |
 | `lib/pbio/include/pbdrv/resistor_ladder.h`, `drv/resistor_ladder/` | Extract the existing decoder from ADC access for reuse with Zephyr |
 | `lib/pbio/include/pbdrv/tlc5955.h`, `drv/pwm/pwm_tlc5955_stm32.c` | Share control-frame definitions and grayscale encoding without the STM32/PBIO scheduler adapter |
+| `lib/pbio/src/cobs.c` | Reject truncated blocks and reserved wire bytes before protocol dispatch |
+| `tools/flash/serdev/cobs.py` | Reuse the Python COBS codec from pybricksdev |
 | `tests/tools/` | Short metadata/package checks and factory-loader preservation checks through the unchanged DFU writer |
 
 These changes are published in
-[the integration commit](https://github.com/alepoydes/pybricks-micropython/commit/2d62eb45e879075d63ace7728f8626437d3a683b).
+[the integration commit](https://github.com/alepoydes/pybricks-micropython/commit/a7b1b04ae4f8449dd46b3dfb97c420334439fd35).
 `west update` obtains them through the manifest without manual patches. The
 installer and its DFU implementation remain unmodified. No upstream PR has been
 submitted yet; remove the downstream delta when equivalent upstream functionality
 is adopted.
 
+The pinned [Zephyr integration commit](https://github.com/alepoydes/zephyr/commit/29bbb539f73adee89fed53fef4b94d59c97962bf)
+is based on v4.4.2. The pinned
+[pybricksdev integration commit](https://github.com/alepoydes/pybricksdev/commit/c970fb90e9c1027bdde93b5fb2806dd34008897b)
+supplies the CDC client and shared Python COBS codec. The corrections below are
+included in these public pins; no manual dependency patches are required.
+
 ## USB experiment prerequisites
 
-The experimental USB path additionally requires portable dependency
-changes, not yet included in the published manifest pins:
+The experimental USB path uses these portable dependency changes:
 
 - Pybricks COBS decoding must reject truncated blocks and reserved wire bytes.
 - Zephyr's next-stack CDC ACM driver must implement `uart_irq_tx_complete()`,
@@ -135,30 +143,27 @@ changes, not yet included in the published manifest pins:
   reads, and bounded exchange/cleanup. Its existing command and event handlers
   remain shared with BLE and the older USB transport. The Python COBS codec moves
   from the Pybricks flashing tool to `pybricksdev.usb.cobs`; the flashing tool
-  imports that single implementation. Keep the coordinated client/tool changes
-  together until they can be published and their dependency requirements finalized.
+  imports that single implementation. The manifest and editable uv dependency
+  keep the coordinated client/tool changes together.
 
-Keep these changes in their owning repositories, run their focused tests, and
-publish reviewed dependency commits before updating the manifest. A clean
-checkout of the current pins does not yet reproduce the complete USB experiment.
-Do not substitute timing delays or inspect private driver buffers in Brickphyr.
-The manifest includes the published pybricksdev base in a sibling checkout, and
-uv installs that checkout as an editable dependency for the coordinated experiment.
-The published base alone does not supply the new CDC client or shared codec.
+These changes remain in their owning repositories with focused tests. Do not
+substitute timing delays or inspect private driver buffers in Brickphyr. West
+fetches the pinned pybricksdev sibling checkout; uv installs it as an editable
+dependency. The released upstream Python package does not yet supply this CDC
+client, so install the CLI through the documented workspace procedure.
 
 ## Settings storage prerequisites
 
 The experimental persistent-settings build also requires a Zephyr file-backend
-correction, currently outside the manifest pin: preserve read errors through
+correction in the pinned integration: preserve read errors through
 file close and reject short values whose stored length says more data exists.
 The regression checks use real filesystem operations with truncated Settings
-records. Keep this correction in Zephyr, with its tests, until reviewed dependency
-commits can be published and pinned.
+records. The correction and its tests remain in Zephyr.
 
 ## SMP prerequisites
 
-The experimental Shell/SMP path requires a Zephyr transport change outside the
-published manifest pin. The common serial receiver exposes packet extraction and
+The experimental Shell/SMP path uses a Zephyr transport change included in the
+manifest pin. The common serial receiver exposes packet extraction and
 session reset to custom Shell backends, so Brickphyr can reuse its framing while
 joining accepted operations during disconnect. It also rejects oversized lines
 and clears rejected header prefixes. The default UART transport remains available;
@@ -166,8 +171,8 @@ its input-expiration timer is specific to that backend and disabled for custom
 receivers. Portable receiver checks cover both configurations.
 
 The manifest imports zcbor through Zephyr's pinned module list. Host tooling uses
-the locked, unmodified `smpclient` and `smpmgr` packages. Keep the receiver change
-in Zephyr; publish reviewed dependency commits before updating shared pins.
+the locked, unmodified `smpclient` and `smpmgr` packages. The receiver implementation
+and its checks remain in Zephyr.
 
 BLE SMP also needs transport packet admission/completion callbacks. An accepted
 packet keeps its session resources until handlers, response output and cleanup
@@ -176,15 +181,15 @@ exposes a public connection callback pair, holds the connection reference throug
 processing, rejects obsolete sessions and clears incomplete/queued packets on
 disconnect. Brickphyr uses this boundary to retain the shared management slot
 without blocking Bluetooth RX. Focused Zephyr tests cover admission, malformed
-input, allocation/output failures and exactly-once completion. These local changes
-are not included in the published manifest pin.
+input, allocation/output failures and exactly-once completion. The callbacks are
+part of the pinned Zephyr integration.
 
 
 ## HCI timeout prerequisite
 
-The Bluetooth profile uses a local Zephyr command-lifetime correction outside the
-published manifest pin. Synchronous HCI commands return `-ETIMEDOUT` on a missing
-completion instead of asserting. Completion and timeout arbitrate access to the
+The Bluetooth profile uses the pinned Zephyr command-lifetime correction.
+Synchronous HCI commands return `-ETIMEDOUT` on a missing completion instead of
+asserting. Completion and timeout arbitrate access to the
 caller's semaphore and state update; a late reply cannot use an expired stack.
 Commands still queued at timeout are removed without restoring controller credits.
 Buffer allocation inside the synchronous API is also bounded.
@@ -193,17 +198,16 @@ The Zephyr native checks use a synthetic HCI controller and the production comma
 path to cover completion/error replies, late replies, repeated queued cancellation,
 buffer exhaustion, and calls from the system workqueue. Both TX scheduling options
 are exercised. This is a transaction-lifetime change, not automatic controller
-recovery; other Bluetooth APIs can still wait on their own resources. Publish and
-pin the reviewed dependency change before claiming clean-checkout reproducibility.
+recovery; other Bluetooth APIs can still wait on their own resources.
 
-The H:4 transport also needs its local close-path correction: release partial RX,
+The H:4 transport also needs its pinned close-path correction: release partial RX,
 pending TX and queued buffers even if board teardown fails, and reset framing
 before reopening. Transport setup preserves its original error. Native tests use
 the production driver and an emulated UART to exercise partial and oversized
 packets, pending transmission, teardown failure and repeated open/close. This is
 transport cleanup, not complete host-stack recovery after controller failure.
 
-The local disable-error correction adapts
+The pinned disable-error correction adapts
 [upstream's readiness fix](https://github.com/zephyrproject-rtos/zephyr/commit/709a1b354b88)
 to the 4.4.2 lifecycle: reject a missing driver close operation before teardown,
 and never restore readiness after a failed close. It retains this base's

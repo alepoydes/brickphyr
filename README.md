@@ -9,20 +9,24 @@ using the Pybricks API, and WebAssembly applications on LEGO hubs. One user
 application runs at a time. Hardware services remain responsive independently
 of the application's interpreter, garbage collection, or willingness to yield.
 
-**Status: experimental board bring-up.** The Prime F4 target builds a Zephyr
-image with a USB diagnostic shell. Installation, shell commands, terminal
-reconnection, and software reboot have been exercised on one Robot Inventor F4
-hub. Four buttons, button lighting, and software DFU/reinstallation have also been
-exercised; battery operation and long-press shutdown have operator observations.
-Return to official Pybricks 4.1.0b4/b6 and subsequent Brickphyr reinstallation are
-verified over USB; LEGO restoration and interrupted-transfer recovery remain
-unverified. The same shell runs in Zephyr's native simulator.
-The new [USB interface selector](docs/host.md) and minimal Pybricks identification
-endpoint pass host simulations and the Linux USB round trip on that Inventor F4.
-An optional [Bluetooth profile](docs/bluetooth.md) also provides Pybricks BLE
-identity/status, SMP management and exclusive USB/BLE ownership on the same hub.
-There is no application loader, SDK, or supported
-recovery procedure yet. See [builds](docs/builds.md) for commands.
+**Status: experimental connection and power foundation.** On one Robot Inventor
+F4, the firmware provides:
+
+- One interactive Zephyr Shell over USB or BLE, with editing, history and completion.
+- USB interface selection and Pybricks identification over USB and BLE;
+  Pybricks Code can discover and connect to the hub.
+- Standard SMP management, runtime settings and explicit persistent save.
+- Four buttons, connection lighting, independent USB/battery idle timeouts,
+  shutdown and button restart with or without USB attached.
+- Software DFU through the standard Pybricks installer; return to official
+  Pybricks 4.1.0b4/b6 and back to Brickphyr has been exercised.
+
+Bluetooth is an optional [build profile](docs/bluetooth.md). One computer owns
+the management connection at a time. Pybricks program upload/execution, a native
+application loader, Python/WASM engines and the SDK are not implemented yet.
+LEGO restoration and interrupted-transfer recovery remain unverified. See
+[hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
+for setup and commands.
 
 The first target is the Inventor / SPIKE Prime family, starting with an identified
 physical board revision. Other hubs follow when their memory, peripherals, and
@@ -59,7 +63,7 @@ do not belong in this firmware.
 | Understand host interfaces and session ownership | [Host connections](docs/host.md) |
 | Understand settings and inactivity shutdown | [Settings and power](docs/settings.md) |
 | Work on Bluetooth | [Bluetooth](docs/bluetooth.md) |
-| Install or restore firmware | [Recovery design](docs/recovery.md) — no install commands yet |
+| Install or restore firmware | [Installation commands](docs/builds.md#diagnostic-shell), [recovery constraints](docs/recovery.md) |
 | Validate software or hardware | [Testing](docs/testing.md) |
 | Contribute and exchange upstream changes | [Contributing](CONTRIBUTING.md), [upstream workflow](docs/upstream.md) |
 | Understand licensing | [Licensing](docs/licensing.md) |
@@ -68,9 +72,9 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-USB interface selection is verified on the initial F4 target with Linux. The
-[acceptance milestones](docs/builds.md#acceptance-milestones) place interface
-selection, settings/power, and separate applications after that hardware bring-up.
+USB/BLE connections and settings/power are implemented on the initial F4 target.
+The next [acceptance milestone](docs/builds.md#acceptance-milestones) is a separately
+loaded native application with explicit lifecycle and isolation checks.
 Subsystem contracts and implementation boundaries are linked in
 [the project orientation](AI/context.md).
 

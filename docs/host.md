@@ -2,7 +2,7 @@
 
 The experimental F4 image implements selectable USB CDC ACM interfaces: Zephyr
 Shell and a minimal Pybricks identification endpoint. The stream handler is
-checked with Zephyr's UART emulator and the Pybricks Python clients. The local
+checked with Zephyr's UART emulator and the Pybricks Python clients. The pinned
 pybricksdev CDC extension also identifies the compiled firmware protocol handler
 through a pseudoterminal and over Linux USB on the Inventor F4. Identity, status,
 reconnection, rejection of unsupported commands, and return to Shell are verified.
@@ -82,9 +82,10 @@ validation: it rejects an outdated lockfile instead of updating it. See
 [uv locking](https://docs.astral.sh/uv/concepts/projects/sync/).
 
 The CLI currently targets Linux. USB identity and Pybricks-to-Shell handover use
-the local [pybricksdev CDC extension](upstream.md#usb-experiment-prerequisites).
-Keep that dependency until the extension is published; the installed CLI itself
-does not require west or firmware sources at runtime.
+the [pybricksdev CDC extension](upstream.md#usb-experiment-prerequisites) pinned
+by west and installed by uv from its sibling checkout. Upstream's released Python
+package does not yet provide this transport. The installed CLI itself does not
+require west or firmware sources at runtime.
 
 ### Native Bluetooth terminal
 
@@ -167,7 +168,7 @@ accepted packet finishes, even after disconnection. Incomplete and queued old
 packets are discarded; they cannot acquire the next session. A disconnect also
 rejects subsequent commands bundled in the current packet, while an already
 entered handler may finish. These paths require
-the local [Zephyr changes](upstream.md#smp-prerequisites).
+the pinned [Zephyr changes](upstream.md#smp-prerequisites).
 
 ## USB selection experiment
 
@@ -273,12 +274,12 @@ The installed pybricksdev client supplies host reads and command framing.
 
 This is identification interoperability, not full Pybricks Code or Python
 compatibility. The returned firmware version does not impersonate Pybricks.
-Its build label uses PEP 440 local-version notation (`0.1.0+bringup`) for Python
-clients; the terminal retains Zephyr's `0.1.0-bringup` display format.
+Its build label uses PEP 440 local-version notation (`0.1.1+bringup`) for Python
+clients; the terminal retains Zephyr's `0.1.1-bringup` display format.
 
 ### pybricksdev CDC client
 
-The coordinated local pybricksdev topic provides a CDC transport using the existing
+The pinned pybricksdev integration provides a CDC transport using the existing
 `PybricksHub` command/event implementation. It requires the client changes listed
 in [upstream integration](upstream.md#usb-experiment-prerequisites); the released
 pybricksdev package does not yet supply this transport. After selecting Pybricks

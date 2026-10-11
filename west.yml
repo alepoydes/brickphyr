@@ -7,15 +7,15 @@ manifest:
       revision: 3aa1d75f3c2ae77f6e4d36194e3d281b899ab149
       path: modules/lib/ti-bt-service-packs
     - name: pybricksdev
-      url: https://github.com/pybricks/pybricksdev
-      revision: 29ca6379d727db8d6683a8ea53a8a8d3e8b176c4
+      url: https://github.com/alepoydes/pybricksdev
+      revision: c970fb90e9c1027bdde93b5fb2806dd34008897b
     - name: pybricks
       url: https://github.com/alepoydes/pybricks-micropython
-      revision: 2d62eb45e879075d63ace7728f8626437d3a683b # Brickphyr helpers on v4.1.0b6
+      revision: a7b1b04ae4f8449dd46b3dfb97c420334439fd35 # Brickphyr helpers on v4.1.0b6
       path: pybricks-micropython
     - name: zephyr
-      url: https://github.com/zephyrproject-rtos/zephyr
-      revision: dccb09599635bdff17633fa7e9dab014b91dce90 # v4.4.2
+      url: https://github.com/alepoydes/zephyr
+      revision: 29bbb539f73adee89fed53fef4b94d59c97962bf # Brickphyr integration on v4.4.2
       import:
         name-allowlist:
           - cmsis_6

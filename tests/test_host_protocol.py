@@ -95,9 +95,10 @@ def test_pybricksdev_serial_client(protocol_bridge, monkeypatch, capsys):
                 await hub.disconnect()
         finally:
             await hub.disconnect()
+        return str(hub.fw_version)
 
     try:
-        asyncio.run(check())
+        firmware_version = asyncio.run(check())
         result = subprocess.run(
             [sys.executable, "-m", "pybricksdev", "usb-info", os.ttyname(slave)],
             capture_output=True,
@@ -106,7 +107,7 @@ def test_pybricksdev_serial_client(protocol_bridge, monkeypatch, capsys):
         )
         assert result.returncode == 0, result.stderr
         assert "Name: Brickphyr" in result.stdout
-        assert "Firmware: 0.1.0+bringup" in result.stdout
+        assert f"Firmware: {firmware_version}" in result.stdout
 
         # Only USB enumeration/control is simulated; identity and handover use the
         # installed client over the PTY against the production firmware handler.
@@ -161,6 +162,63 @@ def test_identification_and_unavailable_capabilities(protocol):
     assert 0 < int.from_bytes(replies[4][4:6], "little") <= 64
     assert replies[4][6:] == bytes(9)  # No engines, storage or program slots.
     assert replies[5] == bytes.fromhex("03 01 ff ff")
+
+
+def test_shell_handover_with_immediate_prompt(monkeypatch):
+    from brickphyrdev import usb as brickphyr_usb
+
+    state = ["shell", False, True]
+    commands = []
+
+    class Port(io.BytesIO):
+        """Synthetic line-control peer: open discards any prompt already sent."""
+
+        def __init__(self, port=None, *args, **kwargs):
+            super().__init__()
+            self.is_open = False
+            self.dtr = True
+            if port is not None:
+                self.open()
+
+        @property
+        def dtr(self):
+            return self._dtr
+
+        @dtr.setter
+        def dtr(self, value):
+            self._dtr = value
+            if self.is_open and value:
+                self.write_reply(b"brickphyr> ")
+
+        def write_reply(self, data):
+            self.seek(0)
+            self.truncate()
+            super().write(data)
+            self.seek(0)
+
+        def open(self):
+            self.is_open = True
+            self.dtr = self.dtr
+            self.write_reply(b"")
+
+        def read_until(self, delimiter):
+            return self.read()
+
+        def write(self, data):
+            commands.append(data)
+            self.write_reply(b"Pybricks selected for the next session.\r\nbrickphyr> ")
+
+        def close(self):
+            if commands:
+                state[0] = "pybricks"
+            super().close()
+
+    monkeypatch.setattr(brickphyr_usb.serial, "Serial", Port)
+    monkeypatch.setattr(brickphyr_usb, "serial_port", lambda hub: "synthetic")
+    monkeypatch.setattr(brickphyr_usb, "status", lambda hub: tuple(state))
+    brickphyr_usb.handover(object(), "pybricks")
+    assert commands == [b"host_mode pybricks\r"]
+    assert state[0] == "pybricks"
 
 
 def test_command_errors_and_subscription(protocol):

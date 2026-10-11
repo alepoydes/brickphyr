@@ -134,8 +134,14 @@ def handover(hub, mode):
         return
     if current == "shell":
         with serial.Serial(
-            serial_port(hub), 115200, timeout=2, write_timeout=2, exclusive=True
+            port=None, baudrate=115200, timeout=2, write_timeout=2, exclusive=True
         ) as port:
+            # pySerial clears RX during open, after setting line controls. Start
+            # the Shell only afterward so its first prompt cannot be discarded.
+            port.dtr = False
+            port.port = serial_port(hub)
+            port.open()
+            port.dtr = True
             if not port.read_until(b"brickphyr> ").endswith(b"brickphyr> "):
                 raise TimeoutError("Shell did not become ready")
             port.write(b"host_mode pybricks\r")
