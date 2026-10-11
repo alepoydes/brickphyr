@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+description: ST LSM6DS3TR-C hub accelerometer and gyroscope
+compatible: "st,lsm6ds3tr-c"
+include: i2c-device.yaml
+properties:
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: Active-high INT1 data-ready signal
+  axis-signs:
+    type: array
+    required: true
+    description: Sensor-to-hub X/Y/Z signs, each 1 or -1

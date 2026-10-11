@@ -120,6 +120,14 @@ int main(void)
 	k_free(reservation);
 	CHECK(available() == capacity);
 
+	/* Exercise the new ABI from a separately loaded userspace image. This
+	 * board lacks an IMU: the real call must report ENOTSUP, without a fault. */
+	CHECK(native_fixture_run("imu") == 0);
+	k_msleep(20);
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_RETURNED && status.result == -ENOTSUP);
+	CHECK(status.cleanup_error == 0 && available() == capacity);
+
 	/* Real userspace syscalls and production driver/service with a synthetic SPI
 	 * peer. Stop must join the app and wait for the outstanding final blank. */
 	hold_transfer = true;

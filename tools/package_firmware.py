@@ -23,6 +23,8 @@ def package(build: Path, version: str, sdk: Path) -> Path:
     notices = [
         ("Brickphyr", root / "LICENSE"),
         ("Pybricks MIT helpers", root / "LICENSES/Pybricks-MIT.txt"),
+        ("ST/Pybricks IMU register helpers", root / "LICENSES/ST-LSM6DS3TR-C.txt"),
+        ("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"),
     ]
     for project_name, license_path in (
         ("zephyr", "LICENSE"),

@@ -11,6 +11,13 @@ instance on both paths. Additional checks cover stale input/output, USB rejectio
 during BLE ownership, and disconnect during an accepted command. These are native
 simulation checks, not evidence of Bluetooth radio behavior.
 
+The IMU fixtures use the production acquisition thread and pinned ST/Pybricks
+register code with a synthetic I²C/GPIO device. Checks cover cold configuration,
+physical units and signed limits, read-only Shell snapshots, stale timestamps,
+I/O failure recovery, overlapping updates and shutdown. A separate startup-failure
+fixture checks that a failed register read cannot cause a write and that cleanup
+does not replace the first error. These do not measure F4 sensor accuracy or timing.
+
 The Python protocol checks also run `brickphyrdev` USB identity and handover through
 the installed pybricksdev library against the production C handler over a PTY.
 USB enumeration/control is simulated. Packaging can be checked with `uv build`;
@@ -25,6 +32,8 @@ After [workspace setup](builds.md), including the experimental
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&

@@ -24,6 +24,9 @@ static const unsigned char matrix[] = {
 static const unsigned char matrix_fault[] = {
 #include <native_matrix_fault.inc>
 };
+static const unsigned char imu[] = {
+#include <native_imu.inc>
+};
 
 const void *native_fixture_hello(size_t *length)
 {
@@ -58,6 +61,7 @@ int native_fixture_run(const char *name)
 		{"hello", hello, sizeof(hello)}, {"counter", counter, sizeof(counter)},
 		{"spin", spin, sizeof(spin)}, {"fault", fault, sizeof(fault)},
 		{"matrix", matrix, sizeof(matrix)}, {"matrix_fault", matrix_fault, sizeof(matrix_fault)},
+		{"imu", imu, sizeof(imu)},
 		{"truncated", hello, sizeof(hello) - 1},
 	};
 	for (size_t i = 0; i < ARRAY_SIZE(images); i++) {
@@ -75,5 +79,5 @@ static int cmd_fixture(const struct shell *shell, size_t argc, char **argv)
 	return err;
 }
 
-SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, truncated, badabi.",
+SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, imu, truncated, badabi.",
 		      cmd_fixture, 2, 0);

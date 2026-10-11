@@ -60,7 +60,10 @@ buttons, application and matrix snapshots through SMP and the same Shell.
 The CLI text monitor and host JSONL recorder are implemented, including a shared
 terminal/monitor session over USB or the native BLE stream. Host tests exercise
 the real simulated Shell/SMP peer; physical monitoring checks remain pending.
-IMU, sound, external sensors and motors are next.
+Uncalibrated IMU acquisition now shares timestamped native/Shell/monitor snapshots,
+using the pinned ST/Pybricks register library over Zephyr I²C/GPIO. Synthetic device
+checks cover acquisition/errors/shutdown; physical readings remain unverified.
+IMU calibration/orientation, sound, external sensors and motors are next.
 
 ## Dependencies and remaining work
 

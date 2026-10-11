@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_power.h"
 #include "hub_matrix.h"
+#include "hub_imu.h"
 #include "input_resistor_ladder.h"
 #include "native.h"
 
@@ -23,8 +24,8 @@
 #endif
 
 #define TELEMETRY_GROUP 66
-enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX };
-static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix"};
+enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU };
+static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix", "imu"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -46,6 +47,7 @@ static bool available(enum source source)
 	case SIDE: return DT_NODE_HAS_STATUS(DT_NODELABEL(arrow_keys), okay);
 	case APPLICATION: return IS_ENABLED(CONFIG_BRICKPHYR_NATIVE);
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
+	case IMU: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
 }
@@ -128,6 +130,23 @@ static void capture(enum source source, struct observation *out)
 			field(out, "ready", value.upload_ready);
 		}
 #endif
+	} else if (source == IMU) {
+		struct bp_imu_sample value;
+		out->error = hub_imu_get(&value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_us", value.sample_us);
+			field(out, "completed_us", value.read_us);
+			field(out, "sequence", value.sequence);
+			field(out, "missed", value.missed);
+			field(out, "failures", value.failures);
+			field(out, "ax_um_s2", value.acceleration[0]);
+			field(out, "ay_um_s2", value.acceleration[1]);
+			field(out, "az_um_s2", value.acceleration[2]);
+			field(out, "gx_mdps", value.angular_velocity[0]);
+			field(out, "gy_mdps", value.angular_velocity[1]);
+			field(out, "gz_mdps", value.angular_velocity[2]);
+		}
 	} else if (source == MATRIX) {
 		out->error = hub_matrix_get(&out->matrix);
 		if (!out->error) {
@@ -233,7 +252,7 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 	return result;
 }
 
-SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | power | buttons.center | buttons.side | application | matrix].",
+SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | power | buttons.center | buttons.side | application | matrix | imu].",
 		      cmd_observe, 1, 1);
 
 static const struct mgmt_handler handlers[] = {

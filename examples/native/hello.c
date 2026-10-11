@@ -15,7 +15,10 @@ static void __attribute__((constructor)) initialize(void)
 int app_main(void)
 {
 	int64_t start = bp_time_ms();
-	bp_write("Hello from a native application.\n", 33);
+	/* Ordinary C initialization can emit a call to the static C library. */
+	char line[96] = "Hello from a native application.\n";
+	bp_write(line, 33);
 	bp_sleep(20);
-	return initialized == 7 && gain * gain == 2.25f && bp_time_ms() >= start + 20 ? 0 : 1;
+	return initialized == 7 && gain * gain == 2.25f && line[95] == 0 &&
+		bp_time_ms() >= start + 20 ? 0 : 1;
 }

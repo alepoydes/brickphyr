@@ -9,12 +9,16 @@ with the firmware; do not copy an API description into multiple runtimes.
 The opt-in F4 profile runs one ARM ELF32 relocatable C image through Zephyr LLEXT.
 The matching SDK emits inline system-call stubs and an ABI identity checked before
 replacement. Unresolved imports, TLS and incompatible ARM/float formats are rejected.
-The current toolchain uses Thumb and soft-float compiler support, linked into the
-application. `app_main`, constructors and normal-return destructors run in user mode.
+The current toolchain uses Thumb, soft-float compiler support and the SDK's static
+C library for operations such as compiler-generated `memset`, linked into the
+application. These execute in its protected domain; no privileged C-library
+imports are exposed. This does not supply POSIX or host I/O functions.
+`app_main`, constructors and normal-return destructors run in user mode.
 Explicit stop and faults do not depend on user cleanup executing.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
-bounded output, read-only buttons and the optional [hub matrix](hardware.md#hub-matrix).
+bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix)
+and read-only [IMU snapshots](hardware.md#hub-imu).
 Matrix writes copy into firmware storage and return on acceptance; snapshots
 report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no

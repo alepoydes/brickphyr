@@ -201,6 +201,56 @@ ARM QEMU additionally exercises user-memory validation and application stop/faul
 cleanup through the actual native syscalls and loader. Physical matrix orientation,
 brightness and operation on the Inventor F4 still await verification.
 
+## Hub IMU
+
+The F4 build includes uncalibrated LSM6DS3TR-C acquisition with
+`CONFIG_BRICKPHYR_IMU`. It reuses the pinned ST/Pybricks register functions through
+Zephyr I²C/GPIO, without the PBIO scheduler or STM32 HAL backend. Wiring and
+mounting signs come from Pybricks' Prime F4 platform: I²C2 at 400 kHz, PB10/PB3,
+INT1 on PB4, sensor-to-hub signs −X/+Y/−Z. Both channels run at 833 Hz with ±8 g
+and ±2000°/s ranges. Startup waits for sensor boot and gyro settling; block data
+update and the filter-settling data-ready mask are enabled.
+
+Read a snapshot in either terminal, or select it in the host monitor:
+
+```sh
+uv run brickphyrdev monitor --source imu
+uv run brickphyrdev monitor --ble Brickphyr --source imu --log imu.jsonl
+```
+
+The Shell command is `observe imu`. Native applications call `bp_imu_get()` with a
+caller-owned `struct bp_imu_sample`; the example `imu.elf` prints acceleration
+and angular velocity. All paths copy the same latest sample, without I²C access,
+allocation, ownership changes or sensor reconfiguration. Read errors preserve the
+last valid values and acquisition time. The API returns `-ENOTSUP` when excluded;
+otherwise inspect `sample.error`, including startup (`-EINPROGRESS`), waiting or
+resynchronization (`-EAGAIN`), stale data (`-ETIMEDOUT`) and stopped acquisition
+(`-ESHUTDOWN`). Units and counters are described in [observations](telemetry.md).
+No calibration, gravity removal or orientation estimate is implemented yet.
+
+`sample_us` timestamps the observed gyro-ready edge on the monotonic clock.
+Acceleration accompanies it in the same 12-byte burst. This is not a simultaneous
+hardware latch of six axes, nor the physical sampling instant before filter
+delay. The driver rejects reads crossed by another observed gyro-ready edge and
+drains a complete frame after an I²C failure before accepting new values.
+The chip's BDU protection covers each two-byte word; see
+[ST AN5130, sections 3.9 and 4](https://www.st.com/resource/en/application_note/dm00472670-lsm6ds3tr-c-always-on-3d-accelerometer-and-3d-gyroscope-stmicroelectronics.pdf).
+
+One preemptible worker has a 1536-byte stack and a binary wakeup; it performs no
+periodic polling and no sample queue grows behind a slow consumer. The 400 kHz
+bus transaction has a nominal wire time
+of about 338 µs within a 1201 µs period, excluding IRQ/software overhead. F4 I²C
+transactions time out after 10 ms; reset polling is bounded. Observation performs
+no background transmission. Shutdown joins acquisition and powers down both
+sensors. Physical sample loss, interrupt latency, CPU use and residual current
+remain unmeasured.
+
+Native simulation uses the actual worker and register library with a synthetic
+I²C/GPIO peer. It checks cold initialization, signed limits and mounting axes,
+units, preserved timestamps, stale samples, transfer failures, overlapping reads,
+shutdown and first-error preservation when initialization and cleanup both fail.
+The F4 image builds; physical readings and mounting orientation await verification.
+
 ## A support claim must be reproducible
 
 A verified row identifies board/product revision, firmware and dependency

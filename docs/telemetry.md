@@ -2,7 +2,7 @@
 
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
-`observe application` or `observe matrix` for one source. Unsupported sources
+`observe application`, `observe matrix` or `observe imu` for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 
 Observation is read-only. It does not start ADC/SPI transactions, change a sensor
@@ -81,7 +81,8 @@ verification with a physical USB/BLE hub remains pending.
 
 ## Time and validity
 
-All hub times use monotonic uptime in milliseconds. `read_ms` is when capture
+Hub times use monotonic uptime: milliseconds for `_ms` fields and microseconds
+for `_us` fields. `read_ms` is when capture
 finished, not when a sensor measurement happened. `sample_ms` belongs to the last
 acquisition attempt; repeated reads preserve it. `applied_ms` belongs to the last
 successful matrix write. The two button ladders have separate snapshots and times;
@@ -116,6 +117,16 @@ format, connection owner or Bluetooth service is introduced.
 | `buttons.side` | `sample_ms`, `raw` (ADC counts), `failures`, `stable`, `left`, `right`, `bluetooth` |
 | `application` | `state`, `result`, `fault`, `cleanup`, `image`, `heap`, `loaded`, `stack`, `unused`, `dropped`, `queued`, `received`, `total`, `ready` |
 | `matrix` | `applied_ms`, `failures`, `owner`, `pending`, `valid`, `requested`, `applied` |
+| `imu` | `sample_us`, `completed_us`, `sequence`, `missed`, `failures`, `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps` |
+
+IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
+accepted gyro data-ready edge; `completed_us` is the last read attempt's end.
+Acceleration is µm/s² and angular velocity is millidegrees/s, in the uncalibrated
+Pybricks hub frame. An acquisition error retains the previous values and sample
+time. A sample older than four nominal periods reports `-ETIMEDOUT`; it is never
+relabeled with the time of a request. `missed` counts observed edges not published
+as samples, including discarded reads; it cannot count interrupts the MCU never
+observed. See [IMU acquisition](hardware.md#hub-imu) for synchronization limits.
 
 Scalars are CBOR integers. Flags are 0/1. Button values are 0 released, 1 pressed,
 or negative errno when the captured sample is unreadable or not yet debounced.

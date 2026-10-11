@@ -13,6 +13,7 @@
 #include "hub.h"
 #include "hub_light.h"
 #include "hub_matrix.h"
+#include "hub_imu.h"
 #include "hub_menu.h"
 #include "hub_power.h"
 #include "input_resistor_ladder.h"
@@ -58,7 +59,11 @@ static void shutdown(void)
 		LOG_ERR("Application shutdown failed: %d", stopped);
 		return;
 	}
-	int err = hub_matrix_shutdown();
+	int err = hub_imu_shutdown();
+	if (err) {
+		LOG_ERR("IMU off failed: %d", err);
+	}
+	err = hub_matrix_shutdown();
 	if (err) {
 		LOG_ERR("Matrix off failed: %d", err);
 	}

@@ -159,7 +159,7 @@ hub revision.
 | `matrix pixel ROW COLUMN LEVEL` | F4: set one pixel; row and column 0–4 |
 | `matrix frame <25 levels>` | F4: write a row-major frame, brightness 0–100 per pixel |
 | `matrix clear` | F4: clear a terminal-owned display and release it; an application owner is busy |
-| `observe [all \| SOURCE]` | Read current power, button, application or matrix observations; see [sources and validity](telemetry.md) |
+| `observe [all \| SOURCE]` | Read current power, button, application, matrix or IMU observations; see [sources and validity](telemetry.md) |
 
 Matrix commands wait for the controller write and report its result. Closing a
 terminal clears only its own display. For example:
@@ -433,7 +433,9 @@ separate example build uses the exported EDK and toolchain, without compiling
 the firmware again. Use an EDK from the exact firmware configuration; mismatched
 ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
 constructors and soft-float arithmetic; `counter.elf` reports a counter and buttons.
-`matrix.elf` displays a smile until stopped. `spin.elf` and `fault.elf` are
+`matrix.elf` displays a smile until stopped. `imu.elf` reports uncalibrated
+acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
+`spin.elf` and `fault.elf` are
 deliberate failure fixtures. Regenerate the EDK and rebuild applications after a
 firmware/SDK change; the ABI identity also includes the ARM syscall stubs.
 

@@ -170,8 +170,9 @@ def render(identity, records, missed):
         values = record["values"]
         elapsed = max(0, (now - record["received_monotonic_ns"]) // 1_000_000)
         status = f"unavailable ({record['error']})" if record["error"] else "ok"
-        if "sample_ms" in values and values["sample_ms"]:
-            age = max(0, record["read_ms"] - values["sample_ms"]) + elapsed
+        sample_ms = values.get("sample_ms", values.get("sample_us", 0) // 1000)
+        if sample_ms:
+            age = max(0, record["read_ms"] - sample_ms) + elapsed
             status += f"; sample age {age} ms"
         else:
             status += f"; read age {elapsed} ms"

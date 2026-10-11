@@ -10,12 +10,14 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py
@@ -30,7 +32,7 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault)
+  foreach(example hello counter spin fault matrix matrix_fault imu)
     if(example STREQUAL matrix_fault)
       set(example_source ${BRICKPHYR_ROOT}/tests/native/matrix_fault.c)
     else()
@@ -46,7 +48,7 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
     llext_link_options(native_${example} -nostdlib
       -Wl,-T,${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h)
     get_target_property(example_target native_${example} lib_target)
-    target_link_libraries(${example_target} PRIVATE gcc)
+    target_link_libraries(${example_target} PRIVATE c gcc)
     set_property(TARGET native_${example}_llext_lib APPEND PROPERTY LINK_DEPENDS
       ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h)
     generate_inc_file_for_target(app ${PROJECT_BINARY_DIR}/${example}.elf

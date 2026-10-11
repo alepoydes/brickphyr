@@ -3,6 +3,16 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_IMU
+	bool "Hub IMU acquisition"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on DT_HAS_ST_LSM6DS3TR_C_ENABLED && TIMER_HAS_64BIT_CYCLE_COUNTER
+	select I2C
+	select GPIO
+	help
+	  One bounded acquisition worker, reusing the ST/Pybricks register API.
+	  Read-only snapshots are shared by native applications and telemetry.
+
 config BRICKPHYR_TELEMETRY
 	bool "Read-only hub observations"
 	default y if BOARD_SPIKE_PRIME_F4

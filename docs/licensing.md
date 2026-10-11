@@ -21,7 +21,11 @@ their notices; selecting Apache for Brickphyr does not erase those obligations.
 Dependencies remain separate west checkouts. The bring-up build uses Zephyr,
 CMSIS 6, STM32 HAL, SDK libraries, and MIT-licensed Pybricks resistor-ladder and
 TLC5955 helpers. Their [license notice](../LICENSES/Pybricks-MIT.txt) accompanies
-the source. The optional Bluetooth build adds Mbed TLS, TF-PSA-Crypto and the
+the source. IMU acquisition also compiles the ST/Pybricks register helpers and
+public continuation macros from the pinned checkout, retaining their
+[ST notice](../LICENSES/ST-LSM6DS3TR-C.txt) and
+[BSD notice](../LICENSES/Pybricks-BSD.txt) in the firmware package.
+The optional Bluetooth build adds Mbed TLS, TF-PSA-Crypto and the
 CC2564C service pack described below. Neither build contains MicroPython or WAMR.
 The following is a preliminary platform inventory,
 not a completed distribution audit of a firmware image:

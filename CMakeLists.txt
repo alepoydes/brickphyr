@@ -27,6 +27,11 @@ target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_TELEMETRY app PRIVATE src/telemetry.c)
 target_include_directories(app PRIVATE sdk/include)
 
+if(CONFIG_BRICKPHYR_IMU)
+  set(BRICKPHYR_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+  include(cmake/hub_imu.cmake)
+endif()
+
 if(CONFIG_BRICKPHYR_NATIVE)
   set(BRICKPHYR_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
   include(sdk/native.cmake)

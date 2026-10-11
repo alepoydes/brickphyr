@@ -19,13 +19,15 @@ add_custom_command(OUTPUT application.ld
   DEPFILE application.ld.d
   VERBATIM COMMAND_EXPAND_LISTS)
 add_custom_target(application_layout DEPENDS application.ld)
-foreach(example hello counter spin fault matrix)
+foreach(example hello counter spin fault matrix imu)
   add_executable(${example} ${example}.c)
   set_target_properties(${example} PROPERTIES SUFFIX .elf
     LINK_DEPENDS ${PROJECT_BINARY_DIR}/application.ld)
   target_compile_options(${example} PRIVATE ${LLEXT_CFLAGS} -O2 -g0)
   target_link_options(${example} PRIVATE ${application_link_flags} -nostdlib
     -r -T${PROJECT_BINARY_DIR}/application.ld)
-  target_link_libraries(${example} PRIVATE gcc)
+  # Compiler-emitted memory operations execute in the application's domain.
+  # Resolve them from the SDK's static C library, never privileged imports.
+  target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
 endforeach()

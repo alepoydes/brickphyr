@@ -7,6 +7,7 @@
 #include <zephyr/syscall.h>
 #include <brickphyr_abi.h>
 #include <brickphyr_matrix.h>
+#include <brickphyr_imu.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -31,6 +32,10 @@ __syscall uint32_t bp_buttons(void);
 __syscall int bp_matrix_write(uint32_t first, const uint8_t *values, size_t count);
 /* Bounded snapshot including the last completed write, timestamp and I/O error. */
 __syscall int bp_matrix_get(struct bp_matrix_state *state);
+
+/* Latest uncalibrated IMU sample. Copies even when sample.error is nonzero;
+ * does not acquire data or change sensor configuration. ENOTSUP if excluded. */
+__syscall int bp_imu_get(struct bp_imu_sample *sample);
 
 /* The firmware calls this entry in user mode; return ends the application. */
 int app_main(void);

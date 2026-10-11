@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+&i2c0 {
+	status = "okay";
+	hub_imu: imu@6a {
+		compatible = "st,lsm6ds3tr-c";
+		reg = <0x6a>;
+		irq-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+		axis-signs = <(-1) 1 (-1)>;
+	};
+};

@@ -8,6 +8,7 @@
 #include "native_private.h"
 #include "hub.h"
 #include "hub_matrix.h"
+#include "hub_imu.h"
 #include "hub_power.h"
 
 #include <brickphyr.h>
@@ -173,6 +174,18 @@ static inline int z_vrfy_bp_matrix_get(struct bp_matrix_state *value)
 	return z_impl_bp_matrix_get(value);
 }
 #include <zephyr/syscalls/bp_matrix_get_mrsh.c>
+
+int z_impl_bp_imu_get(struct bp_imu_sample *value)
+{
+	return hub_imu_get(value);
+}
+
+static inline int z_vrfy_bp_imu_get(struct bp_imu_sample *value)
+{
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_imu_get(value);
+}
+#include <zephyr/syscalls/bp_imu_get_mrsh.c>
 
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_native_finished(int result)
