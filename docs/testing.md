@@ -97,6 +97,10 @@ and cyan/yellow channel exclusion. Green keeps increasing after red saturates.
 It also checks menu lighting, simultaneous central LED updates, skipped late
 frames, persistent manual central color, independent Bluetooth color, and prevention of relighting after shutdown. RGB checks cover
 board gains, gamma response, and exact raw PWM including zero and full duty.
+Bluetooth lighting checks exercise the one-second blue flash, steady unclassified
+connection, shared reactor output, independent USB/BLE palettes, menu priority and
+busy blanking, manual overrides, disconnect, radio off and shutdown. All three
+LEDs must latch in one frame without changing the charger-disable channel.
 These checks establish output behavior, not perceived color or visual quality.
 The menu checks exercise entry, preview, cancellation, release confirmation, and
 retention after rejected selection through the production transition handler.
@@ -106,7 +110,10 @@ combinations with `buttons`, and both lighting commands. Confirm that setting th
 central color stops animation, while a Bluetooth color command does not interrupt
 it. Open the menu, preview both palettes, cancel, then select the other interface;
 interface/menu changes restore automatic lighting. Check busy rejection with a
-terminal open. Then check `shutdown` and the two-second center hold
+terminal open. In the Bluetooth build, close USB and observe waiting flashes,
+then connect through Pybricks and the native terminal/SMP in turn. Check cyan and
+yellow, return to flashing after disconnect, menu priority during a connection,
+and darkness after `bluetooth off`. Then check `shutdown` and the two-second center hold
 with USB and with battery power separately. Check `reboot dfu`, a standard
 Pybricks reinstall, and the returning console. Keep independent factory DFU entry
 available throughout; follow [recovery](recovery.md). Do not infer power removal
@@ -264,7 +271,10 @@ recycled connection notifications cannot undo off, repeated commands are
 idempotent, and the first error prevents reinitialization until reboot. Synthetic
 GATT output failure and rejected connections check that disconnect waits leave
 the system queue responsive, retain the connection reference and management
-ownership correctly, and preserve the first lifecycle error. This does
+ownership correctly, and preserve the first lifecycle error. GATT reads and
+subscriptions also check BLE profile indication: shared identity and rejected
+operations do not select a profile, native Shell retains its indication, and a
+fresh connection forgets the previous selection. This does
 not simulate RF or the HCI controller. The standard pytest run executes this suite;
 it can also run directly as `build/radio-tests/zephyr/zephyr.exe`;
 its clock is accelerated by default. On the Inventor F4, automatic boot discovery,

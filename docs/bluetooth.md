@@ -42,6 +42,15 @@ before opening the other transport. The 31-byte legacy advertising limit puts on
 service UUID in advertising and the other beside the name in scan response. PnP
 identity remains available through the Device Information GATT service.
 
+The Bluetooth button [indicates the BLE connection](hardware.md#f4-buttons-lighting-and-power),
+independently of the USB selection shown by the center button. A connection starts
+without a selected profile. Successful Pybricks capability reads, notification
+subscriptions or commands select cyan; opening the native terminal or accepting
+an SMP request selects yellow. The native terminal retains its indication while
+open; otherwise the last accepted profile-specific operation determines it.
+Shared Device Information reads do not select a profile. Disconnecting clears
+the selection for the next client.
+
 The existing pybricksdev BLE client can identify the hub without uploading code:
 
 ```sh

@@ -100,7 +100,7 @@ encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
 the Pybricks disabled value; this step does not implement charging or the matrix.
 
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
-central LEDs in one transfer. The experimental reactor animation has a saturated
+central LEDs and the Bluetooth LED in one transfer. The experimental reactor animation has a saturated
 cyan base for Pybricks (40% dominant-channel duty) and yellow for Brickphyr (95%).
 Small independent pulses add 2–5% each, starting every 60–100 ms. Their
 60–80 ms attack and 80–100 ms decay overlap into continuous irregular motion.
@@ -113,9 +113,30 @@ frames are skipped. Three small-pulse slots cover the maximum 180 ms lifetime
 at a minimum 60 ms onset spacing. The surge has its own slot; no active envelope
 is overwritten. Each update evaluates at most four envelopes and schedules at
 most one event of each kind. A local libc PRNG needs no hardware entropy or
-allocation.
+allocation. Both buttons share the pulse envelopes and animation code, with
+independent palettes. The periodic SPI traffic remains one 97-byte transfer per
+frame (4,850 bytes/s at 50 Hz); menu and manual changes also write immediately.
 Manual color and shutdown operations serialize with animation writes; shutdown
 prevents relighting. See [shell usage](builds.md#diagnostic-shell).
+
+The central button shows the selected USB interface. In the Bluetooth build, the
+Bluetooth button follows the actual BLE connection independently:
+
+| BLE state | Bluetooth button |
+| --- | --- |
+| Waiting for a connection | Full blue flash for 100 ms, once per second |
+| Connected, no service used yet | Steady blue |
+| Pybricks service in use | Cyan reactor animation |
+| Native terminal or SMP in use | Yellow reactor animation |
+| Radio disabled, starting, stopping or failed | Off |
+
+The connection menu overrides this indication with white; a rejected selection
+briefly blanks it. Closing the menu restores the connection indication. Manual
+Bluetooth color lasts until a BLE state, interface or menu change, or reboot;
+manual central color does not stop automatic Bluetooth indication. Without the
+Bluetooth build option, that button remains off outside the menu unless set
+manually. These connection-driven colors have native simulation checks; their
+brightness and transitions still need a physical hub check.
 
 The F4 board configuration holds provisional channel weights `255:47:64`, selected
 visually using RGB pairs on the central button of the tested Inventor F4. These

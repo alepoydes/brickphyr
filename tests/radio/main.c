@@ -24,6 +24,7 @@ static atomic_t peer_refs;
 static bool management_owned, terminal_closed;
 static void (*terminal_output_ready)(void);
 static int disconnect_error;
+static int terminal_open_error;
 
 int hub_bluetooth_power_off(void)
 {
@@ -107,6 +108,12 @@ int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params 
 	return -EIO;
 }
 
+uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	return 23;
+}
+
 /* Ownership itself has production-transport tests; this fixture drives the
  * GATT adapter and its scheduling with a synthetic connection/controller. */
 int host_ble_acquire(void)
@@ -126,7 +133,7 @@ int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session)
 {
 	terminal_output_ready = tx_ready;
 	*session = 1;
-	return 0;
+	return terminal_open_error;
 }
 void host_ble_shell_close(uint32_t session)
 {
@@ -197,6 +204,7 @@ ZTEST(radio, test_startup_control_and_failure)
 	const struct shell *shell = shell_backend_dummy_get_ptr();
 	zassert_ok(k_sem_take(&enable_entered, K_SECONDS(1)));
 	expect_status("Bluetooth: starting");
+	zassert_equal(host_ble_status(), HOST_BLE_OFF);
 	zassert_equal(shell_execute_cmd(shell, "bluetooth invalid"), -EINVAL);
 	k_work_submit(&probe_work);
 	zassert_ok(k_sem_take(&probe_done, K_MSEC(100)), "Radio blocked the system queue");
@@ -211,6 +219,7 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_ok(off_result);
 	k_msleep(1);
 	expect_status("Bluetooth: off");
+	zassert_equal(host_ble_status(), HOST_BLE_OFF);
 	zassert_equal(enables, 1);
 	zassert_equal(starts, 1);
 	zassert_equal(stops, 1);
@@ -219,11 +228,34 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_ok(shell_execute_cmd(shell, "bluetooth on"));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth on"));
 	expect_status("Bluetooth: on");
+	zassert_equal(host_ble_status(), HOST_BLE_WAITING);
 	connect_peer();
+	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED);
+	/* Shared Device Information reads do not select a protocol. */
+	extern const struct bt_gatt_service_static device_information, pybricks_service;
+	uint8_t value[20];
+	const struct bt_gatt_attr *info = &device_information.attrs[2];
+	zassert_true(info->read(peer, info, value, sizeof(value), 0) > 0);
+	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED);
+	const struct bt_gatt_attr *caps = &pybricks_service.attrs[5];
+	zassert_true(caps->read(peer, caps, value, sizeof(value), UINT16_MAX) < 0);
+	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED);
+	zassert_true(caps->read(peer, caps, value, sizeof(value), 0) > 0);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
 	extern const struct bt_gatt_service_static brickphyr_terminal;
 	const struct bt_gatt_attr *ccc = &brickphyr_terminal.attrs[3];
 	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	terminal_open_error = -EBUSY;
+	zassert_true(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY) < 0);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	terminal_open_error = 0;
 	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	zassert_equal(host_ble_status(), HOST_BLE_NATIVE);
+	const struct bt_gatt_attr *py_ccc = &pybricks_service.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *py_cfg = py_ccc->user_data;
+	zassert_equal(py_cfg->cfg_write(peer, py_ccc, BT_GATT_CCC_NOTIFY), 2);
+	zassert_equal(host_ble_status(), HOST_BLE_NATIVE,
+		      "Pybricks discovery must not recolor an open native terminal");
 	terminal_output_ready();
 	expect_responsive_disconnect();
 	zassert_true(terminal_closed);
@@ -235,8 +267,19 @@ ZTEST(radio, test_startup_control_and_failure)
 		}
 	}
 	zassert_false(management_owned);
+	zassert_equal(host_ble_status(), HOST_BLE_WAITING);
 	zassert_equal(atomic_get(&peer_refs), 1, "Worker must retain the disconnected peer");
 	k_sem_give(&disconnect_continue);
+	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
+	connect_peer();
+	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED, "New link must forget old profile");
+	zassert_equal(py_cfg->cfg_write(peer, py_ccc, BT_GATT_CCC_NOTIFY), 2);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
+		if (callback->disconnected) {
+			callback->disconnected(peer, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		}
+	}
 	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
@@ -252,6 +295,7 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_equal(shell_execute_cmd(shell, "bluetooth on"), -ETIMEDOUT);
 	zassert_equal(shell_execute_cmd(shell, "bluetooth off"), -ETIMEDOUT);
 	expect_status("initialization failed:");
+	zassert_equal(host_ble_status(), HOST_BLE_OFF);
 	zassert_equal(enables, 3);
 	zassert_equal(starts, 2);
 	zassert_equal(stops, 2);

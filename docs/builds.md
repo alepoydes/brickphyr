@@ -223,7 +223,11 @@ button previews the selection. Either arrow cycles the two interfaces.
 Release a short center press
 to confirm; Bluetooth cancels. Center hold still switches power off. An occupied
 interface cannot be displaced: confirmation briefly extinguishes the white BT
-light and leaves the menu open. In normal operation BT lighting is off.
+light and leaves the menu open. Outside the menu, the Bluetooth build flashes
+this button blue once per second while awaiting a connection. Connected Pybricks
+uses the cyan reactor effect; the native terminal and SMP use yellow. A connected
+client that has not yet used either profile shows steady blue. The base build and
+a disabled radio leave the button off. See [connection lighting](hardware.md#f4-buttons-lighting-and-power).
 The 5×5 display is not implemented. An optional
 [Bluetooth controller profile](bluetooth.md#experimental-f4-controller) provides
 Pybricks BLE identification/status and SMP management with shared USB/BLE ownership.
@@ -237,8 +241,9 @@ led bluetooth 0 0 16
 led bluetooth 0 0 0
 ```
 
-`led center` stops the animation; `led bluetooth` leaves it running. Interface or
-menu changes restore automatic lighting, as does reboot.
+`led center` stops only the central animation; `led bluetooth` overrides only the
+Bluetooth button. Interface or menu changes restore automatic lighting, as does
+reboot. A BLE state change also restores automatic Bluetooth indication.
 RGB values pass through the shared correction; `led pwm` sets raw duty instead.
 The base build reports device initialization errors through the shell. The optional
 Bluetooth profile still has the [HCI timeout limitation](bluetooth.md#experimental-f4-controller).

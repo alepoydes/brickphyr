@@ -56,6 +56,10 @@ relighting. The operator confirmed menu operation. RGB commands share gamma-2
 conversion and provisional F4 channel gains `255:47:64`; these are hardware gains,
 not palette colors. `led pwm` provides direct 16-bit duty. See
 [lighting](../docs/hardware.md) for the animation and calibration limits.
+Bluetooth connection lighting now has native checks: blue waiting flashes,
+cyan Pybricks and yellow native reactor indication, independent of USB selection.
+It shares the central animation code and SPI frame; menu white keeps priority.
+The new BLE indication still needs physical verification.
 
 The F4 build uses published Pybricks helper and host-tool changes pinned to our
 fork in the manifest. See

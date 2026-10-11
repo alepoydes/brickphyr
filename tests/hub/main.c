@@ -119,22 +119,103 @@ static uint16_t duty(unsigned int channel)
 	return ((uint16_t)last_frame[1 + 2 * channel] << 8) | last_frame[2 + 2 * channel];
 }
 
+static void check_bluetooth_lighting(void)
+{
+	/* Manual center stays untouched while Bluetooth follows the actual link. */
+	for (int64_t now = 201000; now < 203000; now += 20) {
+		unsigned int before = writes;
+		zassert_equal(hub_light_update(now, HOST_BLE_WAITING), now + 20);
+		zassert_equal(writes, before + 1, "One shared LED frame per tick");
+		zassert_equal(duty(18) != 0, now % 1000 < 100, "One 100 ms flash each second");
+		zassert_equal(duty(19), 0);
+		zassert_equal(duty(20), 0);
+		zassert_equal(duty(5), 0);
+		zassert_equal(duty(4), 32768);
+		zassert_equal(duty(3), 65535);
+	}
+	hub_light_update(203000, HOST_BLE_CONNECTED);
+	zassert_true(duty(18) > 0);
+	unsigned int before = writes;
+	zassert_equal(hub_light_update(203900, HOST_BLE_CONNECTED), INT64_MAX);
+	zassert_equal(writes, before, "Unclassified connection must be steady blue");
+
+	/* The same palette must produce exactly the same animation on both buttons. */
+	zassert_ok(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_NORMAL, 204000));
+	uint16_t previous = 0;
+	bool changed = false;
+	for (int64_t now = 204400; now < 205400; now += 20) {
+		before = writes;
+		hub_light_update(now, HOST_BLE_PYBRICKS);
+		zassert_equal(writes, before + 1);
+		for (int i = 0; i < 3; i++) {
+			zassert_equal(duty(20 - i), duty(5 - i));
+		}
+		zassert_equal(duty(20), 0);
+		zassert_true(duty(19) > 0 && duty(18) > 0);
+		changed |= previous && previous != duty(18);
+		previous = duty(18);
+	}
+	zassert_true(changed, "Connected Bluetooth must animate");
+	/* A native BLE session can coexist with the Pybricks USB selection. */
+	hub_light_update(205400, HOST_BLE_NATIVE);
+	hub_light_update(205800, HOST_BLE_NATIVE);
+	zassert_true(duty(20) >= 62000 && duty(19) > 0);
+	zassert_equal(duty(18), 0);
+	zassert_equal(duty(5), 0);
+	zassert_true(duty(3) > 0);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 206000));
+	for (int64_t now = 206000; now < 206400; now += 20) {
+		hub_light_update(now, HOST_BLE_NATIVE);
+		zassert_equal(duty(20), 65535);
+		zassert_equal(duty(19), 12079);
+		zassert_equal(duty(18), 16448);
+	}
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_BUSY, 206400));
+	hub_light_update(206400, HOST_BLE_NATIVE);
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(20 - i), 0, "Busy menu must blank even during a BLE connection");
+	}
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 206400));
+	hub_light_update(206420, HOST_BLE_NATIVE);
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(20 - i), duty(5 - i));
+	}
+	const uint16_t manual[] = {1, 2, 3};
+	zassert_ok(hub_light_pwm(false, manual));
+	hub_light_update(206440, HOST_BLE_NATIVE);
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(20 - i), manual[i]);
+	}
+	hub_light_update(206460, HOST_BLE_WAITING);
+	zassert_equal(duty(18), UINT16_MAX, "Disconnect must resume automatic indication");
+	hub_light_update(206480, HOST_BLE_OFF);
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(20 - i), 0, "Disabled radio must not indicate waiting");
+	}
+	/* A link change while the menu is open must not replace its white marker. */
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 206500));
+	hub_light_update(206500, HOST_BLE_WAITING);
+	zassert_equal(duty(20), UINT16_MAX);
+	zassert_equal(duty(19), 12079);
+	zassert_equal(duty(18), 16448);
+}
+
 ZTEST(hub, test_readiness_light_and_manual_override)
 {
-	zassert_equal(hub_light_update(0), 20);
+	zassert_equal(hub_light_update(0, HOST_BLE_OFF), 20);
 	zassert_equal(duty(5), 0);
 	zassert_equal(duty(4), 0);
 	zassert_equal(duty(3), 0);
-	hub_light_update(600);
+	hub_light_update(600, HOST_BLE_OFF);
 	zassert_equal(duty(5), 0);
 	zassert_true(duty(3) > 0 && duty(3) < 25000);
-	hub_light_update(1200);
+	hub_light_update(1200, HOST_BLE_OFF);
 	zassert_equal(duty(5), 0);
 	zassert_within(duty(3), 26214, 1);
 	zassert_true(duty(4) > 18000 && duty(4) < duty(3));
 	unsigned int before = writes;
 
-	zassert_equal(hub_light_update(1210), 1220);
+	zassert_equal(hub_light_update(1210, HOST_BLE_OFF), 1220);
 	zassert_equal(writes, before, "Early wake must not send another frame");
 	const uint16_t bt[] = {0, 0, 4112};
 
@@ -152,16 +233,16 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 		int64_t start = palette ? 21600 : 1220;
 
 		if (palette) {
-			zassert_ok(hub_light_select(HOST_SHELL, true, 21200));
+			zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 21200));
 			zassert_equal(duty(20), UINT16_MAX, "Menu white must use full corrected PWM");
 			zassert_equal(duty(19), 12079);
 			zassert_equal(duty(18), 16448);
-			hub_light_update(21220);
+			hub_light_update(21220, HOST_BLE_OFF);
 			zassert_true(duty(3) > duty(5), "Mode transition must start near cyan");
 		}
 		for (int64_t now = start; now < start + 20000; now += 20) {
 			before = writes;
-			zassert_equal(hub_light_update(now), now + 20);
+			zassert_equal(hub_light_update(now, HOST_BLE_OFF), now + 20);
 			zassert_equal(writes, before + 1, "Both center LEDs must latch together");
 			for (int i = 0; i < 3; i++) {
 				zassert_equal(duty(5 - i), duty(8 - i));
@@ -204,12 +285,12 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 			zassert_true(saturated, "Expected per-channel clipping during surges");
 		}
 	}
-	zassert_ok(hub_light_select(HOST_SHELL, false, 41600));
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 41600));
 	zassert_equal(duty(18), 0);
 	zassert_equal(duty(19), 0);
 	zassert_equal(duty(20), 0);
 	before = writes;
-	hub_light_update(100000);
+	hub_light_update(100000, HOST_BLE_OFF);
 	zassert_equal(writes, before + 1, "Delayed frames must not cause catch-up bursts");
 	/* The same board gains must apply to both kinds of RGB lights. */
 	const uint8_t manual[] = {255, 255, 255};
@@ -235,21 +316,23 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 	zassert_ok(hub_light_pwm(true, raw));
 	zassert_ok(hub_light_pwm(false, raw));
 	before = writes;
-	zassert_equal(hub_light_update(200000), INT64_MAX);
+	zassert_equal(hub_light_update(200000, HOST_BLE_OFF), INT64_MAX);
 	zassert_equal(writes, before);
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(5 - i), raw[i]);
 		zassert_equal(duty(8 - i), raw[i]);
 		zassert_equal(duty(20 - i), raw[i]);
 	}
+	check_bluetooth_lighting();
 	zassert_ok(hub_light_off());
 	before = writes;
-	zassert_equal(hub_light_update(300000), INT64_MAX);
+	zassert_equal(hub_light_update(300000, HOST_BLE_WAITING), INT64_MAX);
+	zassert_equal(hub_light_update(300020, HOST_BLE_NATIVE), INT64_MAX);
 	zassert_equal(hub_light_manual(true, manual), -ESHUTDOWN);
 	zassert_equal(hub_light_manual(false, manual), -ESHUTDOWN);
 	zassert_equal(hub_light_pwm(true, raw), -ESHUTDOWN);
 	zassert_equal(hub_light_pwm(false, raw), -ESHUTDOWN);
-	zassert_equal(hub_light_select(HOST_PYBRICKS, true, 300000), -ESHUTDOWN);
+	zassert_equal(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_MENU, 300000), -ESHUTDOWN);
 	zassert_equal(writes, before, "No relighting after shutdown");
 	for (int channel = 3; channel <= 8; channel++) {
 		zassert_equal(duty(channel), 0);

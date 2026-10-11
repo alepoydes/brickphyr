@@ -22,6 +22,14 @@ void host_ble_release(bool exit_compatibility);
 uint16_t host_hub_variant(void);
 /* Terminal shutdown: stop asynchronously; no later radio enable until reboot. */
 void host_ble_shutdown(void);
+/* Link/profile observation only; USB selection does not select a BLE service.
+ * A native terminal owns the profile until its stream closes. Otherwise the
+ * last accepted profile-specific operation identifies the connection. */
+enum host_ble_status {
+	HOST_BLE_OFF, HOST_BLE_WAITING, HOST_BLE_CONNECTED,
+	HOST_BLE_PYBRICKS, HOST_BLE_NATIVE,
+};
+enum host_ble_status host_ble_status(void);
 
 /* Packet callbacks run on one processing thread; only that thread may perform
  * settings operations under the BLE grant, even while disconnect is draining. */

@@ -25,6 +25,7 @@ static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 static struct bt_conn *owner;
 static struct bt_conn *disconnect_pending;
 static struct k_spinlock session_lock;
+static enum host_ble_status profile = HOST_BLE_CONNECTED;
 static void request_disconnect(struct bt_conn *conn);
 static bool exit_compatibility;
 static uint32_t shell_session;
@@ -40,6 +41,26 @@ static struct k_work_q radio_queue;
 /* F4 startup/re-advertising measured 548 bytes; 1 KiB leaves 960 usable with MPU. */
 static K_THREAD_STACK_DEFINE(radio_stack, 1024);
 
+enum host_ble_status host_ble_status(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	enum host_ble_status status = owner ? profile : HOST_BLE_WAITING;
+	if (atomic_get(&radio_state) != RADIO_ON || atomic_get(&shutting_down)) {
+		status = HOST_BLE_OFF;
+	}
+	k_spin_unlock(&session_lock, key);
+	return status;
+}
+
+static void observe_pybricks(struct bt_conn *conn)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	if (conn == owner && !shell_session) {
+		profile = HOST_BLE_PYBRICKS;
+	}
+	k_spin_unlock(&session_lock, key);
+}
+
 static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, uint16_t len, uint16_t offset)
 {
@@ -52,7 +73,11 @@ static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	size_t length = host_protocol_read(caps ? PBIO_PYBRICKS_READ_SERVICE_PYBRICKS :
 		PBIO_PYBRICKS_READ_SERVICE_GATT, id, host_hub_variant(),
 		MIN(bt_gatt_get_mtu(conn) - 3, HOST_PROTOCOL_PAYLOAD_MAX - 1), value);
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, value, length);
+	ssize_t result = bt_gatt_attr_read(conn, attr, buf, len, offset, value, length);
+	if (caps && result >= 0) {
+		observe_pybricks(conn);
+	}
+	return result;
 }
 
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -71,6 +96,7 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	/* The sole supported command selects Shell after the link closes. */
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	exit_compatibility = true;
+	profile = HOST_BLE_PYBRICKS;
 	k_spin_unlock(&session_lock, key);
 	return len;
 }
@@ -87,8 +113,13 @@ static ssize_t allow_subscription(struct bt_conn *conn, const struct bt_gatt_att
 	if (conn != owner) {
 		return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 	}
-	return value <= BT_GATT_CCC_NOTIFY ? sizeof(value) :
-		BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+	if (value > BT_GATT_CCC_NOTIFY) {
+		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+	}
+	if (value) {
+		observe_pybricks(conn);
+	}
+	return sizeof(value);
 }
 
 static void subscribed(const struct bt_gatt_attr *attr, uint16_t value)
@@ -166,6 +197,7 @@ static ssize_t shell_subscription(struct bt_conn *conn, const struct bt_gatt_att
 		} else {
 			shell_session = session;
 			shell_tx_deadline = 0;
+			profile = HOST_BLE_NATIVE;
 		}
 	} else if (!value && shell_session) {
 		host_ble_shell_close(shell_session);
@@ -263,6 +295,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	owner = bt_conn_ref(conn);
+	profile = HOST_BLE_CONNECTED;
 	exit_compatibility = false;
 	shell_retired = false;
 	k_spin_unlock(&session_lock, key);
@@ -292,6 +325,9 @@ static bool request_begin(struct bt_conn *conn)
 {
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	bool valid = owner == conn && host_ble_request_begin();
+	if (valid) {
+		profile = HOST_BLE_NATIVE;
+	}
 	k_spin_unlock(&session_lock, key);
 	return valid;
 }

@@ -33,8 +33,12 @@ void __wrap_sys_reboot(int type)
 }
 
 int hub_light_off(void) { lights_off++; return 0; }
-int64_t hub_light_update(int64_t now) { zassert_equal(lights_off, 0); return now + 20; }
-int hub_light_select(enum host_mode mode, bool menu, int64_t now) { return 0; }
+int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
+{
+	zassert_equal(lights_off, 0);
+	return now + 20;
+}
+int hub_light_select(enum host_mode mode, enum hub_light_menu menu, int64_t now) { return 0; }
 int hub_light_manual(bool center, const uint8_t rgb[3]) { return 0; }
 int hub_light_pwm(bool center, const uint16_t duty[3]) { return 0; }
 enum host_mode host_interface_current(void) { return HOST_SHELL; }

@@ -172,7 +172,7 @@ void hub_run(void)
 	struct hub_menu menu = {0};
 	bool center_was_down = false;
 	int shown = -1;
-	bool menu_shown = false;
+	enum hub_light_menu menu_shown = HUB_LIGHT_NORMAL;
 	int64_t busy_until = 0;
 
 	for (;;) {
@@ -229,16 +229,21 @@ void hub_run(void)
 			host_interface_status(status);
 		}
 		enum host_mode selected = menu.open ? menu.selected : current;
-		bool white = menu.open && now >= busy_until;
-		if (selected != shown || white != menu_shown) {
-			int err = hub_light_select(selected, white, now);
+		enum hub_light_menu indicator = !menu.open ? HUB_LIGHT_NORMAL :
+			now < busy_until ? HUB_LIGHT_BUSY : HUB_LIGHT_MENU;
+		if (selected != shown || indicator != menu_shown) {
+			int err = hub_light_select(selected, indicator, now);
 			if (err) {
 				LOG_ERR("Interface lighting failed: %d", err);
 			}
 			shown = selected;
-			menu_shown = white;
+			menu_shown = indicator;
 		}
-		int64_t deadline = hub_light_update(now);
+		enum host_ble_status bluetooth = HOST_BLE_OFF;
+#if defined(CONFIG_BT_HCI_SETUP)
+		bluetooth = host_ble_status();
+#endif
+		int64_t deadline = hub_light_update(now, bluetooth);
 		/* Manual LED overrides must not stop tracking remotely selected modes. */
 		deadline = MIN(deadline, now + 20);
 
