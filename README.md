@@ -22,8 +22,9 @@ F4, the firmware provides:
   Pybricks 4.1.0b4/b6 and back to Brickphyr has been exercised.
 
 Bluetooth is an optional [build profile](docs/bluetooth.md). One computer owns
-the management connection at a time. Pybricks program upload/execution, a native
-application loader, Python/WASM engines and the SDK are not implemented yet.
+the management connection at a time. The experimental [native profile](docs/builds.md#experimental-native-sdk)
+adds a C SDK and protected application execution, checked with embedded ELF fixtures.
+Host uploads, installed applications and Python/WASM execution remain unimplemented.
 LEGO restoration and interrupted-transfer recovery remain unverified. See
 [hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
 for setup and commands.

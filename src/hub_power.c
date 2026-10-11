@@ -17,6 +17,7 @@ static uint32_t timeout_s[ARRAY_SIZE(names)];
 static struct k_spinlock lock;
 static int source = -ENODEV;
 static bool connected;
+static bool application;
 static bool shutting_down;
 static int64_t idle_since;
 
@@ -122,6 +123,18 @@ void hub_power_request_shutdown(void)
 	k_spin_unlock(&lock, key);
 }
 
+bool hub_power_application(bool running)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool allowed = !running || !shutting_down;
+	if (allowed && application != running) {
+		application = running;
+		idle_since = k_uptime_get();
+	}
+	k_spin_unlock(&lock, key);
+	return allowed;
+}
+
 bool hub_power_update(int vbus, bool activity, int64_t now)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -129,7 +142,7 @@ bool hub_power_update(int vbus, bool activity, int64_t now)
 		source = vbus;
 		idle_since = now;
 	}
-	if (!connected && source >= 0 && source <= 1 && timeout_s[source] &&
+	if (!connected && !application && source >= 0 && source <= 1 && timeout_s[source] &&
 	    now - idle_since >= (int64_t)timeout_s[source] * 1000) {
 		shutting_down = true;
 	}
@@ -143,6 +156,7 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int vbus = source;
 	bool owner = connected;
+	bool running = application;
 	bool stopping = shutting_down;
 	uint32_t battery = timeout_s[0];
 	uint32_t usb = timeout_s[1];
@@ -154,6 +168,7 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell, "Idle timeout: battery %" PRIu32 " s, USB %" PRIu32 " s",
 		battery, usb);
 	const char *inhibit = stopping ? "shutdown pending" : owner ? "active management session" :
+		running ? "running application" :
 		vbus < 0 ? "power source unavailable" : !seconds ? "timeout disabled" : NULL;
 	if (inhibit) {
 		shell_print(shell, "Automatic shutdown: %s", inhibit);

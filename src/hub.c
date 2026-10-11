@@ -8,6 +8,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
+#include "native.h"
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
@@ -21,6 +22,11 @@ static const uint16_t codes[] = {INPUT_KEY_ENTER, INPUT_KEY_LEFT, INPUT_KEY_RIGH
 				 INPUT_KEY_BLUETOOTH};
 static const char *const names[] = {"center", "left", "right", "bluetooth"};
 static atomic_t buttons;
+
+uint32_t hub_buttons(void)
+{
+	return atomic_get(&buttons);
+}
 static atomic_t presses[ARRAY_SIZE(codes)];
 static K_SEM_DEFINE(button_changed, 0, 1);
 
@@ -46,6 +52,11 @@ INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)), button_even
 
 static void shutdown(void)
 {
+	int stopped = native_shutdown();
+	if (stopped) {
+		LOG_ERR("Application shutdown failed: %d", stopped);
+		return;
+	}
 	int err = hub_light_off();
 
 	if (err) {
@@ -177,6 +188,7 @@ void hub_run(void)
 
 	for (;;) {
 		int64_t now = k_uptime_get();
+		native_poll();
 		bool activity = false;
 		bool down = atomic_test_bit(&buttons, 0);
 		atomic_val_t count = atomic_get(&presses[0]);

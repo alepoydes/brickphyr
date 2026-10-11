@@ -3,6 +3,7 @@
 #include "host_transport.h"
 #include "hub_power.h"
 #include "storage.h"
+#include "native.h"
 
 #include <errno.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
 #include <zephyr/mgmt/mcumgr/transport/smp_shell.h>
 #include <zephyr/shell/shell.h>
@@ -97,6 +99,10 @@ static enum mgmt_cb_return management_access(uint32_t event, enum mgmt_cb_return
 		*rc = MGMT_ERR_EACCESSDENIED;
 		return MGMT_CB_ERROR_RC;
 	}
+	if (event == MGMT_EVT_OP_OS_MGMT_RESET && native_shutdown()) {
+		*rc = MGMT_ERR_EUNKNOWN;
+		return MGMT_CB_ERROR_RC;
+	}
 	if (event == MGMT_EVT_OP_SETTINGS_MGMT_ACCESS) {
 		const struct settings_mgmt_access *access = data;
 		/* Whole-store save persists RAM, as in Shell. Delete bypasses runtime
@@ -122,6 +128,11 @@ static struct mgmt_callback command_access = {
 static struct mgmt_callback settings_access = {
 	.callback = management_access, .event_id = MGMT_EVT_OP_SETTINGS_MGMT_ACCESS,
 };
+#ifdef CONFIG_MCUMGR_GRP_OS_RESET_HOOK
+static struct mgmt_callback reset_access = {
+	.callback = management_access, .event_id = MGMT_EVT_OP_OS_MGMT_RESET,
+};
+#endif
 
 static void notify_shell(enum shell_transport_evt event)
 {
@@ -459,6 +470,9 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 	}
 	mgmt_callback_register(&command_access);
 	mgmt_callback_register(&settings_access);
+#ifdef CONFIG_MCUMGR_GRP_OS_RESET_HOOK
+	mgmt_callback_register(&reset_access);
+#endif
 	k_thread_create(&host_worker, host_stack, K_THREAD_STACK_SIZEOF(host_stack),
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&host_worker, "host_stream");

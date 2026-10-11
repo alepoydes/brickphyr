@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20.5)
 
 list(APPEND DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+list(APPEND SYSCALL_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include ${CMAKE_CURRENT_SOURCE_DIR}/include)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(brickphyr)
 
@@ -22,6 +23,11 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+
+if(CONFIG_BRICKPHYR_NATIVE)
+  set(BRICKPHYR_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+  include(sdk/native.cmake)
+endif()
 
 if(CONFIG_BOARD_SPIKE_PRIME_F4)
   if(CONFIG_BT_HCI_SETUP)

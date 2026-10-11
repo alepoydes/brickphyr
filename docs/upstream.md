@@ -216,6 +216,22 @@ that latch. Newer upstream supports retry with additional lifecycle changes that
 are not part of this backport. Synthetic HCI tests cover both missing close and
 close failure; normal on/off operation is checked on the Inventor F4.
 
+## Native loader prerequisites
+
+The native fixture build requires two portable corrections beyond the current
+manifest pin: `add_llext_target` must pass architecture/multilib options to the
+compiler-driven link and depend on the produced binary when copying it for
+packaging. Otherwise Cortex-M compiler helpers can come from an ARM-state library,
+or an incremental build can retain an obsolete application image. They belong in
+Zephyr's `cmake/modules/extensions.cmake`, not a replacement Brickphyr builder.
+
+These corrections are on Zephyr's local `topic/llext-build` branch at
+`eb9551a2`; the manifest remains on the published integration until this dependency
+change is published. The relocatable upstream LLEXT suite passes on ARM QEMU;
+the MPU object suite passes its three applicable checks and skips eight images
+requiring more memory partitions. Brickphyr additionally exercises linked
+soft-float helpers and repeated protected loading on the Inventor F4.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

@@ -539,7 +539,7 @@ static int setup(void)
 	 * stay below USB/UI priority, outside the system device workqueue. */
 	const struct k_work_queue_config config = {.name = "host_ble"};
 	k_work_queue_start(&radio_queue, radio_stack, K_THREAD_STACK_SIZEOF(radio_stack),
-		K_LOWEST_APPLICATION_THREAD_PRIO, &config);
+		K_LOWEST_APPLICATION_THREAD_PRIO - IS_ENABLED(CONFIG_BRICKPHYR_NATIVE), &config);
 #if defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	int err = smp_bt_register_request_callbacks(&request_callbacks);
 	if (err) {

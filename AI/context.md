@@ -31,7 +31,11 @@ on that hub. Linux USB/BLE checks cover reconnection, editing/history, protocol
 handover, partial-input isolation, unread USB output followed by BLE admission,
 SMP settings and persistence. Pybricks Code discovery and reconnection pass in
 Chromium Web Bluetooth, with a profile-version warning. Program upload/execution
-is not implemented; neither are application loading, the SDK or Python/WASM engines.
+is not implemented. An opt-in native profile now provides a matching C SDK,
+protected LLEXT execution, status/output and forced stop through the shared Shell.
+Repeated fixture runs, constructors, soft-float arithmetic, MPU fault recovery,
+USB/BLE reconnection and application power holds pass on the Inventor F4.
+User uploads, installed applications and Python/WASM engines are not implemented.
 
 USB/battery transitions preserve a BLE session and uptime. An active management
 session inhibits idle shutdown. USB and battery expiry, long-press shutdown, and
@@ -52,10 +56,13 @@ Pybricks, pybricksdev and Zephyr; [upstream integration](../docs/upstream.md) re
 their purpose and publication status. Never replace a pinned dependency with a
 source copy or silently discard local dependency work during `west update`.
 
-The next application milestone is a separately uploaded native program through
-one lifecycle, with isolation, stop/unload and fault cleanup checks. SMP is the
-selected management candidate; no application format or working loader is implied.
-Python/WASM integration follows that shared lifecycle.
+The [application milestone](../docs/builds.md#native-application-milestone) continues
+with RAM upload/run over SMP, then several installed applications in LittleFS.
+Use the existing protected lifecycle for both image sources and both transports.
+The current fixture supplies embedded ELF files; it is not an upload interface.
+The native ABI is experimental. Fixture builds require the additional Zephyr
+LLEXT build fixes described in [upstream integration](../docs/upstream.md).
+A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated
 USB wake remain unverified. Startup with a failed radio preserves USB/buttons and

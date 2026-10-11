@@ -55,6 +55,11 @@ before adding a small application-management command group. Firmware image updat
 support is not a loader for native or WASM applications. Do not create another
 framing or file-transfer protocol merely to rename existing functionality.
 
+The planned [native application operations](applications.md#host-and-input-devices)
+use SMP with equivalent USB/BLE support and the same lifecycle handlers as Shell.
+Their [implementation milestones](builds.md#native-application-milestone) include
+temporary RAM runs and persistent installation; neither is available yet.
+
 Shell and SMP can share a serial channel through Zephyr's existing SMP transport.
 This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetooth,
 GATT characteristic addresses distinguish services without guessing payloads;

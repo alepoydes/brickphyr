@@ -323,12 +323,10 @@ LEGO transitions and interrupted-transfer recovery remain separate checks.
    a recovery-compatible partition before enabling explicit save. Verify effective
    values, invalid-input rejection, persistence across reboot, and physical power
    behavior under the [common settings contract](settings.md).
-5. **Add application management and a native application.** Evaluate standard
-   management/transfer mechanisms, with SMP as the preferred candidate. Use one
-   lifecycle for Shell and protocol operations. Reproduce the firmware and SDK
-   from the same checkout; load a separate application through the real loader.
-   Verify output, stop, disconnect/reconnect, rejection, and fault cleanup before
-   expanding to sensor and motor access.
+5. **Add application management and a native application.** Implement the
+   [native application milestone](#native-application-milestone): temporary runs
+   from RAM and installed applications in LittleFS, using LLEXT and one lifecycle.
+   USB and BLE provide the same operations through SMP, Shell and `brickphyrdev`.
 6. **Integrate Python and WASM through that lifecycle.** Verify supported Pybricks
    client/API behavior and WAMR execution incrementally, including cancellation
    and system responsiveness. Preserve their shared service requirements during
@@ -338,3 +336,99 @@ USB wake after shutdown is a separate experiment after reliable power control,
 not a prerequisite for automated tests. Full compatibility and broader hardware
 coverage grow from executable results. Add installation and application commands
 only after they work; keep local measurements and handoffs in ignored reports.
+
+## Native application milestone
+
+The first SDK/protected-loader step is implemented experimentally and checked on
+the Inventor F4. Uploads and application storage remain to be implemented.
+The goal is to build a separate native application, run it without writing flash,
+or install it alongside other applications and start it after a power cycle.
+The [application contract](applications.md#storage-and-launch-operations) owns
+the shared semantics. Complete each step with an observable result:
+
+1. **SDK and protected loading on F4.** Build a minimal separate C ELF with the
+   matching SDK and load it through LLEXT in a user memory domain. Establish the
+   entry/import contract, ARM floating-point ABI and MPU requirements using the
+   actual board. The first example reads monotonic time, emits bounded output and
+   returns. Verify load, execution and unload, and measure peak RAM and firmware
+   overhead before choosing image limits. A board fixture may supply the ELF for
+   this bounded loader experiment; it is not the end-user upload interface.
+2. **Temporary runs over USB and BLE.** Receive an image into RAM through SMP and
+   expose run, status, output and explicit stop through `brickphyrdev` and the
+   shared Shell handlers. Extend the example to observe buttons and report a
+   counter without taking over hub navigation. Verify both transports from their
+   first connection after boot. Disconnect, reconnect using either transport and
+   inspect/stop the same running application. Integrate application power holds
+   and explicit power-off cleanup. Include bounded rejection and fault checks:
+   incompatible/truncated images, interrupted upload, insufficient RAM, a
+   non-yielding loop and an invalid memory access. The hub must remain manageable;
+   repeated load/stop/unload must release owned resources.
+3. **Persistent files and installation.** Establish the external-flash partition
+   within the recovery constraints, then expose LittleFS file operations and
+   standard SMP transfer on both transports. Upload, inspect, list and remove
+   files through the existing filesystem mechanisms. Add staged application
+   installation and complete-image validation. Verify persistence across reboot,
+   capacity errors and preservation of the previous installed image after an
+   interrupted update. Installation does not implicitly start or stop an app.
+4. **Run installed applications.** Feed selected files into the same loader and
+   supervisor used for RAM runs. Store at least two distinguishable applications,
+   power-cycle the hub, then select and run each from the terminal and host CLI.
+   Exercise temporary and installed runs over both USB and BLE, including
+   cross-transport reconnection. Compare RAM use for the two sources and confirm
+   that one application's cleanup permits the next to run without a hub reboot.
+
+Keep fast regression checks on the production paths; do not test source text.
+Use synthetic tests for malformed images and failure boundaries, and named-board
+checks for MPU behavior, resource measurements, persistence and actual transports.
+Long stress tests remain separate. Firmware, SDK and both example applications
+must build from the same published dependency pins in a clean workspace before
+the milestone is released.
+
+Python/WASM execution, IMU/motor integration, automatic application startup and
+a RAM filesystem are outside this milestone. Existing recovery, charging and
+radio-fault limitations retain their own verification scope. The outstanding
+visual BLE-indication check remains a separate small hardware check.
+
+## Experimental native SDK
+
+Native fixture builds require the [LLEXT build prerequisites](upstream.md#native-loader-prerequisites)
+in addition to the current manifest pin. They are not yet part of a release.
+With that Zephyr checkout, build the Bluetooth/native acceptance image:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/native-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay \
+  -DCONFIG_BRICKPHYR_NATIVE_FIXTURES=y
+uv run --locked west build -d build/native-apps -t llext-edk
+mkdir -p build/native-sdk
+tar -xf build/native-apps/zephyr/llext-edk.tar.xz -C build/native-sdk
+uv run --locked cmake -S examples/native -B build/native-examples -G Ninja \
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-sdk/llext-edk"
+uv run --locked cmake --build build/native-examples
+```
+
+Set `ZEPHYR_SDK_INSTALL_DIR` to the SDK installed during workspace setup. The
+separate example build uses the exported EDK and toolchain, without compiling
+the firmware again. Use an EDK from the exact firmware configuration; mismatched
+ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
+constructors and soft-float arithmetic; `counter.elf` reports a counter and buttons.
+`spin.elf` and `fault.elf` are deliberate failure fixtures.
+
+After [authorized installation](recovery.md), use either terminal transport:
+
+```text
+native_fixture hello
+app status
+app output
+native_fixture counter
+app stop
+diagnostics
+```
+
+`native_fixture` loads an ELF embedded for board acceptance, not the separately
+built host file. The first native/BLE acceptance image with four fixture images
+uses 328,696 bytes of firmware flash and 207 KiB of statically reserved RAM,
+including the shared 128 KiB heap (Zephyr SDK 1.0.1, F4, MPU enabled). Its `hello`
+image is 2500 bytes and reserves 8847 bytes for LLEXT; the reported loaded allocation
+is 2126 bytes. These are this fixture's sizes, not application capacity guarantees.

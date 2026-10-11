@@ -5,6 +5,7 @@
 #include <cmsis_core.h>
 #include <zephyr/sys/reboot.h>
 #include "hub.h"
+#include "native.h"
 #include <stm32_ll_bus.h>
 #include <stm32_ll_gpio.h>
 #include <zephyr/devicetree.h>
@@ -45,6 +46,10 @@ int hub_reboot_dfu(void)
 	    !(reset & 1U) || reset < MBOOT_ADDRESS ||
 	    reset >= MBOOT_ADDRESS + DT_REG_SIZE(DT_NODELABEL(mboot_partition))) {
 		return -ENOEXEC;
+	}
+	int err = native_shutdown();
+	if (err) {
+		return err;
 	}
 	boot_request[0] = DFU_REQUEST;
 	boot_request[1] = ~DFU_REQUEST;
