@@ -265,6 +265,10 @@ against that same Shell/SMP peer. It interleaves editing/history with fragmented
 SMP, tests the shared stream over a PTY and explicitly synthetic BLE delivery,
 and verifies JSONL records, refused overwrites, slow-output scheduling, cancellation
 and TTY restoration. It does not emulate a second Shell or claim radio coverage.
+`tests/test_terminal.py` stalls a serial PTY behind the actual CLI, directly and
+through `uv run`. It checks that input resumes without loss, control keys reach
+the peer unchanged, Ctrl+] cancels a blocked send, and local TTY settings are
+restored. These checks use no firmware or physical Bluetooth connection.
 
 `tests/storage` runs the actual LittleFS/Settings stack over simulated flash.
 It checks explicit save versus RAM-only changes, reload, file compaction,

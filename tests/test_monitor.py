@@ -2,6 +2,7 @@
 """Real Shell/SMP over PTYs; BLE notification/write delivery is explicitly synthetic."""
 
 import asyncio
+import fcntl
 import json
 import os
 import selectors
@@ -217,6 +218,8 @@ def test_interactive_terminal_preserves_line_and_tty(tmp_path):
             stdin=slave,
             stdout=slave,
             stderr=slave,
+            start_new_session=True,
+            preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY),
         )
         output = bytearray()
         try:

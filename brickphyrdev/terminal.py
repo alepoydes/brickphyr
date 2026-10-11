@@ -4,6 +4,7 @@
 import asyncio
 import codecs
 import os
+import signal
 import sys
 
 from . import console, monitor
@@ -69,6 +70,8 @@ async def terminal(args):
     )
     loop = asyncio.get_running_loop()
     incoming = asyncio.Queue(maxsize=16)
+    exit_requested = asyncio.Event()
+    input_closed = False
     view = False
     pending_view = False
     boundary = _OutputBoundary()
@@ -95,36 +98,35 @@ async def terminal(args):
             show_monitor(True)
 
     def read_input():
-        nonlocal input_error
+        nonlocal input_closed, input_error
         try:
             data = os.read(sys.stdin.fileno(), 256)
             if not data:
+                input_closed = True
                 loop.remove_reader(sys.stdin.fileno())
             incoming.put_nowait(data)
+            if incoming.full():
+                # Leave further input in the TTY until the sender has room.
+                loop.remove_reader(sys.stdin.fileno())
         except Exception as error:
-            input_error = (
-                RuntimeError("Terminal input exceeded transport throughput")
-                if isinstance(error, asyncio.QueueFull)
-                else error
-            )
+            input_closed = True
+            input_error = error
             loop.remove_reader(sys.stdin.fileno())
-            while not incoming.empty():
-                incoming.get_nowait()
-            incoming.put_nowait(b"")
+            exit_requested.set()
 
     async def input_loop(transport):
         nonlocal pending_view
         while data := await incoming.get():
-            # Only these local shortcuts are consumed. Editing, history and
-            # completion go unchanged to the Shell in terminal view.
+            if not input_closed and incoming.qsize() == incoming.maxsize - 1:
+                loop.add_reader(sys.stdin.fileno(), read_input)
+            # Ctrl+] is handled by the TTY, independently of this sender.
+            # Editing, history and completion go unchanged to the Shell.
             start = 0
             for index, byte in enumerate(data):
-                if byte not in (0x1D, 0x14 if args.monitor else -1):
+                if not args.monitor or byte != 0x14:
                     continue
                 if not view:
                     await transport.write(data[start:index])
-                if byte == 0x1D:
-                    return
                 if view:
                     show_monitor(False)
                 elif pending_view:
@@ -136,8 +138,6 @@ async def terminal(args):
                 start = index + 1
             if not view:
                 await transport.write(data[start:])
-        if input_error:
-            raise RuntimeError(f"Terminal input failed: {input_error}") from input_error
 
     with monitor.recording(args.log) as log:
         print(
@@ -146,8 +146,18 @@ async def terminal(args):
             flush=True,
         )
         previous = termios.tcgetattr(sys.stdin.fileno())
-        tty.setraw(sys.stdin.fileno())
+        previous_interrupt = signal.getsignal(signal.SIGINT)
+        loop.add_signal_handler(signal.SIGINT, exit_requested.set)
         try:
+            tty.setraw(sys.stdin.fileno())
+            mode = termios.tcgetattr(sys.stdin.fileno())
+            # The line discipline recognizes escape even while stdin is paused.
+            # Flush unsent TTY input on exit so it cannot reach the parent shell.
+            mode[3] = (mode[3] | termios.ISIG) & ~termios.NOFLSH
+            mode[6][termios.VINTR] = b"\x1d"
+            disabled = bytes([os.fpathconf(sys.stdin.fileno(), "PC_VDISABLE")])
+            mode[6][termios.VQUIT] = mode[6][termios.VSUSP] = disabled
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, mode)
             async with console.connection(display, management=args.monitor, **target) as (
                 transport,
                 client,
@@ -155,6 +165,7 @@ async def terminal(args):
                 tasks = [
                     asyncio.create_task(input_loop(transport)),
                     asyncio.create_task(transport.closed.wait()),
+                    asyncio.create_task(exit_requested.wait()),
                 ]
                 try:
                     if args.monitor:
@@ -177,6 +188,8 @@ async def terminal(args):
                         )
                     loop.add_reader(sys.stdin.fileno(), read_input)
                     done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    if input_error:
+                        raise RuntimeError(f"Terminal input failed: {input_error}") from input_error
                     for task in done:
                         task.result()
                     if transport.closed.is_set():
@@ -198,6 +211,11 @@ async def terminal(args):
                 cleanup = error
             try:
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, previous)
+            except Exception as error:
+                cleanup = cleanup or error
+            try:
+                loop.remove_signal_handler(signal.SIGINT)
+                signal.signal(signal.SIGINT, previous_interrupt)
             except Exception as error:
                 cleanup = cleanup or error
             try:

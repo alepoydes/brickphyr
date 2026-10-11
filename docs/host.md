@@ -192,6 +192,10 @@ of the USB mode. Pass a BLE address or a different hub name as the final argumen
 when needed. Ctrl+] closes the link. Editing, completion and history run on the
 same hub Shell as USB; the host forwards terminal bytes without interpreting commands.
 The client restores local terminal settings on exit or connection failure.
+When transmission slows down, the client pauses reading local input while its
+bounded queue is full and resumes as space becomes available. Ctrl+] interrupts
+an outstanding send and discards unsent input instead of waiting for the queue
+to drain. This behavior is shared by USB and BLE.
 
 The native interface contains standard SMP management and a separate raw terminal
 stream. Its GATT service is `f3641400-00b0-4240-ba50-05ca45bf8abc`; TX notifications
