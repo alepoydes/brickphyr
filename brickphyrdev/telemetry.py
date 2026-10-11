@@ -55,7 +55,10 @@ class Snapshot(_Group, message.ReadRequest):
 
 
 async def info(client):
-    result = await checked(client, Info())
+    try:
+        result = await checked(client, Info())
+    except TimeoutError as error:
+        raise TimeoutError("Telemetry discovery timed out") from error
     if result.api != 1:
         raise RuntimeError(f"Unsupported telemetry API {result.api}")
     if len(set(result.sources)) != len(result.sources):
@@ -64,7 +67,10 @@ async def info(client):
 
 
 async def snapshot(client, source):
-    result = await checked(client, Snapshot(source=source))
+    try:
+        result = await checked(client, Snapshot(source=source))
+    except TimeoutError as error:
+        raise TimeoutError(f"Telemetry source {source!r} timed out") from error
     if result.api != 1 or result.source != source:
         raise RuntimeError("Mismatched telemetry snapshot")
     return result

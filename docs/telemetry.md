@@ -18,9 +18,66 @@ unbounded telemetry queue. A management connection retains the existing
 [power hold](settings.md#inactivity-shutdown); closing it leaves an autonomous
 application running.
 
-The text monitor and host-side logging are the next host-tool integration. There
-is currently no `brickphyrdev monitor` command. The Python request types in
-`brickphyrdev.telemetry` can read the implemented SMP endpoint.
+## Text monitor and recording
+
+From the repository, use the same installed `brickphyrdev` tools as for applications:
+
+```sh
+uv run brickphyrdev monitor
+uv run brickphyrdev monitor --ble Brickphyr
+uv run brickphyrdev monitor --source power --rate 2 --log telemetry.jsonl
+uv run brickphyrdev monitor --ble Brickphyr --source buttons.side --count 10
+```
+
+USB is the monitor's default transport and selects Shell automatically. Choose a
+particular hub with `--serial NUMBER`, or an already selected port with
+`--port /dev/ttyACM0`. Close another management client before connecting.
+
+The monitor shows all advertised sources, or the sources selected with repeated
+`--source NAME`. One selected source shows detailed fields and matrix frames;
+several sources show a compact overview. A TTY gets a refreshed screen; redirected
+stdout gets plain text snapshots. Errors and sample/read ages remain visible.
+`Ctrl+C` closes the standalone monitor. `--count N` exits after N refresh cycles.
+
+`--rate` is a maximum display rate, default 2 Hz, up to 20 Hz. It does not change
+the devices' acquisition rates. Only one SMP request is outstanding. The scheduler
+counts missed display periods and skips them, including time spent formatting
+and recording; a slow connection or disk does not produce catch-up bursts.
+
+To keep a terminal and monitoring in one connection:
+
+```sh
+uv run brickphyrdev terminal --usb --monitor --log telemetry.jsonl
+uv run brickphyrdev terminal --monitor --source power
+```
+
+The terminal retains its existing default BLE target `Brickphyr`; `--usb` selects
+USB. In this combined mode, `Ctrl+T` switches between the original Shell screen
+and the monitor; `Ctrl+]` closes the connection. Monitoring and optional recording
+continue in either view. Keyboard editing, history and completion still run in
+the same Zephyr Shell on the hub. No host-side command parser is added. If new
+Shell output arrives while the monitor is visible, the client returns to the
+Shell so that output is not hidden or discarded. While viewing the monitor,
+ordinary keyboard input is ignored; switch back before typing commands.
+
+The combined client uses standard serial SMP framing inside the existing native
+USB/BLE console stream, with one writer and connection owner. BLE does not open
+the separate SMP GATT service at the same time. A cancelled or timed-out exchange
+ends that console session so a late response cannot belong to another request.
+
+`--log FILE` creates a new JSONL file on the computer and refuses to overwrite an
+existing file. Nothing is logged to hub flash. The first record identifies the
+schema (`brickphyr.telemetry/1`), session, firmware/build, board, selected sources
+and requested rate. Each snapshot records hub time, acquisition/completion times,
+errors and values, together with host UTC and monotonic reception time. Matrix
+byte strings become integer arrays. Complete lines are flushed to the operating
+system; this is not an fsync guarantee. The last record reports completion,
+cancellation or failure, record counts and missed periods. An abrupt process or
+disk failure can leave an incomplete final line or omit the ending record.
+
+The combined terminal currently requires a POSIX TTY and is checked on Linux
+pseudoterminals. New host monitoring and recording have simulation checks;
+verification with a physical USB/BLE hub remains pending.
 
 ## Time and validity
 
@@ -73,6 +130,9 @@ not encoded text. Native SDK calls and Shell commands share the same matrix
 service; telemetry adds no alternate control path.
 
 Native simulation checks Shell/SMP reads, matrix payloads, unsupported sources,
-write rejection and acquisition timestamps. ARM QEMU checks read-only native
+write rejection and acquisition timestamps. Host tests use the real Shell/SMP
+peer with fragmented, explicitly synthetic BLE delivery; they cover simultaneous
+editing and management, view switching, TTY restoration, JSONL output and slow
+consumers. ARM QEMU checks read-only native
 observation, including busy cleanup and preserved output/allocation. These checks
 do not establish physical sensor accuracy or radio timing.

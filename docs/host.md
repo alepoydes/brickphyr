@@ -142,7 +142,8 @@ that does not relax the single-management-session rule.
 
 ### Host CLI
 
-`brickphyrdev` provides the native Bluetooth terminal and USB interface commands.
+`brickphyrdev` provides USB/BLE terminals, a text telemetry monitor, application
+management and USB interface commands.
 After [workspace setup](builds.md#setup-and-board-bring-up), run it from the repository:
 
 ```sh
@@ -166,6 +167,12 @@ the [pybricksdev CDC extension](upstream.md#usb-experiment-prerequisites) pinned
 by west and installed by uv from its sibling checkout. Upstream's released Python
 package does not yet provide this transport. The installed CLI itself does not
 require west or firmware sources at runtime.
+
+`uv run brickphyrdev terminal --usb` selects and opens the USB Shell. The existing
+`uv run brickphyrdev terminal` command still opens BLE. Add `--monitor` to either
+for telemetry within that connection, or run `uv run brickphyrdev monitor` for a
+standalone USB monitor. [Monitoring and JSONL recording](telemetry.md#text-monitor-and-recording)
+describes source selection, rates, logging and the view-switch shortcut.
 
 ### Native Bluetooth terminal
 
@@ -200,6 +207,8 @@ input and queued commands; an entered handler finishes before ownership is relea
 Terminal history is per session. Reopening after unsubscribe requires a new BLE
 connection, excluding notifications already queued for the old terminal.
 SMP GATT requests cannot execute concurrently with an open terminal stream.
+The combined terminal/monitor instead carries standard serial SMP framing inside
+that same native stream; the client separates responses from human Shell output.
 A stalled notification sender closes its link after three seconds without progress;
 output is never silently truncated. USB and BLE use the same settings and power hold.
 Commands such as `reboot dfu`, `shutdown`, and `bluetooth off` can close the link

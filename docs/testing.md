@@ -171,6 +171,12 @@ observation neither consumes output nor unloads a completed application, and
 returns busy during blocked cleanup. The existing ADC and power-policy fixtures
 also check capture timestamps and errors through the production snapshot accessors.
 
+`tests/test_monitor.py` checks the installed monitor CLI and interactive terminal
+against that same Shell/SMP peer. It interleaves editing/history with fragmented
+SMP, tests the shared stream over a PTY and explicitly synthetic BLE delivery,
+and verifies JSONL records, refused overwrites, slow-output scheduling, cancellation
+and TTY restoration. It does not emulate a second Shell or claim radio coverage.
+
 `tests/storage` runs the actual LittleFS/Settings stack over simulated flash.
 It checks explicit save versus RAM-only changes, reload, file compaction,
 incompatible values and truncated records. A second boot starts with foreign

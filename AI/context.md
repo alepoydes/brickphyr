@@ -24,7 +24,7 @@ Pybricks identification, settings, inactivity shutdown, button restart and DFU
 entry through the standard Pybricks installer. The optional Bluetooth profile
 adds Pybricks identity/status, standard SMP and the same interactive Shell over
 BLE. USB and BLE share one management owner. The installed `brickphyrdev` CLI
-provides the BLE terminal and USB selection/identity operations.
+provides USB/BLE terminals, monitoring and USB selection/identity operations.
 
 Normal installation, Pybricks 4.1.0b4/b6 restoration and return to Brickphyr pass
 on that hub. Linux USB/BLE checks cover reconnection, editing/history, protocol
@@ -57,7 +57,10 @@ Native simulation and ARM QEMU check the service and protected calls; physical
 orientation and brightness remain unverified. Bluetooth waiting flashes now have
 a three-second period. Read-only [observations](../docs/telemetry.md) expose power,
 buttons, application and matrix snapshots through SMP and the same Shell.
-The CLI monitor, IMU, sound, external sensors and motors are next.
+The CLI text monitor and host JSONL recorder are implemented, including a shared
+terminal/monitor session over USB or the native BLE stream. Host tests exercise
+the real simulated Shell/SMP peer; physical monitoring checks remain pending.
+IMU, sound, external sensors and motors are next.
 
 ## Dependencies and remaining work
 

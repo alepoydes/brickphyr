@@ -3,17 +3,38 @@
 
 import argparse
 
-from . import application, terminal, usb
+from . import application, monitor, terminal, usb
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
-    terminal_parser = commands.add_parser("terminal", help="Open the native Bluetooth terminal")
+    terminal_parser = commands.add_parser("terminal", help="Open the shared Shell over BLE or USB")
     terminal_parser.add_argument(
-        "target", nargs="?", default="Brickphyr", help="Hub name or BLE address"
+        "target", nargs="?", help="BLE name or address (default Brickphyr); omit for USB"
     )
+    terminal_parser.add_argument("--usb", action="store_true", help="Select and open the USB Shell")
+    terminal_usb = terminal_parser.add_mutually_exclusive_group()
+    terminal_usb.add_argument("--port", help="Explicit serial port, including a simulator PTY")
+    terminal_usb.add_argument("--serial", help="USB serial number when several hubs are connected")
+    terminal_parser.add_argument(
+        "--monitor", action="store_true", help="Share telemetry and logging; Ctrl+T switches views"
+    )
+    monitor.options(terminal_parser)
     terminal_parser.set_defaults(handler=terminal.run)
+
+    monitor_parser = commands.add_parser(
+        "monitor", help="Display read-only telemetry and optionally record JSONL"
+    )
+    target = monitor_parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "--ble", metavar="TARGET", help="BLE name or address; default transport is USB"
+    )
+    target.add_argument("--port", help="Explicit serial port, including a simulator PTY")
+    target.add_argument("--serial", help="USB serial number when several hubs are connected")
+    monitor_parser.add_argument("--count", type=int, help="Exit after this many refresh cycles")
+    monitor.options(monitor_parser)
+    monitor_parser.set_defaults(handler=monitor.run)
 
     usb_parser = commands.add_parser("usb", help="Inspect or select the USB interface")
     usb_parser.add_argument("--serial", help="USB serial number when several hubs are connected")
