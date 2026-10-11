@@ -56,9 +56,10 @@ share native APIs and Shell/SMP services. Ownership and application cleanup are
 implemented for matrix and sound. IMU settings apply in RAM with explicit save;
 missing measurements start a visible new orientation epoch. The CLI text monitor
 supports filters, host JSONL recording and a shared terminal session over USB/BLE.
-Bluetooth waiting flashes have a three-second period. Synthetic acquisition,
-protected ARM SDK and SMP checks cover these new services; physical display,
-IMU accuracy/timing, audio and voltage/current verification remain pending.
+Bluetooth waiting flashes have a three-second period. Native matrix, IMU,
+tone/PCM and motor examples now run on the Inventor F4 over USB/BLE and release
+their hardware on stop/exit. Perceived display/audio output, calibrated IMU
+accuracy and voltage/current measurement accuracy remain pending.
 Electrical A–F detection and LUMP UART negotiation now have native/Shell/SMP
 snapshots, including raw DATA, with synthetic GPIO/UART and protected ARM checks.
 Known SPIKE/BOOST/WeDo sensors now have converted measurements, owned mode
@@ -72,15 +73,20 @@ or device loss. Experimental PBIO speed/position trajectories and hold now use
 that same owner/output path, a 5 ms port queue and validated battery feedback.
 Synthetic UART/ADC/PWM checks cover stall, completion, input loss, deadline
 overruns and release during output. Numerical ARM checks cover long angles and
-timer wrapping. Physical
-sensor power/readings, encoder motion, port identification, baud switching and
-serial timing under load are unverified.
+timer wrapping. Two physical ID-75 motors on A/B now pass identification,
+encoder direction, short direct/timed drive, position hold and release checks
+with suspended wheels. Startup BREAK is accepted only before a valid TYPE.
+Preemptible CDC and acquisition-first scheduling remove new IMU losses in a
+bounded USB telemetry check; this is not a worst-case timing guarantee.
+Physical sensor power/readings and sustained combined load remain unverified.
 The shared terminal's `port` inventory and `port A` detail expose
 [device metadata and raw/decoded observations](../docs/ports.md#device-inspection),
 including unknown UART IDs. Synthetic checks cover malformed optional fields,
 reconnects, escaped device strings and unchanged outputs. Physical third-party
-compatibility remains unverified. Next is the physical hardware/telemetry
-acceptance cycle, including motor tuning and service timing under load.
+compatibility remains unverified. Next are physical sensor coverage, visual/audio
+acceptance, calibration and motor/service timing under combined load. Investigate
+the unexpected A/B UART reconnection observed during an application/transport
+sequence before claiming continuity across those transitions.
 
 ## Dependencies and remaining work
 
@@ -102,6 +108,8 @@ described in [upstream integration](../docs/upstream.md).
 IMU numerical checks additionally require its local PBIO finite-input correction.
 The F4 speaker requires the local bounded STM32 DMA-stop correction.
 Battery/button acquisition additionally requires the local F4 ADC timeout correction.
+Motor trajectories and preemptible CDC require the local PBIO duration/replacement
+correction and Zephyr CDC workqueue priority option described in upstream integration.
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

@@ -30,7 +30,7 @@ source changes preserve the session and uptime.
 
 | Hub family | Scope | Brickphyr subsystems | Physical verification |
 | --- | --- | --- | --- |
-| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB Shell/SMP, Pybricks identification, persistent settings, buttons, lighting, DFU entry | Factory/mboot installation, shell/reopen/reboot, four button presses, central/Bluetooth colors, software DFU, Pybricks restoration and return; operator-observed battery start/retention and long-press shutdown |
+| Robot Inventor F4 (PCB revision unknown) | Experimental `spike_prime_f4` build | USB/BLE Shell/SMP, Pybricks identification, native applications, settings, power/UI and hardware APIs below | Installation/restoration, connection and power cycles; bounded native matrix/IMU/audio, A/B encoder and unloaded motor checks; subsystem limits below |
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
@@ -43,7 +43,7 @@ the same MCU, radio, boot chain, or flash layout. Add revision-specific rows as
 hardware is identified; do not mark an entire family verified from one board.
 Inventor shares the relevant upstream F4 code. Native application checks are
 described in [applications](applications.md#experimental-native-profile).
-Bluetooth controller input and motor outputs have not been physically verified. Battery retention and
+Bounded motor checks are described under [external ports](#external-ports-and-sensors). Battery retention and
 center-button start/shutdown have operator
 observations on this hub, not current-consumption measurements.
 Other hubs are outside the current implementation target list.
@@ -74,7 +74,7 @@ The both-inputs-low coast state follows
 [`motor_driver_hbridge_pwm.c`](https://github.com/pybricks/pybricks-micropython/blob/8aa9986cd0666fb610225de05440fb6d1f99c4ab/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c).
 Zephyr supplies the SoC/drivers; Brickphyr supplies the devicetree, early power
 hold, and loader metadata. USB boot and shell behavior have been exercised on
-the Inventor F4 above; motor pin behavior still requires physical tests.
+the Inventor F4 above; electrical waveforms still require instrumented tests.
 
 Exact firmware/bootloader regions and the verification still needed are in
 [recovery](recovery.md). Derive pins, power sequencing, clocking, calibration
@@ -198,8 +198,11 @@ SPI frames are not retained for transmission by an unrelated RGB update.
 Native simulation checks cover wiring endpoints, brightness, shared-channel
 preservation, ownership, input validation, in-flight disconnect and SPI failure.
 ARM QEMU additionally exercises user-memory validation and application stop/fault
-cleanup through the actual native syscalls and loader. Physical matrix orientation,
-brightness and operation on the Inventor F4 still await verification.
+cleanup through the actual native syscalls and loader. On the Inventor F4,
+Shell writes and the separately uploaded native matrix example complete without
+driver errors over USB/BLE; stopping the application clears and releases the
+display. Physical matrix orientation, brightness and perceived output still
+await operator verification.
 
 ## Hub IMU
 
@@ -266,8 +269,10 @@ bus transaction has a nominal wire time
 of about 338 µs within a 1201 µs period, excluding IRQ/software overhead. F4 I²C
 transactions time out after 10 ms; reset polling is bounded. Observation performs
 no background transmission. Shutdown joins acquisition and powers down both
-sensors. Physical sample loss, interrupt latency, CPU use and residual current
-remain unmeasured.
+sensors. The F4 acquisition thread precedes the 5 ms motor service and host
+processing. CDC uses Zephyr's dedicated preemptible queue, with the
+[upstream prerequisite](upstream.md#usb-acquisition-scheduling-prerequisite),
+so a long cooperative USB callback cannot occupy an entire acquisition period.
 
 Native simulation uses the actual worker and register library with a synthetic
 I²C/GPIO peer. It checks cold initialization, signed limits and mounting axes,
@@ -276,8 +281,13 @@ shutdown and first-error preservation when initialization and cleanup both fail.
 It also checks calibration persistence, stationary learning, synthetic rotation,
 reference discontinuities and actual SMP observations. ARM numerical checks cover
 gravity poses, complete and tilted rotations, heading, calibration and rejected
-settings without mutation. F4 images build; physical readings, mounting orientation,
-processing latency and stack margin await verification.
+settings without mutation. Physical raw/calibrated observations and the native
+IMU example run over USB/BLE on the Inventor F4. A bounded USB check recorded no
+new missing samples in five quiet seconds and five seconds with 717 telemetry
+requests. This does not establish a worst-case latency guarantee: startup/session
+transitions and all peripheral combinations still require characterization.
+Mounting verification, calibrated accuracy, CPU use, stack margin and residual
+current remain open.
 
 ## Hub sound
 
@@ -337,8 +347,10 @@ physical verification under combined IMU/radio/application load.
 
 Native simulation checks the production service, waveform and Shell through a
 synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
-after protected application stop/fault. The F4 images compile; neither check
-executes the DAC registers on a physical hub.
+after protected application stop/fault. On the Inventor F4 the native tone/PCM
+example completes over USB/BLE, including 8192 PCM samples at 16 kHz, with no
+reported underrun or cleanup failure. Acoustic quality and actual sample timing
+still require listening and instrumented checks.
 
 ## External ports and sensors
 
@@ -348,10 +360,14 @@ describes identification, raw packets, converted sensor/encoder measurements,
 explicit mode selection, direct and regulated motor drive, hotplug and cleanup. Supported SPIKE, BOOST and WeDo
 sensors share one service, including validated additional sensor power. Synthetic
 GPIO/UART checks cover conversions, encoder turn counting and ownership; ARM
-checks cover the protected API boundary. Physical identification, baud switching,
-sensor power, encoder motion and readings remain unverified. Recognized motors
-stay in coast until explicitly commanded; physical drive and stopping remain
-unverified. Experimental PBIO speed/position control, trajectories and hold use
+checks cover the protected API boundary. On one Inventor F4, motors on A/B
+reporting ID 75 negotiate at 115200 baud, expose their modes and provide moving
+encoders. Positive/negative 150 ms direct commands and 300 ms speed commands
+complete and coast; short position targets and hold also pass with suspended
+wheels. Protected native motor commands complete and release their port over
+both USB and BLE. Physical sensor supply/conversions and other device types
+remain unverified. Recognized motors stay in coast until explicitly commanded.
+Experimental PBIO speed/position control, trajectories and hold use
 the same port owner and output. Synthetic UART/ADC/PWM checks cover stall,
 completion, missing feedback and battery errors, missed deadlines and concurrent
 release. Numerical ARM checks cover closed feedback on an independent synthetic
@@ -403,8 +419,10 @@ combined CPU/IRQ cost and measurement accuracy still require physical testing.
 
 Synthetic ADC checks exercise startup, scaling boundaries, first-error preservation,
 partial-pair rejection, stale snapshots, shutdown and continued button sampling.
-ARM QEMU checks protected SDK access and SMP snapshots. F4 images compile; no new
-physical voltage/current or ADC-timeout result is claimed.
+ARM QEMU checks protected SDK access and SMP snapshots. On the Inventor F4,
+USB/BLE observations provide changing voltage/current readings, including during
+the short motor checks, without reported ADC failures. Absolute accuracy and
+the hardware timeout path have not been verified with instruments or fault injection.
 
 ## A support claim must be reproducible
 

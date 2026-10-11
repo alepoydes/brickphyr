@@ -19,7 +19,7 @@ add_custom_command(OUTPUT application.ld
   DEPFILE application.ld.d
   VERBATIM COMMAND_EXPAND_LISTS)
 add_custom_target(application_layout DEPENDS application.ld)
-foreach(example hello counter spin fault matrix imu sound)
+foreach(example hello counter spin fault matrix imu sound motor)
   add_executable(${example} ${example}.c)
   set_target_properties(${example} PROPERTIES SUFFIX .elf
     LINK_DEPENDS ${PROJECT_BINARY_DIR}/application.ld)

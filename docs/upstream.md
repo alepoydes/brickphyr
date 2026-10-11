@@ -289,6 +289,16 @@ Focused upstream trajectory checks and Brickphyr's numerical ARM checks cover
 these boundaries. The complete upstream PBIO test application has not been built
 with this patch; its Bluetooth submodule is not present in the local checkout.
 
+## USB acquisition scheduling prerequisite
+
+F4 builds with high-rate acquisition require local Zephyr commit `b4ffd4217`
+on `topic/cdc-workqueue-priority`, pending publication and manifest integration.
+It makes the existing dedicated CDC ACM workqueue priority configurable; the
+default retains the upstream system-workqueue priority. Brickphyr enables that
+queue at a preemptible priority below IMU and motor service. Bluetooth retains
+its required cooperative system queue. F4 compilation and physical USB telemetry
+checks cover this integration.
+
 ## Speaker DMA prerequisite
 
 The speaker profile requires local Zephyr commit `c26d83f5` on `topic/dma-stop`,

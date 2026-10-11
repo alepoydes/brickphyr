@@ -87,9 +87,11 @@ Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
 Bootstrap west fetches the sibling checkouts before uv resolves the editable
-pybricksdev dependency. The published pins include the coordinated
-[dependency changes](upstream.md#current-downstream-delta); no manual patches or
-unpublished commits are needed. Build the Prime F4 target and check the
+pybricksdev dependency. The published 0.1.1 pins include that release's coordinated
+[dependency changes](upstream.md#current-downstream-delta). The current hardware
+and native-application increments additionally require the local prerequisites
+listed in [upstream integration](upstream.md); publication and updated manifest
+pins are still pending. Build the Prime F4 target and check the
 resulting image:
 
 ```sh
@@ -441,6 +443,9 @@ constructors and soft-float arithmetic; `counter.elf` reports a counter and butt
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
 `sound.elf` plays a short tone followed by generated PCM through the
 [shared speaker service](hardware.md#hub-sound).
+`motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
+then coasts; application exit releases the port. Clear the mechanism before
+explicitly starting this example.
 `spin.elf` and `fault.elf` are
 deliberate failure fixtures. Regenerate the EDK and rebuild applications after a
 firmware/SDK change; the ABI identity also includes the ARM syscall stubs.

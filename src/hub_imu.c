@@ -253,9 +253,10 @@ finish:
 
 /* 12 data bytes + address phases take about 338 us at 400 kHz, below the
  * 1201 us sample period. One 1536-byte stack and a binary wakeup, no sample
- * queue. Preemptible above application/Shell, below the hub supervisor.
+ * queue. Its 1.2 ms acquisition deadline precedes the 5 ms motor frame and
+ * host processing. Cooperative supervisor/system work remains above it.
  * The actual interrupt latency and CPU share still require a physical board. */
-K_THREAD_DEFINE(imu_thread, 1536, worker, NULL, NULL, NULL, 9, 0, 0);
+K_THREAD_DEFINE(imu_thread, 1536, worker, NULL, NULL, NULL, 5, 0, 0);
 
 int hub_imu_get(struct bp_imu_sample *value)
 {

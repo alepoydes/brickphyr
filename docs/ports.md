@@ -286,8 +286,9 @@ The existing port work item runs on a dedicated preemptible queue when regulatio
 is enabled. PBIO's Powered Up models use a 5 ms step; absolute deadlines preserve
 that cadence. Losing a whole frame, including time spent applying output, reports
 `-ETIMEDOUT` and coasts when service resumes. No catch-up integration fabricates
-missing frames. The F4 queue priority precedes HCI TX/RX, IMU, Shell and native
-applications; cooperative work and interrupts can still delay it. This is an
+missing frames. The F4 queue follows the 1.2 ms IMU acquisition and precedes
+HCI TX/RX, USB processing, management, Shell and native applications;
+cooperative work and interrupts can still delay it. This is an
 overrun policy, not an independent hardware watchdog or a hard real-time guarantee.
 
 Missing angle data for the full 100 ms numerical derivative window stops
@@ -387,8 +388,12 @@ consumers read the same cache.
 sensor's acquisition time or first-byte interrupt time. `data_sequence` wraps
 and restarts on connection; `bad_frames` saturates and also restarts. A bad DATA
 checksum increments that counter without replacing the previous sample or its
-time. Invalid framing/format, UART errors reported by the driver and RX overflow
-invalidate the connection. This is a latest-sample interface, not a lossless
+time. During initial TYPE synchronization, a peer's BREAK/framing indication is
+discarded while seeking a valid TYPE packet. SPIKE motor ID 75 emits this after
+the fast-baud acknowledgement. Once TYPE is known, framing errors are fatal.
+Other UART errors and RX overflow are fatal throughout negotiation.
+Invalid packet formats also invalidate the connection. This is a latest-sample
+interface, not a lossless
 recording of every UART packet. Neither an idle poll nor a keepalive makes an
 old measurement fresh.
 
@@ -424,7 +429,7 @@ only the compare value. Coast disconnects the timer using GPIO and disables
 available PWM channels. Re-enabling a channel latches its prepared compare on
 STM32 before pinmux handoff. That timer update can also restart the shared counter;
 different ports do not have an atomic or synchronized command contract. Actual
-waveforms, transitions, stopping and motor behavior still need physical tests.
+waveforms and electrical transitions still need instrumented tests.
 
 `supply` reports sensor DC supply: 0 none, 1 pin 1 positive, 2 pin 2 positive.
 Motor output has its separate state above. Neither is voltage feedback; after a GPIO/cleanup error, the actual
@@ -459,3 +464,16 @@ physical sensor measurements. Fixture provenance is in
 [the test README](../tests/lump/README.md). F4 compilation does not verify
 connector voltages, analogue settling, actual baud transitions, controller error
 reporting under overload or identification of physical attached devices.
+
+On one Inventor F4, two SPIKE motors reporting ID 75 on A/B complete fast-baud
+negotiation and expose their metadata and encoders through Shell/SMP. Short
+positive/negative direct-drive commands, timed speed control, position targets,
+hold and release pass with suspended wheels. The protected native motor example
+also completes and releases its port. These checks establish direction and
+bounded unloaded operation, not controller tuning under load, synchronized axes,
+stopping distance or third-party sensor compatibility. Physical sensor conversion
+and supply checks still need the corresponding devices.
+
+An unexpected UART reconnection was observed during a combined application and
+transport sequence; its trigger is still under investigation. Reconnection resets
+the encoder origin, so those transitions are not yet a verified operating mode.

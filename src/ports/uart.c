@@ -90,8 +90,13 @@ static void interrupt(const struct device *dev, void *arg)
 	}
 	err = uart_err_check(dev);
 	if (err) {
-		err = err < 0 ? err : -EIO;
-		goto failed;
+		/* A Powered Up peer can signal BREAK before TYPE after acknowledging
+		 * the fast baud. Synchronize on a valid TYPE, as PBIO does; once TYPE
+		 * is known, any receive error invalidates the session. */
+		if (err < 0 || (err & ~(UART_ERROR_FRAMING | UART_BREAK)) || l->lump.phase != LUMP_TYPE) {
+			err = err < 0 ? err : -EIO;
+			goto failed;
+		}
 	}
 	uint8_t bytes[32];
 	err = uart_irq_rx_ready(dev);

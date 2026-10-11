@@ -70,7 +70,8 @@ static void scan(struct k_work *item);
 static K_WORK_DELAYABLE_DEFINE(work, scan);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Model sampling must not queue behind system ADC/storage work. Priority 6
- * precedes HCI TX/RX (7/8), IMU (9), Shell (13), and applications (14) on F4.
+ * follows IMU (5) and precedes HCI TX/RX (7/8), management (10), Shell (13),
+ * and applications (14) on F4.
  * Cooperative threads and interrupts still count against the frame deadline. */
 static struct k_work_q port_queue;
 K_THREAD_STACK_DEFINE(port_stack, 2048);

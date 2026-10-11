@@ -191,6 +191,11 @@ static void negotiate(bool fast)
 	zassert_ok(uart_config_get(uart, &cfg));
 	zassert_equal(cfg.baudrate, fast ? 115200 : 2400);
 	zassert_equal(snapshot().error, -EAGAIN);
+	/* SPIKE motor startup: ACK, BREAK, then a valid TYPE. Framing and BREAK
+	 * are synchronization input here, but remain fatal after negotiation. */
+	uart_emul_set_errors(uart, UART_ERROR_FRAMING | UART_BREAK);
+	uint8_t sync = LUMP_SYS_SYNC;
+	feed(&sync, 1);
 	feed(boost_interactive_motor, sizeof(boost_interactive_motor));
 	wait_tx(sizeof(speed) + 2);
 	zassert_equal(tx[sizeof(speed)], LUMP_SYS_ACK);

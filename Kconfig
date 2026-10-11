@@ -6,6 +6,19 @@ mainmenu "Brickphyr"
 config MCUMGR_TRANSPORT_NETBUF_SIZE
 	default 512 if BRICKPHYR_MOTOR_CONTROL && BRICKPHYR_TELEMETRY
 
+# Management commands have no acquisition deadline. Keep CBOR/file processing
+# below the 833 Hz IMU and 200 Hz motor service, but above Shell/applications.
+config MCUMGR_TRANSPORT_WORKQUEUE_THREAD_PRIO
+	default 10 if BRICKPHYR_IMU || BRICKPHYR_MOTOR_CONTROL
+
+# Bluetooth needs the cooperative system queue; CDC processing must instead
+# be preemptible by the 1.2 ms acquisition and 5 ms control work.
+config USBD_CDC_ACM_WORKQUEUE
+	default y if BOARD_SPIKE_PRIME_F4
+
+config USBD_CDC_ACM_WORKQUEUE_PRIORITY
+	default 8 if BOARD_SPIKE_PRIME_F4
+
 source "Kconfig.zephyr"
 
 config BRICKPHYR_PORTS
