@@ -6,6 +6,7 @@
 #include "native.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/input/input.h>
@@ -24,8 +25,9 @@
 #endif
 
 #define TELEMETRY_GROUP 66
-enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU };
-static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix", "imu"};
+enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION };
+static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
+	"imu", "imu.calibrated", "imu.orientation"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -47,7 +49,7 @@ static bool available(enum source source)
 	case SIDE: return DT_NODE_HAS_STATUS(DT_NODELABEL(arrow_keys), okay);
 	case APPLICATION: return IS_ENABLED(CONFIG_BRICKPHYR_NATIVE);
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
-	case IMU: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
+	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
 }
@@ -146,6 +148,37 @@ static void capture(enum source source, struct observation *out)
 			field(out, "gx_mdps", value.angular_velocity[0]);
 			field(out, "gy_mdps", value.angular_velocity[1]);
 			field(out, "gz_mdps", value.angular_velocity[2]);
+		}
+	} else if (source == IMU_CALIBRATED || source == IMU_ORIENTATION) {
+		struct bp_imu_state value;
+		out->error = hub_imu_get_state(&value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_us", value.raw.sample_us);
+			field(out, "sequence", value.raw.sequence);
+			field(out, "epoch", value.epoch);
+			field(out, "ready", value.ready);
+			if (source == IMU_CALIBRATED) {
+				field(out, "stationary", value.stationary);
+				field(out, "ax_um_s2", value.acceleration[0]);
+				field(out, "ay_um_s2", value.acceleration[1]);
+				field(out, "az_um_s2", value.acceleration[2]);
+				field(out, "gx_mdps", value.angular_velocity[0]);
+				field(out, "gy_mdps", value.angular_velocity[1]);
+				field(out, "gz_mdps", value.angular_velocity[2]);
+				field(out, "bx_mdps", value.bias[0]);
+				field(out, "by_mdps", value.bias[1]);
+				field(out, "bz_mdps", value.bias[2]);
+			} else {
+				static const char *const elements[] = {
+					"m11", "m12", "m13", "m21", "m22", "m23", "m31", "m32", "m33",
+				};
+				for (size_t i = 0; i < ARRAY_SIZE(elements); i++) {
+					field(out, elements[i], lroundf(value.orientation[i] * 1000000));
+				}
+				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
+				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
+			}
 		}
 	} else if (source == MATRIX) {
 		out->error = hub_matrix_get(&out->matrix);
@@ -252,7 +285,7 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 	return result;
 }
 
-SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | power | buttons.center | buttons.side | application | matrix | imu].",
+SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | power | buttons.center | buttons.side | application | matrix | imu | imu.calibrated | imu.orientation].",
 		      cmd_observe, 1, 1);
 
 static const struct mgmt_handler handlers[] = {

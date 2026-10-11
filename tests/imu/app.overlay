@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "../storage/app.overlay"
 &i2c0 {
 	status = "okay";
 	hub_imu: imu@6a {

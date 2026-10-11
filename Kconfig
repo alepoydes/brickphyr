@@ -4,19 +4,23 @@ mainmenu "Brickphyr"
 source "Kconfig.zephyr"
 
 config BRICKPHYR_IMU
-	bool "Hub IMU acquisition"
+	bool "Hub IMU acquisition and orientation"
 	default y if BOARD_SPIKE_PRIME_F4
 	depends on DT_HAS_ST_LSM6DS3TR_C_ENABLED && TIMER_HAS_64BIT_CYCLE_COUNTER
 	select I2C
 	select GPIO
 	help
-	  One bounded acquisition worker, reusing the ST/Pybricks register API.
-	  Read-only snapshots are shared by native applications and telemetry.
+	  One bounded worker uses the ST/Pybricks register API and ported
+	  calibration/orientation algorithms. Native applications and telemetry
+	  share read-only snapshots; calibration uses Zephyr Settings.
 
 config BRICKPHYR_TELEMETRY
 	bool "Read-only hub observations"
 	default y if BOARD_SPIKE_PRIME_F4
 	depends on MCUMGR && SHELL
+	select MCUMGR_SMP_CBOR_MIN_DECODING_LEVEL_2
+	select MCUMGR_SMP_CBOR_MIN_ENCODING_LEVEL_2 if ZCBOR_CANONICAL
+	select MCUMGR_SMP_CBOR_MIN_ENCODING_LEVEL_1
 	help
 	  On-demand snapshots through SMP and the shared shell. No background
 	  transmission, sensor reconfiguration or application lifecycle work.

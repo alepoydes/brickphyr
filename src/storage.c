@@ -14,6 +14,7 @@
 #include "app_store.h"
 #endif
 #include "hub_power.h"
+#include "configuration.h"
 
 LOG_MODULE_REGISTER(storage);
 
@@ -41,6 +42,11 @@ static int storage_init(void)
 	if (!status) {
 		status = hub_power_load();
 	}
+#ifdef CONFIG_BRICKPHYR_IMU
+	if (!status) {
+		status = config_load(imu_config, ARRAY_SIZE(imu_config));
+	}
+#endif
 	if (status) {
 		LOG_ERR("Settings storage unavailable: %d; existing data preserved", status);
 	}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_power.h"
-#include "storage.h"
+#include "configuration.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -12,8 +12,11 @@
 
 /* Settings are uint32 little-endian seconds. Zero disables automatic shutdown.
  * Defaults preserve the bring-up firmware's indefinite power retention. */
-static const char *const names[] = {"power/battery_idle_s", "power/usb_idle_s"};
-static uint32_t timeout_s[ARRAY_SIZE(names)];
+const struct config_entry power_config[] = {
+	{"power/battery_idle_s", "s", 1, false},
+	{"power/usb_idle_s", "s", 1, false},
+};
+static uint32_t timeout_s[ARRAY_SIZE(power_config)];
 static struct k_spinlock lock;
 static int source = -ENODEV;
 static bool connected;
@@ -33,22 +36,9 @@ void hub_power_get(struct hub_power_state *state)
 	k_spin_unlock(&lock, key);
 }
 
-static int setting_index(const char *name)
-{
-	if (!name) {
-		return -ENOENT;
-	}
-	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
-		if (!strcmp(name, names[i] + sizeof("power/") - 1)) {
-			return i;
-		}
-	}
-	return -ENOENT;
-}
-
 static int setting_get(const char *name, char *value, int capacity)
 {
-	int index = setting_index(name);
+	int index = config_index(power_config, ARRAY_SIZE(power_config), name);
 	if (index < 0 || capacity < (int)sizeof(uint32_t)) {
 		return index < 0 ? index : -ENOSPC;
 	}
@@ -60,7 +50,7 @@ static int setting_get(const char *name, char *value, int capacity)
 
 static int setting_set(const char *name, size_t length, settings_read_cb read, void *context)
 {
-	int index = setting_index(name);
+	int index = config_index(power_config, ARRAY_SIZE(power_config), name);
 	if (index < 0 || length != sizeof(uint32_t)) {
 		return index < 0 ? index : -EINVAL;
 	}
@@ -81,39 +71,14 @@ static int setting_set(const char *name, size_t length, settings_read_cb read, v
 
 static int setting_export(int (*save)(const char *, const void *, size_t))
 {
-	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
-		uint8_t value[4];
-		int err = settings_runtime_get(names[i], value, sizeof(value));
-		if (err != sizeof(value)) {
-			return err < 0 ? err : -EINVAL;
-		}
-		err = save(names[i], value, sizeof(value));
-		if (err) {
-			return err;
-		}
-	}
-	return 0;
+	return config_export(power_config, ARRAY_SIZE(power_config), save);
 }
 
 SETTINGS_STATIC_HANDLER_DEFINE(power, "power", setting_get, setting_set, NULL, setting_export);
 
 int hub_power_load(void)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
-		uint8_t value[4];
-		int length = settings_load_one(names[i], value, sizeof(value));
-		if (length == 0 || length == -ENOENT) {
-			continue;
-		}
-		if (length != sizeof(value)) {
-			return length < 0 ? length : -EINVAL;
-		}
-		int err = settings_runtime_set(names[i], value, sizeof(value));
-		if (err) {
-			return err;
-		}
-	}
-	return 0;
+	return config_load(power_config, ARRAY_SIZE(power_config));
 }
 
 bool hub_power_connection(bool open)
@@ -194,69 +159,4 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_config(const struct shell *shell, size_t argc, char **argv)
-{
-	uint8_t value[sizeof(uint32_t)];
-	if (argc == 2 && !strcmp(argv[1], "save")) {
-		int err = IS_ENABLED(CONFIG_SETTINGS_FILE) ? storage_status() : -ENOTSUP;
-		if (err) {
-			shell_error(shell, "Persistent settings storage is not available: %d", err);
-			return err;
-		}
-		err = settings_save();
-		if (err) {
-			shell_error(shell, "Save settings failed: %d", err);
-		} else {
-			shell_print(shell, "Settings saved.");
-		}
-		return err;
-	}
-	int err;
-	if (argc == 3 && !strcmp(argv[1], "get")) {
-		err = settings_runtime_get(argv[2], value, sizeof(value));
-		if (err == sizeof(value)) {
-			shell_print(shell, "%s = %" PRIu32 " s (selected and effective)",
-				argv[2], sys_get_le32(value));
-			if (IS_ENABLED(CONFIG_SETTINGS_FILE)) {
-				int available = storage_status();
-				uint8_t saved[sizeof(value)];
-				int length = available ? available :
-					settings_load_one(argv[2], saved, sizeof(saved));
-				if (length == sizeof(saved)) {
-					shell_print(shell, "Saved: %" PRIu32 " s (%s)", sys_get_le32(saved),
-						memcmp(value, saved, sizeof(value)) ? "RAM differs" : "unchanged");
-				} else if (length == 0 || length == -ENOENT) {
-					shell_print(shell, "Not saved.");
-				} else {
-					shell_error(shell, "Saved value unavailable: %d", length < 0 ? length : -EINVAL);
-					return length < 0 ? length : -EINVAL;
-				}
-			} else {
-				shell_print(shell, "RAM only; persistent storage unavailable.");
-			}
-			return 0;
-		}
-	} else if (argc == 4 && !strcmp(argv[1], "set")) {
-		err = 0;
-		unsigned long seconds = shell_strtoul(argv[3], 10, &err);
-		if (err || argv[3][0] == '-' || seconds > UINT32_MAX) {
-			shell_error(shell, "Use integer seconds, 0 through 4294967295; 0 disables.");
-			return -EINVAL;
-		}
-		sys_put_le32(seconds, value);
-		err = settings_runtime_set(argv[2], value, sizeof(value));
-		if (!err) {
-			shell_print(shell, "Applied in RAM. Use config save to persist changes.");
-			return 0;
-		}
-	} else {
-		shell_error(shell, "Usage: config get NAME | set NAME SECONDS | save");
-		return -EINVAL;
-	}
-	shell_error(shell, "Setting operation failed: %d", err);
-	return err;
-}
-
 SHELL_CMD_ARG_REGISTER(power, NULL, "Power source, owner, and inactivity policy.", cmd_power, 1, 0);
-SHELL_CMD_ARG_REGISTER(config, NULL, "Runtime settings: power/battery_idle_s, power/usb_idle_s.",
-		      cmd_config, 2, 2);

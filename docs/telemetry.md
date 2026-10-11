@@ -2,7 +2,8 @@
 
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
-`observe application`, `observe matrix` or `observe imu` for one source. Unsupported sources
+`observe application`, `observe matrix`, `observe imu`, `observe imu.calibrated`
+or `observe imu.orientation` for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 
 Observation is read-only. It does not start ADC/SPI transactions, change a sensor
@@ -118,6 +119,8 @@ format, connection owner or Bluetooth service is introduced.
 | `application` | `state`, `result`, `fault`, `cleanup`, `image`, `heap`, `loaded`, `stack`, `unused`, `dropped`, `queued`, `received`, `total`, `ready` |
 | `matrix` | `applied_ms`, `failures`, `owner`, `pending`, `valid`, `requested`, `applied` |
 | `imu` | `sample_us`, `completed_us`, `sequence`, `missed`, `failures`, `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps` |
+| `imu.calibrated` | `sample_us`, `sequence`, `epoch`, `ready`, `stationary`, calibrated `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps`, current bias `bx_mdps`, `by_mdps`, `bz_mdps` |
+| `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.
@@ -127,6 +130,15 @@ time. A sample older than four nominal periods reports `-ETIMEDOUT`; it is never
 relabeled with the time of a request. `missed` counts observed edges not published
 as samples, including discarded reads; it cannot count interrupts the MCU never
 observed. See [IMU acquisition](hardware.md#hub-imu) for synchronization limits.
+
+Calibrated and orientation sources use the same processed snapshot. Separate
+requests can see different frames; compare their `sequence` and `epoch` when
+combining them. Acceleration includes gravity. The row-major matrix maps hub
+axes to the inertial frame, and headings are clockwise-positive millidegrees.
+Missing data or a calibration change starts a new reference with a different
+`epoch`. `ready` means a bias estimate from the last ten minutes, not proven
+physical rest or absolute heading. Errors retain previous computed values and
+must be checked before using them. See [calibration](settings.md#imu-calibration).
 
 Scalars are CBOR integers. Flags are 0/1. Button values are 0 released, 1 pressed,
 or negative errno when the captured sample is unreadable or not yet debounced.

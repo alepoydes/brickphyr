@@ -203,7 +203,7 @@ brightness and operation on the Inventor F4 still await verification.
 
 ## Hub IMU
 
-The F4 build includes uncalibrated LSM6DS3TR-C acquisition with
+The F4 build includes LSM6DS3TR-C acquisition and calibrated orientation with
 `CONFIG_BRICKPHYR_IMU`. It reuses the pinned ST/Pybricks register functions through
 Zephyr I²C/GPIO, without the PBIO scheduler or STM32 HAL backend. Wiring and
 mounting signs come from Pybricks' Prime F4 platform: I²C2 at 400 kHz, PB10/PB3,
@@ -215,18 +215,41 @@ Read a snapshot in either terminal, or select it in the host monitor:
 
 ```sh
 uv run brickphyrdev monitor --source imu
-uv run brickphyrdev monitor --ble Brickphyr --source imu --log imu.jsonl
+uv run brickphyrdev monitor --ble Brickphyr --source imu.calibrated --log imu.jsonl
 ```
 
-The Shell command is `observe imu`. Native applications call `bp_imu_get()` with a
-caller-owned `struct bp_imu_sample`; the example `imu.elf` prints acceleration
-and angular velocity. All paths copy the same latest sample, without I²C access,
+The Shell commands are `observe imu`, `observe imu.calibrated` and
+`observe imu.orientation`. Native applications call `bp_imu_get()` for raw data
+or `bp_imu_get_state()` for a coherent calibrated snapshot, including its raw
+input. The example `imu.elf` prints calibrated acceleration and angular velocity.
+All paths copy the latest published sample, without I²C access,
 allocation, ownership changes or sensor reconfiguration. Read errors preserve the
 last valid values and acquisition time. The API returns `-ENOTSUP` when excluded;
 otherwise inspect `sample.error`, including startup (`-EINPROGRESS`), waiting or
 resynchronization (`-EAGAIN`), stale data (`-ETIMEDOUT`) and stopped acquisition
 (`-ESHUTDOWN`). Units and counters are described in [observations](telemetry.md).
-No calibration, gravity removal or orientation estimate is implemented yet.
+
+Calibration and quaternion fusion are ported from Pybricks with recorded
+[provenance](../src/imu/README.md). Accelerometer values include gravity. The
+orientation matrix maps hub coordinates to an inertial frame initialized from
+gravity; no magnetometer supplies absolute heading. Integrated axis rotations
+and clockwise-positive 1D/3D headings are in degrees. The 3D heading projects the
+front axis onto the horizontal plane and is undefined when that axis is vertical.
+
+The acquisition worker also performs processing, using actual accepted sample
+intervals. Missing, failed or stale acquisition starts a new orientation reference
+on the next usable frame, increments `epoch`, and retains learned bias. Calibration
+changes likewise start a new reference; compare angles only within one epoch.
+Readers copy the coherent snapshot under a short lock; no application can hold
+the processing lock. No extra sample queue or processing thread is introduced.
+
+Stationary detection and bias averaging retain Pybricks' bounded sample windows.
+`stationary` means low variation, and `ready` means bias was learned within the
+last ten minutes. Constant rotation can resemble bias; neither flag proves
+absolute rest. Learning continues during applications. Set either stationary
+threshold to zero to disable learning when necessary. Future motor control must
+inhibit learning while driving. Initial bias, scale and calibration are changed
+through [Settings](settings.md#imu-calibration); learning never writes flash.
 
 `sample_us` timestamps the observed gyro-ready edge on the monotonic clock.
 Acceleration accompanies it in the same 12-byte burst. This is not a simultaneous
@@ -249,7 +272,11 @@ Native simulation uses the actual worker and register library with a synthetic
 I²C/GPIO peer. It checks cold initialization, signed limits and mounting axes,
 units, preserved timestamps, stale samples, transfer failures, overlapping reads,
 shutdown and first-error preservation when initialization and cleanup both fail.
-The F4 image builds; physical readings and mounting orientation await verification.
+It also checks calibration persistence, stationary learning, synthetic rotation,
+reference discontinuities and actual SMP observations. ARM numerical checks cover
+gravity poses, complete and tilted rotations, heading, calibration and rejected
+settings without mutation. F4 images build; physical readings, mounting orientation,
+processing latency and stack margin await verification.
 
 ## A support claim must be reproducible
 

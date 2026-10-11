@@ -11,7 +11,7 @@ repositories managed by west; see [workspace layout](builds.md).
 
 Start with upstream Zephyr and out-of-tree board/driver support. Create a Zephyr
 fork only when a required change cannot live outside its tree. Maintain a thin
-Pybricks fork when portable changes are needed there. A fork keeps the upstream
+Pybricks fork for changes that independently benefit Pybricks. A fork keeps the upstream
 history and source layout; it is not a copied subtree with a new root commit.
 Do not create an independent PBIO repository before the integration demonstrates
 that extracting it would help both consumers and the upstream maintainers agree.
@@ -30,14 +30,24 @@ respective upstream histories. All three publish branch `brickphyr/0.1.1`.
 | Change | Expected home |
 | --- | --- |
 | Generic Zephyr driver, kernel, or LLEXT improvement | Zephyr, with its required tests |
-| Portable LEGO protocol, calibration, or control fix | Pybricks, independent of Zephyr integration |
+| LEGO protocol, calibration, or control improvement useful to Pybricks itself | Pybricks, independent of Zephyr integration |
 | Reusable firmware packaging, hub identification, installation, or restoration extension | The existing Pybricks host-tool repository owning that operation |
 | Missing reusable MicroPython/WAMR behavior | That runtime's project |
-| Brickphyr lifecycle, SDK, glue, application storage policy | Brickphyr |
+| Brickphyr lifecycle, SDK, glue, application storage policy, Zephyr-specific ports | Brickphyr |
 
 A portable change and its OS-specific integration should be separate commits or
 PRs. Explain the upstream use case without requiring the reviewer to adopt
 Brickphyr. Follow that project's license, style, and contribution requirements.
+
+Reuse unchanged dependency sources directly when their interfaces fit. If an
+adaptation serves Brickphyr alone, port the necessary code here under its existing
+license instead of changing the dependency's architecture for our needs. Retain
+copyright and license notices, record the source path and exact revision, and
+describe the substantive differences beside the port. Compile one implementation
+of each function into the firmware. Review relevant upstream fixes when updating
+the source version; a port is maintained code, not an automatically updated copy.
+Do not copy entire dependencies or create another HAL to keep both execution
+models. Upstream acceptance is not assumed, nor required for Brickphyr's progress.
 
 For firmware installation, first use the existing Pybricks tool and package
 interface directly. Add dependency changes only for a demonstrated missing
@@ -250,6 +260,22 @@ The unchanged upstream patch is backported in local commit `305ebb0fa`,
 pending publication and integration into the dependency pin. Brickphyr reproduces the
 failure and checks the correction on ARM QEMU with GCC. Regenerate the EDK and
 rebuild applications after applying it; the SDK identity includes this header.
+
+## IMU processing port
+
+Brickphyr owns the adapted calibration/orientation code in
+[`src/imu`](../src/imu/README.md). Its acquisition, timing and Settings boundary
+does not require a new Pybricks API. The source revision, license and differences
+are recorded beside the port. Register and geometry helpers still come from the
+dependency; the original PBIO IMU driver and estimator are not
+linked alongside the port.
+
+The numerical checks require the finite-input correction in PBIO's geometry
+normalizer. It is part of local Pybricks commit `1220889f0` on `topic/imu-fixes`,
+pending publication and manifest integration. That commit also fixes Pybricks'
+own IMU sample mutation, delayed orientation update and partial settings changes;
+its regression checks exercise the original PBIO driver callbacks. These changes
+are independent of Brickphyr and introduce no extraction or platform adapter.
 
 ## Contribution certification
 

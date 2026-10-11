@@ -2,13 +2,22 @@
 /* Synthetic register peer. Exercises the unmodified ST/Pybricks helpers,
  * Zephyr I2C/GPIO boundary and actual acquisition thread, not board timing. */
 #include <string.h>
+#include <math.h>
 #include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/i2c_emul.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 #include <zephyr/shell/shell_dummy.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
 #include "hub_imu.h"
+#include "hub_power.h"
+#include "configuration.h"
+#include "storage.h"
 
 static uint8_t registers[256];
 static unsigned int transactions;
@@ -92,6 +101,181 @@ static struct bp_imu_sample latest(uint32_t after, int error)
 	} while (k_uptime_get() < deadline);
 	zassert_unreachable("No sample/error: sequence %u error %d", value.sequence, value.error);
 	return value;
+}
+
+static struct bp_imu_state frame(const int16_t data[6])
+{
+	struct bp_imu_state state;
+	zassert_ok(hub_imu_get_state(&state));
+	uint32_t previous = state.raw.sequence;
+	for (size_t i = 0; i < 6; i++) {
+		sys_put_le16(data[i], registers + 0x22 + i * 2);
+	}
+	k_usleep(1200);
+	pulse();
+	int64_t deadline = k_uptime_get() + 100;
+	do {
+		k_usleep(100);
+		zassert_ok(hub_imu_get_state(&state));
+		zassert_true(k_uptime_get() < deadline, "No processed sample: %d", state.error);
+	} while (state.raw.sequence == previous);
+	zassert_ok(state.error);
+	return state;
+}
+
+static void smp_observation(const char *name, const char *field, int64_t expected)
+{
+	/* Exercise the registered production group with the actual SMP payload
+	 * capacity. Transport framing/ownership is checked by tests/host. */
+	static struct cbor_nb_reader reader;
+	static struct cbor_nb_writer writer;
+	static uint8_t request[40], response[CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 8];
+	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), request, sizeof(request), 1);
+	zassert_true(zcbor_map_start_encode(writer.zs, 1));
+	zassert_true(zcbor_tstr_put_lit(writer.zs, "source"));
+	zassert_true(zcbor_tstr_encode_ptr(writer.zs, name, strlen(name)));
+	zassert_true(zcbor_map_end_encode(writer.zs, 1));
+	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), request,
+		writer.zs[0].payload - request, 1, NULL, 0);
+	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), response, sizeof(response), 1);
+	zassert_true(zcbor_map_start_encode(writer.zs, 5));
+	struct smp_streamer stream = {.reader = &reader, .writer = &writer};
+	const struct mgmt_handler *handler = mgmt_find_handler(66, 1);
+	zassert_not_null(handler);
+	int result = handler->mh_read(&stream);
+	zassert_ok(result, "%s: SMP error %d, %u response bytes", name, result,
+		(unsigned int)(writer.zs[0].payload - response));
+	zassert_true(zcbor_map_end_encode(writer.zs, 5));
+	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), response,
+		writer.zs[0].payload - response, 1, NULL, 0);
+	zassert_true(zcbor_map_start_decode(reader.zs));
+	bool found = false;
+	while (!zcbor_array_at_end(reader.zs)) {
+		struct zcbor_string key;
+		zassert_true(zcbor_tstr_decode(reader.zs, &key));
+		if (key.len != 6 || memcmp(key.value, "values", 6)) {
+			zassert_true(zcbor_any_skip(reader.zs, NULL));
+			continue;
+		}
+		zassert_true(zcbor_map_start_decode(reader.zs));
+		while (!zcbor_array_at_end(reader.zs)) {
+			int64_t value;
+			zassert_true(zcbor_tstr_decode(reader.zs, &key));
+			zassert_true(zcbor_int64_decode(reader.zs, &value));
+			if (key.len == strlen(field) && !memcmp(key.value, field, key.len)) {
+				zassert_equal(value, expected);
+				found = true;
+			}
+		}
+		zassert_true(zcbor_map_end_decode(reader.zs));
+	}
+	zassert_true(zcbor_map_end_decode(reader.zs));
+	zassert_true(found);
+}
+
+static void processing(void)
+{
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	zassert_ok(storage_status());
+	zassert_ok(settings_save());
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps -700 1400 2100"));
+	const int16_t still[] = {10, 20, -30, 0, 0, -4096};
+	struct bp_imu_state state = frame(still);
+	zassert_equal(state.bias[0], -700);
+	zassert_equal(state.bias[1], 1400);
+	zassert_equal(state.bias[2], 2100);
+	for (size_t i = 0; i < 3; i++) {
+		zassert_equal(state.angular_velocity[i], 0);
+		zassert_within(state.orientation[4 * i], 1, 0.00001f);
+	}
+	zassert_false(state.ready);
+	uint8_t saved[24], effective[24];
+	zassert_equal(settings_load_one(imu_config[2].name, saved, sizeof(saved)), 12);
+	zassert_equal(sys_get_le32(saved), 0, "RAM update wrote storage");
+	zassert_ok(shell_execute_cmd(shell, "config save"));
+	zassert_equal(settings_load_one(imu_config[2].name, saved, sizeof(saved)), 12);
+	zassert_equal((int32_t)sys_get_le32(saved), -700);
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 0"));
+	zassert_ok(config_load(imu_config, ARRAY_SIZE(imu_config)));
+	state = frame(still);
+	zassert_equal(state.angular_velocity[2], 0, "Loaded bias was not applied");
+	zassert_equal(state.bias[2], 2100);
+	uint32_t epoch = state.epoch;
+	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_scale_mdeg 360000 1 361000"), -EINVAL);
+	zassert_equal(settings_runtime_get(imu_config[3].name, effective, sizeof(effective)), 12);
+	for (size_t i = 0; i < 3; i++) {
+		zassert_equal(sys_get_le32(effective + 4 * i), 360000);
+	}
+	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 -2147483648"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps -1"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "config set imu/accel_calibration_um_s2 9806650 9806650 9806650 -9806650 9806650 -9806650"), -EINVAL);
+	state = frame(still);
+	zassert_equal(state.epoch, epoch, "Rejected settings reset orientation");
+	zassert_equal(state.angular_velocity[2], 0);
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps 2147483647"));
+	zassert_equal(settings_runtime_get(imu_config[0].name, effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), INT32_MAX, "Selected integer was rounded through float");
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps 2000"));
+	zassert_ok(shell_execute_cmd(shell, "config set power/usb_idle_s 4294967295"));
+	zassert_equal(settings_runtime_get("power/usb_idle_s", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), UINT32_MAX);
+	zassert_ok(shell_execute_cmd(shell, "config set power/usb_idle_s 0"));
+
+	/* A synthetic fixed offset: real acquisition, stationary detection and
+	 * PBIO calibration must remove it without a storage write. */
+	zassert_true(hub_power_application(true));
+	const int16_t biased[] = {0, 0, -100, 0, 0, -4096};
+	for (size_t i = 0; i < 2800; i++) {
+		state = frame(biased);
+	}
+	zassert_true(state.stationary && state.ready);
+	zassert_equal(state.bias[2], 7000);
+	zassert_equal(state.angular_velocity[2], 0);
+	zassert_equal(settings_load_one(imu_config[2].name, effective, sizeof(effective)), 12);
+	zassert_mem_equal(effective, saved, 12, "Learning wrote flash");
+
+	/* Zero disables learning when measuring sustained rotation. Mere signal
+	 * stability cannot distinguish rotation about gravity from a gyro bias. */
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps 0"));
+	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 0"));
+	const int16_t rotating[] = {0, 0, -1000, 0, 0, -4096};
+	state = frame(rotating);
+	int64_t start = state.raw.sample_us;
+	epoch = state.epoch;
+	for (size_t i = 0; i < 1000; i++) {
+		state = frame(rotating);
+	}
+	float degrees = 70.0 * (state.raw.sample_us - start) / 1000000.0;
+	zassert_equal(state.epoch, epoch);
+	zassert_false(state.stationary);
+	zassert_equal(state.bias[2], 0);
+	zassert_within(state.rotation[2], degrees, 0.02f);
+	zassert_within(state.heading_1d, -degrees, 0.02f);
+	zassert_within(state.heading_3d, -degrees, 0.02f);
+	zassert_within(state.orientation[0], cosf(degrees * 0.01745329252f), 0.001f);
+	zassert_within(state.orientation[3], sinf(degrees * 0.01745329252f), 0.001f);
+	unsigned int before = transactions;
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe imu.calibrated"));
+	size_t length;
+	const char *output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "gz_mdps=70000"));
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe imu.orientation"));
+	output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "m33=1000000"));
+	smp_observation("imu.calibrated", "gz_mdps", 70000);
+	smp_observation("imu.orientation", "m33", 1000000);
+	zassert_equal(transactions, before, "Observations triggered acquisition");
+	k_msleep(6);
+	zassert_ok(hub_imu_get_state(&state));
+	zassert_equal(state.error, -ETIMEDOUT);
+	zassert_false(state.ready);
+	state = frame(rotating);
+	zassert_equal(state.epoch, epoch + 1);
+	zassert_within(state.rotation[2], 0, 0.00001f);
+	zassert_true(hub_power_application(false));
 }
 
 ZTEST(imu, test_acquisition)
@@ -193,6 +377,7 @@ ZTEST(imu, test_acquisition)
 	zassert_equal(value.sequence, previous + 2);
 	zassert_equal(value.missed, 3);
 	zassert_equal(value.failures, 3);
+	processing();
 	zassert_ok(hub_imu_shutdown());
 	zassert_equal(registers[0x10], 0);
 	zassert_equal(registers[0x11], 0);

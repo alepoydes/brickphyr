@@ -36,6 +36,9 @@ __syscall int bp_matrix_get(struct bp_matrix_state *state);
 /* Latest uncalibrated IMU sample. Copies even when sample.error is nonzero;
  * does not acquire data or change sensor configuration. ENOTSUP if excluded. */
 __syscall int bp_imu_get(struct bp_imu_sample *sample);
+/* Calibrated vectors and orientation paired with their original raw sample.
+ * Same bounded read and error convention. Orientation continuity uses epoch. */
+__syscall int bp_imu_get_state(struct bp_imu_state *state);
 
 /* The firmware calls this entry in user mode; return ends the application. */
 int app_main(void);

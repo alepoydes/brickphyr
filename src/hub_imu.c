@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "hub_imu.h"
+#include "hub_imu_internal.h"
 #include <lsm6ds3tr_c_reg.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
@@ -132,7 +133,9 @@ static void failed(int error)
 	sample.error = error;
 	sample.read_us = now_us();
 	sample.failures += sample.failures != UINT32_MAX;
+	struct bp_imu_sample value = sample;
 	k_spin_unlock(&lock, key);
+	hub_imu_process(&value, NULL);
 }
 
 static void worker(void *a, void *b, void *c)
@@ -161,7 +164,10 @@ static void worker(void *a, void *b, void *c)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	started_us = now_us();
 	sample.error = -EAGAIN;
+	sample.read_us = started_us;
+	struct bp_imu_sample starting = sample;
 	k_spin_unlock(&lock, key);
+	hub_imu_process(&starting, NULL);
 	uint32_t consumed = 0;
 	bool resync = false;
 	while (!atomic_get(&stopping)) {
@@ -192,16 +198,17 @@ static void worker(void *a, void *b, void *c)
 		}
 		struct bp_imu_sample next = {.sample_us = acquired, .read_us = completed,
 			.sequence = sequence};
+		int16_t raw[6];
 		if (!err) {
 			for (size_t i = 0; i < 3; i++) {
-				int16_t gyro = sys_get_le16(data + 2 * i);
-				int16_t accel = sys_get_le16(data + 6 + 2 * i);
+				raw[i] = sys_get_le16(data + 2 * i);
+				raw[i + 3] = sys_get_le16(data + 6 + 2 * i);
 				/* Convert before applying the mounting sign: -INT16_MIN
 				 * is valid in these wider physical units. 9.81 matches PBIO. */
 				next.angular_velocity[i] = signs[i] *
-					lsm6ds3tr_c_from_fs2000dps_to_mdps(gyro);
+					lsm6ds3tr_c_from_fs2000dps_to_mdps(raw[i]);
 				next.acceleration[i] = signs[i] *
-					lsm6ds3tr_c_from_fs8g_to_mg(accel) * 9810.0f;
+					lsm6ds3tr_c_from_fs8g_to_mg(raw[i + 3]) * 9810.0f;
 			}
 		}
 		key = k_spin_lock(&lock);
@@ -220,8 +227,11 @@ static void worker(void *a, void *b, void *c)
 			sample.failures += sample.failures != UINT32_MAX;
 			sample.error = err;
 			sample.read_us = completed;
+			next = sample;
 		}
 		k_spin_unlock(&lock, key);
+		/* Computation follows acquisition without holding an IRQ lock. */
+		hub_imu_process(&next, err ? NULL : raw);
 	}
 	err = 0;
 finish:
@@ -235,7 +245,9 @@ finish:
 	} else {
 		key = k_spin_lock(&lock);
 		sample.error = -ESHUTDOWN;
+		struct bp_imu_sample stopped = sample;
 		k_spin_unlock(&lock, key);
+		hub_imu_process(&stopped, NULL);
 	}
 }
 

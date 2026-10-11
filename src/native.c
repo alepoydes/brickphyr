@@ -187,6 +187,18 @@ static inline int z_vrfy_bp_imu_get(struct bp_imu_sample *value)
 }
 #include <zephyr/syscalls/bp_imu_get_mrsh.c>
 
+int z_impl_bp_imu_get_state(struct bp_imu_state *value)
+{
+	return hub_imu_get_state(value);
+}
+
+static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
+{
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_imu_get_state(value);
+}
+#include <zephyr/syscalls/bp_imu_get_state_mrsh.c>
+
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_native_finished(int result)
 {

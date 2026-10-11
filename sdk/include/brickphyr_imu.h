@@ -19,3 +19,27 @@ struct bp_imu_sample {
 	uint32_t failures;
 	int32_t error;
 };
+
+/* One coherent calibrated observation, in the same hub axes as raw.
+ * Acceleration includes gravity; integer vectors retain raw's physical units.
+ * orientation is a row-major body-to-inertial rotation matrix. Integrated
+ * rotations and headings use degrees, with clockwise-positive heading.
+ * epoch changes on initialization, missing data or calibration changes that
+ * establish a new orientation reference.
+ * Check error and epoch before comparing angles between observations.
+ * ready means a recent stationary bias estimate, not guaranteed absolute rest.
+ */
+struct bp_imu_state {
+	struct bp_imu_sample raw;
+	int32_t acceleration[3];
+	int32_t angular_velocity[3];
+	int32_t bias[3];
+	float orientation[9];
+	float rotation[3];
+	float heading_1d;
+	float heading_3d;
+	uint32_t epoch;
+	uint32_t stationary;
+	uint32_t ready;
+	int32_t error;
+};

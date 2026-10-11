@@ -110,14 +110,15 @@ def test_image():
 @pytest.mark.parametrize(
     "suite", ["hub-tests", "poweroff-tests", "radio-tests", "imu-tests", "imu-failure-tests"]
 )
-def test_hub_drivers(suite):
+def test_hub_drivers(suite, tmp_path):
     result = subprocess.run(
         [BUILD / suite / "zephyr/zephyr.exe"],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         timeout=5,
-        check=True,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "PROJECT EXECUTION SUCCESSFUL" in result.stdout, result.stdout
 
 
@@ -127,6 +128,6 @@ def test_host_transport():
         capture_output=True,
         text=True,
         timeout=5,
-        check=True,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "PROJECT EXECUTION SUCCESSFUL" in result.stdout, result.stdout

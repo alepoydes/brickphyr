@@ -12,7 +12,7 @@ project(management_interop)
 target_sources(app PRIVATE main.c
   ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
-  ${BRICKPHYR_ROOT}/src/hub_power.c
+  ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c
   ${BRICKPHYR_ROOT}/src/telemetry.c
   ${BRICKPHYR_ROOT}/src/hub_matrix.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c

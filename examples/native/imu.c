@@ -26,8 +26,8 @@ static char *number(char *end, int32_t value)
 int app_main(void)
 {
 	for (;;) {
-		struct bp_imu_sample sample;
-		int err = bp_imu_get(&sample);
+		struct bp_imu_state sample;
+		int err = bp_imu_get_state(&sample);
 		if (err) {
 			return err;
 		}
@@ -38,8 +38,8 @@ int app_main(void)
 		if (sample.error) {
 			return sample.error;
 		}
-		char line[96] = "imu um/s2 mdps:";
-		char *end = line + sizeof("imu um/s2 mdps:") - 1;
+		char line[96] = "imu calibrated um/s2 mdps:";
+		char *end = line + sizeof("imu calibrated um/s2 mdps:") - 1;
 		for (size_t i = 0; i < 3; i++) {
 			end = number(end, sample.acceleration[i]);
 		}

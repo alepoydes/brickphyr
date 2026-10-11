@@ -47,7 +47,7 @@ if(CONFIG_BOARD_SPIKE_PRIME_F4)
   target_sources(app PRIVATE src/host_usb.c src/host_transport.c src/host_protocol.c
     ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
     ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c
-    src/hub.c src/hub_menu.c src/hub_light.c src/hub_power.c src/storage.c src/storage_mount.c
+    src/hub.c src/hub_menu.c src/hub_light.c src/hub_power.c src/configuration.c src/storage.c src/storage_mount.c
     drivers/input_resistor_ladder.c drivers/led_tlc5955.c)
   target_include_directories(app PRIVATE include ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
   add_custom_target(firmware_package

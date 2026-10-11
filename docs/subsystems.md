@@ -30,20 +30,24 @@ a claim that every chip has a Zephyr driver.
 
 ## Sharing with Pybricks
 
-Share protocol parsing, device identification, calibration, control mathematics,
-and other code independent of the operating system. Keep Zephyr-specific IRQ,
-DMA, timer, wait, and synchronization adapters here or in Zephyr, as appropriate.
-An algorithm may remain byte-identical while its I/O adapter differs.
+Reuse protocol parsing, device identification, calibration, control mathematics,
+and board knowledge from Pybricks. Use suitable sources unchanged; port selected
+implementations into Brickphyr when their adaptation serves our execution model.
+Preserve their licenses and record provenance and differences beside each port.
+Keep Zephyr-specific IRQ, DMA, timer, wait, and synchronization support here or
+in Zephyr, as appropriate. Use Zephyr's driver model and standard device APIs;
+robotics algorithms and resource ownership remain above the device drivers.
 
 The `pybricks.*` API is substantially implemented as MicroPython C bindings; it
 cannot be ported by importing a collection of Python files alone. PBIO is a C
 library whose current execution model is cooperative. Reusing its algorithms
 does not require preserving that execution model in Brickphyr.
 
-Start from the existing repositories. Do not extract a new universal PBIO library
-or add a HAL over both HALs before an actual integration establishes the required
-boundary. Make portable refactorings reviewable by Pybricks independently of our
-choice of RTOS. The procedure is in [upstream](upstream.md).
+Keep dependency-fork changes independently useful to Pybricks itself. Do not
+extract a universal PBIO library or add a HAL over both HALs to accommodate
+Brickphyr. Extending hardware access from native Pybricks `.mpy` modules is a
+separate possible project, not a prerequisite for Brickphyr's native SDK or
+hardware support. The procedure is in [upstream](upstream.md).
 
 ## Minimum contract for an integrated service
 

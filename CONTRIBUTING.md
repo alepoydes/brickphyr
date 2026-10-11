@@ -11,8 +11,10 @@ image and simulator can be built using [the workspace procedure](docs/builds.md)
 
 1. Read the relevant contract in [architecture](docs/architecture.md) or its linked
    subsystem document. State the behavior being changed and why.
-2. Find the code's proper home using [subsystems](docs/subsystems.md). A portable
-   dependency improvement belongs in that dependency, with integration separate.
+2. Find the code's proper home using [subsystems](docs/subsystems.md). An improvement
+   useful to a dependency's own users belongs there, with integration separate.
+   A Brickphyr-specific adaptation belongs here, including a licensed source port
+   when an existing implementation cannot be reused unchanged.
 3. Implement the smallest complete solution, preserving existing contracts unless
    their change has been agreed. Remove obsolete alternatives in the same scope.
 4. Check meaningful invariants and failure boundaries. Use the production path;

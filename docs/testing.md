@@ -18,6 +18,15 @@ I/O failure recovery, overlapping updates and shutdown. A separate startup-failu
 fixture checks that a failed register read cannot cause a write and that cleanup
 does not replace the first error. These do not measure F4 sensor accuracy or timing.
 
+`tests/imu_processing` checks the [ported calculation](../src/imu/README.md) on
+ARM QEMU: six gravity poses, known turns, user axes, calibration, rejected settings,
+stationary bias learning and restart after missing measurements. Synthetic input
+sequences check the mathematics, not sensor accuracy. The acquisition fixture
+also exercises processing, Settings and explicit persistence through actual
+I²C/GPIO emulation and the LittleFS backend on simulated flash. It calls the real
+SMP observation handler with the transport's payload capacity, including a build
+where telemetry alone supplies the required CBOR nesting configuration.
+
 The Python protocol checks also run `brickphyrdev` USB identity and handover through
 the installed pybricksdev library against the production C handler over a PTY.
 USB enumeration/control is simulated. Packaging can be checked with `uv build`;
@@ -40,6 +49,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay &&
+uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
 mkdir -p build/native-smp-sdk &&
 tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&

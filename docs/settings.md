@@ -82,6 +82,47 @@ Reboot restores saved values, or defaults for missing keys. Without a working
 storage backend, saving fails explicitly. An open terminal or Pybricks USB session
 inhibits automatic shutdown even with a short timeout; explicit shutdown still works.
 
+## IMU calibration
+
+These settings are available with `CONFIG_BRICKPHYR_IMU`. Each value is signed
+32-bit, stored as little-endian words. Related axis values form one setting and
+are validated together before mutation. Defaults use Pybricks' calibration model.
+
+| Name | Values and units | Default |
+| --- | --- | --- |
+| `imu/gyro_stationary_mdps` | Nonnegative angular-velocity variation threshold, millidegrees/s | 2000 |
+| `imu/accel_stationary_um_s2` | Nonnegative acceleration variation threshold, µm/s² | 2500000 |
+| `imu/gyro_bias_start_mdps` | Initial X/Y/Z gyro bias, millidegrees/s | 0 0 0 |
+| `imu/gyro_scale_mdeg` | Measured X/Y/Z rotation per full turn, millidegrees | 360000 360000 360000 |
+| `imu/accel_calibration_um_s2` | Measured acceleration with +X/+Y/+Z, then −X/−Y/−Z pointing up, µm/s² | +9806650 on positive axes; −9806650 on negative axes |
+| `imu/heading_correction_mdeg` | Measured heading per full turn, millidegrees | 360000 |
+
+Scale and heading values must lie strictly between 345000 and 375000. Each
+acceleration value must be within 10% of the corresponding signed standard
+gravity. Initial bias is limited to the sensor's representable rate. Thresholds
+accept all nonnegative signed 32-bit values; conversion saturates at the sensor's
+raw limit. Zero on either threshold disables stationary learning.
+
+```text
+config get imu/gyro_bias_start_mdps
+config set imu/gyro_stationary_mdps 2000
+config set imu/gyro_scale_mdeg 360000 360000 360000
+observe imu.calibrated
+config save
+```
+
+Changes apply in RAM immediately. The next sample starts a new orientation
+reference and increments its `epoch`; the intervening snapshot reports `-EAGAIN`.
+They do not stop an application. Bias changes also replace the current estimate.
+Stationary learning subsequently refines the effective bias, shown by
+`observe imu.calibrated`; `config get` shows the selected starting bias instead.
+When no initial bias has been selected or loaded, the first three stationary
+windows supply a starting bias in RAM. Only explicit save persists it. Existing
+saved settings remain unchanged during subsequent learning.
+
+These paths are checked with synthetic acquisition and real simulated
+LittleFS/Settings. Physical calibration accuracy is not yet verified.
+
 ## Explicit power control
 
 On F4, `shutdown` and a two-second central-button hold request the same shutdown
@@ -94,8 +135,8 @@ Neither power-off nor reboot implicitly saves settings.
 
 `reboot` restarts Brickphyr. `reboot dfu` enters the existing second-stage loader
 for installation through Pybricks. These are privileged diagnostic commands;
-future application shutdown must quiesce application-owned devices before the
-same final power operation. No application or motor driver runs in this build.
+application shutdown quiesces application-owned devices before the same final
+power operation. Motor control is not implemented yet.
 
 The physical effects of USB power, charging, and wake-up need separate tests;
 USB disconnection alone is not proof that battery power was cut. Charging remains
@@ -128,9 +169,9 @@ Polling shares the light/UI loop's 20 ms period. An unreadable power source
 inhibits automatic shutdown and appears as an error in diagnostics.
 
 Expiry and host acquisition serialize on the same lock: a live owner prevents
-expiry, and a claimed shutdown rejects a later acquisition. No user application
-runs yet; application activity must join this policy before an execution engine
-is enabled. The optional Bluetooth profile acquires the same power hold. USB open/close
+expiry, and a claimed shutdown rejects a later acquisition. A running native
+application holds power until it stops or finishes. The optional Bluetooth
+profile acquires the same power hold. USB open/close
 attempts rejected during BLE ownership cannot release it. These policy boundaries
 are checked with synthetic time, including USB disconnect during an accepted
 Shell command and BLE disconnect during an accepted SMP operation. Both retain

@@ -754,7 +754,7 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	receive_until("Applied in RAM", output, sizeof(output));
 	const char *invalid = "config set power/usb_idle_s -1\r";
 	send(invalid, strlen(invalid));
-	receive_until("Use integer seconds", output, sizeof(output));
+	receive_until("32-bit integer values", output, sizeof(output));
 	send("config get power\r", strlen("config get power\r"));
 	receive_until("Setting operation failed", output, sizeof(output));
 	send("config save\r", strlen("config save\r"));

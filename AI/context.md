@@ -63,14 +63,20 @@ the real simulated Shell/SMP peer; physical monitoring checks remain pending.
 Uncalibrated IMU acquisition now shares timestamped native/Shell/monitor snapshots,
 using the pinned ST/Pybricks register library over Zephyr I²C/GPIO. Synthetic device
 checks cover acquisition/errors/shutdown; physical readings remain unverified.
-IMU calibration/orientation, sound, external sensors and motors are next.
+The Pybricks calibration/orientation algorithms are ported in `src/imu` and shared
+by native snapshots, Shell and SMP observations. Settings apply in RAM with
+explicit save; missing measurements start a visible new orientation epoch.
+ARM numerical checks and synthetic acquisition/persistence checks pass. Physical
+accuracy, processing latency and stack margin remain unverified. Sound, battery
+readings, external sensors and motors follow.
 
 ## Dependencies and remaining work
 
-Dependencies remain separate west repositories. Portable corrections belong in
-Pybricks, pybricksdev and Zephyr; [upstream integration](../docs/upstream.md) records
-their purpose and publication status. Never replace a pinned dependency with a
-source copy or silently discard local dependency work during `west update`.
+Dependencies remain separate west repositories. Corrections independently useful
+to Pybricks, pybricksdev and Zephyr belong in those forks. Brickphyr-specific
+adaptations belong here, including licensed ports with recorded provenance.
+[Upstream integration](../docs/upstream.md) defines the boundary. Never silently
+discard local dependency work during `west update`.
 
 The [application milestone](../docs/builds.md#native-application-milestone) now has
 both RAM and LittleFS image sources under one protected lifecycle and both
@@ -81,6 +87,7 @@ are discarded on disconnect without stopping the application.
 The native ABI is experimental. Native builds require the additional Zephyr
 LLEXT build fixes, MCUmgr file-close API and upstream ARM syscall register correction
 described in [upstream integration](../docs/upstream.md).
+IMU numerical checks additionally require its local PBIO finite-input correction.
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

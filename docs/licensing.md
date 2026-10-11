@@ -16,6 +16,11 @@ Apache-2.0 was selected for the main project to align with Zephyr and provide an
 explicit contributor patent grant. MIT components can be used while preserving
 their notices; selecting Apache for Brickphyr does not erase those obligations.
 
+Selected source ports retain their original license and copyright notices.
+Record the original repository, exact revision, file paths and substantive changes
+beside each port. The [IMU processing port](../src/imu/README.md), for example,
+retains Pybricks' MIT license while its Zephyr integration is Brickphyr code.
+
 ## Planned dependency audit
 
 Dependencies remain separate west checkouts. The bring-up build uses Zephyr,

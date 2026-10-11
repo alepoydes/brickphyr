@@ -34,8 +34,15 @@ def qemu(build):
     )
 
 
-def test_native_lifecycle():
-    build = Path(__file__).resolve().parents[1] / "build/native-app-tests"
+@pytest.mark.parametrize(
+    ("suite", "success"),
+    [
+        ("native-app-tests", b"NATIVE PASS:"),
+        ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+    ],
+)
+def test_arm_firmware(suite, success):
+    build = Path(__file__).resolve().parents[1] / "build" / suite
     with subprocess.Popen(
         [
             qemu(build),
@@ -59,13 +66,15 @@ def test_native_lifecycle():
             deadline = time.monotonic() + 10
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
-                while b"NATIVE PASS:" not in output:
+                while success not in output:
                     remaining = deadline - time.monotonic()
                     assert remaining > 0 and selector.select(remaining), output.decode()
                     chunk = os.read(process.stdout.fileno(), 4096)
                     assert chunk, output.decode()
                     output.extend(chunk)
                     assert b"NATIVE FAIL" not in output, output.decode()
+                    assert b"ASSERTION FAIL" not in output, output.decode()
+                    assert b"PROJECT EXECUTION FAILED" not in output, output.decode()
         finally:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=3)

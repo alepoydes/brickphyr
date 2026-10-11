@@ -18,8 +18,10 @@ to resume work without access to a previous conversation or a personal rules fil
 - Discuss proposed lasting decisions in chat before recording them in public
   documentation. Record them after agreement; an explicit request to document
   agreed decisions authorizes that update without another confirmation.
-- Reuse maintained code through documented interfaces. Do not copy dependencies,
-  patch private host APIs, invent hardware facts, or fabricate measurements.
+- Reuse existing implementations rather than redesigning their algorithms.
+  Use dependency interfaces where suitable; port selected code into Brickphyr
+  when its adaptation serves Brickphyr alone, preserving licenses and provenance.
+  Do not patch private host APIs, invent hardware facts, or fabricate measurements.
 - Keep helper functions local and the public interface small. Do not introduce
   generic managers, services, plugin systems, or parallel implementations without
   a concrete need. Remove superseded paths instead of layering workarounds.
@@ -49,7 +51,9 @@ to resume work without access to a previous conversation or a personal rules fil
 ## Repositories and tools
 
 - Follow [the upstream workflow](docs/upstream.md). Dependencies are independent
-  Git repositories in a west workspace, not source copies inside Brickphyr.
+  Git repositories in a west workspace. Keep changes in a dependency fork only
+  when they independently improve that dependency; maintain Brickphyr-specific
+  ports here, with one active implementation in the firmware.
 - Inspect existing work before changing it. Never overwrite unrelated edits or
   rewrite published dependency commits used by a manifest or release.
 - Use uv for local Python tooling and commit its resolved `uv.lock` when Python
