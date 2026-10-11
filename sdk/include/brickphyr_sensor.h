@@ -5,7 +5,8 @@
 enum bp_sensor_measurement {
 	BP_SENSOR_DEFAULT, BP_SENSOR_SURFACE, BP_SENSOR_AMBIENT,
 	BP_SENSOR_DISTANCE, BP_SENSOR_PRESENCE, BP_SENSOR_FORCE,
-	BP_SENSOR_TILT, BP_SENSOR_COUNT,
+	BP_SENSOR_TILT, BP_SENSOR_COUNT, BP_SENSOR_ANGLE,
+	BP_SENSOR_MEASUREMENT_COUNT,
 };
 enum bp_sensor_owner { BP_SENSOR_UNOWNED, BP_SENSOR_APPLICATION, BP_SENSOR_TERMINAL };
 enum bp_sensor_fields {
@@ -18,6 +19,8 @@ enum bp_sensor_fields {
 	BP_SENSOR_HAS_TILT = 1 << 6,
 	BP_SENSOR_HAS_COUNT = 1 << 7,
 	BP_SENSOR_HAS_PRESENCE = 1 << 8,
+	BP_SENSOR_HAS_ANGLE = 1 << 9,
+	BP_SENSOR_HAS_ABSOLUTE_ANGLE = 1 << 10,
 };
 struct bp_sensor_sample {
 	/* Parser completion time of the last accepted measurement, monotonic ms.
@@ -34,6 +37,11 @@ struct bp_sensor_sample {
 	int32_t force_mn, travel_um;
 	int32_t tilt_deg[2]; /* Pybricks tilt order */
 	int32_t count; /* sensor counter, no application-specific zero offset */
+	/* Encoder direction is the device's, without gear or zero adjustments.
+	 * Absolute encoders require <180 degrees between accepted samples to
+	 * count turns; connection generation changes restart that count. */
+	int64_t angle_mdeg;
+	int32_t absolute_mdeg; /* [-180000, 180000), when HAS_ABSOLUTE_ANGLE */
 	uint16_t hue_deg;
 	uint8_t saturation_pct, value_pct, presence;
 };

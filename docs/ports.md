@@ -18,7 +18,8 @@ Current support distinguishes empty ports, passive device IDs and UART devices.
 `CONFIG_BRICKPHYR_PORT_UART` adds LUMP negotiation and raw binary input, using
 Zephyr UART drivers. Both options default on for F4. ID 14 is the electrical
 UART signature; successful negotiation provides the device's actual ID.
-Known sensors also provide converted measurements and explicit mode selection.
+Known sensors and motor encoders also provide converted measurements and explicit
+mode selection.
 Motor control is not implemented. Reading state does not start I/O, select a mode
 or claim a port.
 
@@ -41,6 +42,8 @@ uv run brickphyrdev monitor --ble Brickphyr --source sensor.A
 | BOOST color/distance (37) | `surface`: reflection and HSV | `ambient`: intensity; `distance`: relative estimate |
 | WeDo 2.0 tilt (34) | `tilt`: two angles in degrees, in Pybricks order | None |
 | WeDo 2.0 infrared (35) | `distance`: relative estimate and reflection | `surface`: same measurement; `count`: sensor counter |
+| BOOST Interactive Motor (38) | `angle`: relative encoder | None |
+| Technic L/XL (46/47), SPIKE M/L/S (48/49/65), Technic angular M/L (75/76) | `angle`: absolute encoder and counted turns | None |
 
 `reflection_permille` and `ambient_permille` use 1000 for nominal full scale;
 HSV uses degrees and percent. `distance_mm=2000` means no ultrasonic return below
@@ -49,6 +52,19 @@ conversion is preserved from Pybricks and can exceed nominal percentage limits;
 applications must not interpret it as calibrated ranging. The signed counter
 has no application-specific zero offset. Color names, sensor-light commands,
 infrared transmission and other device APIs are not implemented.
+
+Encoders report `angle_mdeg` in thousandths of a degree, in the device's direction
+without gear ratios or an application zero offset. BOOST uses its signed POS
+counter, extended through 32-bit rollover. The other listed motors use the second
+CALIB word, as Pybricks does, and additionally report `absolute_mdeg` in
+`[-180000, 180000)`. Their initial accumulated angle equals that absolute angle;
+subsequent samples add the shortest signed change. Counting turns requires less
+than half a revolution between accepted samples. Missed complete revolutions
+cannot be recovered from an absolute sample, even if the UART timeout has not
+expired. Exactly half a revolution is ambiguous and resolves in the negative
+direction. Reconnection resets the count and changes `generation`; releasing a
+measurement claim does not reset it. Reads and SELECT never drive, brake or hold
+a motor. Passive motors without encoders have identity observations only.
 
 To change a measurement in the shared USB/BLE Shell:
 
@@ -93,6 +109,10 @@ PBIO RGB/HSV converter is compiled unchanged. Brickphyr adds explicit units,
 format validation, rejected malformed calibration and RGB saturation before
 narrowing, preventing unusually bright BOOST input from wrapping. Acquisition,
 ownership and scheduling use the existing Zephyr port service.
+Encoder adaptation validates the known ID, negotiated format and absolute-angle
+capability. It extends the BOOST counter without signed overflow, rejects invalid
+absolute values, and uses shortest-angle increments instead of PBIO's quadrant
+crossing test. These are measurement semantics, not a motor controller.
 
 ## Detection and validity
 
@@ -190,8 +210,9 @@ buffers and coasts the H-bridges before enabling that supply. A startup reset
 failure keeps the shared supply off. Only a recognized sensor with a validated
 measurement format can request additional DC power using its NAME flags. Pin 1
 or pin 2 becomes positive while the other stays low; motor flags or contradictory
-power flags reject this operation. Actual motor IDs remain in coast, without
-brake or hold. No raw H-bridge interface is exported.
+power flags reject this operation. Encoder selection ignores supply flags and
+keeps the motor terminals in coast, without brake or hold. No raw H-bridge
+interface is exported.
 
 `supply` reports the accepted DC configuration: 0 coast, 1 pin 1 positive, 2 pin 2
 positive. It is not voltage feedback; after a GPIO/cleanup error, the actual
@@ -220,7 +241,9 @@ both handshake rates, partial/corrupt messages, finite negotiation, keepalive,
 hotplug, framing errors, RX overflow, SMP raw data and shutdown. Synthetic sensor
 peers additionally check conversion, settling, SELECT timeout, ownership, malformed
 calibration, power polarity and cleanup failure through the production service,
-Shell and SMP. These are not physical sensor measurements. Fixture provenance
-is in [the test README](../tests/lump/README.md). F4 compilation does not verify
+Shell and SMP. Encoder cases check both wrap directions, signed counter rollover,
+malformed values, hotplug reset and inactive motor terminals. These are not
+physical sensor measurements. Fixture provenance is in
+[the test README](../tests/lump/README.md). F4 compilation does not verify
 connector voltages, analogue settling, actual baud transitions, controller error
 reporting under overload or identification of physical attached devices.

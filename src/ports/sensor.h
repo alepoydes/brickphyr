@@ -9,8 +9,9 @@ struct port_sensor {
 	struct bp_sensor_sample value;
 	int64_t first_ms, deadline;
 	int16_t offset, released, end;
+	int32_t previous_angle;
 	uint8_t mode;
-	bool pending, awaiting, calibrated;
+	bool pending, awaiting, calibrated, angle_initialized;
 };
 void port_sensor_reset(struct port_sensor *s, const struct lump *l);
 int port_sensor_request(struct port_sensor *s, const struct lump *l, uint32_t measurement);

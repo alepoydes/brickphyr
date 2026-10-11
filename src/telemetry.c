@@ -215,6 +215,8 @@ static void capture(enum source source, struct observation *out)
 			if (value.fields & BP_SENSOR_HAS_AMBIENT) field(out, "ambient_permille", value.ambient_permille);
 			if (value.fields & BP_SENSOR_HAS_COUNT) field(out, "count", value.count);
 			if (value.fields & BP_SENSOR_HAS_PRESENCE) field(out, "presence", value.presence);
+			if (value.fields & BP_SENSOR_HAS_ANGLE) field(out, "angle_mdeg", value.angle_mdeg);
+			if (value.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE) field(out, "absolute_mdeg", value.absolute_mdeg);
 			if (value.fields & BP_SENSOR_HAS_HSV) {
 				field(out, "hue_deg", value.hue_deg);
 				field(out, "saturation_pct", value.saturation_pct);
@@ -419,8 +421,8 @@ static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
 		return hub_sensor_release(BP_SENSOR_TERMINAL, port);
 	}
 	static const char *const modes[] = {"default", "surface", "ambient", "distance",
-		"presence", "force", "tilt", "count"};
-	BUILD_ASSERT(ARRAY_SIZE(modes) == BP_SENSOR_COUNT + 1);
+		"presence", "force", "tilt", "count", "angle"};
+	BUILD_ASSERT(ARRAY_SIZE(modes) == BP_SENSOR_MEASUREMENT_COUNT);
 	for (uint32_t i = 0; i < ARRAY_SIZE(modes); i++) {
 		if (!strcmp(argv[2], modes[i])) {
 			int err = hub_sensor_configure(BP_SENSOR_TERMINAL, port, i);
@@ -431,7 +433,7 @@ static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
 	return -EINVAL;
 }
 SHELL_CMD_ARG_REGISTER(sensor, NULL,
-	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|release.",
+	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|angle|release.",
 	cmd_sensor, 3, 0);
 
 static const struct mgmt_handler handlers[] = {

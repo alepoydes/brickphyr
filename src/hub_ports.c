@@ -429,7 +429,7 @@ int hub_sensor_configure(enum bp_sensor_owner owner, uint32_t port, uint32_t mea
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
 		return -ENOTSUP;
 	}
-	if (port >= BP_PORT_COUNT || measurement > BP_SENSOR_COUNT ||
+	if (port >= BP_PORT_COUNT || measurement >= BP_SENSOR_MEASUREMENT_COUNT ||
 	    (owner != BP_SENSOR_APPLICATION && owner != BP_SENSOR_TERMINAL)) {
 		return -EINVAL;
 	}

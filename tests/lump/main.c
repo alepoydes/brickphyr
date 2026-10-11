@@ -163,6 +163,8 @@ static struct bp_port_state wait_phase(enum bp_port_phase phase)
 	} while (true);
 }
 
+static void wait_select(uint8_t mode, size_t from);
+
 static void negotiate(bool fast)
 {
 	tx_count = 0;
@@ -186,6 +188,7 @@ static void negotiate(bool fast)
 	zassert_ok(uart_config_get(uart, &cfg));
 	zassert_equal(cfg.baudrate, 115200);
 	zassert_equal(wait_phase(BP_PORT_READY).error, -EAGAIN);
+	wait_select(2, 0);
 	feed(position, sizeof(position));
 	zassert_ok(snapshot().error);
 	zassert_equal(snapshot().type_id, 38);
@@ -505,7 +508,7 @@ static void sensor_measurements(void)
 	zassert_equal(sensor().fields, BP_SENSOR_HAS_RELATIVE_DISTANCE);
 
 	/* Unsupported formats and contradictory motor flags cannot authorize
-	 * sensor supply. All actual motors still use the generic raw UART path. */
+	 * sensor supply. */
 	connect_sensor(62, tilt, ARRAY_SIZE(tilt), LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1);
 	zassert_equal(sensor().error, -EPROTO);
 	zassert_equal(sensor().available, 0);
@@ -514,6 +517,112 @@ static void sensor_measurements(void)
 		LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 | LUMP_MODE_FLAGS0_MOTOR);
 	zassert_equal(snapshot().phase, BP_PORT_FAULT);
 	zassert_equal(snapshot().error, -EPROTO);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+}
+
+static void encoder_measurements(void)
+{
+	negotiate(true);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().fields, BP_SENSOR_HAS_ANGLE);
+	zassert_equal(sensor().angle_mdeg, 4660000);
+	zassert_equal(sensor().measurement, BP_SENSOR_ANGLE);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	/* The device counter crosses both signed limits without a spurious
+	 * revolution reset. */
+	const int32_t relative[] = {INT32_MAX, INT32_MIN, INT32_MAX, -2};
+	const int64_t expected[] = {2147483647000LL, 2147483648000LL, 2147483647000LL, 4294967294000LL};
+	for (size_t i = 0; i < ARRAY_SIZE(relative); i++) {
+		uint8_t bytes[4];
+		sys_put_le32(relative[i], bytes);
+		packet(LUMP_MSG_TYPE_DATA, 2, 0, bytes, sizeof(bytes));
+		zassert_ok(sensor().error);
+		zassert_equal(sensor().angle_mdeg, expected[i], "relative %zu", i);
+	}
+	smp_snapshot("angle_mdeg", 4294967294000LL);
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+	/* Use the unchanged upstream Technic motor handshake, then independently
+	 * constructed angles. The first CALIB word is not the output angle. */
+	tx_count = 0;
+	pup_test_circuits[0].kind = UART_DEVICE;
+	wait_tx(sizeof(speed));
+	uint8_t ack = LUMP_SYS_ACK;
+	feed(&ack, 1);
+	feed(technic_large_motor, sizeof(technic_large_motor));
+	wait_select(4, 0);
+	const int16_t absolute[] = {3500, 100, 1700, 2500, 3500, 100, 3500, 2500, 1700, 100, 3600};
+	const int32_t turns[] = {-10000, 10000, 170000, 250000, 350000, 370000, 350000,
+		250000, 170000, 10000, 0};
+	for (size_t i = 0; i < ARRAY_SIZE(absolute); i++) {
+		WORDS(4, -123, absolute[i]);
+		zassert_ok(sensor().error);
+		zassert_equal(sensor().angle_mdeg, turns[i], "absolute %zu", i);
+		zassert_equal(sensor().fields, BP_SENSOR_HAS_ANGLE | BP_SENSOR_HAS_ABSOLUTE_ANGLE);
+		zassert_equal(pup_test_sensor_supply(0), 0);
+	}
+	WORDS(4, 0, 1800);
+	zassert_equal(sensor().absolute_mdeg, -180000);
+	smp_snapshot("absolute_mdeg", -180000);
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	zassert_ok(shell_execute_cmd(shell, "sensor A angle"));
+	zassert_equal(sensor().owner, BP_SENSOR_TERMINAL);
+	k_msleep(5);
+	WORDS(4, 0, 1799);
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe sensor.A"));
+	size_t length;
+	const char *output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "absolute_mdeg=179900"));
+	struct bp_sensor_sample before = sensor();
+	WORDS(4, 0, 3601);
+	zassert_equal(sensor().error, -EBADMSG);
+	zassert_equal(sensor().fields, 0);
+	zassert_equal(sensor().sequence, before.sequence);
+	zassert_equal(sensor().sample_ms, before.sample_ms);
+	WORDS(4, 0, -1);
+	zassert_equal(sensor().error, -EBADMSG);
+	WORDS(4, 0, 1801);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().angle_mdeg, before.angle_mdeg + 200);
+	zassert_equal(sensor().absolute_mdeg, -179900);
+	hub_sensors_release(BP_SENSOR_TERMINAL);
+	k_msleep(5);
+	WORDS(4, 0, 1802);
+	zassert_equal(sensor().angle_mdeg, before.angle_mdeg + 300, "Release reset turns");
+	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	uint32_t generation = sensor().generation;
+	zassert_equal(wait_phase(BP_PORT_FAULT).error, -ETIMEDOUT);
+	zassert_equal(sensor().fields, 0);
+	const uint8_t formats[][2] = {{1, 0}, {1, 0}, {1, 2}, {1, 1}, {2, 1}, {14, 1}};
+	/* Every supported absolute motor shares this format, but capability and
+	 * format must both match. Even supply flags without motor flags cannot
+	 * accidentally turn encoder selection into a DC output command. */
+	const uint8_t ids[] = {46, 47, 48, 49, 65, 75, 76};
+	for (size_t i = 0; i < ARRAY_SIZE(ids); i++) {
+		connect_sensor(ids[i], formats, ARRAY_SIZE(formats),
+			LUMP_MODE_FLAGS0_MOTOR_ABS_POS | LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 |
+			LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN2);
+		wait_select(4, 0);
+		WORDS(4, 0, 100);
+		zassert_ok(sensor().error);
+		zassert_equal(sensor().angle_mdeg, 10000, "Reconnect retained turns");
+		zassert_true(sensor().generation > generation);
+		zassert_equal(snapshot().supply, 0);
+		zassert_equal(pup_test_sensor_supply(0), 0);
+	}
+	connect_sensor(38, formats, ARRAY_SIZE(formats), LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1);
+	wait_select(2, 0);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	connect_sensor(46, formats, ARRAY_SIZE(formats), 0);
+	zassert_equal(sensor().error, -EPROTO);
+	zassert_equal(sensor().available, 0);
+	const uint8_t bad_format[][2] = {{1, 0}, {1, 0}, {1, 2}, {1, 1}, {1, 1}};
+	connect_sensor(46, bad_format, ARRAY_SIZE(bad_format), LUMP_MODE_FLAGS0_MOTOR_ABS_POS);
+	zassert_equal(sensor().error, -EPROTO);
+	zassert_equal(sensor().available, 0);
 	zassert_equal(pup_test_sensor_supply(0), 0);
 	pup_test_circuits[0].kind = UNPLUGGED;
 	wait_phase(BP_PORT_EMPTY);
@@ -601,6 +710,7 @@ ZTEST(lump, test_uart_hotplug)
 	wait_phase(BP_PORT_EMPTY);
 	negotiate(true);
 	sensor_measurements();
+	encoder_measurements();
 	zassert_ok(hub_ports_shutdown());
 	zassert_equal(snapshot().phase, BP_PORT_OFF);
 	zassert_equal(snapshot().length, 0);

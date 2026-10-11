@@ -373,7 +373,10 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 		sensor->error = -EAGAIN;
 		sensor->fields = 0;
 	}
-	if (l->phase == DATA && l->sensor.mode != UINT8_MAX) {
+	/* Encoder modes never authorize power across the motor terminals,
+	 * regardless of advertised supply flags. Logic power is separate. */
+	if (l->phase == DATA && l->sensor.mode != UINT8_MAX &&
+	    l->sensor.value.measurement != BP_SENSOR_ANGLE) {
 		uint8_t supply = l->lump.capabilities & (LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 |
 			LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN2);
 		if (supply && ((l->lump.capabilities & (LUMP_MODE_FLAGS0_MOTOR_SPEED |

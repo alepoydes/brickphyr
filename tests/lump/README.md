@@ -18,3 +18,9 @@ tilt/infrared readings are deliberately synthetic. They check meaningful units,
 settling, invalid calibration, mode ownership, ignored selections, power polarity
 and cleanup failure through the actual UART/GPIO service, Shell and SMP. They
 are not captures or evidence of physical sensor accuracy.
+
+Motor cases use the upstream BOOST and Technic handshakes plus synthetic metadata
+for the remaining known absolute motors. Synthetic angle sequences check units,
+turn counting, signed-counter rollover, invalid values and reconnect/reset through
+the same service. Shell and SMP must expose the same angle, and encoder selection
+must leave both motor outputs inactive even when supply flags are advertised.

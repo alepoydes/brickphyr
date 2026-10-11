@@ -63,8 +63,10 @@ Electrical A–F detection and LUMP UART negotiation now have native/Shell/SMP
 snapshots, including raw DATA, with synthetic GPIO/UART and protected ARM checks.
 Known SPIKE/BOOST/WeDo sensors now have converted measurements, owned mode
 selection and validated sensor supply in that same service. Synthetic UART/GPIO
-checks cover units, settling, malformed calibration and cleanup. Motors remain
-next; physical sensor power/readings, port identification, baud switching and
+checks cover units, settling, malformed calibration and cleanup. Read-only BOOST,
+Technic and SPIKE motor encoders share that service, with synthetic turn counting,
+rollover and inactive-output checks. Motor drive/control remains next; physical
+sensor power/readings, encoder motion, port identification, baud switching and
 serial timing under load are unverified.
 
 ## Dependencies and remaining work

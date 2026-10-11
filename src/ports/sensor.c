@@ -40,6 +40,22 @@ static const struct measurement {
 	 LEGO_DEVICE_MODE_PUP_WEDO2_MOTION_SENSOR__CAL, LUMP_DATA_TYPE_DATA16, 3, 0},
 	{LEGO_DEVICE_TYPE_ID_WEDO2_MOTION_SENSOR, BP_SENSOR_COUNT,
 	 LEGO_DEVICE_MODE_PUP_WEDO2_MOTION_SENSOR__COUNT, LUMP_DATA_TYPE_DATA32, 1, 0},
+	{LEGO_DEVICE_TYPE_ID_INTERACTIVE_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_REL_MOTOR__POS, LUMP_DATA_TYPE_DATA32, 1, 0},
+	{LEGO_DEVICE_TYPE_ID_TECHNIC_L_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_TECHNIC_XL_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_SPIKE_M_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_SPIKE_L_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_SPIKE_S_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_TECHNIC_M_ANGULAR_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
+	{LEGO_DEVICE_TYPE_ID_TECHNIC_L_ANGULAR_MOTOR, BP_SENSOR_ANGLE,
+	 LEGO_DEVICE_MODE_PUP_ABS_MOTOR__CALIB, LUMP_DATA_TYPE_DATA16, 2, 0},
 };
 
 static const struct measurement *find(uint16_t id, uint32_t measurement)
@@ -57,6 +73,8 @@ static bool valid(const struct measurement *m, const struct lump *l)
 	const struct lump_mode *raw = &l->modes[LEGO_DEVICE_MODE_PUP_FORCE_SENSOR__FRAW];
 	return m && m->mode < l->num_modes && l->modes[m->mode].type == m->type &&
 		l->modes[m->mode].values == m->values &&
+		(m->measurement != BP_SENSOR_ANGLE || m->id == LEGO_DEVICE_TYPE_ID_INTERACTIVE_MOTOR ||
+		 (l->capabilities & LUMP_MODE_FLAGS0_MOTOR_ABS_POS)) &&
 		(m->id != LEGO_DEVICE_TYPE_ID_SPIKE_FORCE_SENSOR ||
 		 (raw->type == LUMP_DATA_TYPE_DATA16 && raw->values == 1));
 }
@@ -64,7 +82,7 @@ static bool valid(const struct measurement *m, const struct lump *l)
 void port_sensor_reset(struct port_sensor *s, const struct lump *l)
 {
 	*s = (struct port_sensor){.value = {.type_id = l->id, .error = -ENOTSUP}, .mode = UINT8_MAX};
-	for (uint32_t i = BP_SENSOR_DEFAULT; i <= BP_SENSOR_COUNT; i++) {
+	for (uint32_t i = BP_SENSOR_DEFAULT; i < BP_SENSOR_MEASUREMENT_COUNT; i++) {
 		if (valid(find(l->id, i), l)) {
 			s->value.available |= BIT(i);
 		}
@@ -113,6 +131,37 @@ static int convert(struct port_sensor *s, const struct lump *l, struct bp_sensor
 	int16_t a = l->length >= 2 ? (int16_t)sys_get_le16(l->data) : (int8_t)l->data[0];
 	int16_t b = l->length >= 4 ? (int16_t)sys_get_le16(l->data + 2) : 0;
 	int16_t c = l->length >= 6 ? (int16_t)sys_get_le16(l->data + 4) : 0;
+	if (v->measurement == BP_SENSOR_ANGLE) {
+		v->fields = BP_SENSOR_HAS_ANGLE;
+		int32_t current;
+		int64_t delta;
+		if (l->id == LEGO_DEVICE_TYPE_ID_INTERACTIVE_MOTOR) {
+			/* Extend the device's signed degree counter through its 32-bit
+			 * rollover. Unsigned subtraction avoids signed overflow. */
+			current = (int32_t)sys_get_le32(l->data);
+			delta = (int64_t)(int32_t)((uint32_t)current - (uint32_t)s->previous_angle) * 1000;
+			v->angle_mdeg = (int64_t)current * 1000;
+		} else {
+			/* PBIO reads the second CALIB word in decidegrees. Accept its
+			 * closed 0..3600 range, with both endpoints meaning zero. */
+			if (b < 0 || b > 3600) {
+				return -EBADMSG;
+			}
+			current = b >= 1800 ? (b - 3600) * 100 : b * 100;
+			delta = current - s->previous_angle;
+			if (delta >= 180000) delta -= 360000;
+			if (delta < -180000) delta += 360000;
+			v->angle_mdeg = current;
+			v->absolute_mdeg = current;
+			v->fields |= BP_SENSOR_HAS_ABSOLUTE_ANGLE;
+		}
+		if (s->angle_initialized && __builtin_add_overflow(s->value.angle_mdeg, delta, &v->angle_mdeg)) {
+			return -ERANGE;
+		}
+		s->previous_angle = current;
+		s->angle_initialized = true;
+		return 0;
+	}
 	switch (l->id) {
 	case LEGO_DEVICE_TYPE_ID_SPIKE_FORCE_SENSOR:
 		if (l->mode == LEGO_DEVICE_MODE_PUP_FORCE_SENSOR__CALIB) {
