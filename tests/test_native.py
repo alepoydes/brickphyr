@@ -24,6 +24,7 @@ from brickphyrdev.application import (
     connection,
     upload,
 )
+from brickphyrdev.telemetry import info, snapshot
 
 
 def qemu(build):
@@ -121,6 +122,7 @@ def test_native_smp_and_cli():
 
     async def exercise(port):
         async with connection(port=port) as (client, transport):
+            assert "application" in (await info(client)).sources
             await upload(client, transport, (examples / "hello.elf").read_bytes())
             status = await checked(client, Status())
             assert status.ready and status.state == 0
@@ -129,9 +131,14 @@ def test_native_smp_and_cli():
                 while (status := await checked(client, Status())).state == 1:
                     await asyncio.sleep(0.01)
             assert status.state == 2 and status.result == status.cleanup == 0
+            observed = await snapshot(client, "application")
+            assert observed.error == 0 and observed.values["state"] == 2
+            assert observed.values["queued"] > 0
+            assert (await snapshot(client, "application")).values == observed.values
             assert b"Hello from a native application." in (await checked(client, Output())).data
             await upload(client, transport, (examples / "spin.elf").read_bytes())
             await checked(client, Start())
+            assert (await snapshot(client, "application")).values["state"] == 1
             hello = (examples / "hello.elf").read_bytes()
             incompatible = hello.replace(status.abi.encode(), b"0" * 64)
             for bad in (hello[:-1], incompatible):

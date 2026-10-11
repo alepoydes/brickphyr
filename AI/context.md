@@ -55,7 +55,9 @@ The F4 matrix now has native/Shell operations, one pending firmware-owned frame,
 owner exclusion and stop/fault/disconnect cleanup through the shared TLC5955.
 Native simulation and ARM QEMU check the service and protected calls; physical
 orientation and brightness remain unverified. Bluetooth waiting flashes now have
-a three-second period. Telemetry, IMU, sound, external sensors and motors are next.
+a three-second period. Read-only [observations](../docs/telemetry.md) expose power,
+buttons, application and matrix snapshots through SMP and the same Shell.
+The CLI monitor, IMU, sound, external sensors and motors are next.
 
 ## Dependencies and remaining work
 

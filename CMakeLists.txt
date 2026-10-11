@@ -24,6 +24,7 @@ endif()
 
 target_sources(app PRIVATE src/main.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_TELEMETRY app PRIVATE src/telemetry.c)
 target_include_directories(app PRIVATE sdk/include)
 
 if(CONFIG_BRICKPHYR_NATIVE)

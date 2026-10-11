@@ -769,6 +769,14 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	int64_t base = k_uptime_get();
 	zassert_false(hub_power_update(1, false, base));
 	zassert_false(hub_power_update(1, false, base + 10000), "Owner must inhibit expiry");
+	struct hub_power_state snapshot;
+	hub_power_get(&snapshot);
+	zassert_equal(snapshot.sampled_ms, base + 10000);
+	zassert_equal(snapshot.source, 1);
+	zassert_true(snapshot.connected);
+	zassert_equal(snapshot.usb_idle_s, 2);
+	hub_power_get(&snapshot);
+	zassert_equal(snapshot.sampled_ms, base + 10000, "Reading must not refresh acquisition time");
 	close_session();
 	base = k_uptime_get();
 	zassert_false(hub_power_update(1, false, base + 1000));
@@ -780,6 +788,9 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	zassert_ok(settings_runtime_set("power/battery_idle_s", value, sizeof(value)));
 	zassert_false(hub_power_update(0, false, base + 100000), "Seconds conversion overflowed");
 	zassert_false(hub_power_update(-EIO, false, base + 1000000));
+	hub_power_get(&snapshot);
+	zassert_equal(snapshot.source, -EIO);
+	zassert_equal(snapshot.sampled_ms, base + 1000000);
 	zassert_false(hub_power_update(1, false, base + 1001000));
 	zassert_false(hub_power_update(1, false, base + 1002999));
 	zassert_true(hub_power_update(1, false, base + 1003000));

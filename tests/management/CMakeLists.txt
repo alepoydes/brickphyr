@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20.5)
 get_filename_component(BRICKPHYR_ROOT ../.. ABSOLUTE)
+set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
+list(APPEND DTS_ROOT ${BRICKPHYR_ROOT})
 set(CONF_FILE ${BRICKPHYR_ROOT}/prj.conf
   ${BRICKPHYR_ROOT}/tests/host/prj.conf
   ${BRICKPHYR_ROOT}/tests/storage/prj.conf
@@ -11,6 +13,9 @@ target_sources(app PRIVATE main.c
   ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
   ${BRICKPHYR_ROOT}/src/hub_power.c
+  ${BRICKPHYR_ROOT}/src/telemetry.c
+  ${BRICKPHYR_ROOT}/src/hub_matrix.c
+  ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c
   ${BRICKPHYR_ROOT}/src/storage.c ${BRICKPHYR_ROOT}/src/storage_mount.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)

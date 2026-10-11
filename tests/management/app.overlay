@@ -1,2 +1,3 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "../native/app.overlay"
 #include "../storage/app.overlay"

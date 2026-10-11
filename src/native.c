@@ -491,11 +491,9 @@ int native_run_uploaded(void)
 	return err;
 }
 
-void native_get_status(struct native_status *value)
+/* Caller holds lifecycle; reading output state never consumes it. */
+static void copy_status(struct native_status *value)
 {
-	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
-	expire_upload();
 	*value = status;
 	value->upload_bytes = upload_bytes;
 	value->upload_size = upload_size;
@@ -504,6 +502,24 @@ void native_get_status(struct native_status *value)
 	value->output_dropped = output_dropped;
 	value->output_bytes = ring_buf_size_get(&output);
 	k_spin_unlock(&output_lock, key);
+}
+
+int native_observe(struct native_status *value)
+{
+	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) {
+		return -EBUSY;
+	}
+	copy_status(value);
+	k_mutex_unlock(&lifecycle);
+	return 0;
+}
+
+void native_get_status(struct native_status *value)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	(void)reap(false);
+	expire_upload();
+	copy_status(value);
 	k_mutex_unlock(&lifecycle);
 }
 

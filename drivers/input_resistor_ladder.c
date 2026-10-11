@@ -21,8 +21,6 @@ struct ladder_data {
 	struct k_work_delayable work;
 	const struct device *dev;
 	int8_t previous;
-	uint8_t reported;
-	bool stable;
 	struct k_spinlock lock;
 	struct resistor_ladder_sample last;
 };
@@ -37,22 +35,24 @@ struct resistor_ladder_sample resistor_ladder_get_sample(const struct device *de
 	return last;
 }
 
-int resistor_ladder_get_key(const struct device *dev, uint16_t code)
+int resistor_ladder_sample_key(const struct device *dev,
+	const struct resistor_ladder_sample *value, uint16_t code)
 {
 	const struct ladder_config *cfg = dev->config;
-	struct ladder_data *data = dev->data;
 
 	for (size_t i = 0; i < ARRAY_SIZE(cfg->codes); i++) {
 		if (code && code == cfg->codes[i]) {
-			k_spinlock_key_t key = k_spin_lock(&data->lock);
-			int result = data->last.error ? data->last.error :
-				!data->stable ? -EAGAIN :
-				!!(data->reported & BIT(i));
-			k_spin_unlock(&data->lock, key);
-			return result;
+			return value->error ? value->error : !value->stable ? -EAGAIN :
+				!!(value->pressed & BIT(i));
 		}
 	}
 	return -ENOENT;
+}
+
+int resistor_ladder_get_key(const struct device *dev, uint16_t code)
+{
+	struct resistor_ladder_sample value = resistor_ladder_get_sample(dev);
+	return resistor_ladder_sample_key(dev, &value, code);
 }
 
 static void sample(struct k_work *work)
@@ -74,6 +74,7 @@ static void sample(struct k_work *work)
 	k_spinlock_key_t key = k_spin_lock(&data->lock);
 
 	data->last.raw = raw;
+	data->last.sampled_ms = k_uptime_get();
 	data->last.error = err;
 	if (err) {
 		if (data->last.failures < UINT32_MAX) {
@@ -90,10 +91,10 @@ static void sample(struct k_work *work)
 	/* Two matching samples reject contact bounce; startup waits for settling. */
 	uint8_t changed = 0;
 
-	data->stable = !err && flags == data->previous;
-	if (data->stable || err) {
-		changed = flags ^ data->reported;
-		data->reported = flags;
+	data->last.stable = !err && flags == data->previous;
+	if (data->last.stable || err) {
+		changed = flags ^ data->last.pressed;
+		data->last.pressed = flags;
 	}
 	data->previous = err ? -1 : flags;
 	k_spin_unlock(&data->lock, key);

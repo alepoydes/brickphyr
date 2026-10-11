@@ -3,6 +3,22 @@
 #include "storage.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/spi_emul.h>
+#include <zephyr/fff.h>
+
+DEFINE_FFF_GLOBALS;
+
+/* Synthetic controller; actual channel encoding is exercised in tests/hub. */
+static int frame(const struct emul *emul, const struct spi_config *cfg,
+		 const struct spi_buf_set *tx, const struct spi_buf_set *rx)
+{
+	return tx && tx->count == 1 && tx->buffers[0].len == 97 ? 0 : -EINVAL;
+}
+
+static int emul_init(const struct emul *emul, const struct device *bus) { return 0; }
+static const struct spi_emul_api spi_api = {.io = frame};
+EMUL_DT_DEFINE(DT_NODELABEL(hub_leds), emul_init, NULL, NULL, &spi_api, NULL);
 
 int main(void)
 {

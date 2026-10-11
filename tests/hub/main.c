@@ -297,6 +297,11 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 
 	const struct shell *shell = shell_backend_dummy_get_ptr();
 	zassert_ok(shell_execute_cmd(shell, "matrix frame 100 0 0 0 50 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 25 0 0 0 75"));
+	before = writes;
+	zassert_ok(shell_execute_cmd(shell, "observe matrix"));
+	zassert_equal(writes, before, "Observing the matrix must not transmit a frame");
+	zassert_ok(hub_matrix_get(&value));
+	zassert_equal(value.owner, BP_MATRIX_TERMINAL);
 	zassert_equal(duty(38), 65535);
 	zassert_equal(duty(9), 36863);
 	before = writes;
@@ -506,6 +511,14 @@ ZTEST(hub, test_button_combinations_and_read_failure)
 		zassert_ok(adc_emul_const_raw_value_set(adc, 1, samples[mask]));
 		k_msleep(30);
 		zassert_equal(keys, mask, "combination %u", mask);
+		const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(arrow_keys));
+		struct resistor_ladder_sample captured = resistor_ladder_get_sample(dev);
+		zassert_true(captured.stable && captured.sampled_ms > 0);
+		zassert_true(captured.sampled_ms <= k_uptime_get());
+		zassert_equal(resistor_ladder_sample_key(dev, &captured, INPUT_KEY_LEFT), !!(mask & 1));
+		zassert_equal(resistor_ladder_sample_key(dev, &captured, INPUT_KEY_RIGHT), !!(mask & 2));
+		zassert_equal(resistor_ladder_sample_key(dev, &captured, INPUT_KEY_BLUETOOTH), !!(mask & 4));
+		zassert_equal(resistor_ladder_get_sample(dev).sampled_ms, captured.sampled_ms);
 	}
 	zassert_ok(adc_emul_raw_value_func_set(adc, 1, bad_adc, NULL));
 	k_msleep(20);
@@ -514,6 +527,8 @@ ZTEST(hub, test_button_combinations_and_read_failure)
 		DEVICE_DT_GET(DT_NODELABEL(arrow_keys)));
 
 	zassert_equal(last.error, -EIO);
+	zassert_equal(resistor_ladder_sample_key(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)),
+		&last, INPUT_KEY_LEFT), -EIO);
 	zassert_true(last.failures > 0);
 	zassert_ok(adc_emul_const_raw_value_set(adc, 1, 2000));
 	k_msleep(30);

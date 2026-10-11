@@ -101,6 +101,11 @@ int main(void)
 		printk("hello load %d\n", err);
 		CHECK(err == 0);
 		k_msleep(60);
+		/* Observation must not unload a returned app or consume its output. */
+		CHECK(native_observe(&status) == 0 && status.output_bytes > 0);
+		size_t retained = available();
+		CHECK(retained < capacity);
+		CHECK(native_observe(&status) == 0 && available() == retained);
 		native_get_status(&status);
 		printk("state %d result %d fault %u\n", status.state, status.result, status.fault);
 		CHECK(status.state == NATIVE_RETURNED && status.result == 0);
@@ -122,6 +127,7 @@ int main(void)
 	CHECK(k_sem_take(&transfer_started, K_MSEC(100)) == 0);
 	k_sem_give(&stop_requested);
 	CHECK(k_sem_take(&stop_completed, K_MSEC(10)) == -EAGAIN);
+	CHECK(native_observe(&status) == -EBUSY);
 	CHECK(available() < capacity);
 	k_sem_give(&transfer_continue);
 	CHECK(k_sem_take(&stop_completed, K_MSEC(100)) == 0 && stop_result == 0);

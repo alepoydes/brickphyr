@@ -401,6 +401,7 @@ listed in [upstream integration](upstream.md#usb-experiment-prerequisites).
 
 ## References
 
+- [Observations](telemetry.md) describes read-only snapshots through Shell and SMP.
 - [Pybricks compatibility](compatibility.md) owns the Python and client contract.
 - [Zephyr USB API](https://docs.zephyrproject.org/latest/doxygen/html/group__usbd__api.html)
   supplies control-request handlers.

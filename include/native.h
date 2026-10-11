@@ -41,6 +41,8 @@ int native_stop(void);
 int native_shutdown(void);
 void native_poll(void);
 void native_get_status(struct native_status *status);
+/* No cleanup, expiration, output consumption or wait; EBUSY during lifecycle work. */
+int native_observe(struct native_status *status);
 size_t native_output(void *data, size_t capacity);
 #else
 static inline int native_shutdown(void) { return 0; }

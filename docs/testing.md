@@ -163,6 +163,14 @@ because the native UART has no USB DTR. The separate `tests/host` UART-emulator
 checks exercise actual session transitions, including disconnect during an
 accepted SMP operation and isolation of incomplete commands and old responses.
 
+Observation checks use the same SMP handlers and Shell commands: cold unavailable
+power input, source discovery, rejected writes, preserved acquisition times and
+25-byte matrix frames. A synthetic SPI peer provides matrix transport completion;
+physical pixel orientation remains a board check. Native QEMU verifies that
+observation neither consumes output nor unloads a completed application, and
+returns busy during blocked cleanup. The existing ADC and power-policy fixtures
+also check capture timestamps and errors through the production snapshot accessors.
+
 `tests/storage` runs the actual LittleFS/Settings stack over simulated flash.
 It checks explicit save versus RAM-only changes, reload, file compaction,
 incompatible values and truncated records. A second boot starts with foreign

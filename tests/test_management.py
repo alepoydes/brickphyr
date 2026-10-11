@@ -10,11 +10,15 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import serial
 from smpclient import SMPClient, error, success
 from smpclient.requests.os_management import EchoWrite
 from smpclient.requests.settings_management import ReadSetting, SaveSettings, WriteSetting
 from smpclient.transport.serial import SMPSerialTransport
+
+from brickphyrdev.smp import checked
+from brickphyrdev.telemetry import Snapshot, info, snapshot
 
 
 @contextmanager
@@ -103,3 +107,68 @@ def test_smp_settings_and_restart(tmp_path):
 
     with firmware(flash) as port:
         asyncio.run(after_restart(port))
+
+
+def test_read_only_observations(tmp_path):
+    async def exercise(port):
+        client = SMPClient(SMPSerialTransport(exclusive=True), port, timeout_s=1)
+        try:
+            await client.connect()
+            identity = await info(client)
+            assert identity.sources == ["power", "matrix"] and "native_sim" in identity.board
+            # This board has no VBUS acquisition. A cold first read must report
+            # unavailable data, not initialize a fictitious power source.
+            first = await snapshot(client, "power")
+            assert first.error < 0 and first.values["sample_ms"] == 0
+            assert first.values["connected"] == 1
+            name = "power/usb_idle_s"
+            await checked(client, WriteSetting(name=name, val=(7).to_bytes(4, "little")))
+            second = await snapshot(client, "power")
+            assert second.values["usb_idle_s"] == 7
+            assert second.read_ms >= first.read_ms
+            assert second.values["sample_ms"] == first.values["sample_ms"]
+            for source in ("buttons.center", "buttons.side", "application"):
+                missing = await snapshot(client, source)
+                assert missing.error < 0 and missing.values == {}, missing
+            matrix = await snapshot(client, "matrix")
+            assert matrix.error < 0 and matrix.values["valid"] == 0
+            assert matrix.values["owner"] == 0
+            with pytest.raises(RuntimeError, match="Snapshot rejected"):
+                await snapshot(client, "motor.unknown")
+            # The telemetry group exposes reads only. A write must be rejected.
+            from smp.header import OP
+
+            class Write(Snapshot):
+                _OP = OP.WRITE
+
+            rejected = await client.request(Write(source="power"))
+            assert error(rejected) and int(rejected.rc) == 8, rejected
+            assert (await snapshot(client, "power")).values == second.values
+        finally:
+            await client.disconnect()
+
+    with firmware(tmp_path / "flash.bin") as port:
+        asyncio.run(exercise(port))
+        with serial.Serial(port, timeout=1, write_timeout=1, exclusive=True) as console:
+            console.write(b"observe all\r")
+            output = console.read_until(b"brickphyr> ")
+            assert b"power read_ms=" in output and b"usb_idle_s=7" in output, output
+            assert b"application read_ms=" not in output, output
+            console.write(b"matrix pixel 0 4 100\r")
+            assert console.read_until(b"brickphyr> ").endswith(b"brickphyr> ")
+
+        async def matrix_read(port):
+            client = SMPClient(SMPSerialTransport(exclusive=True), port, timeout_s=1)
+            try:
+                await client.connect()
+                first = await snapshot(client, "matrix")
+                assert first.error == 0 and first.values["valid"] == 1
+                assert first.values["owner"] == 2 and first.values["pending"] == 0
+                frame = bytes([0] * 4 + [100] + [0] * 20)
+                assert first.values["requested"] == first.values["applied"] == frame
+                assert 0 < first.values["applied_ms"] <= first.read_ms
+                assert (await snapshot(client, "matrix")).values == first.values
+            finally:
+                await client.disconnect()
+
+        asyncio.run(matrix_read(port))

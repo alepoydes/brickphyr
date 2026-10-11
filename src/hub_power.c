@@ -20,6 +20,18 @@ static bool connected;
 static bool application;
 static bool shutting_down;
 static int64_t idle_since;
+static int64_t sampled_ms;
+
+void hub_power_get(struct hub_power_state *state)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*state = (struct hub_power_state){
+		.sampled_ms = sampled_ms, .idle_since_ms = idle_since, .source = source,
+		.battery_idle_s = timeout_s[0], .usb_idle_s = timeout_s[1],
+		.connected = connected, .application = application, .shutting_down = shutting_down,
+	};
+	k_spin_unlock(&lock, key);
+}
 
 static int setting_index(const char *name)
 {
@@ -138,6 +150,7 @@ bool hub_power_application(bool running)
 bool hub_power_update(int vbus, bool activity, int64_t now)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	sampled_ms = now;
 	if (source != vbus || activity) {
 		source = vbus;
 		idle_since = now;
@@ -153,16 +166,16 @@ bool hub_power_update(int vbus, bool activity, int64_t now)
 
 static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 {
-	k_spinlock_key_t key = k_spin_lock(&lock);
-	int vbus = source;
-	bool owner = connected;
-	bool running = application;
-	bool stopping = shutting_down;
-	uint32_t battery = timeout_s[0];
-	uint32_t usb = timeout_s[1];
+	struct hub_power_state state;
+	hub_power_get(&state);
+	int vbus = state.source;
+	bool owner = state.connected;
+	bool running = state.application;
+	bool stopping = state.shutting_down;
+	uint32_t battery = state.battery_idle_s;
+	uint32_t usb = state.usb_idle_s;
 	uint32_t seconds = vbus == 0 ? battery : usb;
-	int64_t remaining = MAX((int64_t)seconds * 1000 - (k_uptime_get() - idle_since), 0);
-	k_spin_unlock(&lock, key);
+	int64_t remaining = MAX((int64_t)seconds * 1000 - (k_uptime_get() - state.idle_since_ms), 0);
 	shell_print(shell, "Source: %s; management owner: %s",
 		vbus < 0 ? "unknown" : vbus ? "USB" : "battery", owner ? "active" : "none");
 	shell_print(shell, "Idle timeout: battery %" PRIu32 " s, USB %" PRIu32 " s",

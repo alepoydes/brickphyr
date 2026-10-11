@@ -3,6 +3,14 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_TELEMETRY
+	bool "Read-only hub observations"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on MCUMGR && SHELL
+	help
+	  On-demand snapshots through SMP and the shared shell. No background
+	  transmission, sensor reconfiguration or application lifecycle work.
+
 config BRICKPHYR_MATRIX
 	bool "Hub light matrix"
 	default y
