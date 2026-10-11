@@ -10,6 +10,7 @@
 
 #include <inttypes.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
@@ -32,12 +33,14 @@
 enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION,
 	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F,
 	SENSOR_A, SENSOR_B, SENSOR_C, SENSOR_D, SENSOR_E, SENSOR_F,
-	MOTOR_A, MOTOR_B, MOTOR_C, MOTOR_D, MOTOR_E, MOTOR_F };
+	MOTOR_A, MOTOR_B, MOTOR_C, MOTOR_D, MOTOR_E, MOTOR_F,
+	CONTROL_A, CONTROL_B, CONTROL_C, CONTROL_D, CONTROL_E, CONTROL_F };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
 	"imu", "imu.calibrated", "imu.orientation", "sound", "battery",
 	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F",
 	"sensor.A", "sensor.B", "sensor.C", "sensor.D", "sensor.E", "sensor.F",
-	"motor.A", "motor.B", "motor.C", "motor.D", "motor.E", "motor.F"};
+	"motor.A", "motor.B", "motor.C", "motor.D", "motor.E", "motor.F",
+	"control.A", "control.B", "control.C", "control.D", "control.E", "control.F"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -69,6 +72,8 @@ static bool available(enum source source)
 		return IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART);
 	case MOTOR_A: case MOTOR_B: case MOTOR_C: case MOTOR_D: case MOTOR_E: case MOTOR_F:
 		return IS_ENABLED(CONFIG_BRICKPHYR_MOTORS);
+	case CONTROL_A: case CONTROL_B: case CONTROL_C: case CONTROL_D: case CONTROL_E: case CONTROL_F:
+		return IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -199,6 +204,25 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
+		}
+	} else if (source >= CONTROL_A && source <= CONTROL_F) {
+		struct bp_motor_state value;
+		out->error = hub_motor_get(source - CONTROL_A, &value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_ms", value.control.sample_ms);
+			field(out, "generation", value.generation);
+			field(out, "completed", value.completed);
+			field(out, "active", value.control.active);
+			field(out, "done", value.control.done);
+			field(out, "stalled", value.control.stalled);
+			field(out, "frames", value.control.frames);
+			field(out, "overruns", value.control.overruns);
+			field(out, "reference_mdeg", value.control.reference_mdeg);
+			field(out, "reference_mdps", value.control.reference_speed);
+			field(out, "estimated_mdps", value.control.estimated_speed);
+			field(out, "requested_mv", value.control.requested_mv);
+			field(out, "applied_mv", value.control.applied_mv);
 		}
 	} else if (source >= MOTOR_A && source <= MOTOR_F) {
 		struct bp_motor_state value;
@@ -615,6 +639,32 @@ static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 	uint32_t port = argv[1][0] - 'A';
 	if (argc == 3 && !strcmp(argv[2], "release")) return hub_port_release(BP_PORT_TERMINAL, port);
 	if (argc == 3 && !strcmp(argv[2], "coast")) return hub_motor_coast(BP_PORT_TERMINAL, port);
+	if (!strcmp(argv[2], "run") || !strcmp(argv[2], "target")) {
+		if (argc != 6) return -EINVAL;
+		bool target = !strcmp(argv[2], "target");
+		struct bp_motor_command command = {.mode = target ? BP_MOTOR_POSITION : BP_MOTOR_SPEED};
+		static const char *const finishes[] = {"coast", "brake", "hold", "continue"};
+		for (command.finish = 0; command.finish < ARRAY_SIZE(finishes); command.finish++) {
+			if (!strcmp(argv[5], finishes[command.finish])) break;
+		}
+		if (command.finish == ARRAY_SIZE(finishes)) return -EINVAL;
+		int err = 0;
+		if (target) {
+			char *end;
+			errno = 0;
+			command.target_mdeg = strtoll(argv[3], &end, 10);
+			if (errno || end == argv[3] || *end) return -EINVAL;
+		}
+		long speed = shell_strtol(argv[target ? 4 : 3], 10, &err);
+		if (err || speed < INT32_MIN || speed > INT32_MAX) return -EINVAL;
+		command.speed_mdeg_s = speed;
+		if (!target) {
+			unsigned long duration = shell_strtoul(argv[4], 10, &err);
+			if (err || duration > UINT32_MAX || argv[4][0] == '-') return -EINVAL;
+			command.duration_ms = duration;
+		}
+		return hub_motor_control(BP_PORT_TERMINAL, port, &command);
+	}
 	bool brake = !strcmp(argv[2], "brake");
 	if ((!brake && (strcmp(argv[2], "duty") || argc < 4)) || argc > (brake ? 4 : 5)) return -EINVAL;
 	int err = 0;
@@ -625,8 +675,9 @@ static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 	if (err || duration > INT32_MAX || (argc > duration_index && argv[duration_index][0] == '-')) return -EINVAL;
 	return hub_motor_drive(BP_PORT_TERMINAL, port, duty, duration);
 }
-SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release.",
-	cmd_motor, 3, 2);
+SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release | "
+	"run MDEG/S MS FINISH | target MDEG MDEG/S FINISH (coast/brake/hold/continue).",
+	cmd_motor, 3, 3);
 
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = info_read}, [1] = {.mh_read = snapshot_read},

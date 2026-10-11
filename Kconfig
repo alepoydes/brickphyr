@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 mainmenu "Brickphyr"
 
+# Full source discovery with six controller observations exceeds the upstream
+# 384-byte default (about 430 bytes including the SMP header on F4).
+config MCUMGR_TRANSPORT_NETBUF_SIZE
+	default 512 if BRICKPHYR_MOTOR_CONTROL && BRICKPHYR_TELEMETRY
+
 source "Kconfig.zephyr"
 
 config BRICKPHYR_PORTS
@@ -34,7 +39,17 @@ config BRICKPHYR_MOTORS
 	help
 	  Owned, asynchronous native/Shell duty, brake and coast commands through
 	  the port service. Outputs stay in coast at boot; application cleanup and
-	  device loss stop them. Speed/position regulation is not implemented.
+	  device loss stop them.
+
+config BRICKPHYR_MOTOR_CONTROL
+	bool "Powered Up speed and position control"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on BRICKPHYR_MOTORS && BRICKPHYR_PORT_UART && BRICKPHYR_BATTERY
+	help
+	  Reuse PBIO models, observer and trajectories in the existing port owner.
+	  A dedicated port queue services the 5 ms model step independently of
+	  system work. Missing encoder/battery input or a missed frame coasts the
+	  motor and reports an error. Physical timing and tuning are experimental.
 
 config BRICKPHYR_BATTERY
 	bool "Battery voltage and load-current observations"

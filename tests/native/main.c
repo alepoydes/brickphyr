@@ -185,7 +185,7 @@ int main(void)
 		CHECK(hub_motor_get(0, &motor) == 0);
 		CHECK(k_uptime_get() < deadline);
 	} while (motor.error);
-	for (test_buttons = 0; test_buttons < 3; test_buttons++) {
+	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
 		CHECK(native_fixture_run("motor") == 0);
 		deadline = k_uptime_get() + 500;
 		do {

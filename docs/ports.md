@@ -20,8 +20,8 @@ Zephyr UART drivers. Both options default on for F4. ID 14 is the electrical
 UART signature; successful negotiation provides the device's actual ID.
 Known sensors and motor encoders also provide converted measurements and explicit
 mode selection.
-Direct motor drive is available with `CONFIG_BRICKPHYR_MOTORS`; speed/position
-regulation is not implemented. Reading state does not start I/O, select a mode or
+Direct motor drive is available with `CONFIG_BRICKPHYR_MOTORS`; experimental
+speed/position regulation adds `CONFIG_BRICKPHYR_MOTOR_CONTROL`. Reading state does not start I/O, select a mode or
 claim a port.
 
 ## Device inspection
@@ -214,21 +214,94 @@ invalid encoder measurements cause coast; reconnect never restarts old commands.
 `observe motor.A` through `motor.F` and the existing monitor report the same
 state. `requested_ms`, `request`, `requested_mode` and `requested_duty` describe
 the latest accepted command; `completed`, `applied_ms`, `mode` and
-`duty_permille` describe its execution. Mode is 0 coast or 1 duty. `pending`
+`duty_permille` describe its execution. Mode is 0 coast, 1 duty, 2 regulated speed
+or 3 regulated position. `pending`
 includes in-progress output I/O; `releasing` blocks new drive until cleanup.
 `valid` means the driver confirmed the output configuration, not measured voltage
 or motion. `error` preserves the first operation failure, `cleanup` reports a
 separate coast failure, and `failures` saturates. A new accepted command clears
 previous errors except while release is in progress. Unknown output state also
-inhibits IMU bias learning, as does nonzero drive; a start/stop between IMU frames
+inhibits IMU bias learning, as does nonzero drive or active regulation, including
+position hold; a start/stop between IMU frames
 resets the stationary window.
 
 Durations use the port worker's monotonic clock and are not hard real-time stop
 guarantees. GPIO settling intervals remain at least 2 ms; waking the worker for a
 command does not shorten them. Scheduler starvation or a stalled driver can delay
 command completion and timeout handling. Waveforms, stopping latency and operation
-under physical hub load remain unverified. PBIO regulation, trajectories and
-DriveBase are subsequent work.
+under physical hub load remain unverified. DriveBase is subsequent work.
+
+## Speed and position control
+
+`CONFIG_BRICKPHYR_MOTOR_CONTROL` enables the PBIO observer, feedback controller
+and acceleration-limited trajectories for the supported BOOST, Technic and SPIKE
+UART motors. It requires encoder acquisition, direct motor outputs and valid
+battery observations. Passive motors have no feedback and reject these commands.
+The implementation is experimental: synthetic feedback/lifecycle checks and F4
+compilation do not establish physical tuning or control timing.
+
+The same USB/BLE Shell accepts:
+
+```text
+motor A run 300000 200 coast
+motor A target 90000 300000 hold
+observe control.A
+motor A coast
+motor A release
+```
+
+These commands move a motor. `run` takes signed millidegrees/second, duration in
+milliseconds, and completion behavior (`coast`, `brake`, `hold`, `continue`). Zero
+duration runs indefinitely until replaced or stopped; finite duration is
+1–299999 ms, below PBIO's forever sentinel. `target` takes an absolute encoder
+angle in millidegrees, nonnegative speed and completion behavior. Zero target
+speed selects the model's rated limit. Angles use the current connection's
+accumulated encoder origin; reconnect resets that origin. The maximum single
+target displacement is less than `INT32_MAX / 2` millidegrees. Speeds above the
+model's rated limit and numerically unsafe angles are rejected without replacing
+the current command. Gear ratios and direction remapping are not applied.
+
+Native code calls `bp_motor_control(port, &command)` with a
+`struct bp_motor_command` from the matching SDK. Set `mode` to `BP_MOTOR_SPEED`
+or `BP_MOTOR_POSITION`, `finish` to a `BP_MOTOR_FINISH_*` value, and provide the
+same speed, target and duration units. Unused target/duration fields must be zero.
+The syscall validates and copies application memory before taking a service lock.
+There is one port owner and output path for direct drive and regulation.
+Coast/release, terminal disconnection and application cleanup follow the direct
+drive rules above. A direct duty/brake command also cancels regulation.
+
+Command acceptance is asynchronous. `bp_motor_get()` reports the accepted
+`command`, driver request/completion identifiers, and a `control` snapshot.
+Driver completion means the output operation completed, not that the shaft
+reached its target. `control.done` reports trajectory completion; hold can be
+both done and active. `stalled` reports PBIO's stall detection without silently
+changing the chosen completion policy. Finite duration starts when the worker
+applies the command. Replacing an active regulated command waits for its next
+control frame; coast does not wait for that frame.
+
+The existing port work item runs on a dedicated preemptible queue when regulation
+is enabled. PBIO's Powered Up models use a 5 ms step; absolute deadlines preserve
+that cadence. Losing a whole frame, including time spent applying output, reports
+`-ETIMEDOUT` and coasts when service resumes. No catch-up integration fabricates
+missing frames. The F4 queue priority precedes HCI TX/RX, IMU, Shell and native
+applications; cooperative work and interrupts can still delay it. This is an
+overrun policy, not an independent hardware watchdog or a hard real-time guarantee.
+
+Missing angle data for the full 100 ms numerical derivative window stops
+regulation before stale feedback can represent a stopped shaft indefinitely.
+Invalid encoder data and battery acquisition errors stop it immediately when
+observed by the worker. The last valid battery voltage converts requested mV to
+duty, bounded by both the model's voltage and the available supply. The observer
+predicts using the voltage corresponding to the successfully applied duty, rather
+than an unclipped request. This is a calculation from battery/PWM, not measurement
+of winding voltage or current. Frame timestamps/counters and missed-deadline
+counts are visible in `observe control.A` through `control.F`; voltage/reference
+fields describe the last successful control frame, with `active` distinguishing
+ongoing regulation from historical values.
+
+The [computation adapter](../src/motor/README.md) records source provenance and
+numerical boundaries. PBIO computation is reused without its device scheduler;
+Zephyr port ownership, driver errors and cleanup remain authoritative.
 
 ## Detection and validity
 

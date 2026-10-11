@@ -110,8 +110,11 @@ Group **66** uses standard SMP framing and CBOR over the existing
 Writes are unsupported. An unknown name is a protocol error; a known source
 excluded from a build returns an empty snapshot with `-ENOTSUP`.
 
-One request reads one source. Responses fit the existing 384-byte SMP buffers;
-the client combines several responses for a display. No separate telemetry wire
+One request reads one source; the client combines several responses for a display.
+Builds with motor regulation default to 512-byte SMP buffers because full source
+discovery exceeds 384 bytes. The client negotiates the server's capacity. Motor
+output and controller details remain separate bounded observations of the same
+service state. No separate telemetry wire
 format, connection owner or Bluetooth service is introduced.
 
 | Source | Values and units |
@@ -129,6 +132,7 @@ format, connection owner or Bluetooth service is introduced.
 | `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`, `supply`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
 | `sensor.A` … `sensor.F` | `sample_ms`, `sequence`, `generation`, `type_id`, `mode`, `measurement`, `available`, `owner`, `fields`; applicable distance, light, HSV, force, displacement, tilt, count or presence values in [sensor units](ports.md#sensor-measurements) |
 | `motor.A` … `motor.F` | `requested_ms`, `applied_ms`, `deadline_ms`, `generation`, `request`, `completed`, `mode`, `duty_permille`, `requested_mode`, `requested_duty`, `owner`, `pending`, `releasing`, `valid`, `cleanup`, `failures`; [drive and ownership semantics](ports.md#direct-motor-drive) |
+| `control.A` … `control.F` | `sample_ms`, `generation`, `completed`, `active`, `done`, `stalled`, `frames`, `overruns`, `reference_mdeg`, `reference_mdps`, `estimated_mdps`, `requested_mv`, `applied_mv`; [regulation semantics](ports.md#speed-and-position-control) |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.

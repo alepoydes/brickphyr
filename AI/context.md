@@ -68,14 +68,19 @@ Technic and SPIKE motor encoders share that service, with synthetic turn countin
 rollover and inactive-output checks. The shared GPIO/PWM output adapter has F4
 wiring and synthetic duty/direction/cleanup checks. Native/Shell direct drive
 shares port ownership, asynchronous completion and coast on application cleanup
-or device loss; regulation and trajectories remain next. Physical
+or device loss. Experimental PBIO speed/position trajectories and hold now use
+that same owner/output path, a 5 ms port queue and validated battery feedback.
+Synthetic UART/ADC/PWM checks cover stall, completion, input loss, deadline
+overruns and release during output. Numerical ARM checks cover long angles and
+timer wrapping. Physical
 sensor power/readings, encoder motion, port identification, baud switching and
 serial timing under load are unverified.
 The shared terminal's `port` inventory and `port A` detail expose
 [device metadata and raw/decoded observations](../docs/ports.md#device-inspection),
 including unknown UART IDs. Synthetic checks cover malformed optional fields,
 reconnects, escaped device strings and unchanged outputs. Physical third-party
-compatibility remains unverified. PBIO regulation and trajectories are next.
+compatibility remains unverified. Next is the physical hardware/telemetry
+acceptance cycle, including motor tuning and service timing under load.
 
 ## Dependencies and remaining work
 

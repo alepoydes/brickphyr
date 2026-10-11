@@ -78,6 +78,10 @@ __syscall int bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms);
 __syscall int bp_motor_coast(uint32_t port);
 /* Latest command/output result, no I/O. Inspect pending, valid and error. */
 __syscall int bp_motor_get(uint32_t port, struct bp_motor_state *state);
+/* Queue a regulated speed/position command; does not wait for motion. The
+ * command is copied. bp_motor_get reports driver completion separately from
+ * trajectory completion. Coast or release cancels regulation. */
+__syscall int bp_motor_control(uint32_t port, const struct bp_motor_command *command);
 
 /* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
  * Zero duration continues until stopped; otherwise duration is milliseconds.

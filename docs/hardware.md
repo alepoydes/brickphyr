@@ -345,12 +345,17 @@ executes the DAC registers on a physical hub.
 The F4 build has experimental electrical detection and LUMP UART negotiation on
 ports A–F, shared by the native SDK, Shell and SMP. [External ports](ports.md)
 describes identification, raw packets, converted sensor/encoder measurements,
-explicit mode selection, direct motor drive, hotplug and cleanup. Supported SPIKE, BOOST and WeDo
+explicit mode selection, direct and regulated motor drive, hotplug and cleanup. Supported SPIKE, BOOST and WeDo
 sensors share one service, including validated additional sensor power. Synthetic
 GPIO/UART checks cover conversions, encoder turn counting and ownership; ARM
 checks cover the protected API boundary. Physical identification, baud switching,
 sensor power, encoder motion and readings remain unverified. Recognized motors
 stay in coast until explicitly commanded; physical drive and stopping remain
+unverified. Experimental PBIO speed/position control, trajectories and hold use
+the same port owner and output. Synthetic UART/ADC/PWM checks cover stall,
+completion, missing feedback and battery errors, missed deadlines and concurrent
+release. Numerical ARM checks cover closed feedback on an independent synthetic
+plant. Physical tuning, period jitter and simultaneous peripheral load remain
 unverified.
 
 ## Hub battery

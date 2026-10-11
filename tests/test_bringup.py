@@ -121,6 +121,7 @@ def test_image():
         "lump-tests",
         "motor-output-tests",
         "motor-tests",
+        "regulated-motor-tests",
     ],
 )
 def test_hub_drivers(suite, tmp_path):

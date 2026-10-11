@@ -50,12 +50,14 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/lump -d build/lump-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motor_output -d build/motor-output-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motors -d build/motor-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/regulated_motors -d build/regulated-motor-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay &&
 uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests &&
+uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
 mkdir -p build/native-smp-sdk &&
 tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&
@@ -174,7 +176,25 @@ duration expiry, hotplug, cleanup failures and release during blocked output.
 The LUMP fixture checks drive alongside encoder acquisition and coast on invalid
 data or UART loss. ARM applications exercise motor syscalls, return, forced stop
 and an invalid buffer fault while driving; the IMU fixture checks inhibited bias
-learning during drive. Regulation and physical stopping remain unverified.
+learning during drive.
+
+`tests/motor_control` runs the PBIO computation on ARM with a deliberately simple
+independent synthetic plant. It checks motion in both directions, long encoder
+origins, position hold, timed completion, time wrapping and rejected requests.
+`tests/regulated_motors` runs the production UART/ADC/controller/PWM path with
+synthetic peers: command ownership, stall, Shell/SMP observations, completion,
+missing encoder input, battery failure, lost frames before/during I/O and release
+during an unfinished PWM operation. Neither fixture measures physical tuning,
+motor stopping or service jitter on the hub.
+
+An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-ubsan-tests -- -DCONFIG_UBSAN=y -DCONFIG_UBSAN_TRAP=y
+uv run --locked west build -d build/motor-control-arm-ubsan-tests -t run
+```
+
+The QEMU runner remains open after the result; exit after the suite finishes.
 
 `tests/battery` runs production acquisition, Shell observations and both button
 ladders on one emulated ADC. It checks cold settling without invented values,

@@ -25,6 +25,7 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         ("Pybricks MIT helpers", root / "LICENSES/Pybricks-MIT.txt"),
         ("ST/Pybricks IMU register helpers", root / "LICENSES/ST-LSM6DS3TR-C.txt"),
         ("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"),
+        ("LEGO PBIO motor computation", root / "LICENSES/LEGO-BSD-3-Clause.txt"),
     ]
     for project_name, license_path in (
         ("zephyr", "LICENSE"),

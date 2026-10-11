@@ -39,6 +39,7 @@ def qemu(build):
     [
         ("native-app-tests", b"NATIVE PASS:"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
     ],
 )
 def test_arm_firmware(suite, success):

@@ -18,6 +18,7 @@ int hub_ports_release(enum bp_port_owner owner);
 int hub_motor_get(uint32_t port, struct bp_motor_state *value);
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms);
 int hub_motor_coast(enum bp_port_owner owner, uint32_t port);
+int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_motor_command *command);
 /* Even means idle, odd active/unknown. Changes also expose short activity
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
@@ -39,5 +40,7 @@ static inline int hub_motor_get(uint32_t port, struct bp_motor_state *value) { r
 static inline int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty,
 	uint32_t duration_ms) { return -ENOTSUP; }
 static inline int hub_motor_coast(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }
+static inline int hub_motor_control(enum bp_port_owner owner, uint32_t port,
+	const struct bp_motor_command *command) { return -ENOTSUP; }
 static inline uint32_t hub_motor_activity(void) { return 0; }
 #endif

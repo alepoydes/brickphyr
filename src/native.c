@@ -304,6 +304,20 @@ static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *valu
 }
 #include <zephyr/syscalls/bp_motor_get_mrsh.c>
 
+int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
+{
+	return hub_motor_control(BP_PORT_APPLICATION, port, command);
+}
+static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(command, __alignof__(*command))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	/* Copy user storage before taking any hardware service lock. */
+	struct bp_motor_command copy = *command;
+	return z_impl_bp_motor_control(port, &copy);
+}
+#include <zephyr/syscalls/bp_motor_control_mrsh.c>
+
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
 	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);
