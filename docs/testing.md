@@ -203,6 +203,12 @@ LittleFS store additionally checks standard SMP file transfer, path restrictions
 atomic replacement, partial and incompatible updates, capacity failure, and
 file-loader allocation parity with RAM. The physical F4 uses 224 KiB.
 
+Autonomous ARM checks use Zephyr's `run` build target, including the board's
+configured instruction-count clock. This avoids treating host scheduling or QEMU
+translation delays as guest execution time. The interactive SMP fixture instead
+paces guest time against the host, so a transfer cannot expire while Python waits
+to be scheduled. Neither clock supplies physical hub timing measurements.
+
 `tests/management` runs the production Shell/SMP transport and LittleFS/Settings
 stack behind a native UART pseudoterminal. Unmodified `smpclient` and `smpmgr`
 exercise negotiation, multi-line echo, RAM changes, explicit save, invalid values,

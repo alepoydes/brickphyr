@@ -339,13 +339,16 @@ synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
 after protected application stop/fault. The F4 images compile; neither check
 executes the DAC registers on a physical hub.
 
-## External port identification
+## External ports and sensors
 
 The F4 build has experimental electrical detection and LUMP UART negotiation on
 ports A–F, shared by the native SDK, Shell and SMP. [External ports](ports.md)
-describes identification, raw packets, hotplug, validity and cleanup. Synthetic
-GPIO/UART and ARM checks pass. Physical identification/baud switching and
-device-specific sensor measurements remain pending. Motor outputs stay in coast.
+describes identification, raw packets, converted sensor measurements, explicit
+mode selection, hotplug and cleanup. Supported SPIKE, BOOST and WeDo sensors
+share one service, including validated additional sensor power. Synthetic
+GPIO/UART checks cover conversions and ownership; ARM checks cover the protected
+API boundary. Physical identification, baud switching, sensor power and readings
+remain unverified. Actual motor IDs stay in coast.
 
 ## Hub battery
 

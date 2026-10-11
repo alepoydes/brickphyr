@@ -11,6 +11,7 @@
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
 #include <zephyr/shell/shell_dummy.h>
 #include <zephyr/ztest.h>
+#include <zephyr/sys/byteorder.h>
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
 
@@ -194,16 +195,22 @@ static void negotiate(bool fast)
 	zassert_mem_equal(snapshot().data, position + 1, 4);
 }
 
-static void smp_snapshot(void)
+static void smp_snapshot(const char *field, int64_t expected)
 {
 	/* The registered observation handler must fit the existing transport and
 	 * return the exact binary sample seen through the native service. */
 	static struct cbor_nb_reader reader;
 	static struct cbor_nb_writer writer;
 	static uint8_t response[CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 8];
-	static const uint8_t request[] = {0xa1, 0x66, 's', 'o', 'u', 'r', 'c', 'e',
-		0x66, 'p', 'o', 'r', 't', '.', 'A'};
-	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), request, sizeof(request), 1, NULL, 0);
+	uint8_t request[32];
+	const char *name = field ? "sensor.A" : "port.A";
+	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), request, sizeof(request), 1);
+	zassert_true(zcbor_map_start_encode(writer.zs, 1));
+	zassert_true(zcbor_tstr_put_lit(writer.zs, "source"));
+	zassert_true(zcbor_tstr_encode_ptr(writer.zs, name, strlen(name)));
+	zassert_true(zcbor_map_end_encode(writer.zs, 1));
+	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), request,
+		writer.zs[0].payload - request, 1, NULL, 0);
 	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), response, sizeof(response), 1);
 	zassert_true(zcbor_map_start_encode(writer.zs, 5));
 	struct smp_streamer stream = {.reader = &reader, .writer = &writer};
@@ -225,7 +232,12 @@ static void smp_snapshot(void)
 		zassert_true(zcbor_map_start_decode(reader.zs));
 		while (!zcbor_array_at_end(reader.zs)) {
 			zassert_true(zcbor_tstr_decode(reader.zs, &key));
-			if (key.len == 4 && !memcmp(key.value, "data", 4)) {
+			if (field && key.len == strlen(field) && !memcmp(key.value, field, key.len)) {
+				int64_t value;
+				zassert_true(zcbor_int64_decode(reader.zs, &value));
+				zassert_equal(value, expected);
+				found = true;
+			} else if (!field && key.len == 4 && !memcmp(key.value, "data", 4)) {
 				struct zcbor_string value;
 				zassert_true(zcbor_bstr_decode(reader.zs, &value));
 				zassert_equal(value.len, 4);
@@ -239,6 +251,272 @@ static void smp_snapshot(void)
 	}
 	zassert_true(zcbor_map_end_decode(reader.zs));
 	zassert_true(found);
+}
+
+/* Synthetic sensor peer. Metadata formats follow lego/device.h; these are
+ * protocol fixtures, not captures from a SPIKE/WeDo sensor. Values below check
+ * meaningful units and boundaries rather than duplicate conversion formulas. */
+static void packet(uint8_t type, uint8_t mode, uint8_t info, const uint8_t *data, size_t size)
+{
+	uint8_t frame[35], exponent = 0;
+	size_t padded = 1;
+	while (padded < size) {
+		padded *= 2;
+		exponent++;
+	}
+	frame[0] = type | (exponent << 3) | (mode & 7);
+	size_t pos = 1;
+	if (type == LUMP_MSG_TYPE_INFO) {
+		frame[pos++] = info | (mode >= 8 ? LUMP_INFO_MODE_PLUS_8 : 0);
+	}
+	for (size_t i = 0; i < padded; i++) frame[pos++] = i < size ? data[i] : 0;
+	uint8_t checksum = 0xff;
+	for (size_t i = 0; i < pos; i++) checksum ^= frame[i];
+	frame[pos++] = checksum;
+	feed(frame, pos);
+}
+
+static void connect_sensor(uint8_t id, const uint8_t formats[][2], size_t count, uint8_t flags)
+{
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+	tx_count = 0;
+	pup_test_circuits[0].kind = UART_DEVICE;
+	wait_tx(sizeof(speed));
+	uint8_t ack = LUMP_SYS_ACK;
+	feed(&ack, 1);
+	packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_TYPE, 0, &id, 1);
+	uint8_t modes[] = {MIN(count - 1, 7), 0, count - 1, 0};
+	packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_MODES, 0, modes, 4);
+	feed(speed, sizeof(speed));
+	for (uint8_t mode = 0; mode < count; mode++) {
+		uint8_t name[16] = {'S', 'E', 'N', 0, 0, 0, flags};
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
+		uint8_t format[] = {formats[mode][0], formats[mode][1], 4, 0};
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
+	}
+	feed(&ack, 1);
+	k_msleep(20);
+}
+
+static void wait_select(uint8_t mode, size_t from)
+{
+	int64_t deadline = k_uptime_get() + 200;
+	for (;;) {
+		for (size_t i = from; i + 2 < tx_count; i++) {
+			if (tx[i] == 0x43 && tx[i + 1] == mode && tx[i + 2] == (0xbc ^ mode)) return;
+		}
+		zassert_true(k_uptime_get() < deadline, "Missing SELECT %u", mode);
+		k_msleep(1);
+	}
+}
+
+static void words(uint8_t mode, const int16_t *values, size_t count)
+{
+	uint8_t bytes[32];
+	for (size_t i = 0; i < count; i++) sys_put_le16(values[i], bytes + i * 2);
+	packet(LUMP_MSG_TYPE_DATA, mode, 0, bytes, count * 2);
+}
+#define WORDS(mode, ...) do { const int16_t values_[] = {__VA_ARGS__}; \
+	words(mode, values_, ARRAY_SIZE(values_)); } while (0)
+
+static struct bp_sensor_sample sensor(void)
+{
+	struct bp_sensor_sample value;
+	zassert_ok(hub_sensor_get(0, &value));
+	return value;
+}
+
+static void sensor_measurements(void)
+{
+	const uint8_t color[][2] = {{1, 0}, {1, 0}, {1, 0}, {3, 0}, {2, 1},
+		{4, 1}, {3, 1}, {4, 1}, {2, 1}, {7, 1}};
+	connect_sensor(61, color, ARRAY_SIZE(color), 0);
+	zassert_equal(snapshot().phase, BP_PORT_READY);
+	wait_select(5, 0);
+	zassert_equal(sensor().error, -EAGAIN);
+	WORDS(5, 1024, 0, 0, 0);
+	zassert_equal(sensor().error, -EAGAIN, "Unsettled color accepted");
+	k_msleep(40);
+	WORDS(5, 1024, 0, 0, 0);
+	struct bp_sensor_sample v = sensor();
+	zassert_ok(v.error);
+	zassert_equal(v.hue_deg, 10);
+	zassert_equal(v.saturation_pct, 100);
+	zassert_equal(v.value_pct, 100);
+	zassert_equal(v.reflection_permille, 333);
+	zassert_equal(v.fields, BP_SENSOR_HAS_HSV | BP_SENSOR_HAS_REFLECTION);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	uint32_t sequence = v.sequence;
+	int64_t sampled = v.sample_ms;
+	WORDS(5, -1, 0, 0, 0);
+	zassert_equal(sensor().error, -EBADMSG);
+	zassert_equal(sensor().fields, 0);
+	zassert_equal(sensor().sample_ms, sampled);
+	zassert_equal(sensor().sequence, sequence);
+	WORDS(5, 1024, 1024, 1024, 0);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().reflection_permille, 1000);
+	zassert_equal(sensor().saturation_pct, 0);
+	smp_snapshot("reflection_permille", 1000);
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	zassert_ok(shell_execute_cmd(shell, "observe sensor.A"));
+	size_t length;
+	const char *output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "reflection_permille=1000"));
+	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_SURFACE));
+	zassert_equal(shell_execute_cmd(shell, "sensor A ambient"), -EBUSY);
+	length = tx_count;
+	zassert_equal(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_FORCE), -ENOTSUP);
+	zassert_equal(sensor().owner, BP_SENSOR_APPLICATION);
+	zassert_equal(tx_count, length, "Unsupported request wrote UART");
+	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_AMBIENT));
+	zassert_equal(sensor().error, -EAGAIN);
+	wait_select(7, length);
+	WORDS(5, 1024, 1024, 1024, 0);
+	zassert_equal(sensor().error, -EAGAIN, "Wrong mode masqueraded as ambient");
+	WORDS(7, 120, 500, 400, 0);
+	zassert_equal(sensor().error, -EAGAIN);
+	k_msleep(40);
+	WORDS(7, 120, 500, 400, 0);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().hue_deg, 120);
+	zassert_equal(sensor().saturation_pct, 50);
+	zassert_equal(sensor().ambient_permille, 40);
+	length = tx_count;
+	hub_sensors_release(BP_SENSOR_TERMINAL);
+	zassert_equal(sensor().owner, BP_SENSOR_APPLICATION, "Disconnect stole app ownership");
+	hub_sensors_release(BP_SENSOR_APPLICATION);
+	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	wait_select(5, length);
+	zassert_ok(shell_execute_cmd(shell, "sensor A ambient"));
+	zassert_equal(sensor().owner, BP_SENSOR_TERMINAL);
+	hub_sensors_release(BP_SENSOR_TERMINAL);
+	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	/* A peer can keep the raw link alive while ignoring SELECT. It must not
+	 * keep the requested measurement pending indefinitely. */
+	int64_t began = k_uptime_get();
+	while (snapshot().phase != BP_PORT_FAULT) {
+		zassert_true(k_uptime_get() - began < 650, "Unbounded SELECT wait");
+		WORDS(7, 120, 500, 400, 0);
+	}
+	zassert_equal(snapshot().error, -ETIMEDOUT);
+
+	const uint8_t force[][2] = {{1, 0}, {1, 0}, {1, 0}, {1, 0}, {1, 1}, {1, 0}, {8, 1}};
+	connect_sensor(63, force, ARRAY_SIZE(force), 0);
+	wait_select(6, 0);
+	WORDS(6, 0, 50, 100, 0, 0, 0, 100, 0);
+	zassert_equal(sensor().error, -EBADMSG, "Bad calibration accepted");
+	WORDS(6, 0, 50, 100, 0, 0, 0, 1100, 0);
+	wait_select(4, 0);
+	zassert_equal(sensor().error, -EAGAIN);
+	WORDS(4, 600);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().force_mn, 4500);
+	zassert_equal(sensor().travel_um, 3335);
+	smp_snapshot("force_mn", 4500);
+	WORDS(4, 50);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().force_mn, 0);
+	zassert_equal(sensor().travel_um, -333);
+
+	const uint8_t distance[][2] = {{1, 1}, {1, 1}, {1, 1}, {1, 0}};
+	connect_sensor(62, distance, ARRAY_SIZE(distance), LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1);
+	wait_select(0, 0);
+	zassert_equal(pup_test_sensor_supply(0), 1, "Sensor supply polarity");
+	zassert_equal(snapshot().supply, 1);
+	WORDS(0, 1234);
+	zassert_equal(sensor().error, -EAGAIN, "Unsettled ultrasound accepted");
+	k_msleep(60);
+	WORDS(0, 1234);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().distance_mm, 1234);
+	zassert_equal(sensor().fields, BP_SENSOR_HAS_DISTANCE);
+	smp_snapshot("distance_mm", 1234);
+	WORDS(0, -1);
+	zassert_equal(sensor().distance_mm, 2000);
+	length = tx_count;
+	zassert_ok(shell_execute_cmd(shell, "sensor A presence"));
+	wait_select(3, length);
+	uint8_t yes = 1;
+	packet(LUMP_MSG_TYPE_DATA, 3, 0, &yes, 1);
+	k_msleep(60);
+	packet(LUMP_MSG_TYPE_DATA, 3, 0, &yes, 1);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().presence, 1);
+	/* After a valid sample, unrelated DATA must not preserve its validity. */
+	pup_test_circuits[0].coast_error = -EACCES;
+	began = k_uptime_get();
+	while (snapshot().phase != BP_PORT_FAULT) {
+		zassert_true(k_uptime_get() - began < 400, "Stale presence remained valid");
+		WORDS(0, 1234);
+	}
+	zassert_equal(sensor().error, -ETIMEDOUT);
+	zassert_equal(sensor().fields, 0);
+	zassert_equal(snapshot().cleanup_error, -EACCES, "Lost supply cleanup failure");
+	zassert_equal(pup_test_sensor_supply(0), 1);
+
+	const uint8_t tilt[][2] = {{2, 0}};
+	connect_sensor(34, tilt, ARRAY_SIZE(tilt), 0);
+	zassert_equal(pup_test_sensor_supply(0), 0, "Supply survived previous disconnect");
+	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	wait_select(0, 0);
+	const uint8_t angles[] = {(uint8_t)-20, 30};
+	packet(LUMP_MSG_TYPE_DATA, 0, 0, angles, sizeof(angles));
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().tilt_deg[0], 30);
+	zassert_equal(sensor().tilt_deg[1], -20);
+	const uint8_t infrared[][2] = {{1, 0}, {1, 2}, {3, 1}};
+	connect_sensor(35, infrared, ARRAY_SIZE(infrared), 0);
+	wait_select(2, 0);
+	WORDS(2, 100, 0, 0);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().reflection_permille, 200);
+	zassert_equal(sensor().distance_pct, 10);
+	length = tx_count;
+	zassert_ok(shell_execute_cmd(shell, "sensor A count"));
+	wait_select(1, length);
+	const uint8_t count[] = {0xfe, 0xff, 0xff, 0xff};
+	packet(LUMP_MSG_TYPE_DATA, 1, 0, count, sizeof(count));
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().fields, BP_SENSOR_HAS_COUNT);
+	zassert_equal(sensor().count, -2);
+
+	const uint8_t boost[][2] = {{1, 0}, {1, 0}, {1, 2}, {1, 0}, {1, 0}, {1, 0}, {3, 1}};
+	connect_sensor(37, boost, ARRAY_SIZE(boost), LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN2);
+	wait_select(6, 0);
+	zassert_equal(pup_test_sensor_supply(0), 2);
+	WORDS(6, 900, 900, 900);
+	k_msleep(40);
+	WORDS(6, 900, 900, 900);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().reflection_permille, 1000);
+	zassert_equal(sensor().value_pct, 100, "Bright RGB wrapped instead of saturating");
+	zassert_equal(sensor().saturation_pct, 0);
+	length = tx_count;
+	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_DISTANCE));
+	wait_select(1, length);
+	uint8_t proximity = 7;
+	packet(LUMP_MSG_TYPE_DATA, 1, 0, &proximity, 1);
+	k_msleep(40);
+	packet(LUMP_MSG_TYPE_DATA, 1, 0, &proximity, 1);
+	zassert_ok(sensor().error);
+	zassert_equal(sensor().distance_pct, 70);
+	zassert_equal(sensor().fields, BP_SENSOR_HAS_RELATIVE_DISTANCE);
+
+	/* Unsupported formats and contradictory motor flags cannot authorize
+	 * sensor supply. All actual motors still use the generic raw UART path. */
+	connect_sensor(62, tilt, ARRAY_SIZE(tilt), LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1);
+	zassert_equal(sensor().error, -EPROTO);
+	zassert_equal(sensor().available, 0);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	connect_sensor(62, distance, ARRAY_SIZE(distance),
+		LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 | LUMP_MODE_FLAGS0_MOTOR);
+	zassert_equal(snapshot().phase, BP_PORT_FAULT);
+	zassert_equal(snapshot().error, -EPROTO);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
 }
 
 ZTEST(lump, test_uart_hotplug)
@@ -275,7 +553,7 @@ ZTEST(lump, test_uart_hotplug)
 	const char *output = shell_backend_dummy_get_output(shell, &size);
 	zassert_not_null(strstr(output, "type_id=38"));
 	zassert_not_null(strstr(output, "data_sequence=1"));
-	smp_snapshot();
+	smp_snapshot(NULL, 0);
 
 	struct bp_port_state before = snapshot();
 	uint8_t damaged[sizeof(position)];
@@ -322,6 +600,7 @@ ZTEST(lump, test_uart_hotplug)
 	pup_test_circuits[0].kind = UNPLUGGED;
 	wait_phase(BP_PORT_EMPTY);
 	negotiate(true);
+	sensor_measurements();
 	zassert_ok(hub_ports_shutdown());
 	zassert_equal(snapshot().phase, BP_PORT_OFF);
 	zassert_equal(snapshot().length, 0);

@@ -36,11 +36,23 @@ static const struct gpio_dt_spec supply = GPIO_DT_SPEC_GET(PORTS, vcc_gpios);
 static const struct gpio_dt_spec pins[BP_PORT_COUNT][PIN_COUNT] = {
 	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, PORT_PINS)
 };
+/* P1/P2 polarity follows prime_hub_f4/platform.c and port.c at a7b1b04ae.
+ * Full negative PWM there is P1 input high, P2 low (inverted timer output).
+ * DC sensor supply needs no timer. These pins have exactly one service owner. */
+#define SUPPLY_PINS(node) [DT_REG_ADDR(node)] = { \
+	GPIO_DT_SPEC_GET_OR(node, p1_gpios, {0}), GPIO_DT_SPEC_GET_OR(node, p2_gpios, {0})},
+static const struct gpio_dt_spec supply_pins[BP_PORT_COUNT][2] = {
+	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, SUPPLY_PINS)
+};
 #define CHECK_INDEX(node) BUILD_ASSERT(DT_REG_ADDR(node) < BP_PORT_COUNT);
 DT_FOREACH_CHILD_STATUS_OKAY(PORTS, CHECK_INDEX)
 
 static struct port {
 	struct bp_port_state value;
+	struct bp_sensor_sample sensor;
+	uint32_t measurement, command;
+	enum bp_sensor_owner owner;
+	uint8_t supply;
 	int64_t next_ms;
 	enum step step;
 	enum group group;
@@ -57,6 +69,45 @@ static int set_pin(uint32_t port, enum pin pin, gpio_flags_t flags)
 	return gpio_pin_configure_dt(&pins[port][pin], flags);
 }
 
+static int coast(uint32_t port)
+{
+	int result = 0;
+	for (size_t i = 0; i < 2; i++) {
+		const struct gpio_dt_spec *pin = &supply_pins[port][i];
+		if (!pin->port) {
+			continue;
+		}
+		int err = gpio_is_ready_dt(pin) ? gpio_pin_configure_dt(pin, GPIO_OUTPUT_INACTIVE) : -ENODEV;
+		if (!result) {
+			result = err;
+		}
+	}
+	if (!result) {
+		ports[port].supply = 0;
+	}
+	return result;
+}
+
+static int sensor_supply(uint32_t port, uint8_t value)
+{
+	if (ports[port].supply == value) {
+		return 0;
+	}
+	int err = coast(port);
+	if (err || !value) {
+		return err;
+	}
+	if (value > 2 || !gpio_is_ready_dt(&supply_pins[port][0]) ||
+	    !gpio_is_ready_dt(&supply_pins[port][1])) {
+		return -ENOTSUP;
+	}
+	err = gpio_pin_configure_dt(&supply_pins[port][value - 1], GPIO_OUTPUT_ACTIVE);
+	if (!err) {
+		ports[port].supply = value;
+	}
+	return err;
+}
+
 /* Try all releases even after one fails. Disable the buffer before releasing
  * TX/RX; a failed detection must not leave a test output driven indefinitely. */
 static int release_pins(uint32_t port)
@@ -70,10 +121,15 @@ static int release_pins(uint32_t port)
 			result = err;
 		}
 	}
+	int err = coast(port);
+	if (!result) {
+		result = err;
+	}
 	return result;
 }
 
-static void publish(uint32_t port, int error, int cleanup, const struct bp_port_state *uart)
+static void publish(uint32_t port, int error, int cleanup, const struct bp_port_state *uart,
+	const struct bp_sensor_sample *sensor, uint32_t command)
 {
 	struct port *p = &ports[port];
 	enum bp_port_phase phase = error ? BP_PORT_FAULT : uart ? uart->phase :
@@ -105,6 +161,18 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 		v.sequence += uart ? uart->data_sequence - p->value.data_sequence : 1;
 	}
 	p->value = v;
+	if (sensor && p->command == command) {
+		p->sensor = *sensor;
+	} else if (!sensor) {
+		p->measurement = BP_SENSOR_DEFAULT;
+		p->owner = BP_SENSOR_UNOWNED;
+		p->command++;
+		p->sensor = (struct bp_sensor_sample){.error = v.error ? v.error :
+			phase == BP_PORT_EMPTY ? -ENODEV : -ENOTSUP};
+	}
+	p->sensor.type_id = id;
+	p->sensor.generation = v.generation;
+	p->sensor.owner = p->owner;
 	k_spin_unlock(&lock, key);
 }
 
@@ -119,8 +187,13 @@ static int advance(uint32_t port)
 	switch (p->step) {
 	case UART: {
 		struct bp_port_state uart = {0};
-		TRY_IO(port_uart_poll(port, &uart));
-		publish(port, 0, 0, &uart);
+		struct bp_sensor_sample sensor;
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		uint32_t measurement = p->measurement, command = p->command;
+		k_spin_unlock(&lock, key);
+		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement));
+		TRY_IO(sensor_supply(port, uart.supply));
+		publish(port, 0, 0, &uart, &sensor, command);
 		return 0;
 	}
 	case START:
@@ -229,7 +302,7 @@ static int advance(uint32_t port)
 			p->matches = 0;
 			p->previous = p->candidate;
 		}
-		publish(port, 0, 0, NULL);
+		publish(port, 0, 0, NULL, NULL, 0);
 		if (p->matches == MATCH_COUNT && p->previous == LEGO_DEVICE_TYPE_ID_LPF2_UNKNOWN_UART &&
 		    port_uart_available(port)) {
 			TRY_IO(release_pins(port));
@@ -262,7 +335,7 @@ static void scan(struct k_work *item)
 			if (err) {
 				port_uart_stop(i);
 				int cleanup = release_pins(i);
-				publish(i, err, cleanup, NULL);
+				publish(i, err, cleanup, NULL, NULL, 0);
 				ports[i].step = START;
 			}
 			ports[i].next_ms = k_uptime_get() + (err ? RETRY_MS : SETTLE_MS);
@@ -281,6 +354,7 @@ static int initialize(void)
 		gpio_pin_configure_dt(&supply, GPIO_OUTPUT_INACTIVE) : -ENODEV;
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 		ports[i].value.error = -EAGAIN;
+		ports[i].sensor.error = -EAGAIN;
 		if (!pins[i][P5].port) {
 			continue;
 		}
@@ -299,7 +373,7 @@ static int initialize(void)
 	if (err) {
 		int cleanup = gpio_is_ready_dt(&supply) ? gpio_pin_set_dt(&supply, 0) : 0;
 		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
-			publish(i, err, cleanup, NULL);
+			publish(i, err, cleanup, NULL, NULL, 0);
 		}
 		return err;
 	}
@@ -326,6 +400,83 @@ int hub_port_get(uint32_t port, struct bp_port_state *value)
 		value->error = -ETIMEDOUT;
 	}
 	return 0;
+}
+
+int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		return -ENOTSUP;
+	}
+	if (port >= BP_PORT_COUNT || !value) {
+		return -EINVAL;
+	}
+	if (!pins[port][P5].port) {
+		return -ENODEV;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*value = ports[port].sensor;
+	int64_t updated = ports[port].value.sample_ms;
+	k_spin_unlock(&lock, key);
+	if (!value->error && k_uptime_get() - updated > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) {
+		value->error = -ETIMEDOUT;
+		value->fields = 0;
+	}
+	return 0;
+}
+
+int hub_sensor_configure(enum bp_sensor_owner owner, uint32_t port, uint32_t measurement)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		return -ENOTSUP;
+	}
+	if (port >= BP_PORT_COUNT || measurement > BP_SENSOR_COUNT ||
+	    (owner != BP_SENSOR_APPLICATION && owner != BP_SENSOR_TERMINAL)) {
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		p->value.phase != BP_PORT_READY ? -EAGAIN :
+		!(p->sensor.available & BIT(measurement)) ? -ENOTSUP :
+		p->owner && p->owner != owner ? -EBUSY : 0;
+	if (!err) {
+		p->owner = owner;
+		p->sensor.owner = owner;
+		if (p->measurement != measurement) {
+			p->measurement = measurement;
+			p->command++;
+			p->sensor.error = -EAGAIN;
+			p->sensor.fields = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_sensor_release(enum bp_sensor_owner owner, uint32_t port)
+{
+	if (port >= BP_PORT_COUNT || (owner != BP_SENSOR_APPLICATION && owner != BP_SENSOR_TERMINAL)) {
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = p->owner && p->owner != owner ? -EBUSY : 0;
+	if (!err && p->owner) {
+		p->owner = p->sensor.owner = BP_SENSOR_UNOWNED;
+		p->measurement = BP_SENSOR_DEFAULT;
+		p->command++;
+		p->sensor.error = -EAGAIN;
+		p->sensor.fields = 0;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+void hub_sensors_release(enum bp_sensor_owner owner)
+{
+	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		hub_sensor_release(owner, i);
+	}
 }
 
 int hub_ports_shutdown(void)
@@ -358,6 +509,15 @@ int hub_ports_shutdown(void)
 		v->type_id = 0;
 		v->pressed = 0;
 		v->length = 0;
+		v->supply = 0;
+		ports[i].sensor.fields = 0;
+		ports[i].sensor.available = 0;
+		ports[i].sensor.type_id = 0;
+		ports[i].sensor.generation = v->generation;
+		if (!ports[i].sensor.error || ports[i].sensor.error == -EAGAIN) {
+			ports[i].sensor.error = cleanup ? cleanup : -ESHUTDOWN;
+		}
+		ports[i].owner = ports[i].sensor.owner = BP_SENSOR_UNOWNED;
 		if (!v->error || v->error == -EAGAIN) {
 			v->error = cleanup ? cleanup : -ESHUTDOWN;
 		}

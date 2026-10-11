@@ -3,8 +3,8 @@
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
 `observe application`, `observe matrix`, `observe imu`, `observe imu.calibrated`
-`observe imu.orientation`, `observe sound`, `observe battery` or `observe port.A`
-(through `port.F`) for one source. Unsupported sources
+`observe imu.orientation`, `observe sound`, `observe battery`, `observe port.A`
+(through `port.F`) or `observe sensor.A` (through `sensor.F`) for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 
 Observation is read-only. It does not start ADC/SPI transactions, change a sensor
@@ -86,7 +86,9 @@ verification with a physical USB/BLE hub remains pending.
 Hub times use monotonic uptime: milliseconds for `_ms` fields and microseconds
 for `_us` fields. `read_ms` is when capture
 finished, not when a sensor measurement happened. `sample_ms` belongs to the last
-acquisition attempt; repeated reads preserve it. `applied_ms` belongs to the last
+acquisition or service update as specified for each source; repeated reads preserve
+it. External sensor `sample_ms` marks the last accepted measurement, including
+mode settling. `applied_ms` belongs to the last
 successful matrix write. The two button ladders have separate snapshots and times;
 reading all sources is not an atomic robot-wide measurement.
 
@@ -124,7 +126,8 @@ format, connection owner or Bluetooth service is introduced.
 | `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
 | `sound` | `changed_ms`, `owner`, `phase`, `mode`, `requested_hz`, `actual_hz`, `queued`, `completed`, `frequency`, `duration_ms`, `volume`, `eof`, `underruns`, `failures`, `cleanup` |
 | `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw` |
-| `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
+| `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`, `supply`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
+| `sensor.A` … `sensor.F` | `sample_ms`, `sequence`, `generation`, `type_id`, `mode`, `measurement`, `available`, `owner`, `fields`; applicable distance, light, HSV, force, displacement, tilt, count or presence values in [sensor units](ports.md#sensor-measurements) |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.

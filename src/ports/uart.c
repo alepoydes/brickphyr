@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "port_uart.h"
 #include "lump.h"
+#include "sensor.h"
 #include <string.h>
 #include <zephyr/drivers/uart.h>
 #if defined(CONFIG_PINCTRL)
@@ -41,6 +42,7 @@ static const struct {
 enum phase { OFFER, OFFER_TX, OFFER_ACK, SYNC, ACK_TX, BAUD_WAIT, DATA };
 static struct link {
 	struct lump lump;
+	struct port_sensor sensor;
 	struct ring_buf rx;
 	uint8_t rx_buffer[RX_CAPACITY], tx[34];
 	size_t tx_size, tx_pos;
@@ -48,6 +50,8 @@ static struct link {
 	bool active, tx_busy;
 	int64_t tx_done_ms, tx_deadline, born_ms, deadline, keepalive_ms, data_ms;
 	uint32_t baud;
+	uint32_t measurement;
+	bool selecting;
 	enum phase phase;
 } links[BP_PORT_COUNT];
 
@@ -190,6 +194,8 @@ int port_uart_start(uint32_t port)
 	struct link *l = &links[port];
 	*l = (struct link){0};
 	lump_reset(&l->lump);
+	l->measurement = UINT32_MAX;
+	l->sensor.value.error = -EAGAIN;
 	ring_buf_init(&l->rx, sizeof(l->rx_buffer), l->rx_buffer);
 	int err = uart_irq_callback_user_data_set(config[port].uart, interrupt, l);
 #if defined(CONFIG_PINCTRL)
@@ -248,6 +254,7 @@ static int receive(uint32_t port, int64_t now)
 		}
 		if (result == 1) {
 			l->data_ms = now;
+			port_sensor_receive(&l->sensor, &l->lump, now);
 		}
 		if (l->lump.phase != LUMP_TYPE && (beginning || !l->lump.used)) {
 			l->deadline = now + IO_TIMEOUT_MS;
@@ -261,7 +268,8 @@ static int receive(uint32_t port, int64_t now)
 	return 0;
 }
 
-int port_uart_poll(uint32_t port, struct bp_port_state *out)
+int port_uart_poll(uint32_t port, struct bp_port_state *out,
+	struct bp_sensor_sample *sensor, uint32_t measurement)
 {
 	struct link *l = &links[port];
 	int64_t now = k_uptime_get();
@@ -294,6 +302,23 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out)
 		l->deadline = now + IO_TIMEOUT_MS;
 		/* Until the first DATA, allow the same three keep-alive intervals. */
 		l->data_ms = now;
+		port_sensor_reset(&l->sensor, &l->lump);
+	}
+	if (l->phase == DATA && !err) {
+		if (l->selecting && !tx_busy) {
+			l->selecting = false;
+			port_sensor_sent(&l->sensor, tx_done);
+		}
+		if (l->measurement != measurement && !l->selecting) {
+			l->measurement = measurement;
+			int result = port_sensor_request(&l->sensor, &l->lump, measurement);
+			if (result) {
+				l->sensor.pending = l->sensor.awaiting = false;
+				l->sensor.mode = UINT8_MAX;
+				l->sensor.value.error = result;
+				l->sensor.value.fields = 0;
+			}
+		}
 	}
 	if (!err && (l->phase == OFFER_ACK || l->phase == SYNC || l->phase == DATA)) {
 		err = receive(port, now);
@@ -307,6 +332,10 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out)
 		err = -ETIMEDOUT;
 	}
 	if (!err && l->phase == DATA) {
+		if (!l->sensor.pending && (l->sensor.awaiting || l->sensor.first_ms >= 0) &&
+		    l->sensor.mode != UINT8_MAX && now >= l->sensor.deadline) {
+			return -ETIMEDOUT;
+		}
 		if (now - l->data_ms >= 3 * KEEPALIVE_MS) {
 			return -ETIMEDOUT;
 		}
@@ -314,6 +343,11 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out)
 			const uint8_t nack = LUMP_SYS_NACK;
 			err = transmit(port, &nack, 1);
 			l->keepalive_ms = now + KEEPALIVE_MS;
+		} else if (l->sensor.pending && !l->selecting && !l->tx_busy) {
+			uint8_t command[34];
+			int size = lump_command(command, LUMP_CMD_SELECT, &l->sensor.mode, 1);
+			err = transmit(port, command, size);
+			l->selecting = !err;
 		}
 	}
 	if (err) {
@@ -333,5 +367,22 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out)
 	out->data_type = l->lump.modes[l->lump.mode].type;
 	out->num_values = l->lump.modes[l->lump.mode].values;
 	memcpy(out->data, l->lump.data, out->length);
+	*sensor = l->sensor.value;
+	sensor->type_id = out->type_id;
+	if (l->measurement != measurement) {
+		sensor->error = -EAGAIN;
+		sensor->fields = 0;
+	}
+	if (l->phase == DATA && l->sensor.mode != UINT8_MAX) {
+		uint8_t supply = l->lump.capabilities & (LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 |
+			LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN2);
+		if (supply && ((l->lump.capabilities & (LUMP_MODE_FLAGS0_MOTOR_SPEED |
+		    LUMP_MODE_FLAGS0_MOTOR_ABS_POS | LUMP_MODE_FLAGS0_MOTOR_REL_POS |
+		    LUMP_MODE_FLAGS0_MOTOR_POWER | LUMP_MODE_FLAGS0_MOTOR)) ||
+		    supply == (LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 | LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN2))) {
+			return -EPROTO;
+		}
+		out->supply = supply == LUMP_MODE_FLAGS0_NEEDS_SUPPLY_PIN1 ? 1 : supply ? 2 : 0;
+	}
 	return 0;
 }

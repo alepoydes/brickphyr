@@ -11,3 +11,10 @@ These are upstream fixtures, not Brickphyr hardware captures.
 Tests feed them through the production parser and UART service. Additional
 synthetic malformed frames check bounds and rejection; synthetic serial timing
 does not verify electrical baud switching, ISR cost or physical device behavior.
+
+The sensor peers in `main.c` construct metadata from the pinned `lego/device.h`
+mode formats. Their SPIKE color/ultrasonic/force, BOOST color/distance and WeDo
+tilt/infrared readings are deliberately synthetic. They check meaningful units,
+settling, invalid calibration, mode ownership, ignored selections, power polarity
+and cleanup failure through the actual UART/GPIO service, Shell and SMP. They
+are not captures or evidence of physical sensor accuracy.

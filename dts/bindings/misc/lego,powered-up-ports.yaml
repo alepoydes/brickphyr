@@ -19,6 +19,12 @@ child-binding:
     uart:
       type: phandle
       description: UART controller used after electrical identification
+    p1-gpios:
+      type: phandle-array
+      description: H-bridge P1 input; both low is coast, P1 high supplies positive P1
+    p2-gpios:
+      type: phandle-array
+      description: H-bridge P2 input; paired with p1-gpios
     reg:
       type: int
       required: true

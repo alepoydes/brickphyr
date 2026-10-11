@@ -35,5 +35,6 @@ struct bp_port_state {
 	uint32_t data_sequence, baudrate, bad_frames;
 	uint8_t mode, num_modes, capabilities, length;
 	uint8_t data_type, num_values;
+	uint8_t supply; /* 0 coast, 1 sensor supply on P1, 2 sensor supply on P2 */
 	uint8_t data[32];
 };

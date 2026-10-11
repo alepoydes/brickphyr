@@ -43,19 +43,11 @@ def qemu(build):
 )
 def test_arm_firmware(suite, success):
     build = Path(__file__).resolve().parents[1] / "build" / suite
+    # Use Zephyr's runner, including the board's instruction-count clock.
+    # A hand-written QEMU command silently ignored CONFIG_QEMU_ICOUNT and made
+    # guest deadlines depend on host scheduling and translation overhead.
     with subprocess.Popen(
-        [
-            qemu(build),
-            "-machine",
-            "mps2-an385",
-            "-cpu",
-            "cortex-m3",
-            "-nographic",
-            "-monitor",
-            "none",
-            "-kernel",
-            str(build / "zephyr/zephyr.elf"),
-        ],
+        ["cmake", "--build", str(build), "--target", "run"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -82,6 +74,9 @@ def test_arm_firmware(suite, success):
 
 @contextmanager
 def native_console(build):
+    # This peer interacts with host Python/PTY I/O. Keep its clock paced against
+    # host time; an accelerated idle guest could expire a transfer before the
+    # host process is scheduled. Autonomous guest checks use Zephyr's runner.
     process = subprocess.Popen(
         [
             qemu(build),

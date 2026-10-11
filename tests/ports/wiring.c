@@ -13,7 +13,7 @@ struct wiring_config {
 };
 struct wiring_data {
 	struct gpio_driver_data common;
-	gpio_flags_t flags[5];
+	gpio_flags_t flags[7];
 	uint32_t outputs;
 	int64_t changed_ms;
 	bool read_failed;
@@ -24,12 +24,17 @@ static int configure(const struct device *dev, gpio_pin_t pin, gpio_flags_t flag
 {
 	const struct wiring_config *cfg = dev->config;
 	struct wiring_data *data = dev->data;
-	if (pin >= 5 || flags & (GPIO_PULL_UP | GPIO_PULL_DOWN)) {
+	if (pin >= 7 || flags & (GPIO_PULL_UP | GPIO_PULL_DOWN)) {
 		return -EINVAL;
 	}
 	if (cfg->index < 6) {
 		struct pup_test_circuit *c = &pup_test_circuits[cfg->index];
 		c->writes++;
+		if (c->coast_error && pin == 5 && (flags & GPIO_OUTPUT_INIT_LOW)) {
+			int err = c->coast_error;
+			c->coast_error = 0;
+			return err;
+		}
 		if (data->read_failed && c->release_error && pin == 4 && (flags & GPIO_OUTPUT_INIT_HIGH)) {
 			return c->release_error;
 		}
@@ -118,12 +123,14 @@ static const struct gpio_driver_api api = {
 
 #define WIRING_DEFINE(inst) \
 	static const struct wiring_config config_##inst = { \
-		.common = {.port_pin_mask = BIT_MASK(5)}, .index = DT_INST_PROP(inst, port_index)}; \
+		.common = {.port_pin_mask = BIT_MASK(DT_INST_PROP(inst, ngpios))}, \
+		.index = DT_INST_PROP(inst, port_index)}; \
 	DEVICE_DT_INST_DEFINE(inst, NULL, NULL, &state[DT_INST_PROP(inst, port_index)], \
 		&config_##inst, POST_KERNEL, CONFIG_GPIO_INIT_PRIORITY, &api);
 DT_INST_FOREACH_STATUS_OKAY(WIRING_DEFINE)
 
 bool pup_test_supply(void) { return state[6].outputs & BIT(0); }
+uint8_t pup_test_sensor_supply(uint32_t port) { return (state[port].outputs >> 5) & 3; }
 
 bool pup_test_released(uint32_t port)
 {
@@ -133,5 +140,5 @@ bool pup_test_released(uint32_t port)
 			return false;
 		}
 	}
-	return (d->flags[4] & GPIO_OUTPUT) && (d->outputs & BIT(4));
+	return (d->flags[4] & GPIO_OUTPUT) && (d->outputs & BIT(4)) && !pup_test_sensor_supply(port);
 }

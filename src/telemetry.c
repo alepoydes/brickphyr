@@ -29,10 +29,12 @@
 
 #define TELEMETRY_GROUP 66
 enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION,
-	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F };
+	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F,
+	SENSOR_A, SENSOR_B, SENSOR_C, SENSOR_D, SENSOR_E, SENSOR_F };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
 	"imu", "imu.calibrated", "imu.orientation", "sound", "battery",
-	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F"};
+	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F",
+	"sensor.A", "sensor.B", "sensor.C", "sensor.D", "sensor.E", "sensor.F"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -41,7 +43,7 @@ struct observation {
 	int64_t read_ms;
 	int error;
 	size_t count;
-	struct { const char *name; int64_t value; } fields[17];
+	struct { const char *name; int64_t value; } fields[18];
 	bool frame;
 	struct bp_matrix_state matrix;
 	bool port_data;
@@ -60,6 +62,8 @@ static bool available(enum source source)
 	case BATTERY: return IS_ENABLED(CONFIG_BRICKPHYR_BATTERY);
 	case PORT_A: case PORT_B: case PORT_C: case PORT_D: case PORT_E: case PORT_F:
 		return IS_ENABLED(CONFIG_BRICKPHYR_PORTS);
+	case SENSOR_A: case SENSOR_B: case SENSOR_C: case SENSOR_D: case SENSOR_E: case SENSOR_F:
+		return IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -191,6 +195,40 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
 		}
+	} else if (source >= SENSOR_A && source <= SENSOR_F) {
+		struct bp_sensor_sample value;
+		out->error = hub_sensor_get(source - SENSOR_A, &value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_ms", value.sample_ms);
+			field(out, "sequence", value.sequence);
+			field(out, "generation", value.generation);
+			field(out, "type_id", value.type_id);
+			field(out, "mode", value.mode);
+			field(out, "measurement", value.measurement);
+			field(out, "available", value.available);
+			field(out, "owner", value.owner);
+			field(out, "fields", value.fields);
+			if (value.fields & BP_SENSOR_HAS_DISTANCE) field(out, "distance_mm", value.distance_mm);
+			if (value.fields & BP_SENSOR_HAS_RELATIVE_DISTANCE) field(out, "distance_pct", value.distance_pct);
+			if (value.fields & BP_SENSOR_HAS_REFLECTION) field(out, "reflection_permille", value.reflection_permille);
+			if (value.fields & BP_SENSOR_HAS_AMBIENT) field(out, "ambient_permille", value.ambient_permille);
+			if (value.fields & BP_SENSOR_HAS_COUNT) field(out, "count", value.count);
+			if (value.fields & BP_SENSOR_HAS_PRESENCE) field(out, "presence", value.presence);
+			if (value.fields & BP_SENSOR_HAS_HSV) {
+				field(out, "hue_deg", value.hue_deg);
+				field(out, "saturation_pct", value.saturation_pct);
+				field(out, "value_pct", value.value_pct);
+			}
+			if (value.fields & BP_SENSOR_HAS_FORCE) {
+				field(out, "force_mn", value.force_mn);
+				field(out, "travel_um", value.travel_um);
+			}
+			if (value.fields & BP_SENSOR_HAS_TILT) {
+				field(out, "tilt0_deg", value.tilt_deg[0]);
+				field(out, "tilt1_deg", value.tilt_deg[1]);
+			}
+		}
 	} else if (source >= PORT_A && source <= PORT_F) {
 		struct bp_port_state value;
 		out->error = hub_port_get(source - PORT_A, &value);
@@ -204,6 +242,7 @@ static void capture(enum source source, struct observation *out)
 			field(out, "phase", value.phase);
 			field(out, "type_id", value.type_id);
 			field(out, "cleanup", value.cleanup_error);
+			field(out, "supply", value.supply);
 			if (value.phase == BP_PORT_NEGOTIATING || value.phase == BP_PORT_READY) {
 				field(out, "data_ms", value.data_ms);
 				field(out, "data_sequence", value.data_sequence);
@@ -369,6 +408,31 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | source]. Omit source to read all available observations.",
 		      cmd_observe, 1, 1);
+
+static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
+{
+	if (strlen(argv[1]) != 1 || argv[1][0] < 'A' || argv[1][0] > 'F') {
+		return -EINVAL;
+	}
+	uint32_t port = argv[1][0] - 'A';
+	if (!strcmp(argv[2], "release")) {
+		return hub_sensor_release(BP_SENSOR_TERMINAL, port);
+	}
+	static const char *const modes[] = {"default", "surface", "ambient", "distance",
+		"presence", "force", "tilt", "count"};
+	BUILD_ASSERT(ARRAY_SIZE(modes) == BP_SENSOR_COUNT + 1);
+	for (uint32_t i = 0; i < ARRAY_SIZE(modes); i++) {
+		if (!strcmp(argv[2], modes[i])) {
+			int err = hub_sensor_configure(BP_SENSOR_TERMINAL, port, i);
+			shell_print(shell, "Sensor %c: %d; read observe sensor.%c", argv[1][0], err, argv[1][0]);
+			return err;
+		}
+	}
+	return -EINVAL;
+}
+SHELL_CMD_ARG_REGISTER(sensor, NULL,
+	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|release.",
+	cmd_sensor, 3, 0);
 
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = info_read}, [1] = {.mh_read = snapshot_read},

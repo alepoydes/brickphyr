@@ -8,9 +8,10 @@ enum pup_test_kind { UNPLUGGED, MEDIUM_MOTOR, TRAIN_MOTOR, LIGHT, UART_DEVICE, T
 struct pup_test_circuit {
 	enum pup_test_kind kind;
 	bool pressed;
-	int read_error, release_error;
+	int read_error, release_error, coast_error;
 	uint32_t reads, writes;
 };
 extern struct pup_test_circuit pup_test_circuits[6];
 bool pup_test_supply(void);
+uint8_t pup_test_sensor_supply(uint32_t port);
 bool pup_test_released(uint32_t port);

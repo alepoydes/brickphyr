@@ -14,6 +14,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
@@ -24,6 +25,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py

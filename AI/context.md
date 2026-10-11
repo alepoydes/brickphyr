@@ -61,8 +61,11 @@ protected ARM SDK and SMP checks cover these new services; physical display,
 IMU accuracy/timing, audio and voltage/current verification remain pending.
 Electrical A–F detection and LUMP UART negotiation now have native/Shell/SMP
 snapshots, including raw DATA, with synthetic GPIO/UART and protected ARM checks.
-Device-specific sensor modes/units and motors remain next; physical port
-identification, baud switching and serial timing under load are unverified.
+Known SPIKE/BOOST/WeDo sensors now have converted measurements, owned mode
+selection and validated sensor supply in that same service. Synthetic UART/GPIO
+checks cover units, settling, malformed calibration and cleanup. Motors remain
+next; physical sensor power/readings, port identification, baud switching and
+serial timing under load are unverified.
 
 ## Dependencies and remaining work
 

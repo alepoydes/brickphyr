@@ -231,6 +231,38 @@ static inline int z_vrfy_bp_port_get(uint32_t port, struct bp_port_state *value)
 }
 #include <zephyr/syscalls/bp_port_get_mrsh.c>
 
+int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
+{
+	return hub_sensor_get(port, value);
+}
+static inline int z_vrfy_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_sensor_get(port, value);
+}
+#include <zephyr/syscalls/bp_sensor_get_mrsh.c>
+
+int z_impl_bp_sensor_configure(uint32_t port, uint32_t measurement)
+{
+	return hub_sensor_configure(BP_SENSOR_APPLICATION, port, measurement);
+}
+static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement)
+{
+	return z_impl_bp_sensor_configure(port, measurement);
+}
+#include <zephyr/syscalls/bp_sensor_configure_mrsh.c>
+
+int z_impl_bp_sensor_release(uint32_t port)
+{
+	return hub_sensor_release(BP_SENSOR_APPLICATION, port);
+}
+static inline int z_vrfy_bp_sensor_release(uint32_t port)
+{
+	return z_impl_bp_sensor_release(port);
+}
+#include <zephyr/syscalls/bp_sensor_release_mrsh.c>
+
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
 	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);
@@ -334,6 +366,7 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 static int release(void)
 {
+	hub_sensors_release(BP_SENSOR_APPLICATION);
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */
 	int err = hub_sound_release(BP_SOUND_APPLICATION);

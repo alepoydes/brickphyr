@@ -22,8 +22,9 @@ config BRICKPHYR_PORT_UART
 	select RING_BUFFER
 	select PINCTRL_NON_STATIC if PINCTRL
 	help
-	  Negotiate LUMP devices and acquire bounded binary samples. GPIO detection
-	  and UART share one worker. No output command or H-bridge access is exposed.
+	  Negotiate LUMP devices and acquire raw and converted sensor samples.
+	  One worker owns GPIO, UART, measurement selection and recognized sensor
+	  DC supply. No motor-drive command or raw H-bridge access is exposed.
 
 config BRICKPHYR_BATTERY
 	bool "Battery voltage and load-current observations"

@@ -11,6 +11,7 @@
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
 #include <brickphyr_port.h>
+#include <brickphyr_sensor.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -47,9 +48,18 @@ __syscall int bp_imu_get_state(struct bp_imu_state *state);
  * Check sample.error; startup, stale, failed and stopped readings stay explicit. */
 __syscall int bp_battery_get(struct bp_battery_sample *sample);
 
-/* Copy electrical detection state; no I/O or port reconfiguration. Ports are
- * numbered 0..5 (A..F). This does not negotiate a UART device or drive a motor. */
+/* Copy port identity and raw UART data; no I/O or port reconfiguration.
+ * Ports are numbered 0..5 (A..F). */
 __syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
+/* Shared converted measurement. Inspect error, fields, sample_ms and generation.
+ * Reads never change modes or interfere with a running application. */
+__syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);
+/* Claim this sensor's measurement mode until release/app exit. Nonblocking:
+ * 0 means accepted; get() reports EAGAIN until a settled sample is available.
+ * Unsupported measurements return ENOTSUP before a command or claim. */
+__syscall int bp_sensor_configure(uint32_t port, uint32_t measurement);
+/* Release the application's claim and restore automatic measurement. */
+__syscall int bp_sensor_release(uint32_t port);
 
 /* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
  * Zero duration continues until stopped; otherwise duration is milliseconds.

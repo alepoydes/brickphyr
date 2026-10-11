@@ -6,6 +6,13 @@ BRICKPHYR_APPLICATION();
 
 int app_main(void)
 {
+	/* This electrical-only fixture has no UART sensor backend. The protected
+	 * syscall must report that before acquiring a mode or touching hardware. */
+	struct bp_sensor_sample sensor;
+	if (bp_sensor_get(0, &sensor) != -ENOTSUP ||
+	    bp_sensor_configure(0, BP_SENSOR_AMBIENT) != -ENOTSUP || bp_sensor_release(0)) {
+		return -ENOTSUP;
+	}
 	struct bp_port_state port;
 	if (bp_port_get(0, &port) || bp_port_get(BP_PORT_COUNT, &port) != -EINVAL ||
 	    port.type_id != 0 || (port.error != 0 && port.error != -EAGAIN)) {
