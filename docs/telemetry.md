@@ -124,7 +124,7 @@ format, connection owner or Bluetooth service is introduced.
 | `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
 | `sound` | `changed_ms`, `owner`, `phase`, `mode`, `requested_hz`, `actual_hz`, `queued`, `completed`, `frequency`, `duration_ms`, `volume`, `eof`, `underruns`, `failures`, `cleanup` |
 | `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw` |
-| `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `pressed`, `cleanup`; [electrical identification only](ports.md) |
+| `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.

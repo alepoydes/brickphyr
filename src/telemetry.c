@@ -41,9 +41,11 @@ struct observation {
 	int64_t read_ms;
 	int error;
 	size_t count;
-	struct { const char *name; int64_t value; } fields[16];
+	struct { const char *name; int64_t value; } fields[17];
 	bool frame;
 	struct bp_matrix_state matrix;
+	bool port_data;
+	uint8_t data[32], data_length;
 };
 
 static bool available(enum source source)
@@ -201,8 +203,23 @@ static void capture(enum source source, struct observation *out)
 			field(out, "failures", value.failures);
 			field(out, "phase", value.phase);
 			field(out, "type_id", value.type_id);
-			field(out, "pressed", value.pressed);
 			field(out, "cleanup", value.cleanup_error);
+			if (value.phase == BP_PORT_NEGOTIATING || value.phase == BP_PORT_READY) {
+				field(out, "data_ms", value.data_ms);
+				field(out, "data_sequence", value.data_sequence);
+				field(out, "mode", value.mode);
+				field(out, "num_modes", value.num_modes);
+				field(out, "data_type", value.data_type);
+				field(out, "num_values", value.num_values);
+				field(out, "baudrate", value.baudrate);
+				field(out, "capabilities", value.capabilities);
+				field(out, "bad_frames", value.bad_frames);
+				out->port_data = true;
+				out->data_length = value.length;
+				memcpy(out->data, value.data, value.length);
+			} else {
+				field(out, "pressed", value.pressed);
+			}
 		}
 	} else if (source == BATTERY) {
 		struct bp_battery_sample value;
@@ -300,7 +317,7 @@ static int snapshot_read(struct smp_streamer *stream)
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = number(zs, "api", 1) && text(zs, "source") && text(zs, names[selected]) &&
 		number(zs, "read_ms", value.read_ms) && number(zs, "error", value.error) &&
-		text(zs, "values") && zcbor_map_start_encode(zs, ARRAY_SIZE(value.fields));
+		text(zs, "values") && zcbor_map_start_encode(zs, ARRAY_SIZE(value.fields) + 2);
 	for (size_t i = 0; ok && i < value.count; i++) {
 		ok = number(zs, value.fields[i].name, value.fields[i].value);
 	}
@@ -308,7 +325,10 @@ static int snapshot_read(struct smp_streamer *stream)
 		ok = text(zs, "requested") && zcbor_bstr_encode_ptr(zs, value.matrix.requested, BP_MATRIX_PIXELS) &&
 			text(zs, "applied") && zcbor_bstr_encode_ptr(zs, value.matrix.applied, BP_MATRIX_PIXELS);
 	}
-	return ok && zcbor_map_end_encode(zs, ARRAY_SIZE(value.fields)) ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	if (ok && value.port_data) {
+		ok = text(zs, "data") && zcbor_bstr_encode_ptr(zs, value.data, value.data_length);
+	}
+	return ok && zcbor_map_end_encode(zs, ARRAY_SIZE(value.fields) + 2) ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
 static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
@@ -328,6 +348,9 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 		shell_print(shell, "%s read_ms=%" PRId64 " error=%d", names[i], value.read_ms, value.error);
 		for (size_t j = 0; j < value.count; j++) {
 			shell_print(shell, "  %s=%" PRId64, value.fields[j].name, value.fields[j].value);
+		}
+		if (value.port_data) {
+			shell_hexdump(shell, value.data, value.data_length);
 		}
 		if (value.frame) {
 			shell_print(shell, "  requested / applied (row-major brightness 0..100):");

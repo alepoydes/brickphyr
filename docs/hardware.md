@@ -341,11 +341,11 @@ executes the DAC registers on a physical hub.
 
 ## External port identification
 
-The F4 build has experimental electrical detection on ports A–F, shared by the
-native SDK, Shell and SMP. [External ports](ports.md) describes identification,
-hotplug, validity and cleanup. Synthetic GPIO and ARM checks pass; physical
-identification, UART negotiation and external sensor measurements remain pending.
-Motor outputs stay in coast.
+The F4 build has experimental electrical detection and LUMP UART negotiation on
+ports A–F, shared by the native SDK, Shell and SMP. [External ports](ports.md)
+describes identification, raw packets, hotplug, validity and cleanup. Synthetic
+GPIO/UART and ARM checks pass. Physical identification/baud switching and
+device-specific sensor measurements remain pending. Motor outputs stay in coast.
 
 ## Hub battery
 

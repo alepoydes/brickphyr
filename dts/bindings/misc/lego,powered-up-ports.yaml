@@ -16,6 +16,9 @@ properties:
 child-binding:
   description: One external port; reg is its zero-based index (A is 0)
   properties:
+    uart:
+      type: phandle
+      description: UART controller used after electrical identification
     reg:
       type: int
       required: true

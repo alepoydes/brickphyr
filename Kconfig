@@ -4,13 +4,26 @@ mainmenu "Brickphyr"
 source "Kconfig.zephyr"
 
 config BRICKPHYR_PORTS
-	bool "Powered Up electrical identification"
+	bool "Powered Up port detection"
 	default y if BOARD_SPIKE_PRIME_F4
 	depends on DT_HAS_LEGO_POWERED_UP_PORTS_ENABLED
 	select GPIO
 	help
 	  Detect empty, passive and UART ports using the Pybricks pin sequence
-	  over Zephyr GPIO. No UART negotiation or motor drive yet.
+	  over Zephyr GPIO. Motor outputs are managed separately.
+
+config BRICKPHYR_PORT_UART
+	bool "Powered Up UART messaging"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on BRICKPHYR_PORTS
+	select SERIAL
+	select UART_INTERRUPT_DRIVEN
+	select UART_USE_RUNTIME_CONFIGURE
+	select RING_BUFFER
+	select PINCTRL_NON_STATIC if PINCTRL
+	help
+	  Negotiate LUMP devices and acquire bounded binary samples. GPIO detection
+	  and UART share one worker. No output command or H-bridge access is exposed.
 
 config BRICKPHYR_BATTERY
 	bool "Battery voltage and load-current observations"

@@ -4,6 +4,7 @@
  * Zephyr GPIO and a single delayed work item replace the PBIO scheduler.
  * See docs/ports.md for provenance, settling and identification limits. */
 #include "hub_ports.h"
+#include "port_uart.h"
 #include <lego/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
@@ -15,7 +16,7 @@
 
 enum pin { P5, P6, TX, RX, BUFFER, PIN_COUNT };
 enum step { START, P6_HIGH, P6_LOW, TOUCH, ID1_HIGH, ID1_FLOAT, ID1_DONE,
-	P5_HIGH, P5_LOW, RX_HIGH, RX_LOW, FINISH };
+	P5_HIGH, P5_LOW, RX_HIGH, RX_LOW, FINISH, UART };
 enum group { GND, VCC, PULL_DOWN, OPEN };
 
 static const uint16_t type_ids[3][3] = {
@@ -72,32 +73,38 @@ static int release_pins(uint32_t port)
 	return result;
 }
 
-static void publish(uint32_t port, int error, int cleanup)
+static void publish(uint32_t port, int error, int cleanup, const struct bp_port_state *uart)
 {
 	struct port *p = &ports[port];
-	enum bp_port_phase phase = error ? BP_PORT_FAULT :
+	enum bp_port_phase phase = error ? BP_PORT_FAULT : uart ? uart->phase :
 		p->matches < MATCH_COUNT ? BP_PORT_DETECTING :
 		p->previous == LEGO_DEVICE_TYPE_ID_NONE ? BP_PORT_EMPTY :
 		p->previous == LEGO_DEVICE_TYPE_ID_LPF2_UNKNOWN_UART ? BP_PORT_UART : BP_PORT_PASSIVE;
-	uint16_t id = phase == BP_PORT_PASSIVE || phase == BP_PORT_UART ? p->previous : 0;
+	uint16_t id = error ? 0 : uart ? uart->type_id :
+		phase == BP_PORT_PASSIVE || phase == BP_PORT_UART ? p->previous : 0;
 	int64_t now = k_uptime_get();
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	struct bp_port_state *v = &p->value;
-	if (v->phase != phase || v->type_id != id) {
-		v->changed_ms = now;
-		v->generation++;
+	struct bp_port_state v = uart ? *uart : (struct bp_port_state){0};
+	v.generation = p->value.generation;
+	v.changed_ms = p->value.changed_ms;
+	if (p->value.phase != phase || p->value.type_id != id) {
+		v.changed_ms = now;
+		v.generation++;
 	}
-	v->phase = phase;
-	v->type_id = id;
-	v->pressed = id == LEGO_DEVICE_TYPE_ID_LPF2_TOUCH ? p->pressed : 0;
-	v->sample_ms = now;
-	v->error = error ? error : phase == BP_PORT_DETECTING ? -EAGAIN : 0;
-	v->cleanup_error = cleanup;
+	v.phase = phase;
+	v.type_id = id;
+	v.pressed = id == LEGO_DEVICE_TYPE_ID_LPF2_TOUCH ? p->pressed : 0;
+	v.sample_ms = now;
+	v.error = error ? error : uart ? uart->error : phase == BP_PORT_DETECTING ? -EAGAIN : 0;
+	v.cleanup_error = cleanup;
+	v.failures = p->value.failures;
+	v.sequence = p->value.sequence;
 	if (error) {
-		v->failures += v->failures != UINT32_MAX;
+		v.failures += v.failures != UINT32_MAX;
 	} else {
-		v->sequence++;
+		v.sequence += uart ? uart->data_sequence - p->value.data_sequence : 1;
 	}
+	p->value = v;
 	k_spin_unlock(&lock, key);
 }
 
@@ -110,6 +117,12 @@ static int advance(uint32_t port)
 	struct port *p = &ports[port];
 	int value;
 	switch (p->step) {
+	case UART: {
+		struct bp_port_state uart = {0};
+		TRY_IO(port_uart_poll(port, &uart));
+		publish(port, 0, 0, &uart);
+		return 0;
+	}
 	case START:
 		TRY_IO(release_pins(port));
 		p->matches = 0;
@@ -216,7 +229,15 @@ static int advance(uint32_t port)
 			p->matches = 0;
 			p->previous = p->candidate;
 		}
-		publish(port, 0, 0);
+		publish(port, 0, 0, NULL);
+		if (p->matches == MATCH_COUNT && p->previous == LEGO_DEVICE_TYPE_ID_LPF2_UNKNOWN_UART &&
+		    port_uart_available(port)) {
+			TRY_IO(release_pins(port));
+			TRY_IO(port_uart_start(port));
+			TRY_IO(set_pin(port, BUFFER, GPIO_OUTPUT_ACTIVE));
+			p->step = UART;
+			return 0;
+		}
 		break;
 	}
 	TRY_IO(set_pin(port, P6, GPIO_INPUT));
@@ -239,8 +260,9 @@ static void scan(struct k_work *item)
 		if (k_uptime_get() >= ports[i].next_ms) {
 			int err = advance(i);
 			if (err) {
+				port_uart_stop(i);
 				int cleanup = release_pins(i);
-				publish(i, err, cleanup);
+				publish(i, err, cleanup, NULL);
 				ports[i].step = START;
 			}
 			ports[i].next_ms = k_uptime_get() + (err ? RETRY_MS : SETTLE_MS);
@@ -277,7 +299,7 @@ static int initialize(void)
 	if (err) {
 		int cleanup = gpio_is_ready_dt(&supply) ? gpio_pin_set_dt(&supply, 0) : 0;
 		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
-			publish(i, err, cleanup);
+			publish(i, err, cleanup, NULL);
 		}
 		return err;
 	}
@@ -311,6 +333,9 @@ int hub_ports_shutdown(void)
 	atomic_set(&stopping, 1);
 	struct k_work_sync sync;
 	k_work_cancel_delayable_sync(&work, &sync);
+	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		port_uart_stop(i);
+	}
 	int supply_error = gpio_is_ready_dt(&supply) ? gpio_pin_set_dt(&supply, 0) : -ENODEV;
 	int result = supply_error;
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
@@ -332,6 +357,7 @@ int hub_ports_shutdown(void)
 		v->phase = phase;
 		v->type_id = 0;
 		v->pressed = 0;
+		v->length = 0;
 		if (!v->error || v->error == -EAGAIN) {
 			v->error = cleanup ? cleanup : -ESHUTDOWN;
 		}

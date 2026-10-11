@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "../ports/ports.dtsi"
+/ {
+	lump_uart: lump-uart {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <1024>;
+		tx-fifo-size = <128>;
+	};
+};
+&hub_ports {
+	port@0 { uart = <&lump_uart>; };
+};

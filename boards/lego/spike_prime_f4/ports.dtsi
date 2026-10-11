@@ -9,6 +9,7 @@
 		#size-cells = <0>;
 		port@0 {
 			reg = <0>;
+			uart = <&uart7>;
 			p5-gpios = <&gpiod 7 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpiod 8 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpioe 8 GPIO_ACTIVE_HIGH>;
@@ -17,6 +18,7 @@
 		};
 		port@1 {
 			reg = <1>;
+			uart = <&uart4>;
 			p5-gpios = <&gpiod 9 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpiod 10 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpiod 1 GPIO_ACTIVE_HIGH>;
@@ -25,6 +27,7 @@
 		};
 		port@2 {
 			reg = <2>;
+			uart = <&uart8>;
 			p5-gpios = <&gpiod 11 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpioe 4 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
@@ -33,6 +36,7 @@
 		};
 		port@3 {
 			reg = <3>;
+			uart = <&uart5>;
 			p5-gpios = <&gpioc 15 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpioc 14 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpioc 12 GPIO_ACTIVE_HIGH>;
@@ -41,6 +45,7 @@
 		};
 		port@4 {
 			reg = <4>;
+			uart = <&uart10>;
 			p5-gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpioe 12 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpioe 3 GPIO_ACTIVE_HIGH>;
@@ -49,6 +54,7 @@
 		};
 		port@5 {
 			reg = <5>;
+			uart = <&uart9>;
 			p5-gpios = <&gpioc 11 GPIO_ACTIVE_HIGH>;
 			p6-gpios = <&gpioe 6 GPIO_ACTIVE_HIGH>;
 			tx-gpios = <&gpiod 15 GPIO_ACTIVE_HIGH>;
@@ -56,4 +62,106 @@
 			buffer-gpios = <&gpioc 5 GPIO_ACTIVE_LOW>;
 		};
 	};
+};
+
+&uart7 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart7_tx_pe8 &uart7_rx_pe7>;
+	pinctrl-names = "default";
+};
+
+&uart7_tx_pe8 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart7_rx_pe7 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart4 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart4_tx_pd1 &uart4_rx_pd0>;
+	pinctrl-names = "default";
+};
+
+&uart4_tx_pd1 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart4_rx_pd0 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart8 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart8_tx_pe1 &uart8_rx_pe0>;
+	pinctrl-names = "default";
+};
+
+&uart8_tx_pe1 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart8_rx_pe0 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart5 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart5_tx_pc12 &uart5_rx_pd2>;
+	pinctrl-names = "default";
+};
+
+&uart5_tx_pc12 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart5_rx_pd2 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart10 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart10_tx_pe3 &uart10_rx_pe2>;
+	pinctrl-names = "default";
+};
+
+&uart10_tx_pe3 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart10_rx_pe2 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart9 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart9_tx_pd15 &uart9_rx_pd14>;
+	pinctrl-names = "default";
+};
+
+&uart9_tx_pd15 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+};
+
+&uart9_rx_pd14 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
 };

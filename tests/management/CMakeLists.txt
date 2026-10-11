@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20.5)
 get_filename_component(BRICKPHYR_ROOT ../.. ABSOLUTE)
 set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
-list(APPEND DTS_ROOT ${BRICKPHYR_ROOT})
+list(APPEND DTS_ROOT ${BRICKPHYR_ROOT} ${BRICKPHYR_ROOT}/tests/ports)
 set(CONF_FILE ${BRICKPHYR_ROOT}/prj.conf
   ${BRICKPHYR_ROOT}/tests/host/prj.conf
   ${BRICKPHYR_ROOT}/tests/storage/prj.conf
