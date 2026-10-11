@@ -66,10 +66,14 @@ selection and validated sensor supply in that same service. Synthetic UART/GPIO
 checks cover units, settling, malformed calibration and cleanup. Read-only BOOST,
 Technic and SPIKE motor encoders share that service, with synthetic turn counting,
 rollover and inactive-output checks. The shared GPIO/PWM output adapter has F4
-wiring and synthetic duty/direction/cleanup checks; motor command ownership and
-control remain next. Physical
+wiring and synthetic duty/direction/cleanup checks. Native/Shell direct drive
+shares port ownership, asynchronous completion and coast on application cleanup
+or device loss; regulation and trajectories remain next. Physical
 sensor power/readings, encoder motion, port identification, baud switching and
 serial timing under load are unverified.
+The next port diagnostics increment is [generic device inspection](../docs/ports.md#planned-device-inspection):
+terminal inventory, advertised modes/metadata and raw/decoded observations,
+including unknown third-party sensors, through the existing service.
 
 ## Dependencies and remaining work
 

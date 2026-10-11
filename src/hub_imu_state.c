@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_imu.h"
 #include "hub_imu_internal.h"
+#include "hub_ports.h"
 #include "configuration.h"
 
 #include <math.h>
@@ -28,6 +29,7 @@ static imu_stationary_t stationary;
 static bool restart = true;
 static int64_t last_us;
 static uint32_t last_sequence;
+static uint32_t motor_token;
 
 enum setting { GYRO_THRESHOLD, ACCEL_THRESHOLD, BIAS, GYRO_SCALE, ACCEL_CALIBRATION, HEADING };
 const struct config_entry imu_config[] = {
@@ -95,9 +97,10 @@ void hub_imu_process(const struct bp_imu_sample *sample, const int16_t data[6])
 	last_us = sample->sample_us;
 	last_sequence = sample->sequence;
 
-	/* Motor control is not implemented yet. Its service must inhibit learning
-	 * while driving; an application's mere presence is not motor activity. */
-	if (imu_stationary_update(&stationary, data,
+	uint32_t token = hub_motor_activity();
+	if ((token & 1) || token != motor_token) memset(&stationary, 0, sizeof(stationary));
+	motor_token = token;
+	if (!(token & 1) && imu_stationary_update(&stationary, data,
 		   raw_threshold(calibration.gyro_stationary_threshold,
 			lsm6ds3tr_c_from_fs2000dps_to_mdps(1) / 1000.0f),
 		   raw_threshold(calibration.accel_stationary_threshold,

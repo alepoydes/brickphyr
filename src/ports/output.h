@@ -8,5 +8,7 @@
  * must attempt coast and retain that cleanup error separately. */
 int port_output_coast(uint32_t port);
 int port_output_supply(uint32_t port, uint8_t pin);
+/* Availability/readiness only, no peripheral operations. */
+int port_output_check(uint32_t port);
 /* Pybricks direction, -1000..1000 permille; zero brakes, not coast. */
 int port_output_drive(uint32_t port, int32_t duty);

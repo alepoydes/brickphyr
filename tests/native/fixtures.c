@@ -36,6 +36,9 @@ static const unsigned char sound_fault[] = {
 static const unsigned char battery_fault[] = {
 #include <native_battery_fault.inc>
 };
+static const unsigned char motor[] = {
+#include <native_motor.inc>
+};
 
 const void *native_fixture_hello(size_t *length)
 {
@@ -73,6 +76,7 @@ int native_fixture_run(const char *name)
 		{"imu", imu, sizeof(imu)},
 		{"sound", sound, sizeof(sound)}, {"sound_fault", sound_fault, sizeof(sound_fault)},
 		{"battery_fault", battery_fault, sizeof(battery_fault)},
+		{"motor", motor, sizeof(motor)},
 		{"truncated", hello, sizeof(hello) - 1},
 	};
 	for (size_t i = 0; i < ARRAY_SIZE(images); i++) {
@@ -90,5 +94,5 @@ static int cmd_fixture(const struct shell *shell, size_t argc, char **argv)
 	return err;
 }
 
-SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, imu, sound, sound_fault, battery_fault, truncated, badabi.",
+SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, imu, sound, sound_fault, battery_fault, motor, truncated, badabi.",
 		      cmd_fixture, 2, 0);

@@ -247,8 +247,9 @@ Stationary detection and bias averaging retain Pybricks' bounded sample windows.
 `stationary` means low variation, and `ready` means bias was learned within the
 last ten minutes. Constant rotation can resemble bias; neither flag proves
 absolute rest. Learning continues during applications. Set either stationary
-threshold to zero to disable learning when necessary. Future motor control must
-inhibit learning while driving. Initial bias, scale and calibration are changed
+threshold to zero to disable learning when necessary. Motor drive inhibits
+learning until the output is confirmed passive and a new stationary window is
+observed. Initial bias, scale and calibration are changed
 through [Settings](settings.md#imu-calibration); learning never writes flash.
 
 `sample_us` timestamps the observed gyro-ready edge on the monotonic clock.
@@ -344,12 +345,13 @@ executes the DAC registers on a physical hub.
 The F4 build has experimental electrical detection and LUMP UART negotiation on
 ports A–F, shared by the native SDK, Shell and SMP. [External ports](ports.md)
 describes identification, raw packets, converted sensor/encoder measurements,
-explicit mode selection, hotplug and cleanup. Supported SPIKE, BOOST and WeDo
+explicit mode selection, direct motor drive, hotplug and cleanup. Supported SPIKE, BOOST and WeDo
 sensors share one service, including validated additional sensor power. Synthetic
 GPIO/UART checks cover conversions, encoder turn counting and ownership; ARM
 checks cover the protected API boundary. Physical identification, baud switching,
-sensor power, encoder motion and readings remain unverified. Actual motor IDs
-stay in coast.
+sensor power, encoder motion and readings remain unverified. Recognized motors
+stay in coast until explicitly commanded; physical drive and stopping remain
+unverified.
 
 ## Hub battery
 

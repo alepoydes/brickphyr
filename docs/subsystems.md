@@ -4,7 +4,8 @@ The table selects code sources and integration boundaries. The experimental
 Prime F4 build integrates clock/power setup, buttons, lighting, and a Zephyr USB
 diagnostic shell. See [hardware](hardware.md) for physical verification.
 Native loading, storage, matrix, IMU, sound, battery, electrical port detection
-and raw/converted LUMP sensor and encoder acquisition are implemented. Remaining
+and raw/converted LUMP sensor and encoder acquisition are implemented, along with
+owned direct motor drive. Remaining
 device services and Python/WASM integrations below are selected directions.
 This is not a claim that every chip has a Zephyr driver.
 

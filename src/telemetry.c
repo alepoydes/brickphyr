@@ -30,11 +30,13 @@
 #define TELEMETRY_GROUP 66
 enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION,
 	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F,
-	SENSOR_A, SENSOR_B, SENSOR_C, SENSOR_D, SENSOR_E, SENSOR_F };
+	SENSOR_A, SENSOR_B, SENSOR_C, SENSOR_D, SENSOR_E, SENSOR_F,
+	MOTOR_A, MOTOR_B, MOTOR_C, MOTOR_D, MOTOR_E, MOTOR_F };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
 	"imu", "imu.calibrated", "imu.orientation", "sound", "battery",
 	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F",
-	"sensor.A", "sensor.B", "sensor.C", "sensor.D", "sensor.E", "sensor.F"};
+	"sensor.A", "sensor.B", "sensor.C", "sensor.D", "sensor.E", "sensor.F",
+	"motor.A", "motor.B", "motor.C", "motor.D", "motor.E", "motor.F"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -64,6 +66,8 @@ static bool available(enum source source)
 		return IS_ENABLED(CONFIG_BRICKPHYR_PORTS);
 	case SENSOR_A: case SENSOR_B: case SENSOR_C: case SENSOR_D: case SENSOR_E: case SENSOR_F:
 		return IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART);
+	case MOTOR_A: case MOTOR_B: case MOTOR_C: case MOTOR_D: case MOTOR_E: case MOTOR_F:
+		return IS_ENABLED(CONFIG_BRICKPHYR_MOTORS);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -194,6 +198,28 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
+		}
+	} else if (source >= MOTOR_A && source <= MOTOR_F) {
+		struct bp_motor_state value;
+		out->error = hub_motor_get(source - MOTOR_A, &value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "requested_ms", value.requested_ms);
+			field(out, "applied_ms", value.applied_ms);
+			field(out, "deadline_ms", value.deadline_ms);
+			field(out, "generation", value.generation);
+			field(out, "request", value.request);
+			field(out, "completed", value.completed);
+			field(out, "mode", value.mode);
+			field(out, "duty_permille", value.duty);
+			field(out, "requested_mode", value.requested_mode);
+			field(out, "requested_duty", value.requested_duty);
+			field(out, "owner", value.owner);
+			field(out, "pending", value.pending);
+			field(out, "releasing", value.releasing);
+			field(out, "valid", value.valid);
+			field(out, "cleanup", value.cleanup_error);
+			field(out, "failures", value.failures);
 		}
 	} else if (source >= SENSOR_A && source <= SENSOR_F) {
 		struct bp_sensor_sample value;
@@ -418,14 +444,14 @@ static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
 	}
 	uint32_t port = argv[1][0] - 'A';
 	if (!strcmp(argv[2], "release")) {
-		return hub_sensor_release(BP_SENSOR_TERMINAL, port);
+		return hub_port_release(BP_PORT_TERMINAL, port);
 	}
 	static const char *const modes[] = {"default", "surface", "ambient", "distance",
 		"presence", "force", "tilt", "count", "angle"};
 	BUILD_ASSERT(ARRAY_SIZE(modes) == BP_SENSOR_MEASUREMENT_COUNT);
 	for (uint32_t i = 0; i < ARRAY_SIZE(modes); i++) {
 		if (!strcmp(argv[2], modes[i])) {
-			int err = hub_sensor_configure(BP_SENSOR_TERMINAL, port, i);
+			int err = hub_sensor_configure(BP_PORT_TERMINAL, port, i);
 			shell_print(shell, "Sensor %c: %d; read observe sensor.%c", argv[1][0], err, argv[1][0]);
 			return err;
 		}
@@ -435,6 +461,25 @@ static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(sensor, NULL,
 	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|angle|release.",
 	cmd_sensor, 3, 0);
+
+static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
+{
+	if (strlen(argv[1]) != 1 || argv[1][0] < 'A' || argv[1][0] > 'F') return -EINVAL;
+	uint32_t port = argv[1][0] - 'A';
+	if (argc == 3 && !strcmp(argv[2], "release")) return hub_port_release(BP_PORT_TERMINAL, port);
+	if (argc == 3 && !strcmp(argv[2], "coast")) return hub_motor_coast(BP_PORT_TERMINAL, port);
+	bool brake = !strcmp(argv[2], "brake");
+	if ((!brake && (strcmp(argv[2], "duty") || argc < 4)) || argc > (brake ? 4 : 5)) return -EINVAL;
+	int err = 0;
+	long duty = brake ? 0 : shell_strtol(argv[3], 10, &err);
+	if (err || duty < -1000 || duty > 1000) return -EINVAL;
+	size_t duration_index = brake ? 3 : 4;
+	unsigned long duration = argc > duration_index ? shell_strtoul(argv[duration_index], 10, &err) : 0;
+	if (err || duration > INT32_MAX || (argc > duration_index && argv[duration_index][0] == '-')) return -EINVAL;
+	return hub_motor_drive(BP_PORT_TERMINAL, port, duty, duration);
+}
+SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release.",
+	cmd_motor, 3, 2);
 
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = info_read}, [1] = {.mh_read = snapshot_read},

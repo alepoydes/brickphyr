@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <stdint.h>
+#include <brickphyr_port.h>
 
 enum bp_sensor_measurement {
 	BP_SENSOR_DEFAULT, BP_SENSOR_SURFACE, BP_SENSOR_AMBIENT,
@@ -8,7 +9,6 @@ enum bp_sensor_measurement {
 	BP_SENSOR_TILT, BP_SENSOR_COUNT, BP_SENSOR_ANGLE,
 	BP_SENSOR_MEASUREMENT_COUNT,
 };
-enum bp_sensor_owner { BP_SENSOR_UNOWNED, BP_SENSOR_APPLICATION, BP_SENSOR_TERMINAL };
 enum bp_sensor_fields {
 	BP_SENSOR_HAS_DISTANCE = 1 << 0, /* millimetres, ultrasonic only */
 	BP_SENSOR_HAS_RELATIVE_DISTANCE = 1 << 1, /* percent, infrared */

@@ -374,7 +374,7 @@ static void host_thread(void *a, void *b, void *c)
 			native_session_closed();
 			hub_matrix_session_closed();
 			hub_sound_session_closed();
-			hub_sensors_release(BP_SENSOR_TERMINAL);
+			hub_ports_session_closed(BP_PORT_TERMINAL);
 			smp_shell_rx_reset(&smp_input, &smp_serial);
 			protocol = (struct host_protocol){0};
 			reply_length = 0;
@@ -598,7 +598,7 @@ static void finish_ble_session(void)
 		native_session_closed();
 		hub_matrix_session_closed();
 		hub_sound_session_closed();
-		hub_sensors_release(BP_SENSOR_TERMINAL);
+		hub_ports_session_closed(BP_PORT_TERMINAL);
 		ble_occupied = false;
 		ble_closing = false;
 		hub_power_connection(false);

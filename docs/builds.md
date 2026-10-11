@@ -131,7 +131,7 @@ It does not add H5 support. Building a package does not verify recovery on hardw
 The F4 firmware starts in the experimental Pybricks identification interface.
 Select the standard Zephyr Shell from the computer before opening a terminal;
 see [host connections](host.md). Boot never waits for a host. Its intended hardware behavior is to keep battery power on and hold
-all six motor bridges in coast. The implementation has no motor commands. The
+all six motor bridges in coast until an explicit [motor command](ports.md#direct-motor-drive). The
 current USB descriptors use Zephyr's development VID/PID (`2fe3:0004`); a project
 allocation is required before distribution. These IDs do not identify a physical
 hub revision.

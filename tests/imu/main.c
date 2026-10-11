@@ -18,6 +18,11 @@
 #include "hub_power.h"
 #include "configuration.h"
 #include "storage.h"
+#include "hub_ports.h"
+#include "../ports/wiring.h"
+#include <zephyr/fff.h>
+
+DEFINE_FFF_GLOBALS;
 
 static uint8_t registers[256];
 static unsigned int transactions;
@@ -226,6 +231,19 @@ static void processing(void)
 	 * PBIO calibration must remove it without a storage write. */
 	zassert_true(hub_power_application(true));
 	const int16_t biased[] = {0, 0, -100, 0, 0, -4096};
+	pup_test_circuits[0].kind = MEDIUM_MOTOR;
+	struct bp_motor_state motor;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		zassert_ok(hub_motor_get(0, &motor));
+		zassert_true(k_uptime_get() < deadline);
+	} while (motor.error);
+	zassert_ok(hub_motor_drive(BP_PORT_APPLICATION, 0, 250, 0));
+	for (size_t i = 0; i < 2800; i++) state = frame(biased);
+	zassert_false(state.stationary);
+	zassert_equal(state.bias[2], 2100, "Motor operation was learned as gyro bias");
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
 	for (size_t i = 0; i < 2800; i++) {
 		state = frame(biased);
 	}
@@ -234,6 +252,17 @@ static void processing(void)
 	zassert_equal(state.angular_velocity[2], 0);
 	zassert_equal(settings_load_one(imu_config[2].name, effective, sizeof(effective)), 12);
 	zassert_mem_equal(effective, saved, 12, "Learning wrote flash");
+	/* Even a complete motor pulse between IMU frames resets the stationary
+	 * window. Looking only at the current duty would miss this transition. */
+	zassert_ok(hub_motor_drive(BP_PORT_APPLICATION, 0, 250, 0));
+	do {
+		k_msleep(1);
+		zassert_ok(hub_motor_get(0, &motor));
+	} while (motor.pending);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	state = frame(biased);
+	zassert_false(state.stationary);
+	zassert_equal(state.bias[2], 7000, "Inhibition erased the previous bias");
 
 	/* Zero disables learning when measuring sustained rotation. Mere signal
 	 * stability cannot distinguish rotation about gravity from a gyro bias. */

@@ -2,6 +2,8 @@
 #pragma once
 #include <stdint.h>
 
+enum bp_port_owner { BP_PORT_UNOWNED, BP_PORT_APPLICATION, BP_PORT_TERMINAL };
+
 /* UART is the electrical signature; NEGOTIATING and READY describe LUMP. */
 enum bp_port_phase {
 	BP_PORT_DETECTING,
@@ -35,6 +37,6 @@ struct bp_port_state {
 	uint32_t data_sequence, baudrate, bad_frames;
 	uint8_t mode, num_modes, capabilities, length;
 	uint8_t data_type, num_values;
-	uint8_t supply; /* 0 coast, 1 sensor supply on P1, 2 sensor supply on P2 */
+	uint8_t supply; /* Sensor DC: 0 none, 1 P1, 2 P2. Motor drive is reported separately. */
 	uint8_t data[32];
 };

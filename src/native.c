@@ -245,7 +245,7 @@ static inline int z_vrfy_bp_sensor_get(uint32_t port, struct bp_sensor_sample *v
 
 int z_impl_bp_sensor_configure(uint32_t port, uint32_t measurement)
 {
-	return hub_sensor_configure(BP_SENSOR_APPLICATION, port, measurement);
+	return hub_sensor_configure(BP_PORT_APPLICATION, port, measurement);
 }
 static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement)
 {
@@ -255,13 +255,40 @@ static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement
 
 int z_impl_bp_sensor_release(uint32_t port)
 {
-	return hub_sensor_release(BP_SENSOR_APPLICATION, port);
+	return hub_port_release(BP_PORT_APPLICATION, port);
 }
 static inline int z_vrfy_bp_sensor_release(uint32_t port)
 {
 	return z_impl_bp_sensor_release(port);
 }
 #include <zephyr/syscalls/bp_sensor_release_mrsh.c>
+
+int z_impl_bp_port_release(uint32_t port) { return hub_port_release(BP_PORT_APPLICATION, port); }
+static inline int z_vrfy_bp_port_release(uint32_t port) { return z_impl_bp_port_release(port); }
+#include <zephyr/syscalls/bp_port_release_mrsh.c>
+
+int z_impl_bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms)
+{
+	return hub_motor_drive(BP_PORT_APPLICATION, port, duty, duration_ms);
+}
+static inline int z_vrfy_bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms)
+{
+	return z_impl_bp_motor_drive(port, duty, duration_ms);
+}
+#include <zephyr/syscalls/bp_motor_drive_mrsh.c>
+
+int z_impl_bp_motor_coast(uint32_t port) { return hub_motor_coast(BP_PORT_APPLICATION, port); }
+static inline int z_vrfy_bp_motor_coast(uint32_t port) { return z_impl_bp_motor_coast(port); }
+#include <zephyr/syscalls/bp_motor_coast_mrsh.c>
+
+int z_impl_bp_motor_get(uint32_t port, struct bp_motor_state *value) { return hub_motor_get(port, value); }
+static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_motor_get(port, value);
+}
+#include <zephyr/syscalls/bp_motor_get_mrsh.c>
 
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
@@ -366,10 +393,11 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 static int release(void)
 {
-	hub_sensors_release(BP_SENSOR_APPLICATION);
+	int err = hub_ports_release(BP_PORT_APPLICATION);
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */
-	int err = hub_sound_release(BP_SOUND_APPLICATION);
+	int sound_error = hub_sound_release(BP_SOUND_APPLICATION);
+	if (!err) err = sound_error;
 	int matrix_error = hub_matrix_release(BP_MATRIX_APPLICATION);
 	if (!err) {
 		err = matrix_error;

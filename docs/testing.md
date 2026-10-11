@@ -49,6 +49,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/lump -d build/lump-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motor_output -d build/motor-output-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motors -d build/motor-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
@@ -167,8 +168,13 @@ by a fresh center press with USB left attached, then repeat on battery power.
 and the fake PWM driver: direction, smallest/full duty, steady updates without
 GPIO changes, brake, coast, sensor supply, rejected commands and cleanup after
 injected errors. The fixture records timer counts; it does not emulate STM32
-pinmux, inverted waveforms, shared-timer phase or physical motor behavior. Motor
-command ownership and regulation are not yet implemented.
+pinmux, inverted waveforms, shared-timer phase or physical motor behavior.
+`tests/motors` adds the production port service, ownership, Shell commands,
+duration expiry, hotplug, cleanup failures and release during blocked output.
+The LUMP fixture checks drive alongside encoder acquisition and coast on invalid
+data or UART loss. ARM applications exercise motor syscalls, return, forced stop
+and an invalid buffer fault while driving; the IMU fixture checks inhibited bias
+learning during drive. Regulation and physical stopping remain unverified.
 
 `tests/battery` runs production acquisition, Shell observations and both button
 ladders on one emulated ADC. It checks cold settling without invented values,

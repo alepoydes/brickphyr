@@ -21,7 +21,7 @@ bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix)
 [IMU snapshots](hardware.md#hub-imu),
 [speaker tone and PCM](hardware.md#hub-sound),
 [battery snapshots](hardware.md#hub-battery), and
-[external port identification and sensor measurements](ports.md).
+[external port identification, sensor measurements and direct motor drive](ports.md).
 Matrix writes copy into firmware storage and return on acceptance; snapshots
 report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no
@@ -40,7 +40,9 @@ running and its power hold active. Shutdown and all supported reboot paths stop
 it before proceeding. Matrix cleanup waits for the final blank before releasing
 ownership and unloading the application. A failed blank retains the resource and
 reports a cleanup error. Sensor mode claims return to automatic acquisition on
-application exit; normal host disconnection preserves them. No motor API is exported yet.
+application exit; normal host disconnection preserves them. Motors share those
+port claims. Cleanup waits for coast before freeing ownership and unloading;
+failed cleanup retains the claim and image so explicit stop can retry.
 
 Use `app run`, `app status`, `app output` and `app stop` in either USB or BLE Shell. Output is
 a 1024-byte queue with counted overflow; writing never waits for a reader. The

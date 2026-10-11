@@ -4,6 +4,8 @@
 #include "hub_matrix.h"
 #include "hub_sound.h"
 #include "hub_battery.h"
+#include "hub_ports.h"
+#include "../ports/wiring.h"
 
 extern bool sound_output_active;
 
@@ -50,7 +52,8 @@ LOG_MODULE_REGISTER(native_test, LOG_LEVEL_INF);
 
 int native_fixture_run(const char *name);
 const void *native_fixture_hello(size_t *length);
-uint32_t hub_buttons(void) { return 5; } /* Synthetic input, not a driver test. */
+static uint32_t test_buttons = 5;
+uint32_t hub_buttons(void) { return test_buttons; } /* Synthetic input. */
 int storage_status(void) { return -ENOTSUP; }
 
 K_SEM_DEFINE(stop_requested, 0, 1);
@@ -171,6 +174,38 @@ int main(void)
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
 	CHECK(available() == capacity);
+
+	pup_test_circuits[0].kind = MEDIUM_MOTOR;
+	struct bp_motor_state motor;
+	/* Twenty-one confirmations, each at most ten settling intervals. This
+	 * QEMU fixture uses 100 Hz ticks; account for timeout tick rounding. */
+	deadline = k_uptime_get() + 22 * 10 * (2 + k_ticks_to_ms_ceil64(2));
+	do {
+		k_msleep(1);
+		CHECK(hub_motor_get(0, &motor) == 0);
+		CHECK(k_uptime_get() < deadline);
+	} while (motor.error);
+	for (test_buttons = 0; test_buttons < 3; test_buttons++) {
+		CHECK(native_fixture_run("motor") == 0);
+		deadline = k_uptime_get() + 500;
+		do {
+			k_msleep(1);
+			CHECK(hub_motor_get(0, &motor) == 0);
+			native_get_status(&status);
+			CHECK(k_uptime_get() < deadline);
+		} while (status.state == NATIVE_RUNNING && (test_buttons != 1 || !motor.duty));
+		if (test_buttons == 1) {
+			CHECK(status.state == NATIVE_RUNNING && motor.owner == BP_PORT_APPLICATION);
+			CHECK(native_stop() == 0);
+		} else {
+			CHECK(status.state == (test_buttons == 0 ? NATIVE_RETURNED : NATIVE_FAULT));
+			CHECK(status.result == 0 && status.cleanup_error == 0);
+		}
+		CHECK(hub_motor_get(0, &motor) == 0 && motor.owner == BP_PORT_UNOWNED);
+		CHECK(motor.valid && motor.mode == BP_MOTOR_COAST);
+		CHECK(pup_test_sensor_supply(0) == 0 && available() == capacity);
+	}
+	test_buttons = 5;
 
 	/* Real userspace syscalls and production driver/service with a synthetic SPI
 	 * peer. Stop must join the app and wait for the outstanding final blank. */

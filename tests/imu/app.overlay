@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../storage/app.overlay"
+#include "../ports/ports.dtsi"
+#include "../ports/motor-pwm.dtsi"
 &i2c0 {
 	status = "okay";
 	hub_imu: imu@6a {

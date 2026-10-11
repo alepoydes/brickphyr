@@ -128,6 +128,7 @@ format, connection owner or Bluetooth service is introduced.
 | `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw` |
 | `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`, `supply`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
 | `sensor.A` … `sensor.F` | `sample_ms`, `sequence`, `generation`, `type_id`, `mode`, `measurement`, `available`, `owner`, `fields`; applicable distance, light, HSV, force, displacement, tilt, count or presence values in [sensor units](ports.md#sensor-measurements) |
+| `motor.A` … `motor.F` | `requested_ms`, `applied_ms`, `deadline_ms`, `generation`, `request`, `completed`, `mode`, `duty_permille`, `requested_mode`, `requested_duty`, `owner`, `pending`, `releasing`, `valid`, `cleanup`, `failures`; [drive and ownership semantics](ports.md#direct-motor-drive) |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.

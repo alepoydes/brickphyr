@@ -33,3 +33,4 @@
 #include "../../boards/lego/spike_prime_f4/lights.dtsi"
 #include "battery.dtsi"
 #include "../ports/ports.dtsi"
+#include "../ports/motor-pwm.dtsi"

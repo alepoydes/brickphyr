@@ -86,18 +86,29 @@ int port_output_supply(uint32_t port, uint8_t pin)
 	return err || !pin ? err : gpio_pin_configure_dt(&outputs[port].pins[pin - 1], GPIO_OUTPUT_ACTIVE);
 }
 
-int port_output_drive(uint32_t port, int32_t duty)
+int port_output_check(uint32_t port)
 {
 #ifndef CONFIG_BRICKPHYR_MOTORS
 	return -ENOTSUP;
 #else
-	if (duty < -1000 || duty > 1000) return -EINVAL;
 	int err = pins_ready(port);
 	if (err) return err;
 	for (size_t i = 0; i < 2; i++) {
 		if (!outputs[port].pwm[i].dev) return -ENOTSUP;
 		if (!pwm_is_ready_dt(&outputs[port].pwm[i])) return -ENODEV;
 	}
+	return 0;
+#endif
+}
+
+int port_output_drive(uint32_t port, int32_t duty)
+{
+#ifndef CONFIG_BRICKPHYR_MOTORS
+	return -ENOTSUP;
+#else
+	if (duty < -1000 || duty > 1000) return -EINVAL;
+	int err = port_output_check(port);
+	if (err) return err;
 	int sign = duty > 0 ? 1 : duty < 0 ? -1 : 0;
 	if (!sign) {
 		/* Brake overrides PWM with both GPIO outputs high, as in PBIO. */

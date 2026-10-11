@@ -161,6 +161,11 @@ def test_native_smp_and_cli():
             assert port_a.values["type_id"] == 0 and port_a.values["phase"] == 1
             assert port_a.values["sequence"] > 0
             assert (await snapshot(client, "port.F")).values["type_id"] == 0
+            motor = await snapshot(client, "motor.A")
+            assert motor.error == -19  # Empty port, not a usable motor.
+            assert motor.values["owner"] == motor.values["mode"] == 0
+            assert motor.values["valid"] == 1
+            assert motor.values["duty_permille"] == motor.values["pending"] == 0
             await upload(client, transport, (examples / "spin.elf").read_bytes())
             await checked(client, Start())
             assert (await snapshot(client, "application")).values["state"] == 1

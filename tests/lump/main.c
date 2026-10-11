@@ -14,6 +14,9 @@
 #include <zephyr/sys/byteorder.h>
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
+#include <zephyr/fff.h>
+
+DEFINE_FFF_GLOBALS;
 
 static const uint8_t speed[] = {0x52, 0, 0xc2, 1, 0, 0x6e};
 static const uint8_t position[] = {0xd2, 0x34, 0x12, 0, 0, 0x0b};
@@ -367,13 +370,13 @@ static void sensor_measurements(void)
 	size_t length;
 	const char *output = shell_backend_dummy_get_output(shell, &length);
 	zassert_not_null(strstr(output, "reflection_permille=1000"));
-	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_SURFACE));
+	zassert_ok(hub_sensor_configure(BP_PORT_APPLICATION, 0, BP_SENSOR_SURFACE));
 	zassert_equal(shell_execute_cmd(shell, "sensor A ambient"), -EBUSY);
 	length = tx_count;
-	zassert_equal(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_FORCE), -ENOTSUP);
-	zassert_equal(sensor().owner, BP_SENSOR_APPLICATION);
+	zassert_equal(hub_sensor_configure(BP_PORT_APPLICATION, 0, BP_SENSOR_FORCE), -ENOTSUP);
+	zassert_equal(sensor().owner, BP_PORT_APPLICATION);
 	zassert_equal(tx_count, length, "Unsupported request wrote UART");
-	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_AMBIENT));
+	zassert_ok(hub_sensor_configure(BP_PORT_APPLICATION, 0, BP_SENSOR_AMBIENT));
 	zassert_equal(sensor().error, -EAGAIN);
 	wait_select(7, length);
 	WORDS(5, 1024, 1024, 1024, 0);
@@ -387,15 +390,15 @@ static void sensor_measurements(void)
 	zassert_equal(sensor().saturation_pct, 50);
 	zassert_equal(sensor().ambient_permille, 40);
 	length = tx_count;
-	hub_sensors_release(BP_SENSOR_TERMINAL);
-	zassert_equal(sensor().owner, BP_SENSOR_APPLICATION, "Disconnect stole app ownership");
-	hub_sensors_release(BP_SENSOR_APPLICATION);
-	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	hub_ports_session_closed(BP_PORT_TERMINAL);
+	zassert_equal(sensor().owner, BP_PORT_APPLICATION, "Disconnect stole app ownership");
+	hub_ports_session_closed(BP_PORT_APPLICATION);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
 	wait_select(5, length);
 	zassert_ok(shell_execute_cmd(shell, "sensor A ambient"));
-	zassert_equal(sensor().owner, BP_SENSOR_TERMINAL);
-	hub_sensors_release(BP_SENSOR_TERMINAL);
-	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	zassert_equal(sensor().owner, BP_PORT_TERMINAL);
+	hub_ports_session_closed(BP_PORT_TERMINAL);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
 	/* A peer can keep the raw link alive while ignoring SELECT. It must not
 	 * keep the requested measurement pending indefinitely. */
 	int64_t began = k_uptime_get();
@@ -462,7 +465,7 @@ static void sensor_measurements(void)
 	const uint8_t tilt[][2] = {{2, 0}};
 	connect_sensor(34, tilt, ARRAY_SIZE(tilt), 0);
 	zassert_equal(pup_test_sensor_supply(0), 0, "Supply survived previous disconnect");
-	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
 	wait_select(0, 0);
 	const uint8_t angles[] = {(uint8_t)-20, 30};
 	packet(LUMP_MSG_TYPE_DATA, 0, 0, angles, sizeof(angles));
@@ -497,7 +500,7 @@ static void sensor_measurements(void)
 	zassert_equal(sensor().value_pct, 100, "Bright RGB wrapped instead of saturating");
 	zassert_equal(sensor().saturation_pct, 0);
 	length = tx_count;
-	zassert_ok(hub_sensor_configure(BP_SENSOR_APPLICATION, 0, BP_SENSOR_DISTANCE));
+	zassert_ok(hub_sensor_configure(BP_PORT_APPLICATION, 0, BP_SENSOR_DISTANCE));
 	wait_select(1, length);
 	uint8_t proximity = 7;
 	packet(LUMP_MSG_TYPE_DATA, 1, 0, &proximity, 1);
@@ -506,6 +509,8 @@ static void sensor_measurements(void)
 	zassert_ok(sensor().error);
 	zassert_equal(sensor().distance_pct, 70);
 	zassert_equal(sensor().fields, BP_SENSOR_HAS_RELATIVE_DISTANCE);
+	zassert_equal(hub_motor_coast(BP_PORT_APPLICATION, 0), -ENOTSUP);
+	zassert_equal(pup_test_sensor_supply(0), 2, "Motor command changed a sensor supply");
 
 	/* Unsupported formats and contradictory motor flags cannot authorize
 	 * sensor supply. */
@@ -568,7 +573,7 @@ static void encoder_measurements(void)
 	smp_snapshot("absolute_mdeg", -180000);
 	const struct shell *shell = shell_backend_dummy_get_ptr();
 	zassert_ok(shell_execute_cmd(shell, "sensor A angle"));
-	zassert_equal(sensor().owner, BP_SENSOR_TERMINAL);
+	zassert_equal(sensor().owner, BP_PORT_TERMINAL);
 	k_msleep(5);
 	WORDS(4, 0, 1799);
 	shell_backend_dummy_clear_output(shell);
@@ -576,25 +581,45 @@ static void encoder_measurements(void)
 	size_t length;
 	const char *output = shell_backend_dummy_get_output(shell, &length);
 	zassert_not_null(strstr(output, "absolute_mdeg=179900"));
+	zassert_equal(hub_motor_drive(BP_PORT_APPLICATION, 0, 300, 0), -EBUSY);
+	zassert_ok(shell_execute_cmd(shell, "motor A duty 300"));
+	k_msleep(5);
+	struct bp_motor_state motor;
+	zassert_ok(hub_motor_get(0, &motor));
+	zassert_ok(motor.error);
+	zassert_true(motor.valid && !motor.pending);
+	zassert_equal(motor.duty, 300);
+	WORDS(4, 0, 1799);
+	zassert_equal(pup_test_sensor_supply(0), 2, "Encoder poll overwrote motor PWM");
 	struct bp_sensor_sample before = sensor();
 	WORDS(4, 0, 3601);
 	zassert_equal(sensor().error, -EBADMSG);
 	zassert_equal(sensor().fields, 0);
 	zassert_equal(sensor().sequence, before.sequence);
 	zassert_equal(sensor().sample_ms, before.sample_ms);
+	zassert_ok(hub_motor_get(0, &motor));
+	zassert_equal(motor.error, -EBADMSG);
+	zassert_equal(motor.mode, BP_MOTOR_COAST);
+	zassert_equal(pup_test_sensor_supply(0), 0);
 	WORDS(4, 0, -1);
 	zassert_equal(sensor().error, -EBADMSG);
 	WORDS(4, 0, 1801);
 	zassert_ok(sensor().error);
 	zassert_equal(sensor().angle_mdeg, before.angle_mdeg + 200);
 	zassert_equal(sensor().absolute_mdeg, -179900);
-	hub_sensors_release(BP_SENSOR_TERMINAL);
+	hub_ports_session_closed(BP_PORT_TERMINAL);
 	k_msleep(5);
 	WORDS(4, 0, 1802);
 	zassert_equal(sensor().angle_mdeg, before.angle_mdeg + 300, "Release reset turns");
-	zassert_equal(sensor().owner, BP_SENSOR_UNOWNED);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
+	zassert_ok(hub_motor_drive(BP_PORT_APPLICATION, 0, -200, 0));
+	k_msleep(5);
+	zassert_equal(pup_test_sensor_supply(0), 1);
 	uint32_t generation = sensor().generation;
 	zassert_equal(wait_phase(BP_PORT_FAULT).error, -ETIMEDOUT);
+	zassert_equal(pup_test_sensor_supply(0), 0, "UART loss left the motor powered");
+	zassert_ok(hub_motor_get(0, &motor));
+	zassert_equal(motor.owner, BP_PORT_UNOWNED);
 	zassert_equal(sensor().fields, 0);
 	const uint8_t formats[][2] = {{1, 0}, {1, 0}, {1, 2}, {1, 1}, {2, 1}, {14, 1}};
 	/* Every supported absolute motor shares this format, but capability and

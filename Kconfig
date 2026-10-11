@@ -24,16 +24,17 @@ config BRICKPHYR_PORT_UART
 	help
 	  Negotiate LUMP devices and acquire raw and converted sensor samples.
 	  One worker owns GPIO, UART, measurement selection and recognized sensor
-	  DC supply. No motor-drive command or raw H-bridge access is exposed.
+	  DC supply. Raw H-bridge access is not exposed.
 
 config BRICKPHYR_MOTORS
-	bool "Powered Up H-bridge PWM outputs"
+	bool "Powered Up direct motor drive"
 	default y if BOARD_SPIKE_PRIME_F4
 	depends on BRICKPHYR_PORTS
 	select PWM
 	help
-	  GPIO/PWM handoff for the port service. Outputs stay in coast at boot.
-	  Motor ownership, commands and control are not exposed yet.
+	  Owned, asynchronous native/Shell duty, brake and coast commands through
+	  the port service. Outputs stay in coast at boot; application cleanup and
+	  device loss stop them. Speed/position regulation is not implemented.
 
 config BRICKPHYR_BATTERY
 	bool "Battery voltage and load-current observations"

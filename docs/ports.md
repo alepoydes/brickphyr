@@ -20,8 +20,39 @@ Zephyr UART drivers. Both options default on for F4. ID 14 is the electrical
 UART signature; successful negotiation provides the device's actual ID.
 Known sensors and motor encoders also provide converted measurements and explicit
 mode selection.
-Motor control is not implemented. Reading state does not start I/O, select a mode
-or claim a port.
+Direct motor drive is available with `CONFIG_BRICKPHYR_MOTORS`; speed/position
+regulation is not implemented. Reading state does not start I/O, select a mode or
+claim a port.
+
+## Planned device inspection
+
+The shared USB/BLE terminal will provide a port inventory and a detailed device
+view without requiring a model-specific driver. This extends the existing port
+service and its cached observations; it does not introduce another detector or
+protocol implementation. It is planned, not an available command yet.
+
+The view will include:
+
+- Port, connection state, electrical and negotiated device IDs, and recognition
+  status. A reported ID identifies a protocol type, not a verified manufacturer.
+- Advertised hardware/firmware versions, capabilities and communication rate.
+- Every advertised mode: index, name, input/output mapping, data type and value
+  count, units, scaling ranges and display format, where supplied by the device.
+- The current mode and latest values decoded by its negotiated binary format,
+  alongside raw bytes, timestamp, validity and connection/protocol errors.
+
+Missing metadata remains explicitly unavailable. Unknown models retain their
+reported identity, modes and raw data; they do not acquire guessed units or the
+semantics of a similarly named LEGO sensor. Passive devices show only the
+information their electrical interface provides. Inspection does not select
+modes, claim a port or actuate a device. Any later explicit mode selection must
+use the existing port ownership and validation rules.
+
+Acceptance covers a recognized sensor and an unknown compatible UART peer,
+including optional or malformed metadata and reconnects. The same view must work
+through both terminals. A third-party color sensor is a physical integration
+case: first inspect what it advertises, then determine which measurements are
+usable. Physical compatibility is not established by a matching device ID alone.
 
 ## Sensor measurements
 
@@ -113,6 +144,63 @@ Encoder adaptation validates the known ID, negotiated format and absolute-angle
 capability. It extends the BOOST counter without signed overflow, rejects invalid
 absolute values, and uses shortest-angle increments instead of PBIO's quadrant
 crossing test. These are measurement semantics, not a motor controller.
+
+## Direct motor drive
+
+`CONFIG_BRICKPHYR_MOTORS` provides duty, brake and coast for passive medium/train
+motors (IDs 1/2) and the recognized encoders above. An encoder motor must have a
+valid negotiated angle sample before accepting drive. Other devices and invalid
+commands are rejected before acquiring a port or changing its outputs.
+
+The shared USB/BLE Shell accepts these commands. They actuate the motor on A:
+
+```text
+motor A duty 200 100
+observe motor.A
+motor A coast
+motor A release
+```
+
+Duty is signed permille, from -1000 to 1000, without gear ratios or direction
+remapping. An optional duration in milliseconds starts when the driver applies
+the command and ends in coast; omitted or zero duration continues until stopped.
+`motor A brake [MS]` is zero-duty braking. It is not position hold. The native
+equivalents are `bp_motor_drive(port, duty, duration_ms)`, `bp_motor_coast(port)`,
+`bp_port_release(port)` and `bp_motor_get(port, &state)`.
+
+Motor drive and sensor-mode selection share one port owner: free (0), application
+(1) or terminal (2). Accepted commands copy into firmware storage and return
+without GPIO/PWM I/O or a wait. One pending drive is allowed per port; another
+returns `-EBUSY`. Coast/release can replace a pending drive. The existing port
+worker applies commands and checks identity again. No application-held mutex or
+application buffer is used by the output driver.
+
+Coast and duration expiry retain the claim. Release restores automatic sensor
+selection and frees ownership only after coast succeeds. Application return,
+fault or explicit stop joins that cleanup before unload; a failed coast retains
+the claim and reports a cleanup error, with an explicit stop available to retry.
+Management disconnect releases only terminal claims. Autonomous application
+motors continue running when the computer disconnects. Hotplug, UART loss and
+invalid encoder measurements cause coast; reconnect never restarts old commands.
+
+`observe motor.A` through `motor.F` and the existing monitor report the same
+state. `requested_ms`, `request`, `requested_mode` and `requested_duty` describe
+the latest accepted command; `completed`, `applied_ms`, `mode` and
+`duty_permille` describe its execution. Mode is 0 coast or 1 duty. `pending`
+includes in-progress output I/O; `releasing` blocks new drive until cleanup.
+`valid` means the driver confirmed the output configuration, not measured voltage
+or motion. `error` preserves the first operation failure, `cleanup` reports a
+separate coast failure, and `failures` saturates. A new accepted command clears
+previous errors except while release is in progress. Unknown output state also
+inhibits IMU bias learning, as does nonzero drive; a start/stop between IMU frames
+resets the stationary window.
+
+Durations use the port worker's monotonic clock and are not hard real-time stop
+guarantees. GPIO settling intervals remain at least 2 ms; waking the worker for a
+command does not shorten them. Scheduler starvation or a stalled driver can delay
+command completion and timeout handling. Waveforms, stopping latency and operation
+under physical hub load remain unverified. PBIO regulation, trajectories and
+DriveBase are subsequent work.
 
 ## Detection and validity
 
@@ -211,13 +299,11 @@ failure keeps the shared supply off. Only a recognized sensor with a validated
 measurement format can request additional DC power using its NAME flags. Pin 1
 or pin 2 becomes positive while the other stays low; motor flags or contradictory
 power flags reject this operation. Encoder selection ignores supply flags and
-keeps the motor terminals in coast, without brake or hold. No raw H-bridge
-interface is exported.
+does not drive, brake or hold a motor. Motor commands require a separate explicit
+request through the same owner. No raw H-bridge interface is exported.
 
 The private output adapter in `src/ports/output.c` also implements Pybricks'
-H-bridge PWM behavior through Zephyr GPIO/PWM/pinctrl. This is hardware support;
-motor command ownership, native/Shell commands and regulation are not implemented
-yet. Its selected source is
+H-bridge PWM behavior through Zephyr GPIO/PWM/pinctrl. Its selected source is
 [`motor_driver_hbridge_pwm.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c),
 with the retained MIT notice. It preserves forward/reverse polarity, zero-duty
 braking, coast and the F4's 12 kHz PWM with 1000 duty steps. It checks parameters
@@ -233,8 +319,8 @@ STM32 before pinmux handoff. That timer update can also restart the shared count
 different ports do not have an atomic or synchronized command contract. Actual
 waveforms, transitions, stopping and motor behavior still need physical tests.
 
-`supply` reports the accepted DC configuration: 0 coast, 1 pin 1 positive, 2 pin 2
-positive. It is not voltage feedback; after a GPIO/cleanup error, the actual
+`supply` reports sensor DC supply: 0 none, 1 pin 1 positive, 2 pin 2 positive.
+Motor output has its separate state above. Neither is voltage feedback; after a GPIO/cleanup error, the actual
 output is unknown. UART loss coasts the port when detected, within the protocol
 timeout rather than instantaneously at physical removal. Failed cleanup is
 reported separately and retried before electrical detection resumes.

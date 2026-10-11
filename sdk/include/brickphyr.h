@@ -12,6 +12,7 @@
 #include <brickphyr_battery.h>
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
+#include <brickphyr_motor.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -58,8 +59,21 @@ __syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);
  * 0 means accepted; get() reports EAGAIN until a settled sample is available.
  * Unsupported measurements return ENOTSUP before a command or claim. */
 __syscall int bp_sensor_configure(uint32_t port, uint32_t measurement);
-/* Release the application's claim and restore automatic measurement. */
+/* Release the port claim: coast its motor and restore automatic measurement.
+ * Accepted asynchronously; motor state retains ownership until coast succeeds.
+ * bp_sensor_release is the existing sensor-side spelling of this operation. */
+__syscall int bp_port_release(uint32_t port);
 __syscall int bp_sensor_release(uint32_t port);
+
+/* Queue direct drive, -1000..1000 permille in the device's direction. Zero
+ * brakes. Optional duration ends in coast; 0 continues until stopped/released.
+ * At most INT32_MAX ms. One pending command per port; EBUSY accepts nothing.
+ * There is one shared port owner and no simultaneous multi-port commit. */
+__syscall int bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms);
+/* May supersede a pending drive; retains the application's port claim. */
+__syscall int bp_motor_coast(uint32_t port);
+/* Latest command/output result, no I/O. Inspect pending, valid and error. */
+__syscall int bp_motor_get(uint32_t port, struct bp_motor_state *state);
 
 /* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
  * Zero duration continues until stopped; otherwise duration is milliseconds.
