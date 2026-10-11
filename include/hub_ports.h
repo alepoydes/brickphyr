@@ -7,6 +7,8 @@
 
 #ifdef CONFIG_BRICKPHYR_PORTS
 int hub_port_get(uint32_t port, struct bp_port_state *value);
+int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *value);
 int hub_ports_shutdown(void);
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value);
 int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement);
@@ -25,6 +27,8 @@ static inline int hub_port_get(uint32_t port, struct bp_port_state *value)
 	return -ENOTSUP;
 }
 static inline int hub_ports_shutdown(void) { return 0; }
+static inline int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *value) { return -ENOTSUP; }
 static inline int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value) { return -ENOTSUP; }
 static inline int hub_sensor_configure(enum bp_port_owner owner, uint32_t port,
 	uint32_t measurement) { return -ENOTSUP; }

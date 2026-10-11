@@ -9,6 +9,13 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->name) == LUMP_MAX_NAME_SIZE + 1);
+BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->unit) == LUMP_MAX_UOM_SIZE + 1);
+BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->combinations) == LUMP_MAX_MSG_SIZE);
+BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->extra[0]) == LUMP_MAX_MSG_SIZE);
+BUILD_ASSERT(ARRAY_SIZE(((struct bp_port_mode *)0)->extra) == LUMP_INFO_UNK12 - LUMP_INFO_UNK7 + 1);
+BUILD_ASSERT(sizeof(float) == 4);
+
 void lump_reset(struct lump *l)
 {
 	*l = (struct lump){.baud = 115200};
@@ -61,9 +68,8 @@ static int parse(struct lump *l)
 	}
 	uint8_t *data = message + 1;
 	if (l->phase == LUMP_TYPE) {
-		if (data[0] < 29 || data[0] > 101) {
-			return 0;
-		}
+		/* A framed, checksummed TYPE is an opaque byte. Recognition belongs
+		 * to the device service; a private device ID must still be inspectable. */
 		l->id = data[0];
 		l->phase = LUMP_INFO;
 		return 0;
@@ -90,11 +96,14 @@ static int parse(struct lump *l)
 		case LUMP_CMD_WRITE:
 			return 0;
 		case LUMP_CMD_MODES:
-			if (l->phase != LUMP_INFO || l->num_modes || data[0] > LUMP_MAX_MODE) {
+			if (l->phase != LUMP_INFO || l->num_modes || data[0] > LUMP_MAX_MODE ||
+			    (length != 1 && length != 2 && length != 4)) {
 				return -EBADMSG;
 			}
 			l->num_modes = (length >= 4 ? data[2] : data[0]) + 1;
-			return l->num_modes && l->num_modes <= ARRAY_SIZE(l->modes) ? 0 : -EBADMSG;
+			l->num_view_modes = (length == 4 ? data[3] : length == 2 ? data[1] : data[0]) + 1;
+			return l->num_modes && l->num_modes <= ARRAY_SIZE(l->modes) &&
+				l->num_view_modes && l->num_view_modes <= l->num_modes ? 0 : -EBADMSG;
 		case LUMP_CMD_SPEED:
 			if (l->phase != LUMP_INFO || l->got_speed || length != 4) {
 				return -EBADMSG;
@@ -107,6 +116,8 @@ static int parse(struct lump *l)
 				return -EBADMSG;
 			}
 			l->got_version = true;
+			l->firmware_version = sys_get_le32(data);
+			l->hardware_version = sys_get_le32(data + 4);
 			return 0;
 		default:
 			return -EBADMSG;
@@ -121,12 +132,12 @@ static int parse(struct lump *l)
 	if (mode >= l->num_modes) {
 		return -EBADMSG;
 	}
-	struct lump_mode *m = &l->modes[mode];
+	struct bp_port_mode *m = &l->modes[mode];
 	if (type == LUMP_MSG_TYPE_DATA) {
 		if (l->phase != LUMP_DATA) {
 			return -EBADMSG;
 		}
-		size_t bytes = m->values << MIN(m->type, 2);
+		size_t bytes = m->num_values << MIN(m->data_type, 2);
 		if (!bytes || padded(bytes) != length) {
 			return -EBADMSG;
 		}
@@ -140,11 +151,12 @@ static int parse(struct lump *l)
 		return -EBADMSG;
 	}
 	data++;
+	if (info != LUMP_INFO_NAME && !(l->names & BIT(mode))) return -EBADMSG;
 	switch (info) {
 	case LUMP_INFO_NAME: {
 		const uint8_t *end = memchr(data, 0, length);
 		size_t size = end ? (size_t)(end - data) : length;
-		if (!size || size > LUMP_MAX_NAME_SIZE || data[0] < 'A' || data[0] > 'z' ||
+		if (!size || size > LUMP_MAX_NAME_SIZE ||
 		    (l->names & BIT(mode))) {
 			return -EBADMSG;
 		}
@@ -152,8 +164,9 @@ static int parse(struct lump *l)
 		m->name[size] = 0;
 		l->names |= BIT(mode);
 		if (size <= LUMP_MAX_SHORT_NAME_SIZE && length >= 12) {
-			m->flags = data[6];
-			l->capabilities |= m->flags;
+			memcpy(m->flags, data + 6, sizeof(m->flags));
+			m->present |= BP_PORT_MODE_FLAGS;
+			l->capabilities |= m->flags[0];
 		}
 		break;
 	}
@@ -163,19 +176,60 @@ static int parse(struct lump *l)
 		    ((unsigned int)data[0] << MIN(data[1], 2)) > LUMP_MAX_MSG_SIZE) {
 			return -EBADMSG;
 		}
-		m->values = data[0];
-		m->type = data[1];
+		m->num_values = data[0];
+		m->data_type = data[1];
+		m->digits = data[2];
+		m->decimals = data[3];
 		l->formats |= BIT(mode);
 		break;
 	case LUMP_INFO_MAPPING:
-		if (length < 2 || !(l->names & BIT(mode))) {
+		if (length != 2 || (m->present & BP_PORT_MODE_MAPPING)) {
 			return -EBADMSG;
 		}
-		m->writable = data[1] != 0;
+		m->input_mapping = data[0];
+		m->output_mapping = data[1];
+		m->present |= BP_PORT_MODE_MAPPING;
+		break;
+	case LUMP_INFO_RAW:
+	case LUMP_INFO_PCT:
+	case LUMP_INFO_SI: {
+		uint8_t bit = info == LUMP_INFO_RAW ? BP_PORT_MODE_RAW :
+			info == LUMP_INFO_PCT ? BP_PORT_MODE_PERCENT : BP_PORT_MODE_SI;
+		if (length != 8 || (m->present & bit)) return -EBADMSG;
+		float *range = info == LUMP_INFO_RAW ? m->raw : info == LUMP_INFO_PCT ? m->percent : m->si;
+		for (size_t i = 0; i < 2; i++) {
+			uint32_t bits = sys_get_le32(data + 4 * i);
+			memcpy(&range[i], &bits, sizeof(bits));
+		}
+		m->present |= bit;
+		break;
+	}
+	case LUMP_INFO_UNITS: {
+		const uint8_t *end = memchr(data, 0, length);
+		size_t size = end ? (size_t)(end - data) : length;
+		if (size > LUMP_MAX_UOM_SIZE || (m->present & BP_PORT_MODE_UNIT)) return -EBADMSG;
+		memcpy(m->unit, data, size);
+		m->unit[size] = 0;
+		m->present |= BP_PORT_MODE_UNIT;
+		break;
+	}
+	case LUMP_INFO_MODE_COMBOS:
+		if (length < 2 || (m->present & BP_PORT_MODE_COMBINATIONS)) return -EBADMSG;
+		m->num_combinations = length / 2;
+		for (size_t i = 0; i < m->num_combinations; i++) {
+			m->combinations[i] = sys_get_le16(data + 2 * i);
+		}
+		m->present |= BP_PORT_MODE_COMBINATIONS;
 		break;
 	default:
-		/* Scaling/units/combinations are not needed for binary acquisition.
-		 * They remain framed and checksum-checked, including unknown INFO. */
+		if (info >= LUMP_INFO_UNK7 && info <= LUMP_INFO_UNK12) {
+			uint8_t index = info - LUMP_INFO_UNK7;
+			if (m->extra_length[index]) return -EBADMSG;
+			m->extra_length[index] = length;
+			memcpy(m->extra[index], data, length);
+		} else {
+			m->other_info += m->other_info != UINT16_MAX;
+		}
 		break;
 	}
 	return 0;

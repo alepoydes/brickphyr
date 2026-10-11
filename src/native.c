@@ -231,6 +231,20 @@ static inline int z_vrfy_bp_port_get(uint32_t port, struct bp_port_state *value)
 }
 #include <zephyr/syscalls/bp_port_get_mrsh.c>
 
+int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *value)
+{
+	return hub_port_get_mode(port, generation, mode, value);
+}
+static inline int z_vrfy_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_port_get_mode(port, generation, mode, value);
+}
+#include <zephyr/syscalls/bp_port_get_mode_mrsh.c>
+
 int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	return hub_sensor_get(port, value);

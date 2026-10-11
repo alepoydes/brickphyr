@@ -71,9 +71,11 @@ shares port ownership, asynchronous completion and coast on application cleanup
 or device loss; regulation and trajectories remain next. Physical
 sensor power/readings, encoder motion, port identification, baud switching and
 serial timing under load are unverified.
-The next port diagnostics increment is [generic device inspection](../docs/ports.md#planned-device-inspection):
-terminal inventory, advertised modes/metadata and raw/decoded observations,
-including unknown third-party sensors, through the existing service.
+The shared terminal's `port` inventory and `port A` detail expose
+[device metadata and raw/decoded observations](../docs/ports.md#device-inspection),
+including unknown UART IDs. Synthetic checks cover malformed optional fields,
+reconnects, escaped device strings and unchanged outputs. Physical third-party
+compatibility remains unverified. PBIO regulation and trajectories are next.
 
 ## Dependencies and remaining work
 

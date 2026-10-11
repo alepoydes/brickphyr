@@ -163,6 +163,7 @@ hub revision.
 | `sound [status]` | F4: speaker owner, playback, queue and errors |
 | `sound stop` | F4: stop terminal-owned playback and release the speaker |
 | `observe [all \| SOURCE]` | Read current hardware/application observations; see [sources and validity](telemetry.md) |
+| `port [A..F]` | List connections or inspect a device's [advertised modes and latest data](ports.md#device-inspection) |
 
 Matrix commands wait for the controller write and report its result. Closing a
 terminal clears only its own display. For example:

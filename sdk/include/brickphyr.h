@@ -52,6 +52,10 @@ __syscall int bp_battery_get(struct bp_battery_sample *sample);
 /* Copy port identity and raw UART data; no I/O or port reconfiguration.
  * Ports are numbered 0..5 (A..F). */
 __syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
+/* Read one advertised mode after negotiation. Use generation from bp_port_get;
+ * ESTALE means a different connection. No mode change, ownership or device I/O. */
+__syscall int bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *info);
 /* Shared converted measurement. Inspect error, fields, sample_ms and generation.
  * Reads never change modes or interfere with a running application. */
 __syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);

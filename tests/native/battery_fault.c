@@ -14,6 +14,8 @@ int app_main(void)
 		return -ENOTSUP;
 	}
 	struct bp_port_state port;
+	struct bp_port_mode mode;
+	if (bp_port_get_mode(0, 0, 0, &mode) != -ENOTSUP) return -EINVAL;
 	if (bp_port_get(0, &port) || bp_port_get(BP_PORT_COUNT, &port) != -EINVAL ||
 	    port.type_id != 0 || (port.error != 0 && port.error != -EAGAIN)) {
 		return -EINVAL;

@@ -11,6 +11,7 @@
 #include <inttypes.h>
 #include <math.h>
 #include <string.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
 #include <zephyr/input/input.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
@@ -436,6 +437,152 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | source]. Omit source to read all available observations.",
 		      cmd_observe, 1, 1);
+
+/* Device strings are untrusted terminal input, including for unknown models. */
+static void quoted(const struct shell *shell, const char *value)
+{
+	shell_fprintf(shell, SHELL_NORMAL, "\"");
+	for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+		if (*p >= 0x20 && *p <= 0x7e && *p != '\\' && *p != '"') {
+			shell_fprintf(shell, SHELL_NORMAL, "%c", *p);
+		} else {
+			shell_fprintf(shell, SHELL_NORMAL, "\\x%02x", *p);
+		}
+	}
+	shell_fprintf(shell, SHELL_NORMAL, "\"");
+}
+
+static const char *const wire_types[] = {"int8", "int16", "int32", "float32"};
+
+static void mode_info(const struct shell *shell, uint32_t index, const struct bp_port_mode *m)
+{
+	shell_fprintf(shell, SHELL_NORMAL, "Mode %u: ", index);
+	quoted(shell, m->name);
+	shell_print(shell, "  %u x %s; digits=%u decimals=%u", m->num_values,
+		wire_types[m->data_type], m->digits, m->decimals);
+	if (m->present & BP_PORT_MODE_UNIT) {
+		shell_fprintf(shell, SHELL_NORMAL, "  Unit: ");
+		quoted(shell, m->unit);
+		shell_print(shell, "");
+	} else shell_print(shell, "  Unit: not advertised");
+	const struct { uint8_t bit; const char *name; const float *range; } ranges[] = {
+		{BP_PORT_MODE_RAW, "Raw range", m->raw},
+		{BP_PORT_MODE_PERCENT, "Percent range", m->percent},
+		{BP_PORT_MODE_SI, "SI range", m->si},
+	};
+	for (size_t i = 0; i < ARRAY_SIZE(ranges); i++) {
+		if (m->present & ranges[i].bit) {
+			shell_print(shell, "  %s: %.9g .. %.9g", ranges[i].name,
+				(double)ranges[i].range[0], (double)ranges[i].range[1]);
+		} else shell_print(shell, "  %s: not advertised", ranges[i].name);
+	}
+	if (m->present & BP_PORT_MODE_MAPPING) {
+		shell_print(shell, "  Mapping: input=0x%02x output=0x%02x", m->input_mapping, m->output_mapping);
+	} else shell_print(shell, "  Mapping: not advertised");
+	if (m->present & BP_PORT_MODE_FLAGS) {
+		shell_print(shell, "  Flags: %02x %02x %02x %02x %02x %02x", m->flags[0],
+			m->flags[1], m->flags[2], m->flags[3], m->flags[4], m->flags[5]);
+	} else shell_print(shell, "  Flags: not advertised");
+	if (m->present & BP_PORT_MODE_COMBINATIONS) {
+		shell_fprintf(shell, SHELL_NORMAL, "  Combination masks:");
+		for (size_t i = 0; i < m->num_combinations; i++) {
+			shell_fprintf(shell, SHELL_NORMAL, " %04x", m->combinations[i]);
+		}
+		shell_print(shell, "");
+	} else shell_print(shell, "  Combinations: not advertised");
+	for (size_t i = 0; i < ARRAY_SIZE(m->extra_length); i++) {
+		if (!m->extra_length[i]) continue;
+		shell_print(shell, "  INFO 0x%02x (uninterpreted):", (unsigned int)i + 7);
+		shell_hexdump(shell, m->extra[i], m->extra_length[i]);
+	}
+	if (m->other_info) shell_print(shell, "  Undefined INFO messages: %u (payload not retained)", m->other_info);
+}
+
+static void wire_data(const struct shell *shell, const struct bp_port_state *v)
+{
+	if (!v->length) {
+		shell_print(shell, "Data: unavailable (error %d)", v->error);
+		return;
+	}
+	shell_print(shell, "Data: mode=%u sequence=%u sample_ms=%" PRId64 " error=%d",
+		v->mode, v->data_sequence, v->data_ms, v->error);
+	shell_fprintf(shell, SHELL_NORMAL, "  Wire values (%s, no scaling):", wire_types[v->data_type]);
+	for (size_t i = 0; i < v->num_values; i++) {
+		const uint8_t *p = v->data + (i << MIN(v->data_type, 2));
+		if (v->data_type == 3) {
+			uint32_t bits = sys_get_le32(p);
+			float value;
+			memcpy(&value, &bits, sizeof(value));
+			shell_fprintf(shell, SHELL_NORMAL, " %.9g", (double)value);
+		} else {
+			int32_t value = v->data_type == 0 ? (int8_t)*p : v->data_type == 1 ?
+				(int16_t)sys_get_le16(p) : (int32_t)sys_get_le32(p);
+			shell_fprintf(shell, SHELL_NORMAL, " %" PRId32, value);
+		}
+	}
+	shell_print(shell, "\n  Raw bytes:");
+	shell_hexdump(shell, v->data, v->length);
+}
+
+static int cmd_port(const struct shell *shell, size_t argc, char **argv)
+{
+	static const char *const phases[] = {"detecting", "empty", "passive", "UART", "fault",
+		"off", "negotiating", "ready"};
+	bool all = argc == 1;
+	if (!all && (strlen(argv[1]) != 1 || argv[1][0] < 'A' || argv[1][0] > 'F')) return -EINVAL;
+	uint32_t first = all ? 0 : argv[1][0] - 'A';
+	for (uint32_t port = first; port < (all ? BP_PORT_COUNT : first + 1); port++) {
+		struct bp_port_state v;
+		int err = hub_port_get(port, &v);
+		if (err) {
+			shell_print(shell, "%c: unavailable (error %d)", 'A' + port, err);
+			if (!all) return err;
+			continue;
+		}
+		shell_print(shell, "%c: %s; ID=%u error=%d generation=%u", 'A' + port,
+			phases[v.phase], v.type_id, v.error, v.generation);
+		if (all) continue;
+		shell_print(shell, "Updated_ms=%" PRId64 " changed_ms=%" PRId64 " failures=%u cleanup=%d",
+			v.sample_ms, v.changed_ms, v.failures, v.cleanup_error);
+		if (v.phase != BP_PORT_READY) {
+			shell_print(shell, v.phase == BP_PORT_PASSIVE ?
+				"Passive device: no UART metadata" : "UART metadata: unavailable until negotiation completes");
+			return 0;
+		}
+		shell_print(shell, "Electrical ID=14; reported device ID=%u; baud=%u modes=%u view_modes=%u",
+			v.type_id, v.baudrate, v.num_modes, v.num_view_modes);
+		shell_print(shell, "Capabilities=0x%02x bad_frames=%u sensor_supply=%u", v.capabilities,
+			v.bad_frames, v.supply);
+		if (v.has_version) {
+			shell_print(shell, "Advertised versions (BCD): firmware=0x%08x hardware=0x%08x",
+				v.firmware_version, v.hardware_version);
+		} else shell_print(shell, "Versions: not advertised");
+		struct bp_sensor_sample sensor;
+		err = hub_sensor_get(port, &sensor);
+		if (!err && sensor.generation == v.generation && sensor.available) {
+			shell_print(shell, "Native measurements: mask=0x%08x error=%d; read observe sensor.%c",
+				sensor.available, sensor.error, 'A' + port);
+		} else shell_print(shell, "Native measurements: unavailable; device metadata and wire data follow");
+		for (uint32_t mode = 0; mode < v.num_modes; mode++) {
+			struct bp_port_mode info;
+			err = hub_port_get_mode(port, v.generation, mode, &info);
+			if (err) {
+				shell_warn(shell, "Mode %u unavailable (error %d); inspect the port again", mode, err);
+				return err;
+			}
+			mode_info(shell, mode, &info);
+		}
+		wire_data(shell, &v);
+		struct bp_port_state after;
+		err = hub_port_get(port, &after);
+		if (err || after.generation != v.generation) {
+			shell_warn(shell, "Connection changed during inspection; inspect the port again");
+			return err ? err : -ESTALE;
+		}
+	}
+	return 0;
+}
+SHELL_CMD_ARG_REGISTER(port, NULL, "Inspect connected devices: [A..F]. Omit port for inventory.", cmd_port, 1, 1);
 
 static int cmd_sensor(const struct shell *shell, size_t argc, char **argv)
 {

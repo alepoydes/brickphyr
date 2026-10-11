@@ -84,6 +84,7 @@ config BRICKPHYR_TELEMETRY
 	select MCUMGR_SMP_CBOR_MIN_DECODING_LEVEL_2
 	select MCUMGR_SMP_CBOR_MIN_ENCODING_LEVEL_2 if ZCBOR_CANONICAL
 	select MCUMGR_SMP_CBOR_MIN_ENCODING_LEVEL_1
+	select CBPRINTF_FP_SUPPORT if BRICKPHYR_PORT_UART
 	help
 	  On-demand snapshots through SMP and the shared shell. No background
 	  transmission, sensor reconfiguration or application lifecycle work.

@@ -5,20 +5,18 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <lego/lump.h>
+#include <brickphyr_port.h>
 
 /* Selected protocol state from PBIO port_lump, independent of scheduling and
  * UART I/O. Exactly one trusted port worker owns each instance. */
 enum lump_phase { LUMP_TYPE, LUMP_INFO, LUMP_ACK, LUMP_DATA };
-struct lump_mode {
-	char name[LUMP_MAX_NAME_SIZE + 1];
-	uint8_t values, type, flags, writable;
-};
 struct lump {
 	enum lump_phase phase;
-	struct lump_mode modes[LUMP_MAX_EXT_MODE + 1];
+	struct bp_port_mode modes[LUMP_MAX_EXT_MODE + 1];
 	uint32_t baud, bad_frames, sequence;
+	uint32_t firmware_version, hardware_version;
 	uint16_t names, formats;
-	uint8_t id, num_modes, ext_mode, capabilities, mode, length;
+	uint8_t id, num_modes, num_view_modes, ext_mode, capabilities, mode, length;
 	uint8_t data[LUMP_MAX_MSG_SIZE];
 	uint8_t message[LUMP_MAX_MSG_SIZE + 3];
 	uint8_t used, needed;

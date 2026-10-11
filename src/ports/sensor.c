@@ -70,13 +70,13 @@ static const struct measurement *find(uint16_t id, uint32_t measurement)
 
 static bool valid(const struct measurement *m, const struct lump *l)
 {
-	const struct lump_mode *raw = &l->modes[LEGO_DEVICE_MODE_PUP_FORCE_SENSOR__FRAW];
-	return m && m->mode < l->num_modes && l->modes[m->mode].type == m->type &&
-		l->modes[m->mode].values == m->values &&
+	const struct bp_port_mode *raw = &l->modes[LEGO_DEVICE_MODE_PUP_FORCE_SENSOR__FRAW];
+	return m && m->mode < l->num_modes && l->modes[m->mode].data_type == m->type &&
+		l->modes[m->mode].num_values == m->values &&
 		(m->measurement != BP_SENSOR_ANGLE || m->id == LEGO_DEVICE_TYPE_ID_INTERACTIVE_MOTOR ||
 		 (l->capabilities & LUMP_MODE_FLAGS0_MOTOR_ABS_POS)) &&
 		(m->id != LEGO_DEVICE_TYPE_ID_SPIKE_FORCE_SENSOR ||
-		 (raw->type == LUMP_DATA_TYPE_DATA16 && raw->values == 1));
+		 (raw->data_type == LUMP_DATA_TYPE_DATA16 && raw->num_values == 1));
 }
 
 void port_sensor_reset(struct port_sensor *s, const struct lump *l)

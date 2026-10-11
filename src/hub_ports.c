@@ -543,6 +543,23 @@ int hub_port_get(uint32_t port, struct bp_port_state *value)
 	return 0;
 }
 
+int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
+	struct bp_port_mode *value)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	if (!pins[port][P5].port) return -ENODEV;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	const struct bp_port_state *v = &ports[port].value;
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : v->generation != generation ? -ESTALE :
+		v->phase == BP_PORT_EMPTY ? -ENODEV : v->phase == BP_PORT_PASSIVE ? -ENOTSUP :
+		v->phase != BP_PORT_READY ? v->error ? v->error : -EAGAIN :
+		k_uptime_get() - v->sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT : 0;
+	if (!err) err = port_uart_get_mode(port, mode, value);
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {

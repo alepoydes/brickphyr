@@ -41,7 +41,7 @@ ZTEST(lump, test_captured_metadata)
 		{technic_large_motor, sizeof(technic_large_motor), 46, 6},
 	};
 	for (size_t i = 0; i < ARRAY_SIZE(cases); i++) {
-		struct lump l;
+		static struct lump l;
 		lump_reset(&l);
 		zassert_ok(parse_bytes(&l, cases[i].bytes, cases[i].count), "capture %zu", i);
 		zassert_equal(l.phase, LUMP_ACK);
@@ -50,12 +50,12 @@ ZTEST(lump, test_captured_metadata)
 		zassert_equal(l.baud, 115200);
 		zassert_equal(l.sequence, 0);
 	}
-	struct lump l;
+	static struct lump l;
 	lump_reset(&l);
 	zassert_ok(parse_bytes(&l, boost_interactive_motor, sizeof(boost_interactive_motor)));
 	zassert_mem_equal(l.modes[2].name, "POS", 4);
-	zassert_equal(l.modes[2].type, LUMP_DATA_TYPE_DATA32);
-	zassert_equal(l.modes[2].values, 1);
+	zassert_equal(l.modes[2].data_type, LUMP_DATA_TYPE_DATA32);
+	zassert_equal(l.modes[2].num_values, 1);
 	l.phase = LUMP_DATA;
 	zassert_ok(parse_bytes(&l, position, sizeof(position) - 1));
 	zassert_equal(l.sequence, 0, "Partial frame published");
@@ -95,13 +95,13 @@ ZTEST(lump, test_invalid_metadata)
 	};
 	const size_t sizes[] = {3, 4, 6, 1, 1};
 	for (size_t i = 0; i < ARRAY_SIZE(sizes); i++) {
-		struct lump l;
+		static struct lump l;
 		lump_reset(&l);
 		zassert_ok(parse_bytes(&l, boost_interactive_motor, 3));
 		zassert_true(parse_bytes(&l, packets[i], sizes[i]) < 0, "case %zu", i);
 		zassert_equal(l.sequence, 0);
 	}
-	struct lump l;
+	static struct lump l;
 	lump_reset(&l);
 	const uint8_t bad_type[] = {0x40, 38, 0};
 	zassert_ok(parse_bytes(&l, bad_type, sizeof(bad_type)));
@@ -133,6 +133,13 @@ static struct bp_port_state snapshot(void)
 	return value;
 }
 
+static struct bp_sensor_sample sensor(void)
+{
+	struct bp_sensor_sample value;
+	zassert_ok(hub_sensor_get(0, &value));
+	return value;
+}
+
 static void wait_tx(size_t count)
 {
 	int64_t deadline = k_uptime_get() + 1000;
@@ -158,10 +165,10 @@ static struct bp_port_state wait_phase(enum bp_port_phase phase)
 	struct bp_port_state v;
 	do {
 		v = snapshot();
-		zassert_true(k_uptime_get() < deadline, "phase=%u error=%d, wanted=%u", v.phase, v.error, phase);
 		if (v.phase == phase) {
 			return v;
 		}
+		zassert_true(k_uptime_get() < deadline, "phase=%u error=%d, wanted=%u", v.phase, v.error, phase);
 		k_msleep(1);
 	} while (true);
 }
@@ -191,6 +198,11 @@ static void negotiate(bool fast)
 	zassert_ok(uart_config_get(uart, &cfg));
 	zassert_equal(cfg.baudrate, 115200);
 	zassert_equal(wait_phase(BP_PORT_READY).error, -EAGAIN);
+	struct bp_port_mode mode;
+	zassert_ok(hub_port_get_mode(0, snapshot().generation, 2, &mode));
+	zassert_mem_equal(mode.name, "POS", 4);
+	zassert_equal(mode.num_values, 1);
+	zassert_equal(mode.data_type, LUMP_DATA_TYPE_DATA32);
 	wait_select(2, 0);
 	feed(position, sizeof(position));
 	zassert_ok(snapshot().error);
@@ -282,7 +294,7 @@ static void packet(uint8_t type, uint8_t mode, uint8_t info, const uint8_t *data
 	feed(frame, pos);
 }
 
-static void connect_sensor(uint8_t id, const uint8_t formats[][2], size_t count, uint8_t flags)
+static void begin_sensor(uint8_t id, size_t count)
 {
 	pup_test_circuits[0].kind = UNPLUGGED;
 	wait_phase(BP_PORT_EMPTY);
@@ -295,14 +307,173 @@ static void connect_sensor(uint8_t id, const uint8_t formats[][2], size_t count,
 	uint8_t modes[] = {MIN(count - 1, 7), 0, count - 1, 0};
 	packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_MODES, 0, modes, 4);
 	feed(speed, sizeof(speed));
+}
+
+static void connect_sensor(uint8_t id, const uint8_t formats[][2], size_t count, uint8_t flags)
+{
+	begin_sensor(id, count);
 	for (uint8_t mode = 0; mode < count; mode++) {
 		uint8_t name[16] = {'S', 'E', 'N', 0, 0, 0, flags};
 		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
 		uint8_t format[] = {formats[mode][0], formats[mode][1], 4, 0};
 		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
 	}
+	uint8_t ack = LUMP_SYS_ACK;
 	feed(&ack, 1);
 	k_msleep(20);
+}
+
+static void inspect_device(void)
+{
+	/* A synthetic private ID outside Pybricks' old 29..101 discovery filter.
+	 * Every numeric payload below is an independently chosen wire value. */
+	begin_sensor(201, 4);
+	struct bp_port_mode mode;
+	zassert_equal(hub_port_get_mode(0, snapshot().generation, 0, &mode), -EAGAIN);
+	const uint8_t version[] = {0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0x10};
+	packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_VERSION, 0, version, sizeof(version));
+	const uint8_t types[] = {1, 0, 2, 3};
+	for (uint8_t index = 0; index < 4; index++) {
+		const uint8_t name[] = {'X', 0x1b, '!', 0, 0, 0, 0xc0, 0x40, 3, 4, 5, 6, 0, 0, 0, 0};
+		const uint8_t plain[] = {'N', 'U', 'M', 0};
+		packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_NAME, index ? plain : name,
+			index ? sizeof(plain) : sizeof(name));
+		if (!index) {
+			const uint8_t raw[] = {0, 0, 0, 0xc7, 0, 0xfe, 0xff, 0x46};
+			const uint8_t percent[] = {0, 0, 0, 0, 0, 0, 0xc8, 0x42};
+			const uint8_t si[] = {0, 0, 0x20, 0xc2, 0, 0, 0xfa, 0x42};
+			const uint8_t unit[] = {'d', 'e', 'g', 'C', 0};
+			const uint8_t mapping[] = {0x10, 0};
+			const uint8_t combinations[] = {3, 0, 12, 0};
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_RAW, raw, sizeof(raw));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_PCT, percent, sizeof(percent));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_SI, si, sizeof(si));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_UNITS, unit, sizeof(unit));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_MODE_COMBOS, combinations, sizeof(combinations));
+			packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_UNK9, combinations, sizeof(combinations));
+			packet(LUMP_MSG_TYPE_INFO, index, 0x0d, combinations, sizeof(combinations));
+		}
+		const uint8_t format[] = {2, types[index], 6, 2};
+		packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_FORMAT, format, sizeof(format));
+	}
+	uint8_t ack = LUMP_SYS_ACK;
+	feed(&ack, 1);
+	struct bp_port_state v = wait_phase(BP_PORT_READY);
+	zassert_equal(v.error, -EAGAIN); /* Metadata is useful before the first DATA. */
+	zassert_equal(v.type_id, 201);
+	zassert_true(v.has_version);
+	zassert_equal(v.firmware_version, 0x12345678);
+	zassert_equal(v.hardware_version, 0x10000000);
+	zassert_equal(v.num_view_modes, 1);
+	zassert_ok(hub_port_get_mode(0, v.generation, 0, &mode));
+	zassert_equal(mode.raw[0], -32768);
+	zassert_equal(mode.raw[1], 32767);
+	zassert_equal(mode.percent[1], 100);
+	zassert_equal(mode.si[0], -40);
+	zassert_equal(mode.si[1], 125);
+	zassert_mem_equal(mode.unit, "degC", 5);
+	zassert_equal(mode.flags[5], 6);
+	zassert_equal(mode.num_combinations, 2);
+	zassert_equal(mode.combinations[1], 12);
+	zassert_equal(mode.extra_length[2], 4);
+	zassert_mem_equal(mode.extra[2], ((uint8_t[]){3, 0, 12, 0}), 4);
+	zassert_equal(mode.other_info, 1);
+	zassert_ok(hub_port_get_mode(0, v.generation, 1, &mode));
+	zassert_equal(mode.present, 0, "Missing optional metadata was fabricated");
+	zassert_equal(hub_port_get_mode(0, v.generation, 4, &mode), -EINVAL);
+	zassert_equal(hub_port_get_mode(0, v.generation - 1, 0, &mode), -ESTALE);
+
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	const uint8_t values[][8] = {
+		{0x85, 0xff, 0xff, 0x7f}, {0x80, 0x7f},
+		{0, 0, 0, 0x80, 0xff, 0xff, 0xff, 0x7f},
+		{0, 0, 0xa0, 0x3f, 0, 0, 0, 0xbf},
+	};
+	const size_t lengths[] = {4, 2, 8, 8};
+	const char *expected[] = {"int16, no scaling): -123 32767", "int8, no scaling): -128 127",
+		"int32, no scaling): -2147483648 2147483647", "float32, no scaling): 1.25 -0.5"};
+	for (uint8_t index = 0; index < 4; index++) {
+		packet(LUMP_MSG_TYPE_DATA, index, 0, values[index], lengths[index]);
+		size_t sent_before = tx_count;
+		shell_backend_dummy_clear_output(shell);
+		zassert_ok(shell_execute_cmd(shell, "port A"));
+		size_t length;
+		const char *output = shell_backend_dummy_get_output(shell, &length);
+		zassert_not_null(strstr(output, "reported device ID=201"));
+		zassert_not_null(strstr(output, "firmware=0x12345678 hardware=0x10000000"));
+		zassert_not_null(strstr(output, "Native measurements: unavailable"));
+		zassert_not_null(strstr(output, "\"X\\x1b!\""));
+		zassert_is_null(strchr(output, 0x1b), "Device text injected an ANSI sequence");
+		zassert_not_null(strstr(output, "Raw range: -32768 .. 32767"));
+		zassert_not_null(strstr(output, "SI range: -40 .. 125"));
+		zassert_not_null(strstr(output, "Unit: not advertised"));
+		zassert_not_null(strstr(output, "Flags: c0 40 03 04 05 06"));
+		zassert_not_null(strstr(output, "Combination masks: 0003 000c"));
+		zassert_not_null(strstr(output, "INFO 0x09 (uninterpreted):"));
+		zassert_not_null(strstr(output, "03 00 0c 00"));
+		zassert_not_null(strstr(output, "Undefined INFO messages: 1"));
+		zassert_not_null(strstr(output, expected[index]), "%s", output);
+		zassert_equal(tx_count, sent_before, "Inspection initiated device I/O");
+		zassert_equal(sensor().owner, BP_PORT_UNOWNED);
+		zassert_equal(pup_test_sensor_supply(0), 0, "Unknown flags authorized H-bridge supply");
+	}
+	zassert_equal(hub_motor_drive(BP_PORT_TERMINAL, 0, 100, 1), -ENOTSUP);
+	zassert_equal(shell_execute_cmd(shell, "port G"), -EINVAL);
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "port"));
+	size_t length;
+	const char *output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "A: ready; ID=201"));
+	zassert_not_null(strstr(output, "F: empty; ID=0"));
+
+	/* Reconnect with no versions/ranges. No old optional information may leak
+	 * into another device. Malformed optional metadata invalidates negotiation. */
+	begin_sensor(201, 1);
+	zassert_equal(hub_port_get_mode(0, v.generation, 0, &mode), -ESTALE);
+	const uint8_t plain[] = {'N', 'E', 'W', 0};
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_NAME, plain, sizeof(plain));
+	const uint8_t bad_range[] = {0, 1};
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_RAW, bad_range, sizeof(bad_range));
+	zassert_equal(snapshot().error, -EBADMSG);
+	zassert_equal(snapshot().phase, BP_PORT_FAULT);
+	zassert_false(snapshot().has_version);
+	begin_sensor(201, 1);
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_NAME, plain, sizeof(plain));
+	const uint8_t long_unit[] = {'a', 'b', 'c', 'd', 'e', 0, 0, 0};
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_UNITS, long_unit, sizeof(long_unit));
+	zassert_equal(snapshot().error, -EBADMSG);
+	begin_sensor(201, 1);
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_NAME, plain, sizeof(plain));
+	uint8_t extra[32];
+	for (size_t i = 0; i < sizeof(extra); i++) extra[i] = i;
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_UNK12, extra, sizeof(extra));
+	packet(LUMP_MSG_TYPE_INFO, 0, LUMP_INFO_UNK12, extra, sizeof(extra));
+	zassert_equal(snapshot().error, -EBADMSG, "Duplicate optional metadata accepted");
+	const uint8_t formats[][2] = {{1, 0}};
+	connect_sensor(201, formats, 1, 0);
+	v = snapshot();
+	zassert_false(v.has_version);
+	zassert_ok(hub_port_get_mode(0, v.generation, 0, &mode));
+	zassert_false(mode.present & (BP_PORT_MODE_RAW | BP_PORT_MODE_SI));
+	zassert_equal(mode.other_info, 0);
+	zassert_equal(mode.extra_length[2], 0);
+	/* Highest extended mode and largest opaque payload must survive unchanged. */
+	begin_sensor(201, 16);
+	for (uint8_t index = 0; index < 16; index++) {
+		packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_NAME, plain, sizeof(plain));
+		if (index == 15) packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_UNK12, extra, sizeof(extra));
+		const uint8_t format[] = {1, 0, 3, 0};
+		packet(LUMP_MSG_TYPE_INFO, index, LUMP_INFO_FORMAT, format, sizeof(format));
+	}
+	feed(&ack, 1);
+	v = wait_phase(BP_PORT_READY);
+	zassert_equal(v.num_modes, 16);
+	zassert_ok(hub_port_get_mode(0, v.generation, 15, &mode));
+	zassert_equal(mode.extra_length[5], sizeof(extra));
+	zassert_mem_equal(mode.extra[5], extra, sizeof(extra));
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
 }
 
 static void wait_select(uint8_t mode, size_t from)
@@ -325,13 +496,6 @@ static void words(uint8_t mode, const int16_t *values, size_t count)
 }
 #define WORDS(mode, ...) do { const int16_t values_[] = {__VA_ARGS__}; \
 	words(mode, values_, ARRAY_SIZE(values_)); } while (0)
-
-static struct bp_sensor_sample sensor(void)
-{
-	struct bp_sensor_sample value;
-	zassert_ok(hub_sensor_get(0, &value));
-	return value;
-}
 
 static void sensor_measurements(void)
 {
@@ -736,6 +900,7 @@ ZTEST(lump, test_uart_hotplug)
 	negotiate(true);
 	sensor_measurements();
 	encoder_measurements();
+	inspect_device();
 	zassert_ok(hub_ports_shutdown());
 	zassert_equal(snapshot().phase, BP_PORT_OFF);
 	zassert_equal(snapshot().length, 0);

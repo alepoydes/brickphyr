@@ -24,3 +24,10 @@ for the remaining known absolute motors. Synthetic angle sequences check units,
 turn counting, signed-counter rollover, invalid values and reconnect/reset through
 the same service. Shell and SMP must expose the same angle, and encoder selection
 must leave both motor outputs inactive even when supply flags are advertised.
+
+A synthetic private-ID peer advertises versions, units, ranges, mappings, flags
+and opaque INFO fields, then sends all four numeric wire formats. The actual
+`port` Shell command must escape device strings, retain unavailable fields and
+show the same bytes and values as the native snapshot without SELECT, ownership
+or H-bridge changes. Boundary cases include 16 modes, 32-byte opaque payloads,
+duplicate or short metadata, overlong units and reconnects without optional fields.

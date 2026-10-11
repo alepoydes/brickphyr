@@ -54,6 +54,19 @@ static struct link {
 	bool selecting;
 	enum phase phase;
 } links[BP_PORT_COUNT];
+/* The parser owns the sole metadata copy. Publish only after negotiation;
+ * invalidate under this lock before resetting it. No UART I/O holds the lock. */
+static struct k_spinlock metadata_lock;
+static bool metadata_ready[BP_PORT_COUNT];
+
+int port_uart_get_mode(uint32_t port, uint32_t mode, struct bp_port_mode *value)
+{
+	k_spinlock_key_t key = k_spin_lock(&metadata_lock);
+	int err = !metadata_ready[port] ? -EAGAIN : mode >= links[port].lump.num_modes ? -EINVAL : 0;
+	if (!err) *value = links[port].lump.modes[mode];
+	k_spin_unlock(&metadata_lock, key);
+	return err;
+}
 
 static void disable_irq(const struct device *dev)
 {
@@ -140,6 +153,10 @@ bool port_uart_available(uint32_t port)
 
 void port_uart_stop(uint32_t port)
 {
+	if (port >= BP_PORT_COUNT) return;
+	k_spinlock_key_t snapshot_key = k_spin_lock(&metadata_lock);
+	metadata_ready[port] = false;
+	k_spin_unlock(&metadata_lock, snapshot_key);
 	if (!port_uart_available(port) || !device_is_ready(config[port].uart)) {
 		return;
 	}
@@ -303,6 +320,9 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 		/* Until the first DATA, allow the same three keep-alive intervals. */
 		l->data_ms = now;
 		port_sensor_reset(&l->sensor, &l->lump);
+		k_spinlock_key_t snapshot_key = k_spin_lock(&metadata_lock);
+		metadata_ready[port] = !err;
+		k_spin_unlock(&metadata_lock, snapshot_key);
 	}
 	if (l->phase == DATA && !err) {
 		if (l->selecting && !tx_busy) {
@@ -355,17 +375,21 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	}
 	out->phase = l->phase == DATA ? BP_PORT_READY : BP_PORT_NEGOTIATING;
 	out->error = l->lump.length ? 0 : -EAGAIN;
-	out->type_id = l->lump.id ? l->lump.id : 14;
+	out->type_id = l->lump.phase == LUMP_TYPE ? 14 : l->lump.id;
 	out->baudrate = l->baud;
 	out->num_modes = l->lump.num_modes;
+	out->num_view_modes = l->lump.num_view_modes;
+	out->has_version = l->lump.got_version;
+	out->firmware_version = l->lump.firmware_version;
+	out->hardware_version = l->lump.hardware_version;
 	out->capabilities = l->lump.capabilities;
 	out->bad_frames = l->lump.bad_frames;
 	out->length = l->lump.length;
 	out->data_sequence = l->lump.sequence;
 	out->data_ms = l->lump.length ? l->data_ms : 0;
 	out->mode = l->lump.mode;
-	out->data_type = l->lump.modes[l->lump.mode].type;
-	out->num_values = l->lump.modes[l->lump.mode].values;
+	out->data_type = l->lump.modes[l->lump.mode].data_type;
+	out->num_values = l->lump.modes[l->lump.mode].num_values;
 	memcpy(out->data, l->lump.data, out->length);
 	*sensor = l->sensor.value;
 	sensor->type_id = out->type_id;

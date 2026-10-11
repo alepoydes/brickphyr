@@ -24,14 +24,17 @@ Direct motor drive is available with `CONFIG_BRICKPHYR_MOTORS`; speed/position
 regulation is not implemented. Reading state does not start I/O, select a mode or
 claim a port.
 
-## Planned device inspection
+## Device inspection
 
-The shared USB/BLE terminal will provide a port inventory and a detailed device
-view without requiring a model-specific driver. This extends the existing port
-service and its cached observations; it does not introduce another detector or
-protocol implementation. It is planned, not an available command yet.
+The same Shell command works through the USB and BLE terminals:
 
-The view will include:
+```text
+port
+port A
+```
+
+`port` lists A–F. `port A` displays that connection's cached information without
+requiring a model-specific driver:
 
 - Port, connection state, electrical and negotiated device IDs, and recognition
   status. A reported ID identifies a protocol type, not a verified manufacturer.
@@ -41,6 +44,12 @@ The view will include:
 - The current mode and latest values decoded by its negotiated binary format,
   alongside raw bytes, timestamp, validity and connection/protocol errors.
 
+Protocol INFO fields 0x07–0x0c are shown as unchanged hexadecimal payloads,
+including wire padding; their meaning is not inferred. Undefined INFO types
+outside the protocol's list are counted, but their payloads are not retained.
+Device-supplied strings are escaped before terminal output. Versions retain
+their advertised BCD words, rather than assuming a vendor-specific version scheme.
+
 Missing metadata remains explicitly unavailable. Unknown models retain their
 reported identity, modes and raw data; they do not acquire guessed units or the
 semantics of a similarly named LEGO sensor. Passive devices show only the
@@ -48,11 +57,30 @@ information their electrical interface provides. Inspection does not select
 modes, claim a port or actuate a device. Any later explicit mode selection must
 use the existing port ownership and validation rules.
 
-Acceptance covers a recognized sensor and an unknown compatible UART peer,
-including optional or malformed metadata and reconnects. The same view must work
-through both terminals. A third-party color sensor is a physical integration
-case: first inspect what it advertises, then determine which measurements are
-usable. Physical compatibility is not established by a matching device ID alone.
+Wire values are signed integers or IEEE-754 float32, without applying the
+advertised scaling or decimal precision. Ranges are device claims, including
+non-finite or reversed values if supplied; inspection does not use them to
+convert measurements. Use `observe sensor.A` for supported, converted quantities.
+
+Native applications use `bp_port_get_mode(port, generation, mode, &info)` with
+the generation from `bp_port_get()`. It copies one mode into caller-owned memory;
+`-ESTALE` means the connection changed, `-EAGAIN` means negotiation is incomplete,
+and `-EINVAL` rejects an out-of-range mode. Metadata can be read before the first
+DATA sample. Optional fields require their presence bit or payload length.
+The terminal checks generation while reading modes and after printing the sample;
+if the connection changed, repeat inspection. Neither reader locks the device
+for the duration of the display.
+
+The UART parser owns the only metadata table: at most 16 modes per port, with
+bounded strings and payloads. Publication occurs after negotiation, and reset
+invalidates readers first. No heap allocation or device I/O occurs in a getter.
+Shell range/float32 output enables Zephyr's floating-point formatter.
+
+Synthetic checks cover recognized and unknown UART peers, all four wire formats,
+optional and malformed metadata, maximum mode/payload sizes, reconnects and
+unchanged ownership/outputs. Physical third-party compatibility and USB/BLE
+inspection on the hub remain unverified. First inspect what a device advertises;
+a matching ID alone does not establish compatibility.
 
 ## Sensor measurements
 
@@ -258,7 +286,9 @@ under the same MIT license. The pinned `lib/lego/lego/lump.h` definitions are us
 unchanged. Brickphyr separates byte parsing from Zephyr UART scheduling, checks
 field lengths before access, requires a NAME and FORMAT for every advertised
 mode, and bounds the entire negotiation. No PBIO coroutine runs underneath it.
-Optional units/scaling metadata is checksum-checked but not interpreted yet.
+Optional metadata is retained for [device inspection](#device-inspection),
+with length and duplicate checks. A checksummed TYPE byte is accepted even when
+no device-specific driver recognizes it; that does not authorize power or motion.
 
 The hub offers 115200 baud. Devices without the fast-handshake ACK fall back to
 2400 baud after 10 ms. After metadata and the hub's ACK, it waits 10 ms from the
@@ -272,9 +302,10 @@ detection. These waits yield to Zephyr instead of blocking a service thread.
 Each snapshot includes `mode`, `num_modes`, `data_type` (0 int8, 1 int16, 2 int32,
 3 float32), `num_values`, `baudrate`, `capabilities`, `data_sequence`, `data_ms`
 and up to 32 `data` bytes. Multi-byte wire values are little-endian. Payload
-padding is removed according to the negotiated FORMAT. The Shell prints DATA
-as hexadecimal; SMP sends a byte string and the existing JSONL monitor records
-its bytes as an integer array. All consumers read the same cache.
+padding is removed according to the negotiated FORMAT. `observe` prints DATA
+as hexadecimal; `port A` also decodes its wire format. SMP sends a byte string,
+and the existing JSONL monitor records its bytes as an integer array. All
+consumers read the same cache.
 
 `data_ms` is the last valid frame's parser completion time on the hub, not the
 sensor's acquisition time or first-byte interrupt time. `data_sequence` wraps
