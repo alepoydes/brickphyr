@@ -15,7 +15,11 @@ properties:
 
 child-binding:
   description: One external port; reg is its zero-based index (A is 0)
+  include: pinctrl-device.yaml
   properties:
+    pwms:
+      type: phandle-array
+      description: H-bridge PWM outputs in P1, P2 order, inverted on Prime F4
     uart:
       type: phandle
       description: UART controller used after electrical identification

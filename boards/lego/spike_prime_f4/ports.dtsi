@@ -9,6 +9,10 @@
 		#size-cells = <0>;
 		port@0 {
 			reg = <0>;
+			pwms = <&motor_pwm_ab 1 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_ab 2 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim1_ch1_pe9>;
+			pinctrl-1 = <&tim1_ch2_pe11>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpioe 9 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpioe 11 GPIO_ACTIVE_HIGH>;
 			uart = <&uart7>;
@@ -20,6 +24,10 @@
 		};
 		port@1 {
 			reg = <1>;
+			pwms = <&motor_pwm_ab 3 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_ab 4 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim1_ch3_pe13>;
+			pinctrl-1 = <&tim1_ch4_pe14>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpioe 13 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpioe 14 GPIO_ACTIVE_HIGH>;
 			uart = <&uart4>;
@@ -31,6 +39,10 @@
 		};
 		port@2 {
 			reg = <2>;
+			pwms = <&motor_pwm_cd 1 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_cd 2 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim4_ch1_pb6>;
+			pinctrl-1 = <&tim4_ch2_pb7>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpiob 6 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpiob 7 GPIO_ACTIVE_HIGH>;
 			uart = <&uart8>;
@@ -42,6 +54,10 @@
 		};
 		port@3 {
 			reg = <3>;
+			pwms = <&motor_pwm_cd 3 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_cd 4 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim4_ch3_pb8>;
+			pinctrl-1 = <&tim4_ch4_pb9>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpiob 8 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpiob 9 GPIO_ACTIVE_HIGH>;
 			uart = <&uart5>;
@@ -53,6 +69,10 @@
 		};
 		port@4 {
 			reg = <4>;
+			pwms = <&motor_pwm_ef 1 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_ef 2 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim3_ch1_pc6>;
+			pinctrl-1 = <&tim3_ch2_pc7>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpioc 6 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;
 			uart = <&uart10>;
@@ -64,6 +84,10 @@
 		};
 		port@5 {
 			reg = <5>;
+			pwms = <&motor_pwm_ef 3 83334 PWM_POLARITY_INVERTED>, <&motor_pwm_ef 4 83334 PWM_POLARITY_INVERTED>;
+			pinctrl-0 = <&tim3_ch3_pc8>;
+			pinctrl-1 = <&tim3_ch4_pb1>;
+			pinctrl-names = "default", "reverse";
 			p1-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
 			p2-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
 			uart = <&uart9>;
@@ -73,6 +97,38 @@
 			rx-gpios = <&gpiod 14 GPIO_ACTIVE_HIGH>;
 			buffer-gpios = <&gpioc 5 GPIO_ACTIVE_LOW>;
 		};
+	};
+};
+
+/* Each 96 MHz timer is divided by 8. Rounding the period up to 83334 ns
+ * gives exactly 1000 timer ticks, preserving PBIO's 12 kHz and duty steps.
+ * The timers deliberately have no boot pinmux: GPIO hogs retain coast.
+ * The port owner applies a single channel's mux only on a drive command. */
+&timers1 {
+	status = "okay";
+	st,prescaler = <7>;
+	motor_pwm_ab: pwm {
+		status = "okay";
+		pinctrl-0 = <>;
+		pinctrl-names = "default";
+	};
+};
+&timers4 {
+	status = "okay";
+	st,prescaler = <7>;
+	motor_pwm_cd: pwm {
+		status = "okay";
+		pinctrl-0 = <>;
+		pinctrl-names = "default";
+	};
+};
+&timers3 {
+	status = "okay";
+	st,prescaler = <7>;
+	motor_pwm_ef: pwm {
+		status = "okay";
+		pinctrl-0 = <>;
+		pinctrl-names = "default";
 	};
 };
 

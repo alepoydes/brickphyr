@@ -119,6 +119,7 @@ def test_image():
         "battery-tests",
         "ports-tests",
         "lump-tests",
+        "motor-output-tests",
     ],
 )
 def test_hub_drivers(suite, tmp_path):

@@ -65,7 +65,9 @@ Known SPIKE/BOOST/WeDo sensors now have converted measurements, owned mode
 selection and validated sensor supply in that same service. Synthetic UART/GPIO
 checks cover units, settling, malformed calibration and cleanup. Read-only BOOST,
 Technic and SPIKE motor encoders share that service, with synthetic turn counting,
-rollover and inactive-output checks. Motor drive/control remains next; physical
+rollover and inactive-output checks. The shared GPIO/PWM output adapter has F4
+wiring and synthetic duty/direction/cleanup checks; motor command ownership and
+control remain next. Physical
 sensor power/readings, encoder motion, port identification, baud switching and
 serial timing under load are unverified.
 

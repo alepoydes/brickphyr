@@ -5,6 +5,7 @@
  * See docs/ports.md for provenance, settling and identification limits. */
 #include "hub_ports.h"
 #include "port_uart.h"
+#include "ports/output.h"
 #include <lego/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
@@ -36,14 +37,6 @@ static const struct gpio_dt_spec supply = GPIO_DT_SPEC_GET(PORTS, vcc_gpios);
 static const struct gpio_dt_spec pins[BP_PORT_COUNT][PIN_COUNT] = {
 	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, PORT_PINS)
 };
-/* P1/P2 polarity follows prime_hub_f4/platform.c and port.c at a7b1b04ae.
- * Full negative PWM there is P1 input high, P2 low (inverted timer output).
- * DC sensor supply needs no timer. These pins have exactly one service owner. */
-#define SUPPLY_PINS(node) [DT_REG_ADDR(node)] = { \
-	GPIO_DT_SPEC_GET_OR(node, p1_gpios, {0}), GPIO_DT_SPEC_GET_OR(node, p2_gpios, {0})},
-static const struct gpio_dt_spec supply_pins[BP_PORT_COUNT][2] = {
-	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, SUPPLY_PINS)
-};
 #define CHECK_INDEX(node) BUILD_ASSERT(DT_REG_ADDR(node) < BP_PORT_COUNT);
 DT_FOREACH_CHILD_STATUS_OKAY(PORTS, CHECK_INDEX)
 
@@ -71,17 +64,7 @@ static int set_pin(uint32_t port, enum pin pin, gpio_flags_t flags)
 
 static int coast(uint32_t port)
 {
-	int result = 0;
-	for (size_t i = 0; i < 2; i++) {
-		const struct gpio_dt_spec *pin = &supply_pins[port][i];
-		if (!pin->port) {
-			continue;
-		}
-		int err = gpio_is_ready_dt(pin) ? gpio_pin_configure_dt(pin, GPIO_OUTPUT_INACTIVE) : -ENODEV;
-		if (!result) {
-			result = err;
-		}
-	}
+	int result = port_output_coast(port);
 	if (!result) {
 		ports[port].supply = 0;
 	}
@@ -93,15 +76,7 @@ static int sensor_supply(uint32_t port, uint8_t value)
 	if (ports[port].supply == value) {
 		return 0;
 	}
-	int err = coast(port);
-	if (err || !value) {
-		return err;
-	}
-	if (value > 2 || !gpio_is_ready_dt(&supply_pins[port][0]) ||
-	    !gpio_is_ready_dt(&supply_pins[port][1])) {
-		return -ENOTSUP;
-	}
-	err = gpio_pin_configure_dt(&supply_pins[port][value - 1], GPIO_OUTPUT_ACTIVE);
+	int err = port_output_supply(port, value);
 	if (!err) {
 		ports[port].supply = value;
 	}

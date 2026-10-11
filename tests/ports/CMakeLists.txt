@@ -5,7 +5,7 @@ set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
 list(APPEND DTS_ROOT ${BRICKPHYR_ROOT})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hub_ports)
-target_sources(app PRIVATE main.c wiring.c ${BRICKPHYR_ROOT}/src/hub_ports.c
+target_sources(app PRIVATE main.c wiring.c ${BRICKPHYR_ROOT}/src/hub_ports.c ${BRICKPHYR_ROOT}/src/ports/output.c
   ${BRICKPHYR_ROOT}/src/telemetry.c ${BRICKPHYR_ROOT}/src/hub_power.c
   ${BRICKPHYR_ROOT}/src/configuration.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include

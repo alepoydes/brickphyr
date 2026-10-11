@@ -24,7 +24,7 @@ endif()
 
 target_sources(app PRIVATE src/main.c)
 if(CONFIG_BRICKPHYR_PORTS)
-  target_sources(app PRIVATE src/hub_ports.c)
+  target_sources(app PRIVATE src/hub_ports.c src/ports/output.c)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
 endif()
 if(CONFIG_BRICKPHYR_PORT_UART)

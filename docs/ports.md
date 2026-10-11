@@ -214,6 +214,25 @@ power flags reject this operation. Encoder selection ignores supply flags and
 keeps the motor terminals in coast, without brake or hold. No raw H-bridge
 interface is exported.
 
+The private output adapter in `src/ports/output.c` also implements Pybricks'
+H-bridge PWM behavior through Zephyr GPIO/PWM/pinctrl. This is hardware support;
+motor command ownership, native/Shell commands and regulation are not implemented
+yet. Its selected source is
+[`motor_driver_hbridge_pwm.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c),
+with the retained MIT notice. It preserves forward/reverse polarity, zero-duty
+braking, coast and the F4's 12 kHz PWM with 1000 duty steps. It checks parameters
+and driver results; the owning service must attempt coast after an I/O failure
+and preserve any cleanup failure separately.
+
+TIM1 serves A/B, TIM4 C/D and TIM3 E/F. Timer initialization has an empty pinctrl
+state, so the boot GPIO coast remains in force. A drive transition prepares the
+PWM before applying that port's single-channel pinmux; steady updates change
+only the compare value. Coast disconnects the timer using GPIO and disables
+available PWM channels. Re-enabling a channel latches its prepared compare on
+STM32 before pinmux handoff. That timer update can also restart the shared counter;
+different ports do not have an atomic or synchronized command contract. Actual
+waveforms, transitions, stopping and motor behavior still need physical tests.
+
 `supply` reports the accepted DC configuration: 0 coast, 1 pin 1 positive, 2 pin 2
 positive. It is not voltage feedback; after a GPIO/cleanup error, the actual
 output is unknown. UART loss coasts the port when detected, within the protocol
