@@ -2,6 +2,9 @@
 #include "native.h"
 #include "hub_power.h"
 #include "hub_matrix.h"
+#include "hub_sound.h"
+
+extern bool sound_output_active;
 
 #include <errno.h>
 #include <string.h>
@@ -127,6 +130,35 @@ int main(void)
 	native_get_status(&status);
 	CHECK(status.state == NATIVE_RETURNED && status.result == -ENOTSUP);
 	CHECK(status.cleanup_error == 0 && available() == capacity);
+
+	CHECK(native_fixture_run("sound") == 0);
+	/* Tone and PCM consume fewer than 80 halves in this tick-driven sink. */
+	int64_t deadline = k_uptime_get() + k_ticks_to_ms_ceil64(100);
+	do {
+		k_sleep(K_TICKS(1));
+		native_get_status(&status);
+		CHECK(k_uptime_get() < deadline);
+	} while (status.state == NATIVE_RUNNING);
+	printk("sound: state %d result %d fault %u cleanup %d\n", status.state,
+	       status.result, status.fault, status.cleanup_error);
+	CHECK(status.state == NATIVE_RETURNED && status.result == 0);
+	struct bp_sound_state speaker;
+	CHECK(hub_sound_get(&speaker) == 0 && speaker.completed_samples == 8192);
+	CHECK(speaker.owner == BP_SOUND_FREE && !sound_output_active);
+	CHECK(status.cleanup_error == 0 && available() == capacity);
+	CHECK(native_fixture_run("sound") == 0);
+	k_msleep(10);
+	CHECK(sound_output_active);
+	CHECK(native_stop() == 0);
+	CHECK(!sound_output_active);
+	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
+	CHECK(available() == capacity);
+	CHECK(native_fixture_run("sound_fault") == 0);
+	k_msleep(20);
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
+	CHECK(!sound_output_active && available() == capacity);
 
 	/* Real userspace syscalls and production driver/service with a synthetic SPI
 	 * peer. Stop must join the app and wait for the outstanding final blank. */

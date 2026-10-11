@@ -278,6 +278,67 @@ gravity poses, complete and tilted rotations, heading, calibration and rejected
 settings without mutation. F4 images build; physical readings, mounting orientation,
 processing latency and stack margin await verification.
 
+## Hub sound
+
+`CONFIG_BRICKPHYR_SOUND` provides one speaker service for the shared USB/BLE Shell
+and native applications. The F4 backend ports Pybricks' DAC1 channel 1 output on
+PA4, PC10 amplifier enable, TIM6 trigger and DMA1 stream 5/channel 7 to Zephyr.
+Nothing plays at startup. [Source provenance](../src/sound/README.md) records the
+reused implementation and its changes.
+
+In either terminal:
+
+```text
+sound tone 440 200 10
+sound status
+observe sound
+sound stop
+```
+
+Tone arguments are frequency in Hz (20–20000), duration in milliseconds (zero
+continues until stopped), and volume (0–100). Tones are square waves at a fixed
+48 kHz sample clock, with Pybricks' logarithmic volume law. Edges are quantized to
+one sample; no claim of high-fidelity tone synthesis is made.
+
+Native applications use `bp_sound_tone()` or `bp_sound_stream()` with
+`bp_sound_write()` and `bp_sound_finish()`. PCM is signed 16-bit mono at 8000–48000
+samples/s. The DAC uses the upper 12 bits. The timer chooses the nearest divider;
+status reports requested and effective integer Hz. No implicit resampling occurs.
+The [native example](../examples/native/sound.c) plays a short tone followed by
+a generated PCM triangle, without a file or allocation.
+
+Commands do not block. Playback acquires the free speaker for the application or
+terminal; a competing start returns `-EBUSY`. Each write copies 1–256 samples into
+a firmware queue and accepts either all or none (`-EAGAIN` when full). Two complete
+chunks prime the DMA buffer; finishing also permits a shorter stream. Finish
+marks the end of input and drains it, including silence after the last conversion.
+Keep the application alive until idle to hear the complete stream: return, fault
+and forced stop quiesce DMA before unload. Terminal disconnection stops only its
+own playback. Completion or successful stop releases ownership; a failed stop
+retains it and can be retried. Shutdown, reboot and DFU quiesce sound as well.
+
+DMA has two 256-sample halves; the queue holds another 1024 samples. These buffers
+occupy 3072 bytes, independently of stream length. At 48 kHz, a half lasts about
+5.33 ms, there are 187.5 callbacks/s, and the full queue represents another 21.33 ms
+of producer time. Each callback fills at most 256 samples with integer operations;
+there is no allocation, floating-point calculation or logging in the refill path.
+Start and stop run on the existing system workqueue. Reads and writes copy bounded
+state under a spinlock; user applications cannot hold a device mutex or lend DMA
+their own memory.
+
+Missing PCM, a DMA/DAC failure or a detected late refill stops playback and
+preserves the first error. Old audio is not intentionally replayed to hide an
+underrun. `sound status` distinguishes queued and completed samples, playback
+state, cleanup error and cumulative failure/underrun counts. Completion counts
+DMA consumption, not measured acoustic output. Actual sampling, refill deadline
+margin, interruption clicks, amplifier behavior and sound quality still require
+physical verification under combined IMU/radio/application load.
+
+Native simulation checks the production service, waveform and Shell through a
+synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
+after protected application stop/fault. The F4 images compile; neither check
+executes the DAC registers on a physical hub.
+
 ## A support claim must be reproducible
 
 A verified row identifies board/product revision, firmware and dependency

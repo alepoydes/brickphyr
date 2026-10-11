@@ -6,6 +6,7 @@
 #include <zephyr/sys/reboot.h>
 #include "hub.h"
 #include "native.h"
+#include "hub_sound.h"
 #include <stm32_ll_bus.h>
 #include <stm32_ll_gpio.h>
 #include <zephyr/devicetree.h>
@@ -48,6 +49,9 @@ int hub_reboot_dfu(void)
 		return -ENOEXEC;
 	}
 	int err = native_shutdown();
+	if (!err) {
+		err = hub_sound_shutdown();
+	}
 	if (err) {
 		return err;
 	}

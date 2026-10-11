@@ -159,7 +159,10 @@ hub revision.
 | `matrix pixel ROW COLUMN LEVEL` | F4: set one pixel; row and column 0–4 |
 | `matrix frame <25 levels>` | F4: write a row-major frame, brightness 0–100 per pixel |
 | `matrix clear` | F4: clear a terminal-owned display and release it; an application owner is busy |
-| `observe [all \| SOURCE]` | Read current power, button, application, matrix or IMU observations; see [sources and validity](telemetry.md) |
+| `sound tone HZ MS VOLUME` | F4: square tone, 20–20000 Hz, duration in ms (0 continues), volume 0–100 |
+| `sound [status]` | F4: speaker owner, playback, queue and errors |
+| `sound stop` | F4: stop terminal-owned playback and release the speaker |
+| `observe [all \| SOURCE]` | Read current hardware/application observations; see [sources and validity](telemetry.md) |
 
 Matrix commands wait for the controller write and report its result. Closing a
 terminal clears only its own display. For example:
@@ -433,8 +436,10 @@ separate example build uses the exported EDK and toolchain, without compiling
 the firmware again. Use an EDK from the exact firmware configuration; mismatched
 ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
 constructors and soft-float arithmetic; `counter.elf` reports a counter and buttons.
-`matrix.elf` displays a smile until stopped. `imu.elf` reports uncalibrated
+`matrix.elf` displays a smile until stopped. `imu.elf` reports calibrated
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
+`sound.elf` plays a short tone followed by generated PCM through the
+[shared speaker service](hardware.md#hub-sound).
 `spin.elf` and `fault.elf` are
 deliberate failure fixtures. Regenerate the EDK and rebuild applications after a
 firmware/SDK change; the ABI identity also includes the ARM syscall stubs.

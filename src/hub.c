@@ -13,6 +13,7 @@
 #include "hub.h"
 #include "hub_light.h"
 #include "hub_matrix.h"
+#include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_menu.h"
 #include "hub_power.h"
@@ -66,6 +67,10 @@ static void shutdown(void)
 	err = hub_matrix_shutdown();
 	if (err) {
 		LOG_ERR("Matrix off failed: %d", err);
+	}
+	err = hub_sound_shutdown();
+	if (err) {
+		LOG_ERR("Sound off failed: %d", err);
 	}
 	err = hub_light_off();
 

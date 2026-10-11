@@ -8,6 +8,7 @@
 #include "native_private.h"
 #include "hub.h"
 #include "hub_matrix.h"
+#include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_power.h"
 
@@ -199,6 +200,67 @@ static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 }
 #include <zephyr/syscalls/bp_imu_get_state_mrsh.c>
 
+int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
+{
+	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);
+}
+static inline int z_vrfy_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
+{
+	return z_impl_bp_sound_tone(frequency, duration_ms, volume);
+}
+#include <zephyr/syscalls/bp_sound_tone_mrsh.c>
+
+int z_impl_bp_sound_stream(uint32_t rate)
+{
+	return hub_sound_stream(BP_SOUND_APPLICATION, rate);
+}
+static inline int z_vrfy_bp_sound_stream(uint32_t rate)
+{
+	return z_impl_bp_sound_stream(rate);
+}
+#include <zephyr/syscalls/bp_sound_stream_mrsh.c>
+
+int z_impl_bp_sound_write(const int16_t *samples, size_t count)
+{
+	return hub_sound_write(BP_SOUND_APPLICATION, samples, count);
+}
+static inline int z_vrfy_bp_sound_write(const int16_t *samples, size_t count)
+{
+	if (!count || count > BP_SOUND_CHUNK_SAMPLES) {
+		return -EINVAL;
+	}
+	K_OOPS(K_SYSCALL_MEMORY_READ(samples, count * sizeof(*samples)));
+	/* The bounded copy/conversion finishes under the service spinlock.
+	 * No application pointer survives this syscall. */
+	return z_impl_bp_sound_write(samples, count);
+}
+#include <zephyr/syscalls/bp_sound_write_mrsh.c>
+
+int z_impl_bp_sound_finish(void)
+{
+	return hub_sound_finish(BP_SOUND_APPLICATION);
+}
+static inline int z_vrfy_bp_sound_finish(void) { return z_impl_bp_sound_finish(); }
+#include <zephyr/syscalls/bp_sound_finish_mrsh.c>
+
+int z_impl_bp_sound_stop(void)
+{
+	return hub_sound_stop(BP_SOUND_APPLICATION);
+}
+static inline int z_vrfy_bp_sound_stop(void) { return z_impl_bp_sound_stop(); }
+#include <zephyr/syscalls/bp_sound_stop_mrsh.c>
+
+int z_impl_bp_sound_get(struct bp_sound_state *value)
+{
+	return hub_sound_get(value);
+}
+static inline int z_vrfy_bp_sound_get(struct bp_sound_state *value)
+{
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_sound_get(value);
+}
+#include <zephyr/syscalls/bp_sound_get_mrsh.c>
+
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_native_finished(int result)
 {
@@ -241,7 +303,11 @@ static int release(void)
 {
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */
-	int err = hub_matrix_release(BP_MATRIX_APPLICATION);
+	int err = hub_sound_release(BP_SOUND_APPLICATION);
+	int matrix_error = hub_matrix_release(BP_MATRIX_APPLICATION);
+	if (!err) {
+		err = matrix_error;
+	}
 	if (!err && domain_initialized) {
 		for (size_t i = 0; i < ARRAY_SIZE(application_domain.partitions); i++) {
 			struct k_mem_partition part = application_domain.partitions[i];

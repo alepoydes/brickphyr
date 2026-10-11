@@ -108,7 +108,8 @@ def test_image():
 
 
 @pytest.mark.parametrize(
-    "suite", ["hub-tests", "poweroff-tests", "radio-tests", "imu-tests", "imu-failure-tests"]
+    "suite",
+    ["hub-tests", "poweroff-tests", "radio-tests", "imu-tests", "imu-failure-tests", "sound-tests"],
 )
 def test_hub_drivers(suite, tmp_path):
     result = subprocess.run(

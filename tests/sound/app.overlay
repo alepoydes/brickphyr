@@ -1,0 +1,6 @@
+/ {
+	hub_speaker: speaker {
+		compatible = "vnd,sound-output";
+		status = "okay";
+	};
+};

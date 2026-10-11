@@ -3,6 +3,27 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_SOUND
+	bool "Hub tone and PCM service"
+	default y if BOARD_SPIKE_PRIME_F4
+	help
+	  One speaker owner, firmware-owned DMA samples and bounded PCM queue.
+	  Native applications and the USB/BLE Shell use the same service.
+
+config BRICKPHYR_SOUND_STM32
+	bool "Prime F4 DAC sound output"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on BRICKPHYR_SOUND
+	depends on DT_HAS_LEGO_PRIME_F4_SPEAKER_ENABLED && SOC_SERIES_STM32F4X
+	depends on TIMER_HAS_64BIT_CYCLE_COUNTER
+	select DMA
+	select GPIO
+	select PINCTRL
+	select RESET
+	help
+	  Timer-triggered DAC samples through Zephyr DMA. The driver owns DAC1
+	  channel 1, TIM6 and the speaker amplifier; no sound starts at boot.
+
 config BRICKPHYR_IMU
 	bool "Hub IMU acquisition and orientation"
 	default y if BOARD_SPIKE_PRIME_F4

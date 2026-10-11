@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Prime F4 amplified speaker using DAC1 channel 1 and TIM6 TRGO
+compatible: "lego,prime-f4-speaker"
+include: [base.yaml, pinctrl-device.yaml, reset-device.yaml]
+properties:
+  reg:
+    required: true
+  reg-names:
+    required: true
+    description: DAC and TIM6 register regions, named dac and timer.
+  clocks:
+    required: true
+  clock-names:
+    required: true
+    description: DAC gate, TIM6 gate and timer source, named dac, timer and sample.
+  resets:
+    required: true
+  interrupts:
+    required: true
+  enable-gpios:
+    type: phandle-array
+    required: true
+  dmas:
+    required: true
+  dma-names:
+    required: true

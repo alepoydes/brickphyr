@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/dma/stm32_dma.h>
+
+/* Pybricks prime_hub_f4/platform.c: amplifier PC10, DAC1 OUT1 on PA4,
+ * TIM6 update trigger, DMA1 stream 5/channel 7. This driver exclusively owns
+ * both peripherals; the single-value STM32 DAC driver is not instantiated.
+ */
+hub_speaker: &dac1 {
+	compatible = "lego,prime-f4-speaker";
+	reg = <0x40007400 0x400>, <0x40001000 0x400>;
+	reg-names = "dac", "timer";
+	clocks = <&rcc STM32_CLOCK(APB1, 29)>, <&rcc STM32_CLOCK(APB1, 4)>,
+		 <&rcc STM32_SRC_TIMPCLK1 NO_SEL>;
+	clock-names = "dac", "timer", "sample";
+	resets = <&rctl STM32_RESET(APB1, 29)>, <&rctl STM32_RESET(APB1, 4)>;
+	interrupts = <54 0>;
+	pinctrl-0 = <&dac_out1_pa4>;
+	pinctrl-names = "default";
+	enable-gpios = <&gpioc 10 GPIO_ACTIVE_HIGH>;
+	dmas = <&dma1 5 7 (STM32_DMA_PERIPH_TX | STM32_DMA_PERIPH_16BITS |
+		STM32_DMA_MEM_16BITS | STM32_DMA_PRIORITY_HIGH) STM32_DMA_FIFO_1_4>;
+	dma-names = "tx";
+	/delete-property/ #io-channel-cells;
+	status = "okay";
+};
+
+&dma1 {
+	status = "okay";
+};

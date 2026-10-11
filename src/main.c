@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "hub_sound.h"
 
 #include <inttypes.h>
 #include <string.h>
@@ -53,6 +54,10 @@ static int cmd_reboot(const struct shell *shell, size_t argc, char **argv)
 		return err;
 	}
 #endif
+	int sound_error = hub_sound_shutdown();
+	if (sound_error) {
+		return sound_error;
+	}
 	sys_reboot(SYS_REBOOT_COLD);
 	return 0;
 }

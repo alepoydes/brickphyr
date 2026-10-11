@@ -18,7 +18,8 @@ Explicit stop and faults do not depend on user cleanup executing.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
 bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix)
-and read-only [IMU snapshots](hardware.md#hub-imu).
+and read-only [IMU snapshots](hardware.md#hub-imu), plus
+[speaker tone and PCM](hardware.md#hub-sound).
 Matrix writes copy into firmware storage and return on acceptance; snapshots
 report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no

@@ -11,6 +11,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
@@ -18,6 +19,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py
@@ -32,9 +34,9 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault imu)
-    if(example STREQUAL matrix_fault)
-      set(example_source ${BRICKPHYR_ROOT}/tests/native/matrix_fault.c)
+  foreach(example hello counter spin fault matrix matrix_fault imu sound sound_fault)
+    if(example STREQUAL matrix_fault OR example STREQUAL sound_fault)
+      set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
       set(example_source ${BRICKPHYR_ROOT}/examples/native/${example}.c)
     endif()

@@ -2,6 +2,7 @@
 #include "hub_power.h"
 #include "hub_matrix.h"
 #include "hub_imu.h"
+#include "hub_sound.h"
 #include "input_resistor_ladder.h"
 #include "native.h"
 
@@ -25,9 +26,9 @@
 #endif
 
 #define TELEMETRY_GROUP 66
-enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION };
+enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION, SOUND };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
-	"imu", "imu.calibrated", "imu.orientation"};
+	"imu", "imu.calibrated", "imu.orientation", "sound"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -49,6 +50,7 @@ static bool available(enum source source)
 	case SIDE: return DT_NODE_HAS_STATUS(DT_NODELABEL(arrow_keys), okay);
 	case APPLICATION: return IS_ENABLED(CONFIG_BRICKPHYR_NATIVE);
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
+	case SOUND: return IS_ENABLED(CONFIG_BRICKPHYR_SOUND);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -179,6 +181,27 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
+		}
+	} else if (source == SOUND) {
+		struct bp_sound_state value;
+		out->error = hub_sound_get(&value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "changed_ms", value.changed_ms);
+			field(out, "owner", value.owner);
+			field(out, "phase", value.phase);
+			field(out, "mode", value.mode);
+			field(out, "requested_hz", value.requested_rate);
+			field(out, "actual_hz", value.actual_rate);
+			field(out, "queued", value.queued_samples);
+			field(out, "completed", value.completed_samples);
+			field(out, "frequency", value.frequency);
+			field(out, "duration_ms", value.duration_ms);
+			field(out, "volume", value.volume);
+			field(out, "eof", value.eof);
+			field(out, "underruns", value.underruns);
+			field(out, "failures", value.failures);
+			field(out, "cleanup", value.cleanup_error);
 		}
 	} else if (source == MATRIX) {
 		out->error = hub_matrix_get(&out->matrix);

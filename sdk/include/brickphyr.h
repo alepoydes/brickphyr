@@ -8,6 +8,7 @@
 #include <brickphyr_abi.h>
 #include <brickphyr_matrix.h>
 #include <brickphyr_imu.h>
+#include <brickphyr_sound.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -39,6 +40,22 @@ __syscall int bp_imu_get(struct bp_imu_sample *sample);
 /* Calibrated vectors and orientation paired with their original raw sample.
  * Same bounded read and error convention. Orientation continuity uses epoch. */
 __syscall int bp_imu_get_state(struct bp_imu_state *state);
+
+/* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
+ * Zero duration continues until stopped; otherwise duration is milliseconds.
+ * All sound commands are nonblocking; completion/error is visible in get(). */
+__syscall int bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume);
+/* Acquire the free speaker for signed 16-bit mono PCM, 8000..48000 samples/s.
+ * Playback starts after two chunks are queued, or finish marks a shorter stream. */
+__syscall int bp_sound_stream(uint32_t rate);
+/* Copy 1..BP_SOUND_CHUNK_SAMPLES. 0 accepts all, EAGAIN accepts none.
+ * Buffers can be reused immediately. An unfilled running stream stops with EPIPE. */
+__syscall int bp_sound_write(const int16_t *samples, size_t count);
+/* End input and drain queued samples. Application exit still stops playback;
+ * keep the application alive until get() reports idle to hear the complete stream. */
+__syscall int bp_sound_finish(void);
+__syscall int bp_sound_stop(void);
+__syscall int bp_sound_get(struct bp_sound_state *state);
 
 /* The firmware calls this entry in user mode; return ends the application. */
 int app_main(void);

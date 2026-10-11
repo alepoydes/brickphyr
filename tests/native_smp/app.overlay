@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* A small synthetic store exercises capacity failures without a long transfer. */
 / {
+	hub_speaker: speaker {
+		compatible = "vnd,sound-output";
+		status = "okay";
+	};
 	sim_flash_controller {
 		compatible = "zephyr,sim-flash";
 		#address-cells = <1>;

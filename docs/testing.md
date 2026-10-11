@@ -44,6 +44,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
@@ -157,6 +158,19 @@ removal or USB restart. On hardware, check command and long-press shutdown follo
 by a fresh center press with USB left attached, then repeat on battery power.
 
 ## Local checks
+
+`tests/sound` exercises the production speaker service, waveform and Shell with
+a synthetic DMA sink and IRQ callbacks. It checks tone periods/levels/duration,
+PCM conversion and buffering, caller-buffer independence, queue backpressure,
+partial final blocks, drain, empty streams and ownership. Injected underrun,
+start/DMA/cleanup failures, stop retry, disconnect during start and shutdown
+check that samples are not replayed and the first error survives cleanup.
+`tests/native` uses the same service through the actual ARM SDK and user-memory
+checks, with a synthetic tick-driven sink. The sound example must finish tone
+and PCM, and stop/fault must release its speaker before unload. `tests/native_smp`
+also uploads the sound image through SMP and reads its completed sample count
+through the production observations handler. These fixtures
+do not execute STM32 DAC registers or measure sound quality or interrupt budgets.
 
 `tests/native` executes the production loader on an ARM MPU model, checking
 matrix syscalls, repeated invalid calls, invalid result buffers and release after

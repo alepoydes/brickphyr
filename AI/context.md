@@ -67,7 +67,10 @@ The Pybricks calibration/orientation algorithms are ported in `src/imu` and shar
 by native snapshots, Shell and SMP observations. Settings apply in RAM with
 explicit save; missing measurements start a visible new orientation epoch.
 ARM numerical checks and synthetic acquisition/persistence checks pass. Physical
-accuracy, processing latency and stack margin remain unverified. Sound, battery
+accuracy, processing latency and stack margin remain unverified. A speaker service
+now provides tone and bounded PCM output through the native SDK/shared Shell,
+with owner cleanup and telemetry. Synthetic output and ARM SDK/SMP checks pass;
+F4 images compile. Physical sound and DMA timing remain unverified. Battery
 readings, external sensors and motors follow.
 
 ## Dependencies and remaining work
@@ -88,6 +91,7 @@ The native ABI is experimental. Native builds require the additional Zephyr
 LLEXT build fixes, MCUmgr file-close API and upstream ARM syscall register correction
 described in [upstream integration](../docs/upstream.md).
 IMU numerical checks additionally require its local PBIO finite-input correction.
+The F4 speaker requires the local bounded STM32 DMA-stop correction.
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

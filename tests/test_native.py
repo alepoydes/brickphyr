@@ -145,6 +145,15 @@ def test_native_smp_and_cli():
             assert observed.values["queued"] > 0
             assert (await snapshot(client, "application")).values == observed.values
             assert b"Hello from a native application." in (await checked(client, Output())).data
+            await upload(client, transport, (examples / "sound.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (status := await checked(client, Status())).state == 1:
+                    await asyncio.sleep(0.01)
+            assert status.state == 2 and status.result == status.cleanup == 0
+            sound = await snapshot(client, "sound")
+            assert sound.error == 0 and sound.values["owner"] == 0
+            assert sound.values["completed"] == 8192
             await upload(client, transport, (examples / "spin.elf").read_bytes())
             await checked(client, Start())
             assert (await snapshot(client, "application")).values["state"] == 1

@@ -23,9 +23,11 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_SOUND_STM32 app PRIVATE drivers/sound_stm32.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_SOUND app PRIVATE src/hub_sound.c src/sound/waveform.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_TELEMETRY app PRIVATE src/telemetry.c)
-target_include_directories(app PRIVATE sdk/include)
+target_include_directories(app PRIVATE include sdk/include)
 
 if(CONFIG_BRICKPHYR_IMU)
   set(BRICKPHYR_ROOT ${CMAKE_CURRENT_SOURCE_DIR})

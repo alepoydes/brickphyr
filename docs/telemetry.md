@@ -3,7 +3,7 @@
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
 `observe application`, `observe matrix`, `observe imu`, `observe imu.calibrated`
-or `observe imu.orientation` for one source. Unsupported sources
+`observe imu.orientation` or `observe sound` for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 
 Observation is read-only. It does not start ADC/SPI transactions, change a sensor
@@ -121,6 +121,7 @@ format, connection owner or Bluetooth service is introduced.
 | `imu` | `sample_us`, `completed_us`, `sequence`, `missed`, `failures`, `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps` |
 | `imu.calibrated` | `sample_us`, `sequence`, `epoch`, `ready`, `stationary`, calibrated `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps`, current bias `bx_mdps`, `by_mdps`, `bz_mdps` |
 | `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
+| `sound` | `changed_ms`, `owner`, `phase`, `mode`, `requested_hz`, `actual_hz`, `queued`, `completed`, `frequency`, `duration_ms`, `volume`, `eof`, `underruns`, `failures`, `cleanup` |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.
@@ -151,6 +152,14 @@ Matrix owner is 0 free, 1 application or 2 terminal. The two frames are CBOR byt
 strings of 25 row-major brightness values, each 0–100. Bytes represent brightness,
 not encoded text. Native SDK calls and Shell commands share the same matrix
 service; telemetry adds no alternate control path.
+
+Sound owner is 0 free, 1 application or 2 terminal. Phase is 0 idle, 1 priming,
+2 playing (including accepted device startup), 3 stopping or 4 failed cleanup;
+mode is 0 tone or 1 PCM. `queued` counts samples waiting outside DMA; `completed`
+counts consumed payload samples, excluding silence padding. `actual_hz` is zero
+until device startup completes. `changed_ms` belongs to the latest playback
+transition; observing sound does not start, drain or stop it. See
+[speaker ownership and timing](hardware.md#hub-sound).
 
 Native simulation checks Shell/SMP reads, matrix payloads, unsupported sources,
 write rejection and acquisition timestamps. Host tests use the real Shell/SMP

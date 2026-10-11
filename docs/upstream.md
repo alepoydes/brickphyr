@@ -277,6 +277,22 @@ own IMU sample mutation, delayed orientation update and partial settings changes
 its regression checks exercise the original PBIO driver callbacks. These changes
 are independent of Brickphyr and introduce no extraction or platform adapter.
 
+## Speaker DMA prerequisite
+
+The speaker profile requires local Zephyr commit `c26d83f5` on `topic/dma-stop`,
+pending publication and manifest integration. STM32 DMA v1 must return pending
+disable to the common driver's timeout instead of spinning indefinitely. Stop
+must propagate timeout, retain channel ownership on failure, and permit retry;
+an interrupt caller receives busy rather than sleeping. The existing five-second
+thread deadline now uses elapsed time, independent of scheduler tick rounding.
+
+This is a general STM32 DMA correction, not a Brickphyr API. F4 images compile
+with it; source inspection establishes the changed error paths. A stalled
+physical DMA controller has not been fault-injected. Brickphyr's synthetic DMA
+checks separately establish that its service retains ownership after failed stop
+and releases it on successful retry. The amplifier and sample trigger are disabled
+before waiting for DMA cleanup.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

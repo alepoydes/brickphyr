@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 / {
+	hub_speaker: speaker {
+		compatible = "vnd,sound-output";
+		status = "okay";
+	};
 	matrix_gpio: matrix-gpio {
 		compatible = "zephyr,gpio-emul";
 		gpio-controller;

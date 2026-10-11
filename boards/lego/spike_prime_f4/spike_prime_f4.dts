@@ -248,6 +248,7 @@ zephyr_udc0: &usbotg_fs {
 };
 
 #include "lights.dtsi"
+#include "sound.dtsi"
 
 /* Keep the reboot request above the RAM used by the existing bootloaders. */
 &sram0 {
