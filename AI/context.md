@@ -58,7 +58,9 @@ missing measurements start a visible new orientation epoch. The CLI text monitor
 supports filters, host JSONL recording and a shared terminal session over USB/BLE.
 Bluetooth waiting flashes have a three-second period. Native matrix, IMU,
 tone/PCM and motor examples now run on the Inventor F4 over USB/BLE and release
-their hardware on stop/exit. Perceived display/audio output, calibrated IMU
+their hardware on stop/exit. Bounded repeated launches preserve hub responsiveness
+and both attached encoder links with the required Zephyr MPU and thread-cleanup
+corrections. Perceived display/audio output, calibrated IMU
 accuracy and voltage/current measurement accuracy remain pending.
 Electrical A–F detection and LUMP UART negotiation now have native/Shell/SMP
 snapshots, including raw DATA, with synthetic GPIO/UART and protected ARM checks.
@@ -84,9 +86,9 @@ The shared terminal's `port` inventory and `port A` detail expose
 including unknown UART IDs. Synthetic checks cover malformed optional fields,
 reconnects, escaped device strings and unchanged outputs. Physical third-party
 compatibility remains unverified. Next are physical sensor coverage, visual/audio
-acceptance, calibration and motor/service timing under combined load. Investigate
-the unexpected A/B UART reconnection observed during an application/transport
-sequence before claiming continuity across those transitions.
+acceptance, calibration and motor/service timing under combined load. Repeated
+BLE application transfers still produce occasional IMU acquisition failures;
+their cause remains to be isolated.
 
 ## Dependencies and remaining work
 
@@ -108,8 +110,8 @@ described in [upstream integration](../docs/upstream.md).
 IMU numerical checks additionally require its local PBIO finite-input correction.
 The F4 speaker requires the local bounded STM32 DMA-stop correction.
 Battery/button acquisition additionally requires the local F4 ADC timeout correction.
-Motor trajectories and preemptible CDC require the local PBIO duration/replacement
-correction and Zephyr CDC workqueue priority option described in upstream integration.
+Motor trajectories, preemptible CDC, MPU switching and bounded thread cleanup
+require the local dependency corrections described in upstream integration.
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

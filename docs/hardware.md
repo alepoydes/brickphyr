@@ -337,6 +337,11 @@ Start and stop run on the existing system workqueue. Reads and writes copy bound
 state under a spinlock; user applications cannot hold a device mutex or lend DMA
 their own memory.
 
+On F4, byte-fed UART reception takes priority over speaker interrupts. Tone
+generation keeps oscillator state in registers, and priming releases the IRQ
+mask between the two halves. At 115200 baud a UART byte arrives every 86.8 µs;
+the audio half-buffer deadline alone is not a sufficient interrupt-latency budget.
+
 Missing PCM, a DMA/DAC failure or a detected late refill stops playback and
 preserves the first error. Old audio is not intentionally replayed to hide an
 underrun. `sound status` distinguishes queued and completed samples, playback
@@ -349,8 +354,13 @@ Native simulation checks the production service, waveform and Shell through a
 synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
 after protected application stop/fault. On the Inventor F4 the native tone/PCM
 example completes over USB/BLE, including 8192 PCM samples at 16 kHz, with no
-reported underrun or cleanup failure. Acoustic quality and actual sample timing
-still require listening and instrumented checks.
+reported underrun or cleanup failure. Bounded repeated-launch checks preserve
+hub responsiveness and both attached ID-75 encoder links, using the required
+[ARM MPU and thread-cleanup corrections](upstream.md#native-loader-prerequisites).
+These checks do not establish worst-case timing with six active ports. Acoustic
+quality and actual sample timing still require listening and instrumented checks.
+The repeated BLE application sequence also produced occasional IMU acquisition
+failures; combined-load acquisition timing remains unresolved.
 
 ## External ports and sensors
 

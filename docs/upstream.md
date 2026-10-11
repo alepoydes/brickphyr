@@ -261,6 +261,26 @@ pending publication and integration into the dependency pin. Brickphyr reproduce
 failure and checks the correction on ARM QEMU with GCC. Regenerate the EDK and
 rebuild applications after applying it; the SDK identity includes this header.
 
+ARM MPU switching additionally requires local Zephyr commit `019ac4de` on
+`topic/arm-mpu-irq`, pending publication and manifest integration. PendSV can
+enter the dynamic MPU update with interrupts enabled. An interrupt between the
+region base and attribute writes can see the new base with the old read-only
+size, faulting on unrelated kernel data. Mask interrupts while programming the
+dynamic regions. The short `tests/arch/arm/mpu_irq` QEMU test injects a pending
+interrupt at that boundary during a real context switch and checks deferred
+delivery; it fails before the correction and passes after it. This fault was
+also captured on the Inventor F4 during native application execution.
+
+Local Zephyr commit `85e1a648` on `topic/object-permission-cleanup` additionally
+batches permission locking when clearing a departed thread's access to static
+objects. The scheduler already masks interrupts during thread termination;
+reacquiring the same object lock for every entry unnecessarily extends that
+interval. Dynamic objects retain their existing reclamation and lock ordering.
+The upstream userspace suite passes on ARM QEMU with dynamic objects both disabled
+and enabled, including a check that a surviving thread keeps its grant and a
+reused thread cannot regain the departed owner's access. Publication and manifest
+integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in

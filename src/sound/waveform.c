@@ -16,11 +16,14 @@ void sound_waveform_init(struct sound_waveform *wave, uint32_t frequency, uint32
 
 void sound_waveform_fill(struct sound_waveform *wave, uint16_t *dest, size_t count)
 {
+	/* Keep oscillator state in registers during the IRQ-masked refill. */
+	struct sound_waveform value = *wave;
 	for (size_t i = 0; i < count; i++) {
-		dest[i] = wave->phase < wave->rate / 2 ? wave->low : wave->high;
-		wave->phase += wave->frequency;
-		if (wave->phase >= wave->rate) {
-			wave->phase -= wave->rate;
+		dest[i] = value.phase < value.rate / 2 ? value.low : value.high;
+		value.phase += value.frequency;
+		if (value.phase >= value.rate) {
+			value.phase -= value.rate;
 		}
 	}
+	wave->phase = value.phase;
 }

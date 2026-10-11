@@ -140,6 +140,14 @@ static void update(struct k_work *item)
 		}
 	}
 	(void)fill(0);
+	/* Give byte-fed UARTs an IRQ opportunity between the initial halves,
+	 * just as they get between DMA refills during playback. */
+	k_spin_unlock(&lock, key);
+	key = k_spin_lock(&lock);
+	if (state.phase != BP_SOUND_PRIMING) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
 	(void)fill(1);
 	if (!half_valid[0] && !half_valid[1]) {
 		stopping(0);

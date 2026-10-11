@@ -95,8 +95,15 @@ static void tone_checks(void)
 	for (size_t i = 0; i < 24; i++) {
 		zassert_equal(dma_buffer[i], 0);
 		zassert_equal(dma_buffer[i + 24], 0xfff0);
+		/* The low interval crosses the initial 256-sample half boundary. */
+		zassert_equal(dma_buffer[i + 240], 0);
+		zassert_equal(dma_buffer[i + 264], 0xfff0);
 	}
-	for (unsigned int i = 0; i < 5; i++) {
+	advance();
+	/* Sample 512 is 32 samples into the next 48-sample period. */
+	for (size_t i = 0; i < 16; i++) zassert_equal(dma_buffer[i], 0xfff0);
+	for (size_t i = 16; i < 40; i++) zassert_equal(dma_buffer[i], 0);
+	for (unsigned int i = 0; i < 4; i++) {
 		advance();
 	}
 	struct bp_sound_state value = wait_phase(BP_SOUND_IDLE);

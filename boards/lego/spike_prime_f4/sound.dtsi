@@ -13,7 +13,7 @@ hub_speaker: &dac1 {
 		 <&rcc STM32_SRC_TIMPCLK1 NO_SEL>;
 	clock-names = "dac", "timer", "sample";
 	resets = <&rctl STM32_RESET(APB1, 29)>, <&rctl STM32_RESET(APB1, 4)>;
-	interrupts = <54 0>;
+	interrupts = <54 1>;
 	pinctrl-0 = <&dac_out1_pa4>;
 	pinctrl-names = "default";
 	enable-gpios = <&gpioc 10 GPIO_ACTIVE_HIGH>;
@@ -25,5 +25,8 @@ hub_speaker: &dac1 {
 };
 
 &dma1 {
+	/* A UART byte arrives every 86.8 us at 115200 baud; an audio half lasts
+	 * at least 5.33 ms. Only speaker stream 5 yields to the byte-fed UARTs. */
+	interrupts = <11 0 12 0 13 0 14 0 15 0 16 1 17 0 47 0>;
 	status = "okay";
 };
