@@ -339,6 +339,54 @@ synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
 after protected application stop/fault. The F4 images compile; neither check
 executes the DAC registers on a physical hub.
 
+## Hub battery
+
+`CONFIG_BRICKPHYR_BATTERY` provides voltage and load-current snapshots through
+`bp_battery_get()`, `observe battery` and the same USB/BLE monitor:
+
+```sh
+uv run brickphyrdev monitor --source battery
+uv run brickphyrdev monitor --ble Brickphyr --source battery --log battery.jsonl
+```
+
+On F4, PC0/ADC1 channel 10 measures current and PC1/channel 11 measures voltage.
+The 12-bit conversion and coefficients retain Pybricks' implementation at
+[`a7b1b04ae`](https://github.com/alepoydes/pybricks-micropython/tree/a7b1b04ae4f8449dd46b3dfb97c420334439fd35):
+`lib/pbio/drv/battery/battery_adc.c` and the Prime F4 platform/configuration.
+The port in `src/hub_battery.c` retains its MIT notice. Board coefficients live
+in `battery.dtsi`: 4096 counts correspond to 7300 mA or 9900 mV; the voltage
+correction is the integer current times 3/16 Ω. Integer rounding order is retained.
+Current-offset variation of tens of milliamps is known in the source; these are
+not calibrated laboratory measurements. Current is not signed charging current,
+and no state-of-charge percentage is inferred. Charging control remains separate.
+
+The existing system workqueue takes two single-channel conversions, current then
+voltage, without DMA or a new thread. This avoids depending on CPU service of
+back-to-back results at the ADC's full conversion rate. A new pair is requested
+10 ms after the preceding attempt, matching the reference's nominal polling
+period; scheduling can lengthen it. There is no sample history or allocation.
+The first second remains `-EINPROGRESS` for startup settling; no minimum voltage
+is substituted. Observations copy the cache without ADC access or changing power
+policy. A pair is published only when both reads succeed within 40 ms. Its
+`sample_ms` is the completion time of that accepted pair, not a simultaneous
+hardware latch of both channels. `completed_ms` records the last attempt's end.
+Read errors preserve values and acquisition time; a cached pair older than 40 ms
+reports `-ETIMEDOUT`. Shutdown joins this work without disabling the button ADC.
+
+F4 conversions use the [local Zephyr timeout correction](upstream.md#adc-timeout-prerequisite).
+At the board's 24 MHz ADC clock, one 12-bit conversion with 15-cycle acquisition
+takes 27 cycles, nominally 1.125 µs. A 2 ms failure deadline bounds missing
+completion interrupts; this is a recovery budget, not measured normal latency.
+Stopping the conversion and its interrupts precedes returning an error, preserving
+buffer lifetime. Two additional ADC interrupts per pair add at most 200/s to the
+two button ladders' nominal 200/s. Each conversion arms and cancels a kernel timer;
+combined CPU/IRQ cost and measurement accuracy still require physical testing.
+
+Synthetic ADC checks exercise startup, scaling boundaries, first-error preservation,
+partial-pair rejection, stale snapshots, shutdown and continued button sampling.
+ARM QEMU checks protected SDK access and SMP snapshots. F4 images compile; no new
+physical voltage/current or ADC-timeout result is claimed.
+
 ## A support claim must be reproducible
 
 A verified row identifies board/product revision, firmware and dependency

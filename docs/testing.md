@@ -45,6 +45,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery -d build/battery-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
@@ -158,6 +159,19 @@ removal or USB restart. On hardware, check command and long-press shutdown follo
 by a fresh center press with USB left attached, then repeat on battery power.
 
 ## Local checks
+
+`tests/battery` runs production acquisition, Shell observations and both button
+ladders on one emulated ADC. It checks cold settling without invented values,
+physical-unit scaling and limits, rejected partial/late pairs, preserved samples
+on either-channel failure, stale cache reads, shutdown joining and continued button
+operation. The converter can deliberately wait; observations must not start more
+ADC work. The ARM native fixture also exercises the real SDK and a writable but
+misaligned result buffer: rejection must precede the snapshot lock, and subsequent
+privileged reads must work. The SMP fixture reads the same service through group 66. These tests do
+not emulate STM32 registers, validate physical readings or prove its IRQ timeout.
+The separate Zephyr F4 timeout fixture masks the ADC IRQ and checks timeout,
+late-interrupt buffer lifetime, retry and asynchronous reads; its image is built
+but has not yet run on physical hardware. See [the prerequisite](upstream.md#adc-timeout-prerequisite).
 
 `tests/sound` exercises the production speaker service, waveform and Shell with
 a synthetic DMA sink and IRQ callbacks. It checks tone periods/levels/duration,

@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	adc1: battery_adc {
+		compatible = "zephyr,adc-emul";
+		#io-channel-cells = <1>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		ref-internal-mv = <3300>;
+		nchannels = <12>;
+	};
+};
+#include "../../boards/lego/spike_prime_f4/battery.dtsi"

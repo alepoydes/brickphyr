@@ -3,6 +3,15 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_BATTERY
+	bool "Battery voltage and load-current observations"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on DT_HAS_LEGO_ADC_BATTERY_ENABLED
+	select ADC
+	help
+	  Shared native/Shell/SMP snapshots from Zephyr ADC, using the board's
+	  Pybricks scaling. No charging control or state-of-charge estimate.
+
 config BRICKPHYR_SOUND
 	bool "Hub tone and PCM service"
 	default y if BOARD_SPIKE_PRIME_F4

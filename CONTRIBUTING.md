@@ -47,6 +47,9 @@ Do not publish an unpushed local dependency commit in a shared manifest.
   release. Assertions are appropriate for internal invariants.
 - An unsupported feature returns a documented unsupported result before changing
   hardware. Never simulate success with zeros or an empty callback.
+- Validate user memory ranges, sizes and required alignment before entering a
+  privileged critical section. Application faults must not strand service locks
+  or leave a driver accessing an application's buffer after release.
 - Retry only when retrying can help. Record the cause and keep recovery bounded.
   A cleanup failure must not replace the original fault.
 - Comments explain reasons and non-obvious contracts. Do not narrate obvious code

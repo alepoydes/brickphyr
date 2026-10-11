@@ -3,6 +3,7 @@
 #include "hub_power.h"
 #include "hub_matrix.h"
 #include "hub_sound.h"
+#include "hub_battery.h"
 
 extern bool sound_output_active;
 
@@ -159,6 +160,17 @@ int main(void)
 	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
 	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
 	CHECK(!sound_output_active && available() == capacity);
+	CHECK(native_fixture_run("battery_fault") == 0);
+	deadline = k_uptime_get() + 1600;
+	do {
+		k_msleep(10);
+		native_get_status(&status);
+		CHECK(k_uptime_get() < deadline);
+	} while (status.state == NATIVE_RUNNING);
+	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	struct bp_battery_sample battery;
+	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
+	CHECK(available() == capacity);
 
 	/* Real userspace syscalls and production driver/service with a synthetic SPI
 	 * peer. Stop must join the app and wait for the outstanding final blank. */

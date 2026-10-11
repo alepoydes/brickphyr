@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+description: LEGO battery load-current and voltage ADC measurements
+compatible: "lego,adc-battery"
+include: base.yaml
+properties:
+  io-channels:
+    required: true
+  io-channel-names:
+    required: true
+    description: Separate 12-bit ADC inputs named current and voltage.
+  current-full-scale-ma:
+    type: int
+    required: true
+    description: Milliamps corresponding to 4096 ADC counts.
+  voltage-full-scale-mv:
+    type: int
+    required: true
+    description: Millivolts corresponding to 4096 ADC counts.
+  voltage-correction-microohms:
+    type: int
+    required: true
+    description: Measurement-path resistance compensated using measured current.

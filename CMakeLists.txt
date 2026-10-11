@@ -23,6 +23,7 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_BATTERY app PRIVATE src/hub_battery.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_SOUND_STM32 app PRIVATE drivers/sound_stm32.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_SOUND app PRIVATE src/hub_sound.c src/sound/waveform.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)

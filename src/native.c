@@ -10,6 +10,7 @@
 #include "hub_matrix.h"
 #include "hub_sound.h"
 #include "hub_imu.h"
+#include "hub_battery.h"
 #include "hub_power.h"
 
 #include <brickphyr.h>
@@ -171,6 +172,9 @@ int z_impl_bp_matrix_get(struct bp_matrix_state *value)
 
 static inline int z_vrfy_bp_matrix_get(struct bp_matrix_state *value)
 {
+	/* Range validation alone permits misaligned memory. A resulting ARM
+	 * fault inside the snapshot copy would strand the service's spinlock. */
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
 	return z_impl_bp_matrix_get(value);
 }
@@ -183,6 +187,7 @@ int z_impl_bp_imu_get(struct bp_imu_sample *value)
 
 static inline int z_vrfy_bp_imu_get(struct bp_imu_sample *value)
 {
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
 	return z_impl_bp_imu_get(value);
 }
@@ -195,10 +200,23 @@ int z_impl_bp_imu_get_state(struct bp_imu_state *value)
 
 static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 {
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
 	return z_impl_bp_imu_get_state(value);
 }
 #include <zephyr/syscalls/bp_imu_get_state_mrsh.c>
+
+int z_impl_bp_battery_get(struct bp_battery_sample *value)
+{
+	return hub_battery_get(value);
+}
+static inline int z_vrfy_bp_battery_get(struct bp_battery_sample *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_battery_get(value);
+}
+#include <zephyr/syscalls/bp_battery_get_mrsh.c>
 
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
@@ -229,6 +247,7 @@ static inline int z_vrfy_bp_sound_write(const int16_t *samples, size_t count)
 	if (!count || count > BP_SOUND_CHUNK_SAMPLES) {
 		return -EINVAL;
 	}
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(samples, __alignof__(*samples))));
 	K_OOPS(K_SYSCALL_MEMORY_READ(samples, count * sizeof(*samples)));
 	/* The bounded copy/conversion finishes under the service spinlock.
 	 * No application pointer survives this syscall. */
@@ -256,6 +275,7 @@ int z_impl_bp_sound_get(struct bp_sound_state *value)
 }
 static inline int z_vrfy_bp_sound_get(struct bp_sound_state *value)
 {
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
 	return z_impl_bp_sound_get(value);
 }

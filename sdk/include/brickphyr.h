@@ -9,6 +9,7 @@
 #include <brickphyr_matrix.h>
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
+#include <brickphyr_battery.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -40,6 +41,10 @@ __syscall int bp_imu_get(struct bp_imu_sample *sample);
 /* Calibrated vectors and orientation paired with their original raw sample.
  * Same bounded read and error convention. Orientation continuity uses epoch. */
 __syscall int bp_imu_get_state(struct bp_imu_state *state);
+
+/* Copy the latest battery pair without starting ADC or waiting for acquisition.
+ * Check sample.error; startup, stale, failed and stopped readings stay explicit. */
+__syscall int bp_battery_get(struct bp_battery_sample *sample);
 
 /* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
  * Zero duration continues until stopped; otherwise duration is milliseconds.

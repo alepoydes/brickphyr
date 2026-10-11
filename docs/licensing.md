@@ -25,8 +25,9 @@ retains Pybricks' MIT license while its Zephyr integration is Brickphyr code.
 
 Dependencies remain separate west checkouts. The bring-up build uses Zephyr,
 CMSIS 6, STM32 HAL, SDK libraries, and MIT-licensed Pybricks resistor-ladder and
-TLC5955 helpers. Their [license notice](../LICENSES/Pybricks-MIT.txt) accompanies
-the source. IMU acquisition also compiles the ST/Pybricks register helpers and
+TLC5955 helpers, plus selected IMU, sound and battery ports. Their
+[license notice](../LICENSES/Pybricks-MIT.txt) accompanies the source.
+IMU acquisition also compiles the ST/Pybricks register helpers and
 public continuation macros from the pinned checkout, retaining their
 [ST notice](../LICENSES/ST-LSM6DS3TR-C.txt) and
 [BSD notice](../LICENSES/Pybricks-BSD.txt) in the firmware package.

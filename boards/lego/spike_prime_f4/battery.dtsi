@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/* Pybricks prime_hub_f4/platform.c and pbdrvconfig.h at a7b1b04ae.
+ * These are physical ADC channels, not PBIO's indices into its DMA buffer.
+ */
+/ {
+	hub_battery: battery {
+		compatible = "lego,adc-battery";
+		io-channels = <&adc1 10>, <&adc1 11>;
+		io-channel-names = "current", "voltage";
+		current-full-scale-ma = <7300>;
+		voltage-full-scale-mv = <9900>;
+		voltage-correction-microohms = <187500>;
+	};
+};
+
+&adc1 {
+	channel@a {
+		reg = <10>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
+	channel@b {
+		reg = <11>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 15)>;
+		zephyr,resolution = <12>;
+	};
+};

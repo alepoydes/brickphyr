@@ -17,15 +17,20 @@ imports are exposed. This does not supply POSIX or host I/O functions.
 Explicit stop and faults do not depend on user cleanup executing.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
-bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix)
-and read-only [IMU snapshots](hardware.md#hub-imu), plus
-[speaker tone and PCM](hardware.md#hub-sound).
+bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix),
+[IMU snapshots](hardware.md#hub-imu),
+[speaker tone and PCM](hardware.md#hub-sound), and
+[battery snapshots](hardware.md#hub-battery).
 Matrix writes copy into firmware storage and return on acceptance; snapshots
 report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no
 device handles or raw flash service. Essential system threads preempt a busy
 application independently of time slicing. This is not a claim that the privileged
 ELF parser or kernel withstand every malicious image.
+
+Typed result structures and PCM buffers require their natural C alignment.
+Syscall validation checks it and the complete memory range before entering
+service locks; a bad pointer ends the application without stranding those locks.
 
 The supervisor joins the application before removing partitions and freeing its
 loader allocation. Return, stop and MPU faults retain their result for inspection;

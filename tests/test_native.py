@@ -152,6 +152,11 @@ def test_native_smp_and_cli():
                     await asyncio.sleep(0.01)
             assert status.state == 2 and status.result == status.cleanup == 0
             sound = await snapshot(client, "sound")
+            battery = await snapshot(client, "battery")
+            assert battery.error == 0
+            assert battery.values["current_ma"] == 1825
+            assert battery.values["voltage_mv"] == 7767
+            assert battery.values["sequence"] > 0
             assert sound.error == 0 and sound.values["owner"] == 0
             assert sound.values["completed"] == 8192
             await upload(client, transport, (examples / "spin.elf").read_bytes())

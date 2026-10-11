@@ -12,6 +12,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
@@ -20,6 +21,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py
@@ -34,8 +36,8 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault imu sound sound_fault)
-    if(example STREQUAL matrix_fault OR example STREQUAL sound_fault)
+  foreach(example hello counter spin fault matrix matrix_fault imu sound sound_fault battery_fault)
+    if(example MATCHES "_fault$")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
       set(example_source ${BRICKPHYR_ROOT}/examples/native/${example}.c)

@@ -293,6 +293,30 @@ checks separately establish that its service retains ownership after failed stop
 and releases it on successful retry. The amplifier and sample trigger are disabled
 before waiting for DMA cleanup.
 
+## ADC timeout prerequisite
+
+F4 battery and button acquisition enables the per-conversion timeout from local
+Zephyr commit `aae8fbf7` on `topic/adc-timeout`, following the speaker DMA change.
+Publication and manifest integration remain pending. This corrects a driver
+lifetime problem: a missing completion IRQ otherwise leaves `adc_read()` waiting
+indefinitely. Returning from an application-side wait would leave its buffer
+reachable by a late ADC interrupt.
+
+`CONFIG_ADC_STM32_CONVERSION_TIMEOUT_MS` currently applies to F4 regular
+interrupt-driven conversions, excluding DMA, injected channels and streaming.
+The default zero preserves other builds. A nonzero value bounds each sampling,
+including asynchronous reads, without limiting intentional sequence intervals.
+Timeout or overrun stops the ADC, disables its completion interrupt and cancels
+further sampling before completing the read with an error. Late IRQs cannot write
+to the released buffer; a later read can retry. The stop operation follows
+[ST RM0430, ADC on/off control](https://www.st.com/resource/en/reference_manual/rm0430-stm32f413423-advanced-armbased-32bit-mcus-stmicroelectronics.pdf).
+
+The F4 firmware and Zephyr's `tests/drivers/adc/stm32_timeout` image for
+`nucleo_f401re` compile. That physical regression checks cold reads, masked-IRQ
+timeout, late IRQs, retry, asynchronous completion and deliberate sequence delays;
+it has not been run on a board. Brickphyr's emulated ADC tests separately check
+how acquisition/observations handle errors; they do not prove this hardware path.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

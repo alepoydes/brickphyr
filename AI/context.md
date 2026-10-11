@@ -51,27 +51,15 @@ blue waiting flashes, cyan Pybricks and yellow native connections, with menu whi
 retaining priority. Its perceived colors and transitions still await operator
 verification.
 
-The F4 matrix now has native/Shell operations, one pending firmware-owned frame,
-owner exclusion and stop/fault/disconnect cleanup through the shared TLC5955.
-Native simulation and ARM QEMU check the service and protected calls; physical
-orientation and brightness remain unverified. Bluetooth waiting flashes now have
-a three-second period. Read-only [observations](../docs/telemetry.md) expose power,
-buttons, application and matrix snapshots through SMP and the same Shell.
-The CLI text monitor and host JSONL recorder are implemented, including a shared
-terminal/monitor session over USB or the native BLE stream. Host tests exercise
-the real simulated Shell/SMP peer; physical monitoring checks remain pending.
-Uncalibrated IMU acquisition now shares timestamped native/Shell/monitor snapshots,
-using the pinned ST/Pybricks register library over Zephyr I²C/GPIO. Synthetic device
-checks cover acquisition/errors/shutdown; physical readings remain unverified.
-The Pybricks calibration/orientation algorithms are ported in `src/imu` and shared
-by native snapshots, Shell and SMP observations. Settings apply in RAM with
-explicit save; missing measurements start a visible new orientation epoch.
-ARM numerical checks and synthetic acquisition/persistence checks pass. Physical
-accuracy, processing latency and stack margin remain unverified. A speaker service
-now provides tone and bounded PCM output through the native SDK/shared Shell,
-with owner cleanup and telemetry. Synthetic output and ARM SDK/SMP checks pass;
-F4 images compile. Physical sound and DMA timing remain unverified. Battery
-readings, external sensors and motors follow.
+The F4 matrix, raw/calibrated IMU, tone/PCM speaker and battery observations now
+share native APIs and Shell/SMP services. Ownership and application cleanup are
+implemented for matrix and sound. IMU settings apply in RAM with explicit save;
+missing measurements start a visible new orientation epoch. The CLI text monitor
+supports filters, host JSONL recording and a shared terminal session over USB/BLE.
+Bluetooth waiting flashes have a three-second period. Synthetic acquisition,
+protected ARM SDK and SMP checks cover these new services; physical display,
+IMU accuracy/timing, audio and voltage/current verification remain pending.
+External sensors and motors are the next implementation work.
 
 ## Dependencies and remaining work
 
@@ -92,6 +80,7 @@ LLEXT build fixes, MCUmgr file-close API and upstream ARM syscall register corre
 described in [upstream integration](../docs/upstream.md).
 IMU numerical checks additionally require its local PBIO finite-input correction.
 The F4 speaker requires the local bounded STM32 DMA-stop correction.
+Battery/button acquisition additionally requires the local F4 ADC timeout correction.
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

@@ -3,6 +3,7 @@
 #include "hub_matrix.h"
 #include "hub_imu.h"
 #include "hub_sound.h"
+#include "hub_battery.h"
 #include "input_resistor_ladder.h"
 #include "native.h"
 
@@ -26,9 +27,9 @@
 #endif
 
 #define TELEMETRY_GROUP 66
-enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION, SOUND };
+enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION, SOUND, BATTERY };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
-	"imu", "imu.calibrated", "imu.orientation", "sound"};
+	"imu", "imu.calibrated", "imu.orientation", "sound", "battery"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -51,6 +52,7 @@ static bool available(enum source source)
 	case APPLICATION: return IS_ENABLED(CONFIG_BRICKPHYR_NATIVE);
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
 	case SOUND: return IS_ENABLED(CONFIG_BRICKPHYR_SOUND);
+	case BATTERY: return IS_ENABLED(CONFIG_BRICKPHYR_BATTERY);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -181,6 +183,20 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
+		}
+	} else if (source == BATTERY) {
+		struct bp_battery_sample value;
+		out->error = hub_battery_get(&value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_ms", value.sample_ms);
+			field(out, "completed_ms", value.read_ms);
+			field(out, "sequence", value.sequence);
+			field(out, "failures", value.failures);
+			field(out, "voltage_mv", value.voltage_mv);
+			field(out, "current_ma", value.current_ma);
+			field(out, "voltage_raw", value.voltage_raw);
+			field(out, "current_raw", value.current_raw);
 		}
 	} else if (source == SOUND) {
 		struct bp_sound_state value;
