@@ -23,6 +23,8 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
+target_include_directories(app PRIVATE sdk/include)
 
 if(CONFIG_BRICKPHYR_NATIVE)
   set(BRICKPHYR_ROOT ${CMAKE_CURRENT_SOURCE_DIR})

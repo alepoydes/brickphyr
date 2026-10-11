@@ -12,6 +12,7 @@
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
+#include "hub_matrix.h"
 #include "hub_menu.h"
 #include "hub_power.h"
 #include "input_resistor_ladder.h"
@@ -57,7 +58,11 @@ static void shutdown(void)
 		LOG_ERR("Application shutdown failed: %d", stopped);
 		return;
 	}
-	int err = hub_light_off();
+	int err = hub_matrix_shutdown();
+	if (err) {
+		LOG_ERR("Matrix off failed: %d", err);
+	}
+	err = hub_light_off();
 
 	if (err) {
 		LOG_ERR("Lights off failed: %d", err);

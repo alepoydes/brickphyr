@@ -7,6 +7,6 @@ project(hub_poweroff)
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/hub.c
   ${BRICKPHYR_ROOT}/src/hub_menu.c ${BRICKPHYR_ROOT}/src/hub_power.c
   ${BRICKPHYR_ROOT}/drivers/input_resistor_ladder.c)
-target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include
+target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${BRICKPHYR_ROOT}/sdk/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
 zephyr_ld_options(-Wl,--wrap=sys_reboot)

@@ -242,6 +242,15 @@ A native simulator test exercises the actual SMP handler with an injected
 filesystem close failure; Brickphyr tests use real LittleFS. This commit is also
 pending publication; keep both prerequisites before building the native profile.
 
+Native applications also require upstream's
+[ARM syscall register correction `fe5781eb`](https://github.com/zephyrproject-rtos/zephyr/commit/fe5781eb97475847214a24cc2a20b0f5ad53dabf).
+The dispatcher changes `r6`; the inline invocation must declare it read-write.
+Without the correction an optimized consecutive call can enter the wrong handler.
+The unchanged upstream patch is backported in local commit `305ebb0fa`,
+pending publication and integration into the dependency pin. Brickphyr reproduces the
+failure and checks the correction on ARM QEMU with GCC. Regenerate the EDK and
+rebuild applications after applying it; the SDK identity includes this header.
+
 ## Contribution certification
 
 Follow the target project's current DCO and attribution rules. An agent must not

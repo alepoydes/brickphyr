@@ -10,9 +10,11 @@
 #include <zephyr/input/input.h>
 #include <zephyr/ztest.h>
 #include <zephyr/fff.h>
+#include <zephyr/shell/shell_dummy.h>
 #include "input_resistor_ladder.h"
 #include "hub_light.h"
 #include "hub_menu.h"
+#include "hub_matrix.h"
 #include "led_tlc5955.h"
 
 DEFINE_FFF_GLOBALS;
@@ -23,10 +25,18 @@ static unsigned int writes;
 static int spi_error;
 static uint32_t keys;
 static bool center_down;
+static bool hold_transfer;
+K_SEM_DEFINE(transfer_started, 0, 1);
+K_SEM_DEFINE(transfer_continue, 0, 1);
 
 static int receive_frame(const struct emul *emul, const struct spi_config *cfg,
 			 const struct spi_buf_set *tx, const struct spi_buf_set *rx)
 {
+	if (hold_transfer) {
+		hold_transfer = false;
+		k_sem_give(&transfer_started);
+		zassert_ok(k_sem_take(&transfer_continue, K_SECONDS(1)));
+	}
 	if (spi_error) {
 		return spi_error;
 	}
@@ -122,28 +132,30 @@ static uint16_t duty(unsigned int channel)
 static void check_bluetooth_lighting(void)
 {
 	/* Manual center stays untouched while Bluetooth follows the actual link. */
-	for (int64_t now = 201000; now < 203000; now += 20) {
+	for (int64_t now = 201000; now < 209000; now += 20) {
 		unsigned int before = writes;
 		zassert_equal(hub_light_update(now, HOST_BLE_WAITING), now + 20);
 		zassert_equal(writes, before + 1, "One shared LED frame per tick");
-		zassert_equal(duty(18) != 0, now % 1000 < 100, "One 100 ms flash each second");
+		zassert_equal(duty(18) != 0, now < 201100 ||
+			(now >= 204000 && now < 204100) || (now >= 207000 && now < 207100),
+			"One 100 ms flash every three seconds");
 		zassert_equal(duty(19), 0);
 		zassert_equal(duty(20), 0);
 		zassert_equal(duty(5), 0);
 		zassert_equal(duty(4), 32768);
 		zassert_equal(duty(3), 65535);
 	}
-	hub_light_update(203000, HOST_BLE_CONNECTED);
+	hub_light_update(209000, HOST_BLE_CONNECTED);
 	zassert_true(duty(18) > 0);
 	unsigned int before = writes;
-	zassert_equal(hub_light_update(203900, HOST_BLE_CONNECTED), INT64_MAX);
+	zassert_equal(hub_light_update(209900, HOST_BLE_CONNECTED), INT64_MAX);
 	zassert_equal(writes, before, "Unclassified connection must be steady blue");
 
 	/* The same palette must produce exactly the same animation on both buttons. */
-	zassert_ok(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_NORMAL, 204000));
+	zassert_ok(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_NORMAL, 210000));
 	uint16_t previous = 0;
 	bool changed = false;
-	for (int64_t now = 204400; now < 205400; now += 20) {
+	for (int64_t now = 210400; now < 211400; now += 20) {
 		before = writes;
 		hub_light_update(now, HOST_BLE_PYBRICKS);
 		zassert_equal(writes, before + 1);
@@ -157,47 +169,147 @@ static void check_bluetooth_lighting(void)
 	}
 	zassert_true(changed, "Connected Bluetooth must animate");
 	/* A native BLE session can coexist with the Pybricks USB selection. */
-	hub_light_update(205400, HOST_BLE_NATIVE);
-	hub_light_update(205800, HOST_BLE_NATIVE);
+	hub_light_update(211400, HOST_BLE_NATIVE);
+	hub_light_update(211800, HOST_BLE_NATIVE);
 	zassert_true(duty(20) >= 62000 && duty(19) > 0);
 	zassert_equal(duty(18), 0);
 	zassert_equal(duty(5), 0);
 	zassert_true(duty(3) > 0);
-	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 206000));
-	for (int64_t now = 206000; now < 206400; now += 20) {
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 212000));
+	for (int64_t now = 212000; now < 212400; now += 20) {
 		hub_light_update(now, HOST_BLE_NATIVE);
 		zassert_equal(duty(20), 65535);
 		zassert_equal(duty(19), 12079);
 		zassert_equal(duty(18), 16448);
 	}
-	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_BUSY, 206400));
-	hub_light_update(206400, HOST_BLE_NATIVE);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_BUSY, 212400));
+	hub_light_update(212400, HOST_BLE_NATIVE);
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(20 - i), 0, "Busy menu must blank even during a BLE connection");
 	}
-	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 206400));
-	hub_light_update(206420, HOST_BLE_NATIVE);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 212400));
+	hub_light_update(212420, HOST_BLE_NATIVE);
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(20 - i), duty(5 - i));
 	}
 	const uint16_t manual[] = {1, 2, 3};
 	zassert_ok(hub_light_pwm(false, manual));
-	hub_light_update(206440, HOST_BLE_NATIVE);
+	hub_light_update(212440, HOST_BLE_NATIVE);
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(20 - i), manual[i]);
 	}
-	hub_light_update(206460, HOST_BLE_WAITING);
+	hub_light_update(212460, HOST_BLE_WAITING);
 	zassert_equal(duty(18), UINT16_MAX, "Disconnect must resume automatic indication");
-	hub_light_update(206480, HOST_BLE_OFF);
+	hub_light_update(212480, HOST_BLE_OFF);
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(20 - i), 0, "Disabled radio must not indicate waiting");
 	}
 	/* A link change while the menu is open must not replace its white marker. */
-	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 206500));
-	hub_light_update(206500, HOST_BLE_WAITING);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 212500));
+	hub_light_update(212500, HOST_BLE_WAITING);
 	zassert_equal(duty(20), UINT16_MAX);
 	zassert_equal(duty(19), 12079);
 	zassert_equal(duty(18), 16448);
+}
+
+ZTEST(hub, test_matrix_ownership_and_shared_controller)
+{
+	const struct device *led = DEVICE_DT_GET(DT_NODELABEL(test_leds));
+	const uint16_t rgb[] = {123, 456, 789};
+	zassert_ok(tlc5955_set_colors16(led, 0, 1, rgb));
+	uint8_t frame[BP_MATRIX_PIXELS] = {0};
+	frame[0] = 100;
+	frame[4] = 50;
+	frame[20] = 25;
+	frame[24] = 75;
+	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, sizeof(frame)));
+	zassert_ok(hub_matrix_wait());
+	/* Corners from the upstream Prime F4 wiring; gamma-2 percentage endpoints. */
+	zassert_equal(duty(38), 65535);
+	zassert_equal(duty(33), 16383);
+	zassert_equal(duty(25), 4095);
+	zassert_equal(duty(9), 36863);
+	zassert_equal(duty(36), 0);
+	zassert_equal(duty(5), 123);
+	zassert_equal(duty(4), 456);
+	zassert_equal(duty(3), 789);
+	zassert_equal(duty(14), 65535, "Matrix must preserve charger disable");
+	struct bp_matrix_state value;
+	zassert_ok(hub_matrix_get(&value));
+	zassert_true(value.valid && !value.pending && value.applied_ms <= k_uptime_get());
+	zassert_mem_equal(value.applied, frame, sizeof(frame));
+	zassert_equal(value.owner, BP_MATRIX_APPLICATION);
+	unsigned int before = writes;
+	zassert_equal(hub_matrix_write(BP_MATRIX_TERMINAL, 0, frame, 1), -EBUSY);
+	hub_matrix_session_closed();
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(writes, before, "Host disconnect must leave an application display alone");
+	frame[3] = 101;
+	zassert_equal(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, sizeof(frame)), -EINVAL);
+	zassert_equal(hub_matrix_write(BP_MATRIX_APPLICATION, 25, frame, 1), -EINVAL);
+	zassert_equal(hub_matrix_write(BP_MATRIX_APPLICATION, UINT32_MAX, frame, 1), -EINVAL);
+	zassert_equal(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, 26), -EINVAL);
+	zassert_equal(writes, before);
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
+	zassert_equal(duty(38), 0);
+	zassert_equal(duty(9), 0);
+	zassert_equal(duty(14), 65535);
+
+	/* Abort/disconnect while a driver is blocked must keep its buffers alive and
+	 * apply the final blank before releasing the display to another owner. */
+	hold_transfer = true;
+	frame[0] = 100;
+	zassert_ok(hub_matrix_write(BP_MATRIX_TERMINAL, 0, frame, 1));
+	zassert_ok(k_sem_take(&transfer_started, K_MSEC(100)));
+	frame[0] = 0;
+	zassert_equal(hub_matrix_write(BP_MATRIX_TERMINAL, 0, frame, 1), -EBUSY);
+	hub_matrix_session_closed();
+	zassert_equal(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, 1), -EBUSY);
+	k_sem_give(&transfer_continue);
+	zassert_ok(hub_matrix_wait());
+	zassert_ok(hub_matrix_get(&value));
+	zassert_equal(value.owner, BP_MATRIX_FREE);
+	zassert_equal(duty(38), 0);
+
+	/* Rejected writes cannot become visible via an unrelated later RGB write. */
+	spi_error = -EIO;
+	frame[0] = 100;
+	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, 1));
+	zassert_equal(hub_matrix_wait(), -EIO);
+	zassert_ok(hub_matrix_get(&value));
+	zassert_false(value.valid);
+	zassert_equal(value.error, -EIO);
+	zassert_equal(value.errors, 1);
+	zassert_equal(hub_matrix_release(BP_MATRIX_APPLICATION), -EIO);
+	zassert_ok(hub_matrix_get(&value));
+	zassert_equal(value.owner, BP_MATRIX_APPLICATION, "Failed cleanup must retain ownership");
+	spi_error = 0;
+	zassert_ok(tlc5955_set_colors16(led, 0, 1, rgb));
+	zassert_equal(duty(38), 0);
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
+
+	uint8_t reserved = 14;
+	uint16_t off = 0;
+	before = writes;
+	zassert_equal(tlc5955_set_channels16(led, &reserved, &off, 1), -EACCES);
+	zassert_equal(writes, before);
+	zassert_equal(duty(14), 65535);
+
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	zassert_ok(shell_execute_cmd(shell, "matrix frame 100 0 0 0 50 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 25 0 0 0 75"));
+	zassert_equal(duty(38), 65535);
+	zassert_equal(duty(9), 36863);
+	before = writes;
+	zassert_equal(shell_execute_cmd(shell, "matrix pixel wrong 1 100"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "matrix fill 101"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "matrix pixel 5 0 20"), -EINVAL);
+	zassert_equal(writes, before);
+	zassert_ok(shell_execute_cmd(shell, "matrix pixel 0 0 0"));
+	zassert_equal(duty(38), 0);
+	zassert_equal(duty(9), 36863);
+	zassert_ok(shell_execute_cmd(shell, "matrix clear"));
+	zassert_ok(hub_matrix_get(&value));
+	zassert_equal(value.owner, BP_MATRIX_FREE);
 }
 
 ZTEST(hub, test_readiness_light_and_manual_override)

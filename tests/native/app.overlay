@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	matrix_gpio: matrix-gpio {
+		compatible = "zephyr,gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <2>;
+	};
+	matrix_pwm: matrix-pwm {
+		compatible = "zephyr,fake-pwm";
+		#pwm-cells = <2>;
+		frequency = <96000000>;
+	};
+	matrix_spi: spi@10000000 {
+		compatible = "zephyr,spi-emul-controller";
+		reg = <0x10000000 4>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		hub_leds: leds@0 {
+			compatible = "ti,tlc5955";
+			reg = <0>;
+			spi-max-frequency = <24000000>;
+			latch-gpios = <&matrix_gpio 1 0>;
+			pwms = <&matrix_pwm 0 104>;
+			initial-full-channels = <14>;
+		};
+	};
+};
+#include "../../boards/lego/spike_prime_f4/lights.dtsi"

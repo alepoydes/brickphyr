@@ -7,6 +7,7 @@
 #include "native_image.h"
 #include "native_private.h"
 #include "hub.h"
+#include "hub_matrix.h"
 #include "hub_power.h"
 
 #include <brickphyr.h>
@@ -144,6 +145,35 @@ static inline uint32_t z_vrfy_bp_buttons(void)
 }
 #include <zephyr/syscalls/bp_buttons_mrsh.c>
 
+int z_impl_bp_matrix_write(uint32_t first, const uint8_t *values, size_t count)
+{
+	return hub_matrix_write(BP_MATRIX_APPLICATION, first, values, count);
+}
+
+static inline int z_vrfy_bp_matrix_write(uint32_t first, const uint8_t *values, size_t count)
+{
+	if (!count || first >= BP_MATRIX_PIXELS || count > BP_MATRIX_PIXELS - first) {
+		return -EINVAL;
+	}
+	K_OOPS(K_SYSCALL_MEMORY_READ(values, count));
+	uint8_t copy[BP_MATRIX_PIXELS];
+	memcpy(copy, values, count);
+	return z_impl_bp_matrix_write(first, copy, count);
+}
+#include <zephyr/syscalls/bp_matrix_write_mrsh.c>
+
+int z_impl_bp_matrix_get(struct bp_matrix_state *value)
+{
+	return hub_matrix_get(value);
+}
+
+static inline int z_vrfy_bp_matrix_get(struct bp_matrix_state *value)
+{
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_matrix_get(value);
+}
+#include <zephyr/syscalls/bp_matrix_get_mrsh.c>
+
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_native_finished(int result)
 {
@@ -186,8 +216,8 @@ static int release(void)
 {
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */
-	int err = 0;
-	if (domain_initialized) {
+	int err = hub_matrix_release(BP_MATRIX_APPLICATION);
+	if (!err && domain_initialized) {
 		for (size_t i = 0; i < ARRAY_SIZE(application_domain.partitions); i++) {
 			struct k_mem_partition part = application_domain.partitions[i];
 			if (part.size && (err = k_mem_domain_remove_partition(&application_domain, &part))) {

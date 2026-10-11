@@ -14,7 +14,9 @@ application. `app_main`, constructors and normal-return destructors run in user 
 Explicit stop and faults do not depend on user cleanup executing.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
-bounded output and read-only buttons. Text/constants, initialized data and BSS use
+bounded output, read-only buttons and the optional [hub matrix](hardware.md#hub-matrix).
+Matrix writes copy into firmware storage and return on acceptance; snapshots
+report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no
 device handles or raw flash service. Essential system threads preempt a busy
 application independently of time slicing. This is not a claim that the privileged
@@ -24,7 +26,9 @@ The supervisor joins the application before removing partitions and freeing its
 loader allocation. Return, stop and MPU faults retain their result for inspection;
 cleanup errors are reported separately. Host disconnection leaves the application
 running and its power hold active. Shutdown and all supported reboot paths stop
-it before proceeding. No motor or asynchronous device API is exported yet.
+it before proceeding. Matrix cleanup waits for the final blank before releasing
+ownership and unloading the application. A failed blank retains the resource and
+reports a cleanup error. No motor API is exported yet.
 
 Use `app run`, `app status`, `app output` and `app stop` in either USB or BLE Shell. Output is
 a 1024-byte queue with counted overflow; writing never waits for a reader. The

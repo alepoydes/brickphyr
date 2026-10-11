@@ -30,7 +30,7 @@ Normal installation, Pybricks 4.1.0b4/b6 restoration and return to Brickphyr pas
 on that hub. Linux USB/BLE checks cover reconnection, editing/history, protocol
 handover, partial-input isolation, unread USB output followed by BLE admission,
 SMP settings and persistence. Pybricks Code discovery and reconnection pass in
-Chromium Web Bluetooth, with a profile-version warning. Program upload/execution
+Chromium Web Bluetooth, with a profile-version warning. Pybricks program upload/execution
 is not implemented. An opt-in native profile now provides a matching C SDK,
 protected LLEXT execution, RAM uploads and lifecycle control through SMP,
 `brickphyrdev app` and the shared Shell. Separate SDK images, constructors,
@@ -51,6 +51,12 @@ blue waiting flashes, cyan Pybricks and yellow native connections, with menu whi
 retaining priority. Its perceived colors and transitions still await operator
 verification.
 
+The F4 matrix now has native/Shell operations, one pending firmware-owned frame,
+owner exclusion and stop/fault/disconnect cleanup through the shared TLC5955.
+Native simulation and ARM QEMU check the service and protected calls; physical
+orientation and brightness remain unverified. Bluetooth waiting flashes now have
+a three-second period. Telemetry, IMU, sound, external sensors and motors are next.
+
 ## Dependencies and remaining work
 
 Dependencies remain separate west repositories. Portable corrections belong in
@@ -65,7 +71,8 @@ never starts or stops an application. Reboot and power-cycle persistence are che
 Completed RAM uploads can be started from a later session; incomplete uploads
 are discarded on disconnect without stopping the application.
 The native ABI is experimental. Native builds require the additional Zephyr
-LLEXT build fixes and MCUmgr file-close API described in [upstream integration](../docs/upstream.md).
+LLEXT build fixes, MCUmgr file-close API and upstream ARM syscall register correction
+described in [upstream integration](../docs/upstream.md).
 A RAM filesystem is outside the milestone.
 
 LEGO restoration, interrupted updates, charging, residual current and host-initiated

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "native.h"
 #include "hub_power.h"
+#include "hub_matrix.h"
 
 #include <errno.h>
 #include <string.h>
@@ -9,6 +10,37 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell_dummy.h>
+#include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/spi_emul.h>
+#include <zephyr/fff.h>
+
+DEFINE_FFF_GLOBALS;
+
+static bool hold_transfer;
+static uint8_t led_frame[97];
+K_SEM_DEFINE(transfer_started, 0, 1);
+K_SEM_DEFINE(transfer_continue, 0, 1);
+
+static int receive_frame(const struct emul *emul, const struct spi_config *cfg,
+			 const struct spi_buf_set *tx, const struct spi_buf_set *rx)
+{
+	if (hold_transfer) {
+		hold_transfer = false;
+		k_sem_give(&transfer_started);
+		if (k_sem_take(&transfer_continue, K_MSEC(500))) {
+			return -ETIMEDOUT;
+		}
+	}
+	if (tx->count != 1 || tx->buffers[0].len != sizeof(led_frame)) {
+		return -EINVAL;
+	}
+	memcpy(led_frame, tx->buffers[0].buf, sizeof(led_frame));
+	return 0;
+}
+
+static int emul_init(const struct emul *emul, const struct device *bus) { return 0; }
+static const struct spi_emul_api spi_api = {.io = receive_frame};
+EMUL_DT_DEFINE(DT_NODELABEL(hub_leds), emul_init, NULL, NULL, &spi_api, NULL);
 
 LOG_MODULE_REGISTER(native_test, LOG_LEVEL_INF);
 
@@ -81,6 +113,32 @@ int main(void)
 	CHECK(reservation != NULL);
 	CHECK(native_fixture_run("hello") == -ENOMEM);
 	k_free(reservation);
+	CHECK(available() == capacity);
+
+	/* Real userspace syscalls and production driver/service with a synthetic SPI
+	 * peer. Stop must join the app and wait for the outstanding final blank. */
+	hold_transfer = true;
+	CHECK(native_fixture_run("matrix") == 0);
+	CHECK(k_sem_take(&transfer_started, K_MSEC(100)) == 0);
+	k_sem_give(&stop_requested);
+	CHECK(k_sem_take(&stop_completed, K_MSEC(10)) == -EAGAIN);
+	CHECK(available() < capacity);
+	k_sem_give(&transfer_continue);
+	CHECK(k_sem_take(&stop_completed, K_MSEC(100)) == 0 && stop_result == 0);
+	struct bp_matrix_state display;
+	CHECK(hub_matrix_get(&display) == 0);
+	CHECK(display.owner == BP_MATRIX_FREE && !display.pending && display.valid);
+	CHECK(led_frame[73] == 0 && led_frame[74] == 0); /* smile's top-row pixel */
+	CHECK(led_frame[29] == 255 && led_frame[30] == 255); /* charger remains disabled */
+	CHECK(available() == capacity);
+	CHECK(native_fixture_run("matrix_fault") == 0);
+	k_msleep(20);
+	native_get_status(&status);
+	printk("matrix fault: state %d result %d fault %u cleanup %d\n", status.state,
+	       status.result, status.fault, status.cleanup_error);
+	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	CHECK(hub_matrix_get(&display) == 0 && display.owner == BP_MATRIX_FREE);
+	CHECK(led_frame[77] == 0 && led_frame[78] == 0);
 	CHECK(available() == capacity);
 	CHECK(native_fixture_run("spin") == 0);
 	k_msleep(20);

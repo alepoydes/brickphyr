@@ -8,4 +8,9 @@
 int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t count,
 			const uint16_t *colors);
 
+/* Privileged sparse PWM write, sharing the RGB frame and latch. Reserved
+ * initial-full channels cannot be changed through the LED interface. */
+int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
+			  const uint16_t *values, size_t count);
+
 #endif

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+description: LEGO hub 5 by 5 monochrome matrix on a shared TLC5955
+compatible: "lego,hub-matrix"
+properties:
+  led-controller:
+    type: phandle
+    required: true
+  channels:
+    type: array
+    required: true
+    description: 25 TLC5955 wire channel indices, row-major in the hub's upright orientation.

@@ -3,7 +3,9 @@
 The table selects code sources and integration boundaries. The experimental
 Prime F4 build integrates clock/power setup, buttons, lighting, and a Zephyr USB
 diagnostic shell. See [hardware](hardware.md) for physical verification.
-Application services and runtime integrations below remain unimplemented. This is not a claim that every chip has a Zephyr driver.
+Native loading, storage and matrix services are implemented; the remaining device
+services and Python/WASM integrations below are selected directions. This is not
+a claim that every chip has a Zephyr driver.
 
 | Subsystem | Preferred source | Brickphyr work / boundary |
 | --- | --- | --- |

@@ -169,8 +169,8 @@ static void bluetooth_color(int64_t now, uint32_t fluctuation)
 			color_to_pwm(rgb, UINT16_MAX);
 		}
 	} else if (bluetooth_state == HOST_BLE_WAITING) {
-		/* 100 ms at full blue PWM once per second; no catch-up flashes. */
-		rgb[2] = (now - bluetooth_changed) % 1000 < 100 ? UINT16_MAX : 0;
+		/* 100 ms at full blue PWM every three seconds; no catch-up flashes. */
+		rgb[2] = (now - bluetooth_changed) % 3000 < 100 ? UINT16_MAX : 0;
 	} else if (bluetooth_state == HOST_BLE_CONNECTED) {
 		/* A link alone has no profile; keep blue steady until a service is used. */
 		rgb[2] = 26214;

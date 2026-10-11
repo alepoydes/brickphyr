@@ -41,9 +41,9 @@ source changes preserve the session and uptime.
 The family name is not a board ID. Do not assume all Prime-family hardware uses
 the same MCU, radio, boot chain, or flash layout. Add revision-specific rows as
 hardware is identified; do not mark an entire family verified from one board.
-Inventor shares the relevant upstream F4 code. The verified scope above covers
-Brickphyr `0.1.0-bringup` with Zephyr `4.4.2`; Bluetooth controller input, motor outputs, and
-application isolation have not been physically verified. Battery retention and
+Inventor shares the relevant upstream F4 code. Native application checks are
+described in [applications](applications.md#experimental-native-profile).
+Bluetooth controller input and motor outputs have not been physically verified. Battery retention and
 center-button start/shutdown have operator
 observations on this hub, not current-consumption measurements.
 Other hubs are outside the current implementation target list.
@@ -97,7 +97,8 @@ The TLC5955 drives both central RGB LEDs and the Bluetooth RGB LED over SPI1,
 with a TIM12 clock and PA15 latch. The driver reuses Pybricks control/grayscale
 encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
 3.2 mA setting matches Pybricks. The shared charger-control channel remains at
-the Pybricks disabled value; this step does not implement charging or the matrix.
+the Pybricks disabled value. Charging is not implemented. The matrix uses the
+same controller and frame; see [hub matrix](#hub-matrix).
 
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
 central LEDs and the Bluetooth LED in one transfer. The experimental reactor animation has a saturated
@@ -124,7 +125,7 @@ Bluetooth button follows the actual BLE connection independently:
 
 | BLE state | Bluetooth button |
 | --- | --- |
-| Waiting for a connection | Full blue flash for 100 ms, once per second |
+| Waiting for a connection | Full blue flash for 100 ms, once every three seconds |
 | Connected, no service used yet | Steady blue |
 | Pybricks service in use | Cyan reactor animation |
 | Native terminal or SMP in use | Yellow reactor animation |
@@ -161,6 +162,44 @@ not measurements of residual current or proof of wake initiated by the USB host.
 Button restart with USB left attached is checked after both command shutdown and
 a long center hold. See [power behavior](settings.md#inactivity-shutdown) and
 [testing](testing.md#hub-input-and-lighting).
+
+## Hub matrix
+
+The F4 image implements a 5 by 5 monochrome display through the existing TLC5955
+driver. Its row-major wiring comes from Pybricks `prime_hub_f4`'s
+`LED_ARRAY_DEV_0_LIGHT_MATRIX`. Brightness is 0–100 with Pybricks' gamma-2
+conversion to 16-bit PWM. Coordinates start at the top left in the upright hub
+orientation. Matrix and button writes serialize through the same persistent
+controller frame, preserving each other's channels and the charger-disable output.
+
+The [Shell commands](builds.md#diagnostic-shell) and native SDK use one display
+service. The first accepted write acquires the matrix for the terminal or the
+application; another owner receives `-EBUSY`. A terminal clear or disconnect
+blanks its display and releases it. Host disconnection leaves an application's
+display alone. Application return, fault or stop blanks it before unload. A
+failed blank retains ownership and reports the error; an explicit cleanup can
+retry it. Shutdown closes admission and requests a blank.
+
+`bp_matrix_write(first, values, count)` accepts a contiguous portion of the
+25-pixel row-major frame, including a single pixel or the whole display. It
+copies the values before returning and does not wait or allocate. One frame can
+be pending; another write receives `-EBUSY`. A system work item performs the SPI
+operation, so aborting the application cannot leave a driver mutex locked or
+invalidate the driver's buffer. Each attempted frame adds one 97-byte transfer
+to the existing button animation traffic. There is no periodic display transfer
+when the image is unchanged.
+
+`bp_matrix_get()` distinguishes requested values from the last successful write,
+with its monotonic completion time, pending flag, owner, latest error and failure
+count. Successful writes establish controller output, not measured light.
+An I/O error marks the output uncertain until another write succeeds. Rejected
+SPI frames are not retained for transmission by an unrelated RGB update.
+
+Native simulation checks cover wiring endpoints, brightness, shared-channel
+preservation, ownership, input validation, in-flight disconnect and SPI failure.
+ARM QEMU additionally exercises user-memory validation and application stop/fault
+cleanup through the actual native syscalls and loader. Physical matrix orientation,
+brightness and operation on the Inventor F4 still await verification.
 
 ## A support claim must be reproducible
 

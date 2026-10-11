@@ -2,6 +2,7 @@
 #include "host_protocol.h"
 #include "host_transport.h"
 #include "hub_power.h"
+#include "hub_matrix.h"
 #include "storage.h"
 #include "native.h"
 
@@ -369,6 +370,7 @@ static void host_thread(void *a, void *b, void *c)
 				shell_initialized = false;
 			}
 			native_session_closed();
+			hub_matrix_session_closed();
 			smp_shell_rx_reset(&smp_input, &smp_serial);
 			protocol = (struct host_protocol){0};
 			reply_length = 0;
@@ -590,6 +592,7 @@ static void finish_ble_session(void)
 {
 	if (ble_closing && !ble_request_thread && !ble_shell) {
 		native_session_closed();
+		hub_matrix_session_closed();
 		ble_occupied = false;
 		ble_closing = false;
 		hub_power_connection(false);

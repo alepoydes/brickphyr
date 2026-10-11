@@ -1,4 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	hub_matrix: matrix {
+		compatible = "lego,hub-matrix";
+		led-controller = <&hub_leds>;
+		/* Pybricks prime_hub_f4 LED_ARRAY_DEV_0_LIGHT_MATRIX wiring. */
+		channels = <38 36 41 46 33
+			    37 28 39 47 21
+			    24 29 31 45 23
+			    26 27 32 34 22
+			    25 40 30 35 9>;
+	};
+};
 &hub_leds {
 	/* Provisional gains from visual RGB-pair checks on Inventor F4. */
 	white-balance = <255 47 64>;

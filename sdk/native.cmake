@@ -9,10 +9,14 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py
   VERBATIM)
@@ -26,10 +30,15 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault)
+  foreach(example hello counter spin fault matrix matrix_fault)
+    if(example STREQUAL matrix_fault)
+      set(example_source ${BRICKPHYR_ROOT}/tests/native/matrix_fault.c)
+    else()
+      set(example_source ${BRICKPHYR_ROOT}/examples/native/${example}.c)
+    endif()
     add_llext_target(native_${example}
       OUTPUT ${PROJECT_BINARY_DIR}/${example}.elf
-      SOURCES ${BRICKPHYR_ROOT}/examples/native/${example}.c)
+      SOURCES ${example_source})
     add_dependencies(native_${example}_llext_lib brickphyr_abi)
     # Firmware headers include both syscall paths; fixture images use only SVC.
     llext_compile_definitions(native_${example} __ZEPHYR_USER__)

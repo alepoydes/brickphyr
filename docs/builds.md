@@ -154,6 +154,24 @@ hub revision.
 | `led center R G B` | F4: stop animation and set both central-button LEDs, corrected RGB 0–255 |
 | `led bluetooth R G B` | F4: set the Bluetooth-button LED, corrected RGB 0–255 |
 | `led pwm center R G B` / `led pwm bluetooth R G B` | F4: direct channel duty 0–65535, bypassing gamma and white balance |
+| `matrix [status]` | F4: display owner, completion/error status and last applied 5×5 image |
+| `matrix fill LEVEL` | F4: set all pixels to brightness 0–100 |
+| `matrix pixel ROW COLUMN LEVEL` | F4: set one pixel; row and column 0–4 |
+| `matrix frame <25 levels>` | F4: write a row-major frame, brightness 0–100 per pixel |
+| `matrix clear` | F4: clear a terminal-owned display and release it; an application owner is busy |
+
+Matrix commands wait for the controller write and report its result. Closing a
+terminal clears only its own display. For example:
+
+```text
+matrix fill 0
+matrix pixel 0 0 100
+matrix pixel 4 4 50
+matrix status
+matrix clear
+```
+
+See [matrix ownership and native API](hardware.md#hub-matrix).
 
 RGB commands use gamma 2 followed by the board's white-balance coefficients.
 The provisional F4 channel weights are `255:47:64`; see [color handling](hardware.md).
@@ -414,7 +432,9 @@ separate example build uses the exported EDK and toolchain, without compiling
 the firmware again. Use an EDK from the exact firmware configuration; mismatched
 ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
 constructors and soft-float arithmetic; `counter.elf` reports a counter and buttons.
-`spin.elf` and `fault.elf` are deliberate failure fixtures.
+`matrix.elf` displays a smile until stopped. `spin.elf` and `fault.elf` are
+deliberate failure fixtures. Regenerate the EDK and rebuild applications after a
+firmware/SDK change; the ABI identity also includes the ARM syscall stubs.
 
 After [authorized installation](recovery.md), use either terminal transport:
 
@@ -430,11 +450,8 @@ diagnostics
 `native_fixture` loads an ELF embedded for board acceptance, not the separately
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
-use. The native/BLE acceptance build with four fixture images uses 336,188 bytes
-of firmware flash and 207 KiB of statically reserved RAM, including the shared
-128 KiB heap (Zephyr SDK 1.0.1, F4, MPU enabled). Its separately built `hello`
-image is 3240 bytes and reserves 9824 bytes for LLEXT; the reported loaded allocation
-is 2419 bytes. During RAM loading, the receive buffer and loader reservation coexist;
+use. Read firmware flash and static RAM usage from the build's memory report;
+these include the shared 128 KiB heap. The loader reports the image size,
+reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
 the receive buffer is then released. File loading reserves no ELF receive buffer
-and reports the same loader/loaded allocation for the same image. These are example sizes, not application
-capacity guarantees.
+and reports the same loader/loaded allocation for the same image.

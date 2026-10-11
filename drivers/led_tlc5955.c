@@ -3,6 +3,7 @@
 #define DT_DRV_COMPAT ti_tlc5955
 
 #include <pbdrv/tlc5955.h>
+#include <string.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/led.h>
 #include <zephyr/drivers/pwm.h>
@@ -45,26 +46,52 @@ static int transfer(const struct tlc_config *cfg, const uint8_t *frame)
 	return gpio_pin_set_dt(&cfg->latch, 0);
 }
 
-int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t count,
-			const uint16_t *colors)
+int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
+			  const uint16_t *values, size_t count)
 {
 	const struct tlc_config *cfg = dev->config;
 	struct tlc_data *data = dev->data;
 
-	if (first >= cfg->led_count || !count || count > cfg->led_count - first) {
+	if (!channels || !values || !count || count > TLC5955_NUM_CHANNEL) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&data->lock, K_FOREVER);
-	for (uint32_t led = 0; led < count; led++) {
-		for (int i = 0; i < 3; i++) {
-			pbdrv_tlc5955_set_duty(data->frame, cfg->channels[first + led][i],
-					       colors[3 * led + i]);
+	uint64_t used = 0;
+	for (size_t i = 0; i < count; i++) {
+		if (channels[i] >= TLC5955_NUM_CHANNEL || (used & BIT64(channels[i]))) {
+			return -EINVAL;
+		}
+		used |= BIT64(channels[i]);
+	}
+	for (size_t i = 0; i < cfg->full_count; i++) {
+		if (used & BIT64(cfg->full_channels[i])) {
+			return -EACCES;
 		}
 	}
-	int err = transfer(cfg, data->frame);
+	uint8_t frame[TLC5955_DATA_SIZE];
+	k_mutex_lock(&data->lock, K_FOREVER);
+	memcpy(frame, data->frame, sizeof(frame));
+	for (size_t i = 0; i < count; i++) {
+		pbdrv_tlc5955_set_duty(frame, channels[i], values[i]);
+	}
+	int err = transfer(cfg, frame);
+	/* A rejected frame must not leak into a later update of another LED. */
+	if (!err) {
+		memcpy(data->frame, frame, sizeof(frame));
+	}
 
 	k_mutex_unlock(&data->lock);
 	return err;
+}
+
+int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t count,
+			const uint16_t *colors)
+{
+	const struct tlc_config *cfg = dev->config;
+	if (first >= cfg->led_count || !count || count > cfg->led_count - first) {
+		return -EINVAL;
+	}
+	return tlc5955_set_channels16(dev, (const uint8_t *)&cfg->channels[first], colors,
+				     count * 3);
 }
 
 static int set_color(const struct device *dev, uint32_t led, uint8_t count,

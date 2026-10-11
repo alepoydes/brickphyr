@@ -3,6 +3,13 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_MATRIX
+	bool "Hub light matrix"
+	default y
+	depends on DT_HAS_LEGO_HUB_MATRIX_ENABLED && LED
+	help
+	  Shared 5 by 5 display, with application and terminal ownership.
+
 config BRICKPHYR_NATIVE
 	bool "Experimental protected native applications"
 	depends on CPU_CORTEX_M && USERSPACE && ARM_MPU && LLEXT

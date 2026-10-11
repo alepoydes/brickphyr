@@ -30,7 +30,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
-uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests &&
+uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay &&
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
 mkdir -p build/native-smp-sdk &&
 tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&
@@ -104,11 +104,14 @@ and cyan/yellow channel exclusion. Green keeps increasing after red saturates.
 It also checks menu lighting, simultaneous central LED updates, skipped late
 frames, persistent manual central color, independent Bluetooth color, and prevention of relighting after shutdown. RGB checks cover
 board gains, gamma response, and exact raw PWM including zero and full duty.
-Bluetooth lighting checks exercise the one-second blue flash, steady unclassified
+Bluetooth lighting checks exercise the three-second blue flash, steady unclassified
 connection, shared reactor output, independent USB/BLE palettes, menu priority and
 busy blanking, manual overrides, disconnect, radio off and shutdown. All three
 LEDs must latch in one frame without changing the charger-disable channel.
 These checks establish output behavior, not perceived color or visual quality.
+Matrix checks use the same SPI driver and production service: brightness and
+corner wiring, preservation of RGB/charger channels, owner exclusion, malformed
+Shell arguments, disconnect during an unfinished write, and failed-write isolation.
 The menu checks exercise entry, preview, cancellation, release confirmation, and
 retention after rejected selection through the production transition handler.
 
@@ -137,6 +140,9 @@ by a fresh center press with USB left attached, then repeat on battery power.
 ## Local checks
 
 `tests/native` executes the production loader on an ARM MPU model, checking
+matrix syscalls, repeated invalid calls, invalid result buffers and release after
+stop/fault. Its synthetic SPI peer can delay a write until the test allows it to
+finish; application unload must wait for the final blank. It also checks
 resource recovery, unavailable memory, interrupted staging, ABI/format rejection,
 busy-loop termination at terminal priority and recovery after a prohibited RAM
 write. `tests/native_smp` adds the standard serial SMP stack. Its host check uploads
