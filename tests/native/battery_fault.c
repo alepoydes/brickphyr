@@ -6,6 +6,11 @@ BRICKPHYR_APPLICATION();
 
 int app_main(void)
 {
+	struct bp_port_state port;
+	if (bp_port_get(0, &port) || bp_port_get(BP_PORT_COUNT, &port) != -EINVAL ||
+	    port.type_id != 0 || (port.error != 0 && port.error != -EAGAIN)) {
+		return -EINVAL;
+	}
 	struct bp_battery_sample value = {0};
 	int64_t deadline = bp_time_ms() + 1500;
 	for (;;) {

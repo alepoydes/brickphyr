@@ -215,6 +215,7 @@ zephyr_udc0: &usbotg_fs {
 
 #include "buttons.dtsi"
 #include "battery.dtsi"
+#include "ports.dtsi"
 
 &adc1 {
 	pinctrl-0 = <&adc1_in1_pa1 &adc1_in14_pc4 &adc1_in10_pc0 &adc1_in11_pc1>;

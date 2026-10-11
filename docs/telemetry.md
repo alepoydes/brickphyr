@@ -3,7 +3,8 @@
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
 `observe application`, `observe matrix`, `observe imu`, `observe imu.calibrated`
-`observe imu.orientation`, `observe sound` or `observe battery` for one source. Unsupported sources
+`observe imu.orientation`, `observe sound`, `observe battery` or `observe port.A`
+(through `port.F`) for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 
 Observation is read-only. It does not start ADC/SPI transactions, change a sensor
@@ -123,6 +124,7 @@ format, connection owner or Bluetooth service is introduced.
 | `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
 | `sound` | `changed_ms`, `owner`, `phase`, `mode`, `requested_hz`, `actual_hz`, `queued`, `completed`, `frequency`, `duration_ms`, `volume`, `eof`, `underruns`, `failures`, `cleanup` |
 | `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw` |
+| `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `pressed`, `cleanup`; [electrical identification only](ports.md) |
 
 IMU times are microseconds on the hub's monotonic clock. `sample_us` is the last
 accepted gyro data-ready edge; `completed_us` is the last read attempt's end.

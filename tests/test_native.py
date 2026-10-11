@@ -159,6 +159,13 @@ def test_native_smp_and_cli():
             assert battery.values["sequence"] > 0
             assert sound.error == 0 and sound.values["owner"] == 0
             assert sound.values["completed"] == 8192
+            async with asyncio.timeout(5):
+                while (port_a := await snapshot(client, "port.A")).error == -11:
+                    await asyncio.sleep(0.01)
+            assert port_a.error == 0
+            assert port_a.values["type_id"] == 0 and port_a.values["phase"] == 1
+            assert port_a.values["sequence"] > 0
+            assert (await snapshot(client, "port.F")).values["type_id"] == 0
             await upload(client, transport, (examples / "spin.elf").read_bytes())
             await checked(client, Start())
             assert (await snapshot(client, "application")).values["state"] == 1

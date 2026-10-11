@@ -4,6 +4,7 @@
 #include "hub_imu.h"
 #include "hub_sound.h"
 #include "hub_battery.h"
+#include "hub_ports.h"
 #include "input_resistor_ladder.h"
 #include "native.h"
 
@@ -27,9 +28,11 @@
 #endif
 
 #define TELEMETRY_GROUP 66
-enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION, SOUND, BATTERY };
+enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU_ORIENTATION,
+	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
-	"imu", "imu.calibrated", "imu.orientation", "sound", "battery"};
+	"imu", "imu.calibrated", "imu.orientation", "sound", "battery",
+	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -53,6 +56,8 @@ static bool available(enum source source)
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
 	case SOUND: return IS_ENABLED(CONFIG_BRICKPHYR_SOUND);
 	case BATTERY: return IS_ENABLED(CONFIG_BRICKPHYR_BATTERY);
+	case PORT_A: case PORT_B: case PORT_C: case PORT_D: case PORT_E: case PORT_F:
+		return IS_ENABLED(CONFIG_BRICKPHYR_PORTS);
 	case IMU: case IMU_CALIBRATED: case IMU_ORIENTATION: return IS_ENABLED(CONFIG_BRICKPHYR_IMU);
 	default: return false;
 	}
@@ -183,6 +188,21 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
+		}
+	} else if (source >= PORT_A && source <= PORT_F) {
+		struct bp_port_state value;
+		out->error = hub_port_get(source - PORT_A, &value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_ms", value.sample_ms);
+			field(out, "changed_ms", value.changed_ms);
+			field(out, "sequence", value.sequence);
+			field(out, "generation", value.generation);
+			field(out, "failures", value.failures);
+			field(out, "phase", value.phase);
+			field(out, "type_id", value.type_id);
+			field(out, "pressed", value.pressed);
+			field(out, "cleanup", value.cleanup_error);
 		}
 	} else if (source == BATTERY) {
 		struct bp_battery_sample value;
@@ -324,7 +344,7 @@ static int cmd_observe(const struct shell *shell, size_t argc, char **argv)
 	return result;
 }
 
-SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | power | buttons.center | buttons.side | application | matrix | imu | imu.calibrated | imu.orientation].",
+SHELL_CMD_ARG_REGISTER(observe, NULL, "Read snapshots: [all | source]. Omit source to read all available observations.",
 		      cmd_observe, 1, 1);
 
 static const struct mgmt_handler handlers[] = {

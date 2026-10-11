@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2025 The Pybricks Authors
+/* Prime F4 port wiring from platform/prime_hub_f4/platform.c at a7b1b04ae. */
+/ {
+	hub_ports: ports {
+		compatible = "lego,powered-up-ports";
+		vcc-gpios = <&gpioa 14 GPIO_ACTIVE_HIGH>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		port@0 {
+			reg = <0>;
+			p5-gpios = <&gpiod 7 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpiod 8 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpioe 8 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpioe 7 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpioa 10 GPIO_ACTIVE_LOW>;
+		};
+		port@1 {
+			reg = <1>;
+			p5-gpios = <&gpiod 9 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpiod 10 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpiod 1 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpiod 0 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpioa 8 GPIO_ACTIVE_LOW>;
+		};
+		port@2 {
+			reg = <2>;
+			p5-gpios = <&gpiod 11 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpioe 4 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpioe 1 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpioe 0 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpioe 5 GPIO_ACTIVE_LOW>;
+		};
+		port@3 {
+			reg = <3>;
+			p5-gpios = <&gpioc 15 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpioc 14 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpioc 12 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpiod 2 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
+		};
+		port@4 {
+			reg = <4>;
+			p5-gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpioe 12 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpioe 3 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpioe 2 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+		};
+		port@5 {
+			reg = <5>;
+			p5-gpios = <&gpioc 11 GPIO_ACTIVE_HIGH>;
+			p6-gpios = <&gpioe 6 GPIO_ACTIVE_HIGH>;
+			tx-gpios = <&gpiod 15 GPIO_ACTIVE_HIGH>;
+			rx-gpios = <&gpiod 14 GPIO_ACTIVE_HIGH>;
+			buffer-gpios = <&gpioc 5 GPIO_ACTIVE_LOW>;
+		};
+	};
+};

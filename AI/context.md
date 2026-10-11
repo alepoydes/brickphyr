@@ -59,7 +59,9 @@ supports filters, host JSONL recording and a shared terminal session over USB/BL
 Bluetooth waiting flashes have a three-second period. Synthetic acquisition,
 protected ARM SDK and SMP checks cover these new services; physical display,
 IMU accuracy/timing, audio and voltage/current verification remain pending.
-External sensors and motors are the next implementation work.
+Electrical A–F detection now has native/Shell/SMP snapshots with synthetic GPIO
+and protected ARM checks. UART negotiation, external sensor data and motors
+remain the next implementation work; physical port identification is unverified.
 
 ## Dependencies and remaining work
 

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Synthetic Powered Up wiring for electrical identification checks
+compatible: "vnd,pup-test-gpio"
+include: [gpio-controller.yaml, base.yaml]
+properties:
+  port-index:
+    type: int
+    required: true
+  "#gpio-cells":
+    const: 2
+gpio-cells: [pin, flags]

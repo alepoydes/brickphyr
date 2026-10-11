@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Powered Up electrical identification and shared logic supply
+compatible: "lego,powered-up-ports"
+include: base.yaml
+
+properties:
+  vcc-gpios:
+    type: phandle-array
+    required: true
+    description: Shared device logic supply enable, not motor power
+  "#address-cells":
+    const: 1
+  "#size-cells":
+    const: 0
+
+child-binding:
+  description: One external port; reg is its zero-based index (A is 0)
+  properties:
+    reg:
+      type: int
+      required: true
+    p5-gpios:
+      type: phandle-array
+      required: true
+    p6-gpios:
+      type: phandle-array
+      required: true
+    tx-gpios:
+      type: phandle-array
+      required: true
+    rx-gpios:
+      type: phandle-array
+      required: true
+    buffer-gpios:
+      type: phandle-array
+      required: true
+      description: Active-low UART buffer enable

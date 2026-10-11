@@ -3,8 +3,9 @@
 The table selects code sources and integration boundaries. The experimental
 Prime F4 build integrates clock/power setup, buttons, lighting, and a Zephyr USB
 diagnostic shell. See [hardware](hardware.md) for physical verification.
-Native loading, storage and matrix services are implemented; the remaining device
-services and Python/WASM integrations below are selected directions. This is not
+Native loading, storage, matrix, IMU, sound, battery and electrical port detection
+are implemented. Remaining device services and Python/WASM integrations below
+are selected directions. This is not
 a claim that every chip has a Zephyr driver.
 
 | Subsystem | Preferred source | Brickphyr work / boundary |
@@ -13,7 +14,7 @@ a claim that every chip has a Zephyr driver.
 | MCU startup, clocks, interrupt/DMA support | Zephyr and its SoC support | LEGO board description and required missing support |
 | GPIO, UART, SPI, I²C, PWM, ADC, USB, watchdog | Zephyr drivers | Verify each actual peripheral; add missing drivers upstream where useful |
 | Hub power, charging status, shutdown, buttons, LEDs, display, sound | Pybricks board/device knowledge + Zephyr mechanisms | Preserve electrical behavior and user-facing semantics; board-specific adapters |
-| LEGO port identification and device protocols | Pybricks | Port detection, hotplug, protocol state machines over Zephyr transport |
+| LEGO port identification and device protocols | Pybricks | [Port detection and hotplug](ports.md), protocol state machines over Zephyr transport |
 | Motor sensing, regulation, trajectories, DriveBase | Pybricks PBIO | Reuse algorithms; replace scheduling and low-level I/O coupling |
 | IMU acquisition | Zephyr driver if suitable; otherwise reusable Pybricks driver | Verify chip, range, sample timing, filters and units |
 | IMU calibration and orientation / Python semantics | Pybricks | Preserve coordinate, calibration, and persistence contracts |

@@ -46,6 +46,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery -d build/battery-tests &&
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&

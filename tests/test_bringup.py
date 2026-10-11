@@ -117,6 +117,7 @@ def test_image():
         "imu-failure-tests",
         "sound-tests",
         "battery-tests",
+        "ports-tests",
     ],
 )
 def test_hub_drivers(suite, tmp_path):

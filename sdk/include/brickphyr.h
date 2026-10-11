@@ -10,6 +10,7 @@
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
+#include <brickphyr_port.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -45,6 +46,10 @@ __syscall int bp_imu_get_state(struct bp_imu_state *state);
 /* Copy the latest battery pair without starting ADC or waiting for acquisition.
  * Check sample.error; startup, stale, failed and stopped readings stay explicit. */
 __syscall int bp_battery_get(struct bp_battery_sample *sample);
+
+/* Copy electrical detection state; no I/O or port reconfiguration. Ports are
+ * numbered 0..5 (A..F). This does not negotiate a UART device or drive a motor. */
+__syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
 
 /* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
  * Zero duration continues until stopped; otherwise duration is milliseconds.

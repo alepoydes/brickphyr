@@ -16,6 +16,7 @@
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
+#include "hub_ports.h"
 #include "hub_menu.h"
 #include "hub_power.h"
 #include "input_resistor_ladder.h"
@@ -65,6 +66,10 @@ static void shutdown(void)
 	hub_battery_shutdown();
 	if (err) {
 		LOG_ERR("IMU off failed: %d", err);
+	}
+	err = hub_ports_shutdown();
+	if (err) {
+		LOG_ERR("Ports off failed: %d", err);
 	}
 	err = hub_matrix_shutdown();
 	if (err) {

@@ -339,6 +339,14 @@ synthetic DMA sink. ARM QEMU additionally exercises the SDK calls and cleanup
 after protected application stop/fault. The F4 images compile; neither check
 executes the DAC registers on a physical hub.
 
+## External port identification
+
+The F4 build has experimental electrical detection on ports A–F, shared by the
+native SDK, Shell and SMP. [External ports](ports.md) describes identification,
+hotplug, validity and cleanup. Synthetic GPIO and ARM checks pass; physical
+identification, UART negotiation and external sensor measurements remain pending.
+Motor outputs stay in coast.
+
 ## Hub battery
 
 `CONFIG_BRICKPHYR_BATTERY` provides voltage and load-current snapshots through

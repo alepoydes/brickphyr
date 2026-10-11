@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "../native/battery.dtsi"
+#include "../ports/ports.dtsi"
 /* A small synthetic store exercises capacity failures without a long transfer. */
 / {
 	hub_speaker: speaker {

@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#define GPIO_CELLS #gpio-cells
+#define TEST_GPIO(label_, name_, index_) \
+	label_: name_ { compatible = "vnd,pup-test-gpio"; gpio-controller; \
+		ngpios = <5>; GPIO_CELLS = <2>; port-index = <index_>; };
+#define TEST_PORT(index_, gpio_) \
+	port@index_ { reg = <index_>; p5-gpios = <&gpio_ 0 GPIO_ACTIVE_HIGH>; \
+		p6-gpios = <&gpio_ 1 GPIO_ACTIVE_HIGH>; tx-gpios = <&gpio_ 2 GPIO_ACTIVE_HIGH>; \
+		rx-gpios = <&gpio_ 3 GPIO_ACTIVE_HIGH>; buffer-gpios = <&gpio_ 4 GPIO_ACTIVE_LOW>; };
+/ {
+	TEST_GPIO(pup_a, pup-a, 0)
+	TEST_GPIO(pup_b, pup-b, 1)
+	TEST_GPIO(pup_c, pup-c, 2)
+	TEST_GPIO(pup_d, pup-d, 3)
+	TEST_GPIO(pup_e, pup-e, 4)
+	TEST_GPIO(pup_f, pup-f, 5)
+	TEST_GPIO(pup_supply, pup-supply, 6)
+	hub_ports: ports {
+		compatible = "lego,powered-up-ports";
+		vcc-gpios = <&pup_supply 0 GPIO_ACTIVE_HIGH>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		TEST_PORT(0, pup_a)
+		TEST_PORT(1, pup_b)
+		TEST_PORT(2, pup_c)
+		TEST_PORT(3, pup_d)
+		TEST_PORT(4, pup_e)
+		TEST_PORT(5, pup_f)
+	};
+};
+#undef TEST_GPIO
+#undef TEST_PORT
+#undef GPIO_CELLS

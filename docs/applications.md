@@ -20,7 +20,8 @@ The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable
 bounded output, read-only buttons, optional [hub matrix](hardware.md#hub-matrix),
 [IMU snapshots](hardware.md#hub-imu),
 [speaker tone and PCM](hardware.md#hub-sound), and
-[battery snapshots](hardware.md#hub-battery).
+[battery snapshots](hardware.md#hub-battery), and
+[external port identification](ports.md).
 Matrix writes copy into firmware storage and return on acceptance; snapshots
 report completion and errors. Text/constants, initialized data and BSS use
 three MPU partitions; the stack has its own protection. Native code receives no

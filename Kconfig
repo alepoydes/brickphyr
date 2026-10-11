@@ -3,6 +3,15 @@ mainmenu "Brickphyr"
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_PORTS
+	bool "Powered Up electrical identification"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on DT_HAS_LEGO_POWERED_UP_PORTS_ENABLED
+	select GPIO
+	help
+	  Detect empty, passive and UART ports using the Pybricks pin sequence
+	  over Zephyr GPIO. No UART negotiation or motor drive yet.
+
 config BRICKPHYR_BATTERY
 	bool "Battery voltage and load-current observations"
 	default y if BOARD_SPIKE_PRIME_F4
