@@ -31,6 +31,12 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests &&
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
+mkdir -p build/native-smp-sdk &&
+tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&
+uv run --locked cmake -S examples/native -B build/native-smp-examples -G Ninja \
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/llext-edk" &&
+uv run --locked cmake --build build/native-smp-examples &&
 uv run --locked pytest -q
 ```
 
@@ -129,6 +135,15 @@ removal or USB restart. On hardware, check command and long-press shutdown follo
 by a fresh center press with USB left attached, then repeat on battery power.
 
 ## Local checks
+
+`tests/native` executes the production loader on an ARM MPU model, checking
+resource recovery, unavailable memory, interrupted staging, ABI/format rejection,
+busy-loop termination at terminal priority and recovery after a prohibited RAM
+write. `tests/native_smp` adds the standard serial SMP stack. Its host check uploads
+separately built EDK images and invokes the installed CLI through a QEMU PTY;
+it checks useful output, stop and the same rejection/fault paths. The simulated
+buttons are explicitly synthetic. Actual USB/BLE ownership and disconnect cleanup
+remain separate board checks; QEMU has no USB DTR or radio.
 
 `tests/management` runs the production Shell/SMP transport and LittleFS/Settings
 stack behind a native UART pseudoterminal. Unmodified `smpclient` and `smpmgr`

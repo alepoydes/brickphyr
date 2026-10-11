@@ -8,8 +8,7 @@ if(NOT LLEXT_EDK_INSTALL_DIR)
   set(LLEXT_EDK_INSTALL_DIR "$ENV{LLEXT_EDK_INSTALL_DIR}")
 endif()
 include(${LLEXT_EDK_INSTALL_DIR}/cmake.cflags)
-# Picolibc's specs inject its executable linker script. A relocatable image
-# supplies its own layout and links only compiler support routines.
+# Keep compile-only library specs out of the application link.
 set(application_link_flags ${LLEXT_CFLAGS})
 list(FILTER application_link_flags EXCLUDE REGEX "^-specs=")
 file(WRITE ${PROJECT_BINARY_DIR}/application.ld.in "#include <brickphyr.ld.h>\n")
@@ -26,7 +25,7 @@ foreach(example hello counter spin fault)
     LINK_DEPENDS ${PROJECT_BINARY_DIR}/application.ld)
   target_compile_options(${example} PRIVATE ${LLEXT_CFLAGS} -O2 -g0)
   target_link_options(${example} PRIVATE ${application_link_flags} -nostdlib
-    -Wl,-r,-T,${PROJECT_BINARY_DIR}/application.ld)
+    -r -T${PROJECT_BINARY_DIR}/application.ld)
   target_link_libraries(${example} PRIVATE gcc)
   add_dependencies(${example} application_layout)
 endforeach()

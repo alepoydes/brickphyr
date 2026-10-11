@@ -13,8 +13,8 @@ shares the Shell channel and passes native simulation and Linux USB checks with
 standard clients, including fragmented packets and persistent settings. The optional
 [Bluetooth profile](bluetooth.md#experimental-f4-controller) provides Pybricks BLE
 identification/status, SMP management, and the native interactive terminal with
-the same USB/BLE ownership rule. Application loading
-and Python/WASM execution remain outside this implementation.
+the same USB/BLE ownership rule. The optional native profile adds RAM application
+loading. Python/WASM execution remains outside this implementation.
 
 ## One management session
 
@@ -55,10 +55,58 @@ before adding a small application-management command group. Firmware image updat
 support is not a loader for native or WASM applications. Do not create another
 framing or file-transfer protocol merely to rename existing functionality.
 
-The planned [native application operations](applications.md#host-and-input-devices)
+The experimental [native application operations](applications.md#host-and-input-devices)
 use SMP with equivalent USB/BLE support and the same lifecycle handlers as Shell.
 Their [implementation milestones](builds.md#native-application-milestone) include
-temporary RAM runs and persistent installation; neither is available yet.
+temporary RAM runs, now implemented, and persistent installation, still planned.
+
+## Native applications
+
+Build the native profile and [its matching SDK](builds.md#experimental-native-sdk)
+before using these commands. USB is the default; it selects the Shell/SMP interface
+automatically. Close another terminal or client first.
+
+```sh
+uv run brickphyrdev app run build/native-examples/hello.elf
+uv run brickphyrdev app status
+uv run brickphyrdev app output
+uv run brickphyrdev app --ble Brickphyr run build/native-examples/counter.elf
+uv run brickphyrdev app --ble Brickphyr output
+uv run brickphyrdev app stop
+```
+
+Closing the command's connection leaves an autonomous application running. Status
+and stop may use either transport, regardless of the upload transport. Output
+drains one bounded batch; unread overflow is counted in status. No command above
+writes application flash.
+
+To upload without starting, use `app upload FILE`; then `app start` or the hub
+terminal's `app run`. A complete validated upload survives connection closure.
+Use `app discard` to free it. An interrupted upload is discarded automatically and
+does not stop an existing application. The hub rejects malformed or incompatible
+images; RAM exhaustion never silently switches to persistent storage.
+
+`--serial NUMBER` chooses among USB hubs; `--port PATH` selects an explicit serial
+port for an already selected Shell interface or a simulator. `--ble` accepts a
+Bluetooth name or address. The CLI reuses `smpclient` for both transports.
+
+The experimental native management group is SMP group 65, API version 1:
+
+| Command ID | Operation | Fields/result |
+| --- | --- | --- |
+| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state and image limit |
+| 1 | Write upload fragment | `off`, `total`, `data`; returns accepted `off` |
+| 2 | Write start | Start the completed RAM image |
+| 3 | Write stop | Confirm application termination and release |
+| 4 | Read output | At most 128 bytes in `data` |
+| 5 | Write discard | Discard the waiting upload |
+
+Offset zero starts a new upload. Later fragments must be contiguous or exact
+repeats of already accepted bytes. Group errors carry the positive Zephyr errno;
+malformed requests use standard SMP errors. This group adds application operations,
+not another framing or firmware-update protocol. The versioned definitions are
+in [the firmware handler](../src/native_mgmt.c) and
+[the client](../brickphyrdev/application.py).
 
 Shell and SMP can share a serial channel through Zephyr's existing SMP transport.
 This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetooth,

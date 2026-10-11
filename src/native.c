@@ -41,6 +41,41 @@ static atomic_t active;
 RING_BUF_DECLARE(output, OUTPUT_CAPACITY);
 static struct k_spinlock output_lock;
 static uint32_t output_dropped;
+static void *upload;
+static size_t upload_size;
+static size_t upload_bytes;
+static size_t upload_heap;
+static atomic_t session_generation;
+static atomic_val_t upload_generation;
+static bool shutting_down;
+
+/* lifecycle is held for all staging access. A complete validated upload can
+ * be started from a later session; an incomplete one cannot be resumed there. */
+static void discard_upload(void)
+{
+	k_free(upload);
+	upload = NULL;
+	upload_size = upload_bytes = upload_heap = 0;
+}
+
+static void expire_upload(void)
+{
+	if (!upload_heap && upload_generation != atomic_get(&session_generation)) {
+		discard_upload();
+	}
+}
+
+void native_session_closed(void)
+{
+	atomic_inc(&session_generation);
+}
+
+void native_discard_upload(void)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	discard_upload();
+	k_mutex_unlock(&lifecycle);
+}
 
 int64_t z_impl_bp_time_ms(void)
 {
@@ -213,7 +248,12 @@ int native_stop(void)
 int native_shutdown(void)
 {
 	hub_power_request_shutdown();
-	return native_stop();
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	shutting_down = true;
+	int err = reap(true);
+	discard_upload();
+	k_mutex_unlock(&lifecycle);
+	return err;
 }
 
 void native_poll(void)
@@ -222,22 +262,14 @@ void native_poll(void)
 		return;
 	}
 	(void)reap(false);
+	expire_upload();
 	k_mutex_unlock(&lifecycle);
 }
 
-int native_run(const void *image, size_t length)
+/* lifecycle is held and this loader has passed native_image_check. */
+static int run_image(struct llext_loader *loader, size_t length, size_t heap_size)
 {
-	if (!image || !length) {
-		return -EINVAL;
-	}
-	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(image, length);
-	size_t heap_size;
-	int err = native_image_check(&loader.loader, length, &heap_size);
-	if (err) {
-		return err;
-	}
-	k_mutex_lock(&lifecycle, K_FOREVER);
-	err = reap(true);
+	int err = reap(true);
 	if (err) {
 		goto out;
 	}
@@ -257,7 +289,7 @@ int native_run(const void *image, size_t length)
 		goto failed;
 	}
 	struct llext_load_param parameters = LLEXT_LOAD_PARAM_DEFAULT;
-	err = llext_load(&loader.loader, "application", &extension, &parameters);
+	err = llext_load(loader, "application", &extension, &parameters);
 	if (err) {
 		goto failed;
 	}
@@ -304,6 +336,93 @@ failed:
 	/* Retain the original loading error; a failed release retains ownership. */
 	(void)release();
 out:
+	return err;
+}
+
+int native_run(const void *image, size_t length)
+{
+	if (!image || !length) {
+		return -EINVAL;
+	}
+	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(image, length);
+	size_t heap_size;
+	int err = native_image_check(&loader.loader, length, &heap_size);
+	if (!err) {
+		k_mutex_lock(&lifecycle, K_FOREVER);
+		err = run_image(&loader.loader, length, heap_size);
+		k_mutex_unlock(&lifecycle);
+	}
+	return err;
+}
+
+int native_upload(size_t offset, size_t total, const void *data, size_t length, size_t *next)
+{
+	if (!data || !next || !length || !total || offset > total || length > total - offset) {
+		return -EINVAL;
+	}
+	if (total > NATIVE_IMAGE_LIMIT) {
+		return -EFBIG;
+	}
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	expire_upload();
+	int err = 0;
+	if (shutting_down) {
+		err = -ESHUTDOWN;
+		goto out;
+	}
+	if (!offset) {
+		/* Allocate before replacing a previous complete image. */
+		void *data_buffer = k_malloc(total);
+		if (!data_buffer) {
+			err = -ENOMEM;
+			goto out;
+		}
+		discard_upload();
+		upload = data_buffer;
+		upload_size = total;
+		upload_generation = atomic_get(&session_generation);
+	}
+	if (!upload || total != upload_size || offset > upload_bytes) {
+		err = -EINVAL;
+		goto out;
+	}
+	if (offset < upload_bytes) {
+		/* A repeated acknowledged fragment is harmless; a changed one is not. */
+		if (length > upload_bytes - offset || memcmp((uint8_t *)upload + offset, data, length)) {
+			err = -EINVAL;
+			goto out;
+		}
+	} else {
+		memcpy((uint8_t *)upload + offset, data, length);
+		upload_bytes += length;
+	}
+	if (upload_bytes == upload_size && !upload_heap) {
+		struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(upload, upload_size);
+		err = native_image_check(&loader.loader, upload_size, &upload_heap);
+		if (err) {
+			discard_upload();
+			goto out;
+		}
+	}
+	*next = upload_bytes;
+out:
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+
+int native_run_uploaded(void)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	expire_upload();
+	int err = -ENODATA;
+	if (upload_heap) {
+		struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(upload, upload_size);
+		err = run_image(&loader.loader, upload_size, upload_heap);
+		if (!err) {
+			/* The temporary buffer loader copies all retained sections. */
+			discard_upload();
+		}
+	}
 	k_mutex_unlock(&lifecycle);
 	return err;
 }
@@ -312,9 +431,14 @@ void native_get_status(struct native_status *value)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	(void)reap(false);
+	expire_upload();
 	*value = status;
+	value->upload_bytes = upload_bytes;
+	value->upload_size = upload_size;
+	value->upload_ready = upload_heap != 0;
 	k_spinlock_key_t key = k_spin_lock(&output_lock);
 	value->output_dropped = output_dropped;
+	value->output_bytes = ring_buf_size_get(&output);
 	k_spin_unlock(&output_lock, key);
 	k_mutex_unlock(&lifecycle);
 }
@@ -329,6 +453,15 @@ size_t native_output(void *data, size_t capacity)
 
 static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "run")) {
+		int err = native_run_uploaded();
+		shell_print(shell, "Run: %d", err);
+		return err;
+	}
+	if (argc == 2 && !strcmp(argv[1], "discard")) {
+		native_discard_upload();
+		return 0;
+	}
 	if (argc == 2 && !strcmp(argv[1], "stop")) {
 		int err = native_stop();
 		shell_print(shell, "Stop: %d", err);
@@ -346,7 +479,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 		return 0;
 	}
 	if (argc != 1 && (argc != 2 || strcmp(argv[1], "status"))) {
-		shell_error(shell, "Usage: app [status | stop | output]");
+		shell_error(shell, "Usage: app [status | run | stop | output | discard]");
 		return -EINVAL;
 	}
 	struct native_status value;
@@ -358,6 +491,8 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 		    value.image_bytes, value.loader_bytes, value.loaded_bytes,
 		    value.stack_bytes, value.stack_unused);
 	shell_print(shell, "Output dropped: %u; ABI %s", value.output_dropped, BRICKPHYR_ABI);
+	shell_print(shell, "Upload %zu/%zu; %s", value.upload_bytes, value.upload_size,
+		    !value.upload_size ? "empty" : value.upload_ready ? "ready" : "incomplete");
 	return 0;
 }
 

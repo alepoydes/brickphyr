@@ -21,6 +21,9 @@ add_dependencies(app brickphyr_abi)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/native.c ${BRICKPHYR_ROOT}/src/native_image.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include)
+if(CONFIG_MCUMGR)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/native_mgmt.c)
+endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
   foreach(example hello counter spin fault)

@@ -19,6 +19,12 @@ static const unsigned char fault[] = {
 #include <native_fault.inc>
 };
 
+const void *native_fixture_hello(size_t *length)
+{
+	*length = sizeof(hello);
+	return hello;
+}
+
 int native_fixture_run(const char *name)
 {
 	if (!strcmp(name, "badabi")) {

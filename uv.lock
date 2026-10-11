@@ -249,6 +249,7 @@ dependencies = [
     { name = "pybricksdev" },
     { name = "pyserial" },
     { name = "pyusb" },
+    { name = "smpclient", extra = ["ble", "serial"] },
 ]
 
 [package.dev-dependencies]
@@ -263,7 +264,6 @@ dev = [
     { name = "pyyaml" },
     { name = "ruff" },
     { name = "semver" },
-    { name = "smpclient", extra = ["serial"] },
     { name = "smpmgr" },
     { name = "west" },
 ]
@@ -284,6 +284,7 @@ requires-dist = [
     { name = "pybricksdev", editable = "../pybricksdev" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyusb", specifier = ">=1.3" },
+    { name = "smpclient", extras = ["serial", "ble"], specifier = ">=7.3" },
 ]
 
 [package.metadata.requires-dev]
@@ -298,7 +299,6 @@ dev = [
     { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.16,<1" },
     { name = "semver", specifier = ">=3" },
-    { name = "smpclient", extras = ["serial"], specifier = ">=7.3" },
     { name = "smpmgr", specifier = ">=0.19.1" },
     { name = "west", specifier = ">=1.5" },
 ]
@@ -2145,6 +2145,9 @@ all = [
     { name = "platformdirs" },
     { name = "pyserial" },
     { name = "zephyr-4-4-0-hci" },
+]
+ble = [
+    { name = "bleak" },
 ]
 serial = [
     { name = "pyserial" },

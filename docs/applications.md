@@ -26,7 +26,7 @@ cleanup errors are reported separately. Host disconnection leaves the applicatio
 running and its power hold active. Shutdown and all supported reboot paths stop
 it before proceeding. No motor or asynchronous device API is exported yet.
 
-Use `app status`, `app output` and `app stop` in either USB or BLE Shell. Output is
+Use `app run`, `app status`, `app output` and `app stop` in either USB or BLE Shell. Output is
 a 1024-byte queue with counted overflow; writing never waits for a reader. The
 `diagnostics` command separately drains a bounded firmware log queue. Its backend
 remains available without a host, including during LLEXT's deferred-log flush.
@@ -41,12 +41,22 @@ reports the image, reserved loader budget, LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
 
-The first board fixture verifies repeated execution/unload, constructor state,
+The board checks verify repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
 cross-transport reconnection and power holds on one Robot Inventor F4 (PCB revision
 unknown). ARM QEMU additionally checks allocator capacity restoration, exhaustion,
-ABI/truncation rejection and command execution at the terminal priority. Uploads
-and installed files remain the next steps; see [build and SDK usage](builds.md#experimental-native-sdk).
+ABI/truncation rejection and command execution at the terminal priority. SMP checks
+use separately compiled EDK images through the actual protocol and CLI, both on
+ARM QEMU and the F4. Installed files remain the next step; see
+[build and SDK usage](builds.md#experimental-native-sdk).
+
+RAM upload and start are distinct operations. An upload never stops the running
+application. Its final fragment triggers complete-image validation; an incomplete
+upload is discarded after the closing session's accepted operations finish. A
+complete image stays ready across sessions until started, discarded, replaced or
+rebooted. Starting it uses the same supervisor and releases the receive buffer
+after LLEXT has copied retained sections. `app discard` frees a waiting image
+without stopping the active one. See [host commands](host.md#native-applications).
 
 ## Application formats
 

@@ -13,6 +13,7 @@
 LOG_MODULE_REGISTER(native_test, LOG_LEVEL_INF);
 
 int native_fixture_run(const char *name);
+const void *native_fixture_hello(size_t *length);
 uint32_t hub_buttons(void) { return 5; } /* Synthetic input, not a driver test. */
 int storage_status(void) { return -ENOTSUP; }
 
@@ -99,6 +100,47 @@ int main(void)
 	k_msleep(60);
 	native_get_status(&status);
 	CHECK(status.state == NATIVE_RETURNED && status.result == 0);
+	CHECK(available() == capacity);
+
+	/* Staging is independent of the running application and connection owner. */
+	CHECK(native_fixture_run("spin") == 0);
+	size_t size, next;
+	const uint8_t *image = native_fixture_hello(&size);
+	CHECK(native_upload(0, size, image, 128, &next) == 0 && next == 128);
+	CHECK(native_upload(129, size, image + 129, 1, &next) == -EINVAL);
+	uint8_t changed = image[1] ^ 1;
+	CHECK(native_upload(1, size, &changed, 1, &next) == -EINVAL);
+	native_get_status(&status);
+	CHECK(status.upload_bytes == 128 && status.state == NATIVE_RUNNING);
+	native_session_closed();
+	native_poll();
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_RUNNING && status.upload_size == 0);
+	CHECK(native_run_uploaded() == -ENODATA);
+	CHECK(native_upload(0, size - 1, image, size - 1, &next) == -ENOEXEC);
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_RUNNING && status.upload_size == 0);
+	for (size_t offset = 0; offset < size;) {
+		size_t count = MIN(128, size - offset);
+		CHECK(native_upload(offset, size, image + offset, count, &next) == 0);
+		CHECK(next == offset + count);
+		if (offset) {
+			CHECK(native_upload(offset, size, image + offset, count, &next) == 0);
+		}
+		offset = next;
+	}
+	native_session_closed();
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_RUNNING && status.upload_ready);
+	CHECK(native_run_uploaded() == 0);
+	k_msleep(60);
+	native_get_status(&status);
+	CHECK(status.state == NATIVE_RETURNED && status.result == 0 && status.upload_size == 0);
+	CHECK(available() == capacity);
+	reservation = k_malloc(capacity);
+	CHECK(reservation != NULL);
+	CHECK(native_upload(0, size, image, 128, &next) == -ENOMEM);
+	k_free(reservation);
 	CHECK(available() == capacity);
 
 	uint8_t timeout[4];
