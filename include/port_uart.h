@@ -7,6 +7,8 @@
 
 /* Private measurement selector; public raw requests use bp_port_select(). */
 #define PORT_RAW_MODE (1U << 31)
+/* 16 modes, 14 INFO types, maximum messages at 2400 baud plus startup. */
+#define PORT_UART_SYNC_TIMEOUT_MS (16 * 14 * 35 * 10 * 1000 / 2400 + 1000)
 
 /* Immutable until the port worker completes or cancels it. */
 struct port_uart_write {

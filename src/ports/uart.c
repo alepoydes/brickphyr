@@ -14,9 +14,6 @@
 #define PORTS DT_NODELABEL(hub_ports)
 #define IO_TIMEOUT_MS 250
 #define KEEPALIVE_MS 100
-/* 16 modes, 14 INFO types, largest frame at the slowest baud + startup.
- * Inactivity still fails after 250 ms, including during TYPE discovery. */
-#define SYNC_TIMEOUT_MS (16 * 14 * 35 * 10 * 1000 / 2400 + 1000)
 #define RX_CAPACITY 512
 #define RX_BUDGET 128
 
@@ -306,7 +303,7 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	int64_t tx_done = l->tx_done_ms;
 	irq_unlock(key);
 	if (err || (tx_busy && now >= l->tx_deadline) ||
-	    (l->phase != DATA && now - l->born_ms >= SYNC_TIMEOUT_MS)) {
+	    (l->phase != DATA && now - l->born_ms >= PORT_UART_SYNC_TIMEOUT_MS)) {
 		return err ? err : -ETIMEDOUT;
 	}
 	if (l->phase == OFFER) {

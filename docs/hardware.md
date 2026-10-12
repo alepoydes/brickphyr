@@ -473,6 +473,9 @@ complete and coast; short position targets and hold also pass with suspended
 wheels. Protected native motor commands complete and release their port over
 both USB and BLE. Physical sensor supply/conversions and other device types
 remain unverified. Recognized motors stay in coast until explicitly commanded.
+Python `PUPDevice` reset also renegotiates an idle ID-75 motor over USB/BLE,
+followed by synchronous and awaitable CALIB reads and port release. Force, Tilt
+and Infrared Python classes have synthetic ARM coverage only.
 Experimental PBIO speed/position control, trajectories and hold use
 the same port owner and output. Synthetic UART/ADC/PWM checks cover stall,
 completion, missing feedback and battery errors, missed deadlines and concurrent

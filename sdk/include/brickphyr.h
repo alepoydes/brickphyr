@@ -120,6 +120,10 @@ __syscall int bp_port_select(uint32_t port, uint32_t generation, uint32_t mode);
  * token for bp_port_get().write. One pending write per port, never overwritten. */
 __syscall int bp_port_write(uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request);
+/* Request fresh electrical/UART negotiation of the same device type. Claims
+ * an idle port and invalidates its previous generation immediately. Observe
+ * bp_port_get().reset using the returned token; release cancels the request. */
+__syscall int bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request);
 /* Shared converted measurement. Inspect error, fields, sample_ms and generation.
  * Reads never change modes or interfere with a running application. */
 __syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);
@@ -127,6 +131,9 @@ __syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);
  * 0 means accepted; get() reports EAGAIN until a settled sample is available.
  * Unsupported measurements return ENOTSUP before a command or claim. */
 __syscall int bp_sensor_configure(uint32_t port, uint32_t measurement);
+/* Bind selection to an inspected connection; stale generations fail before
+ * ownership or mode changes. Device-class bindings use this form. */
+__syscall int bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement);
 /* Release the port claim: coast its motor and restore automatic measurement.
  * Accepted asynchronously; ownership remains until coast succeeds and pending
  * UART output is cancelled or finishes transmission and settling.

@@ -18,11 +18,28 @@
 typedef struct {
 	mp_obj_base_t base;
 	pb_type_async_t *iter;
-	uint32_t port, generation, write_request;
+	uint32_t port, generation, write_request, reset_request;
 	uint16_t id;
 	uint8_t mode;
 	bool passive;
 } pup_obj_t;
+
+/* Only this object's explicit reset permits accepting a new generation. A
+ * later reconnection cannot impersonate the recorded completion. */
+static void resolve_reset(pup_obj_t *self)
+{
+	if (!self->reset_request) return;
+	struct bp_port_state value;
+	python_device_check(bp_port_get(self->port, &value));
+	if (value.reset.request != self->reset_request) python_device_check(-ECANCELED);
+	if (value.reset.completed != self->reset_request) python_device_check(-EAGAIN);
+	python_device_check(value.reset.error);
+	if (value.reset.generation != value.generation || value.type_id != self->id) {
+		python_device_check(-ENODEV);
+	}
+	self->generation = value.generation;
+	self->reset_request = 0;
+}
 
 static void get_port(pup_obj_t *self, struct bp_port_state *value)
 {
@@ -31,22 +48,29 @@ static void get_port(pup_obj_t *self, struct bp_port_state *value)
 	python_device_check(value->error);
 }
 
-static mp_obj_t pup_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
+uint32_t python_port_connect(mp_obj_t port_in, uint16_t type, struct bp_port_state *value)
 {
-	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port));
 	pb_module_tools_assert_blocking();
 	int port = pb_type_enum_get_value(port_in, &pb_enum_type_Port) - PBIO_PORT_ID_A;
 	if (port < 0 || port >= BP_PORT_COUNT) mp_raise_ValueError(MP_ERROR_TEXT("expected port A-F"));
-	struct bp_port_state value;
 	for (;;) {
-		python_device_check(bp_port_get(port, &value));
-		if (value.phase == BP_PORT_READY || value.phase == BP_PORT_PASSIVE) break;
-		if (value.phase == BP_PORT_EMPTY) python_device_check(-ENODEV);
-		if (value.error != -EAGAIN) python_device_check(value.error);
+		python_device_check(bp_port_get(port, value));
+		if (value->phase == BP_PORT_READY || value->phase == BP_PORT_PASSIVE) break;
+		if (value->phase == BP_PORT_EMPTY) python_device_check(-ENODEV);
+		if (value->error != -EAGAIN) python_device_check(value->error);
 		mp_hal_delay_ms(2);
 	}
 	/* Negotiated metadata is usable even before the first DATA frame. */
-	if (value.error != -EAGAIN) python_device_check(value.error);
+	if (value->error != -EAGAIN) python_device_check(value->error);
+	if (type && (value->phase != BP_PORT_READY || value->type_id != type)) python_device_check(-ENODEV);
+	return port;
+}
+
+static mp_obj_t pup_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
+{
+	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port));
+	struct bp_port_state value;
+	uint32_t port = python_port_connect(port_in, 0, &value);
 	pup_obj_t *self = mp_obj_malloc(pup_obj_t, type);
 	*self = (pup_obj_t){.base = {.type = type}, .port = port,
 		.generation = value.generation, .id = value.type_id,
@@ -57,6 +81,7 @@ static mp_obj_t pup_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 static mp_obj_t pup_info(mp_obj_t self_in)
 {
 	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
+	resolve_reset(self);
 	struct bp_port_state value;
 	python_device_check(bp_port_get(self->port, &value));
 	if (value.generation != self->generation) python_device_check(-ENODEV);
@@ -130,6 +155,7 @@ static mp_obj_t pup_read(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
 	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, pup_obj_t, self, PB_ARG_REQUIRED(mode));
 	if (self->iter && self->iter->parent_obj != MP_OBJ_NULL) python_device_check(-EBUSY);
+	resolve_reset(self);
 	if (self->passive) {
 		if (self->id != LEGO_DEVICE_TYPE_ID_LPF2_TOUCH) python_device_check(-ENOTSUP);
 		struct bp_port_state value;
@@ -172,6 +198,7 @@ static mp_obj_t pup_write(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args
 	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, pup_obj_t, self,
 		PB_ARG_REQUIRED(mode), PB_ARG_REQUIRED(data));
 	if (self->iter && self->iter->parent_obj != MP_OBJ_NULL) python_device_check(-EBUSY);
+	resolve_reset(self);
 	if (self->passive) python_device_check(-ENOTSUP);
 	mp_int_t mode = mp_obj_get_int(mode_in);
 	if (mode < 0 || mode > LUMP_MAX_EXT_MODE) mp_raise_ValueError(MP_ERROR_TEXT("invalid mode"));
@@ -216,10 +243,23 @@ static mp_obj_t pup_write(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(pup_write_obj, 1, pup_write);
 
+static mp_obj_t pup_reset(mp_obj_t self_in)
+{
+	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
+	if (self->iter && self->iter->parent_obj != MP_OBJ_NULL) python_device_check(-EBUSY);
+	if (self->passive) python_device_check(-ENOTSUP);
+	resolve_reset(self);
+	int err = bp_port_reset(self->port, self->generation, &self->reset_request);
+	python_device_check(err == -ESTALE ? -ENODEV : err);
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(pup_reset_obj, pup_reset);
+
 static const mp_rom_map_elem_t pup_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_info), MP_ROM_PTR(&pup_info_obj)},
 	{MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&pup_read_obj)},
 	{MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&pup_write_obj)},
+	{MP_ROM_QSTR(MP_QSTR_reset), MP_ROM_PTR(&pup_reset_obj)},
 };
 static MP_DEFINE_CONST_DICT(pup_dict, pup_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(pup_type, MP_QSTR_PUPDevice, MP_TYPE_FLAG_NONE,

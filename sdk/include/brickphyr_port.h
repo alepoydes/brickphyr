@@ -79,4 +79,11 @@ struct bp_port_state {
 		uint32_t request, completed;
 		int32_t error;
 	} write;
+	/* Explicit resynchronization. Completion identifies the newly negotiated
+	 * generation; later hotplug never updates that result. No power-cycle
+	 * guarantee. Request != completed means pending, with error -EAGAIN. */
+	struct {
+		uint32_t request, completed, generation;
+		int32_t error;
+	} reset;
 };

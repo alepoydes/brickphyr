@@ -51,6 +51,9 @@ static struct port {
 	struct bp_sensor_sample sensor;
 	struct bp_motor_state motor;
 	struct port_uart_write write;
+	uint16_t reset_type;
+	bool reset_start;
+	int64_t reset_deadline;
 	uint32_t motor_duration, motor_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct motor_control controller; /* touched only by the port worker */
@@ -97,6 +100,22 @@ uint32_t hub_motor_activity(void) { return atomic_get(&activity); }
 static bool write_pending(const struct port *p)
 {
 	return p->value.write.request != p->value.write.completed;
+}
+
+static bool reset_pending(const struct port *p)
+{
+	return p->value.reset.request != p->value.reset.completed;
+}
+
+/* Caller holds lock. Retain the exact result across later connections. */
+static void finish_resync(struct port *p, int error, uint32_t generation)
+{
+	if (reset_pending(p)) {
+		p->value.reset.completed = p->value.reset.request;
+		p->value.reset.error = error;
+		p->value.reset.generation = generation;
+		p->reset_start = false;
+	}
 }
 
 /* Caller holds lock. A failed or cancelled operation keeps its own result. */
@@ -147,7 +166,7 @@ static void finish_reset(uint32_t port, int cleanup)
 		p->motor.valid = false;
 		if (!p->motor.error) p->motor.error = cleanup;
 		motor_activity(port, true);
-	} else {
+	} else if (!reset_pending(p)) {
 		drop_claim(p);
 	}
 	k_spin_unlock(&lock, key);
@@ -225,6 +244,13 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 		phase == BP_PORT_PASSIVE || phase == BP_PORT_UART ? p->previous : 0;
 	int64_t now = k_uptime_get();
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	/* A request admitted during the preceding UART poll invalidates that
+	 * poll's observation; only the next worker round may start resync.
+	 * An I/O or cleanup failure still fails the accepted request explicitly. */
+	if (p->reset_start && !error) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
 	struct bp_port_state v = uart ? *uart :
 		(struct bp_port_state){.selected_mode = UINT8_MAX, .mode_error = -ENOTSUP};
 	if (uart && write_pending(p) && uart->write.completed == p->value.write.request) {
@@ -250,6 +276,16 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 	v.sample_ms = now;
 	v.error = error ? error : uart ? uart->error : phase == BP_PORT_DETECTING ? -EAGAIN : 0;
 	v.cleanup_error = cleanup;
+	/* A warm UART device can present a stable empty/passive signature until
+	 * its own keepalive expires. Only a new handshake or an error completes
+	 * explicit reset; the overall deadline bounds continued detection. */
+	if (reset_pending(p) && (phase == BP_PORT_READY || error)) {
+		int result = error ? error : id != p->reset_type ? -ENODEV : 0;
+		finish_resync(p, result, result ? 0 : v.generation);
+		if (result && !cleanup) drop_claim(p);
+		else if (!result && p->motor.valid) p->motor.error = 0;
+	}
+	v.reset = p->value.reset;
 	v.failures = p->value.failures;
 	v.sequence = p->value.sequence;
 	if (error) {
@@ -278,6 +314,16 @@ static int advance(uint32_t port)
 {
 	struct port *p = &ports[port];
 	int value;
+	k_spinlock_key_t reset_key = k_spin_lock(&lock);
+	bool restart = p->reset_start;
+	p->reset_start = false;
+	bool expired = reset_pending(p) && k_uptime_get() >= p->reset_deadline;
+	k_spin_unlock(&lock, reset_key);
+	if (expired) return -ETIMEDOUT;
+	if (restart) {
+		port_uart_stop(port);
+		p->step = START;
+	}
 	switch (p->step) {
 	case UART: {
 		struct bp_port_state uart = {0};
@@ -798,6 +844,49 @@ int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	return raw_request(owner, port, generation, mode, data, size, request);
 }
 
+int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t *request)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (!request || port >= BP_PORT_COUNT ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		p->value.generation != generation ? -ESTALE :
+		reset_pending(p) ? -EBUSY : p->value.phase != BP_PORT_READY ? -ENODEV :
+		p->value.error && p->value.error != -EAGAIN ? p->value.error :
+		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
+		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing || write_pending(p) ||
+		!p->motor.valid || p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
+	uint32_t token = 0;
+	if (!err) {
+		token = p->value.reset.request + 1;
+		if (!token) token++;
+		p->value.reset.request = token;
+		p->value.reset.error = -EAGAIN;
+		p->value.reset.generation = 0;
+		p->reset_type = p->value.type_id;
+		p->reset_start = true;
+		/* Electrical debounce plus the existing bounded UART negotiation. */
+		p->reset_deadline = k_uptime_get() + (MATCH_COUNT + 1) * 10 *
+			(SETTLE_MS + k_ticks_to_ms_ceil64(2)) + PORT_UART_SYNC_TIMEOUT_MS;
+		p->owner = p->sensor.owner = owner;
+		p->measurement = BP_SENSOR_DEFAULT;
+		p->command++;
+		p->value.generation++;
+		p->value.phase = BP_PORT_NEGOTIATING;
+		p->value.error = p->value.mode_error = -EAGAIN;
+		p->value.selected_mode = UINT8_MAX;
+		p->value.length = 0;
+		p->sensor.generation = p->value.generation;
+		p->sensor.error = -EAGAIN;
+		p->sensor.fields = 0;
+	}
+	k_spin_unlock(&lock, key);
+	if (!err) *request = token;
+	return err;
+}
+
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
@@ -820,7 +909,8 @@ int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 	return 0;
 }
 
-int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement)
+static int sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement,
+	const uint32_t *generation)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
 		return -ENOTSUP;
@@ -832,6 +922,7 @@ int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measu
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		generation && p->value.generation != *generation ? -ESTALE :
 		p->motor.releasing || write_pending(p) ? -EBUSY :
 		p->value.phase != BP_PORT_READY ? -EAGAIN :
 		!(p->sensor.available & BIT(measurement)) ? -ENOTSUP :
@@ -842,6 +933,7 @@ int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measu
 		if (p->measurement != measurement) {
 			p->measurement = measurement;
 			p->command++;
+			p->sensor.measurement = measurement;
 			p->value.selected_mode = UINT8_MAX;
 			p->value.mode_error = -ENOTSUP;
 			p->sensor.error = -EAGAIN;
@@ -850,6 +942,16 @@ int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measu
 	}
 	k_spin_unlock(&lock, key);
 	return err;
+}
+
+int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement)
+{
+	return sensor_configure(owner, port, measurement, NULL);
+}
+
+int hub_sensor_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t measurement)
+{
+	return sensor_configure(owner, port, measurement, &generation);
 }
 
 int hub_port_release(enum bp_port_owner owner, uint32_t port)
@@ -861,6 +963,7 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port)
 	struct port *p = &ports[port];
 	int err = p->owner && p->owner != owner ? -EBUSY : 0;
 	if (!err && p->owner) {
+		finish_resync(p, -ECANCELED, 0);
 		if (p->motor.pending || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
 		    p->motor.releasing || write_pending(p)) {
 			p->motor.releasing = true;
@@ -1019,6 +1122,7 @@ int hub_ports_shutdown(void)
 			result = err;
 		}
 		k_spinlock_key_t key = k_spin_lock(&lock);
+		finish_resync(&ports[i], -ESHUTDOWN, 0);
 		struct bp_port_state *v = &ports[i].value;
 		int cleanup = supply_error ? supply_error : err;
 		enum bp_port_phase phase = cleanup ? BP_PORT_FAULT : BP_PORT_OFF;

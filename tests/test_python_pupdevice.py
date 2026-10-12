@@ -13,12 +13,17 @@ from brickphyrdev.telemetry import snapshot
 
 
 async def port_matches(client, **fields):
-    async with asyncio.timeout(3):
-        while True:
-            value = await snapshot(client, "port.A")
-            if all(value.values.get(key) == expected for key, expected in fields.items()):
-                return value
-            await asyncio.sleep(0.005)
+    value = None
+    try:
+        async with asyncio.timeout(3):
+            while True:
+                value = await snapshot(client, "port.A")
+                if all(value.values.get(key) == expected for key, expected in fields.items()):
+                    return value
+                await asyncio.sleep(0.005)
+    except TimeoutError as error:
+        error.add_note(f"Expected {fields}, last port state: {value}")
+        raise
 
 
 def test_raw_modes_async_hotplug_and_passive_input():
@@ -194,4 +199,121 @@ print('replacement passed')
                 raise
 
     with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
+
+
+def test_reset_reuses_only_its_object_and_stop_releases_port():
+    source = b"""
+from pybricks.iodevices import PUPDevice
+from pybricks.parameters import Port
+from pybricks.tools import run_task
+import errno
+
+def expect_errno(call, number):
+    try:
+        call()
+    except OSError as error:
+        assert error.args[0] == number
+    else:
+        assert False
+
+d = PUPDevice(Port.A)
+sibling = PUPDevice(Port.A)
+assert d.info()['id'] == 201
+print('ready')
+input()
+assert d.reset() is None
+expect_errno(d.info, errno.EAGAIN)
+expect_errno(lambda: d.read(0), errno.EAGAIN)
+expect_errno(lambda: d.write(0, (1, 2)), errno.EAGAIN)
+expect_errno(sibling.info, errno.ENODEV)
+print('ready')
+input()
+assert d.info()['id'] == 201
+assert d.read(0) == (-128, 127)
+assert d.write(0, (11, -12)) is None
+assert d.read(0) == (11, -12)
+expect_errno(sibling.info, errno.ENODEV)
+print('ready')
+input()
+async def pending_write():
+    pending = d.write(1, (3, 4))
+    expect_errno(d.reset, errno.EBUSY)
+    await pending
+run_task(pending_write())
+print('ready')
+input()
+assert d.reset() is None
+print('ready')
+input()
+expect_errno(d.info, errno.ENODEV)
+d = PUPDevice(Port.A)
+assert d.read(0) == (-128, 127)
+print('ready')
+input()
+assert d.reset() is None
+print('ready')
+input()
+assert False, 'Stopped Python resumed after reset'
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                await shell(port, captured, b"pup_peer connect")
+                # Observe automatic detection; this cached read neither selects
+                # a mode nor starts I/O. Reset requires an established link.
+                await port_matches(client, phase=7, type_id=201)
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                before = await snapshot(client, "port.A")
+                await shell(port, captured, b"pup_peer hold_reset")
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await port_matches(client, phase=0)  # Fresh electrical detection.
+                await shell(port, captured, b"pup_peer unplug")
+                await port_matches(client, phase=1)  # Transient EMPTY must not finish reset.
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 1
+                await shell(port, captured, b"pup_peer connect")
+                after = await port_matches(client, phase=7, type_id=201)
+                assert after.values["generation"] != before.values["generation"]
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await shell(port, captured, b"pup_peer hold_reset")
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await port_matches(client, phase=0)
+                await port_matches(client, phase=6)
+                await shell(port, captured, b"pup_peer resume_reset")
+                completed_reset = await port_matches(client, phase=7, type_id=201)
+                await shell(port, captured, b"pup_peer unplug")
+                await port_matches(client, phase=1)
+                await shell(port, captured, b"pup_peer connect")
+                replacement = await port_matches(client, phase=7, type_id=201)
+                assert replacement.values["generation"] != completed_reset.values["generation"]
+                # A completed reset must not adopt a later connection.
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await shell(port, captured, b"pup_peer hold_reset")
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await port_matches(client, phase=0)
+                await port_matches(client, phase=6)
+                await checked(client, Stop())
+                result = await completed(client, state=3)
+                assert result.fault == result.cleanup == 0
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+                await shell(port, captured, b"pup_peer resume_reset")
+                await port_matches(client, phase=7, type_id=201)
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+            except BaseException as error:
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    # Preserve UART deadlines if the host deschedules QEMU during negotiation.
+    with native_console(BUILD, virtual_clock=True) as device:
         asyncio.run(exercise(device))

@@ -130,7 +130,8 @@ subpackages and application modules.
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
 | Hub system | `name`, `info`, `reset_reason`, `set_stop_button`, `storage` and supervised `shutdown`; shared boot cause, launch identity, management connection and persistent user data |
-| `PUPDevice`, `LUMPDevice` | `info`, blocking/awaitable `read` and `write`; shared raw-mode selection, signed/float wire values, writable-mode output, passive touch input and connection generation checks; `reset` remains unimplemented |
+| `PUPDevice`, `LUMPDevice` | `info`, blocking/awaitable `read` and `write`, asynchronous UART `reset`; shared raw modes, signed/float wire values, passive touch input and connection generation checks |
+| `ForceSensor`, `TiltSensor`, `InfraredSensor` | Blocking/awaitable native measurements with reference units, force calibration, tilt axis order and infrared count offset; generation-bound selection and cleanup |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -150,11 +151,15 @@ service. They cover all four read formats, async reads, replacement without
 silently rebinding an existing object, passive touch input and release on return.
 Protected ARM write checks cover signed and float32 formats, payload copying,
 forced stop and port reuse. These checks do not establish physical output or
-third-party device compatibility. See
+third-party device compatibility. Reset checks cover transient electrical absence,
+renegotiation, replacement after completion and release on stop. Synthetic
+Force/Tilt/Infrared peers
+exercise cold construction, native conversions and Python results; physical
+acceptance of these classes remains pending. See
 [raw device usage and ownership](ports.md#arbitrary-uart-modes).
-On the Inventor F4, `PUPDevice.info()` and synchronous/async CALIB reads from an
-idle ID-75 motor also pass through USB/BLE application upload and execution, with
-port release afterwards. No motor drive is part of this check; physical sensor,
+On the Inventor F4, `PUPDevice.info()`, reset and synchronous/async CALIB reads
+from an idle ID-75 motor pass through USB/BLE application upload and execution,
+with port release afterwards. No motor drive is part of this check; physical sensor,
 touch-switch and third-party raw-mode acceptance remain pending.
 Display cleanup and error-free driver completion are checked there; perceived
 output and running that example through the browser remain separate acceptance items.

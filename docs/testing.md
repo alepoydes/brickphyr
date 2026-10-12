@@ -131,6 +131,12 @@ For generic wired-device changes, run
 Its synthetic UART peer supplies independent signed/float32 samples through the
 real UART parser, selector and protected Python binding. One boot covers normal
 and async reads, hotplug rejection, passive touch input and application cleanup.
+Additional cases cover output formats and forced stop, explicit reset,
+transient electrical absence and replacement after reset. The reset case uses QEMU instruction
+time to keep host scheduling pauses out of UART deadlines.
+`tests/test_python_sensors.py` adds Force/Tilt/Infrared cold constructors, units,
+awaitable results, count offsets and stale-object rejection through the same
+native service; it does not establish physical sensor accuracy.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

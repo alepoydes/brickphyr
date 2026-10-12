@@ -634,6 +634,18 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 }
 #include <zephyr/syscalls/bp_port_write_mrsh.c>
 
+int z_impl_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
+{
+	return hub_port_reset(BP_PORT_APPLICATION, port, generation, request);
+}
+static inline int z_vrfy_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_port_reset(port, generation, request);
+}
+#include <zephyr/syscalls/bp_port_reset_mrsh.c>
+
 int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	return hub_sensor_get(port, value);
@@ -655,6 +667,16 @@ static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement
 	return z_impl_bp_sensor_configure(port, measurement);
 }
 #include <zephyr/syscalls/bp_sensor_configure_mrsh.c>
+
+int z_impl_bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement)
+{
+	return hub_sensor_select(BP_PORT_APPLICATION, port, generation, measurement);
+}
+static inline int z_vrfy_bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement)
+{
+	return z_impl_bp_sensor_select(port, generation, measurement);
+}
+#include <zephyr/syscalls/bp_sensor_select_mrsh.c>
 
 int z_impl_bp_sensor_release(uint32_t port)
 {

@@ -110,6 +110,19 @@ and the device-specific post-write delay, not an acknowledgement from the device
 Release cancels unsent DATA; once transmission starts, it retains ownership
 until the bytes and settling interval finish.
 
+`bp_port_reset(port, generation, &token)` claims an idle, coasting UART port and
+requests fresh electrical detection and UART negotiation. It invalidates the
+old generation immediately; it does not guarantee a device power cycle. Match
+the returned token against `bp_port_get().reset.request` and `.completed`.
+`reset.error` is `-EAGAIN` while pending; successful completion records the exact
+new generation in `reset.generation`. A later reconnection cannot change that
+result. Negotiation errors, a different device type or release terminate the
+request explicitly. Pending output or active motor control prevents reset.
+Electrical detection can temporarily report an empty/passive port while the
+device leaves its old UART session. Reset retains ownership and waits for the
+new handshake within the existing detection/negotiation deadline. The protocol
+cannot distinguish a same-type replacement during this explicit reset.
+
 The Python binding provides `pybricks.iodevices.PUPDevice` (`LUMPDevice` alias):
 
 ```python
@@ -129,8 +142,12 @@ values, and validates them before queuing; it blocks or can be awaited inside
 `run_task`. Passive touch switches return a boolean and have no UART modes.
 Objects retain their original connection generation: create a new object after
 unplugging/replacing a device. Program cleanup releases the port; disconnecting
-the host alone does not. `reset` and device-specific Python sensor/motor APIs
-remain pending.
+the host alone does not. `reset()` returns `None` after requesting negotiation;
+`info`, `read` and `write` report `OSError(EAGAIN)` until it completes. Only the
+object that requested a successful reset accepts its resulting connection.
+Other objects remain invalid, as does the requesting object after an
+unplug/reconnect following reset completion. Reset is unavailable for passive
+devices.
 
 ## Sensor measurements
 
@@ -161,6 +178,23 @@ conversion is preserved from Pybricks and can exceed nominal percentage limits;
 applications must not interpret it as calibrated ranging. The signed counter
 has no application-specific zero offset. Color names, sensor-light commands,
 infrared transmission and other device APIs are not implemented.
+
+The Python `pybricks.pupdevices` module provides `ForceSensor`, `TiltSensor` and
+`InfraredSensor`, constructed with `Port.A` through `Port.F`. Their blocking or
+awaitable reads use these same native measurements:
+
+| Class | Methods and units |
+| --- | --- |
+| `ForceSensor` | `force()` in newtons, `distance()` in millimetres, `touched()` and `pressed(force=3)` booleans |
+| `TiltSensor` | `tilt()` returns two angles in degrees, in Pybricks order |
+| `InfraredSensor` | `distance()` is relative percent, `reflection()` is percent, `count()` is relative to construction |
+
+Selection uses `bp_sensor_select(port, generation, measurement)` so a stale
+object cannot change the mode of a replacement device. The existing native
+`bp_sensor_configure` selects on the current connection without that generation
+constraint. Protected ARM checks use synthetic UART devices; these Python sensor
+classes still require physical acceptance. Other sensor classes and motor
+bindings remain pending.
 
 Encoders report `angle_mdeg` in thousandths of a degree, in the device's direction
 without gear ratios or an application zero offset. BOOST uses its signed POS

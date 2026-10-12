@@ -108,11 +108,19 @@ remain distinct from physical hardware acceptance.
 
 `pupdevice.c` adapts the MIT-licensed
 [`pb_type_iodevices_pupdevice.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/pybricks/iodevices/pb_type_iodevices_pupdevice.c)
-metadata/read/write binding to the protected port API. It converts copied wire
+metadata/read/write/reset binding to the protected port API. It converts copied wire
 values without unaligned accesses; the common UART service owns SELECT, output,
 settling and connection generations. Blocking I/O uses interruptible timed VM waits because
 there is no PBIO cooperative device scheduler. No second parser or driver is
-linked. Reset remains pending.
+linked. Explicit reset records the resulting connection generation; a later
+hotplug cannot silently rebind an old object.
+
+`pupsensors.c` adapts the ForceSensor, TiltSensor and InfraredSensor bindings from
+the same revision. The common native sensor service retains calibration and
+conversion; Python maps units and results and supplies the infrared object's
+counter offset. Generation-bound selection rejects stale objects before changing
+device modes. These classes have protected ARM coverage with synthetic UART peers;
+their physical acceptance remains pending.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
