@@ -17,14 +17,55 @@ static unsigned int enables, disables, starts, stops;
 static int enable_error, off_result;
 static K_SEM_DEFINE(disconnect_entered, 0, 1);
 static K_SEM_DEFINE(disconnect_continue, 0, 1);
-static K_SEM_DEFINE(peer_released, 0, 1);
-static uintptr_t fake_peer;
-static struct bt_conn *const peer = (void *)&fake_peer;
-static atomic_t peer_refs;
+static K_SEM_DEFINE(peer_released, 0, 3);
+static uintptr_t fake_peers[3];
+static struct bt_conn *const peer = (void *)&fake_peers[0];
+static struct bt_conn *const other = (void *)&fake_peers[1];
+static struct bt_conn *const third = (void *)&fake_peers[2];
+static atomic_t peer_refs[3];
+static uint8_t peer_roles[3] = {
+	BT_CONN_ROLE_PERIPHERAL, BT_CONN_ROLE_CENTRAL, BT_CONN_ROLE_PERIPHERAL,
+};
+static struct bt_conn *disconnect_current;
+static atomic_t advertising_active;
+static struct k_work_q *radio_work_queue;
+static K_SEM_DEFINE(radio_drained, 0, 1);
 static bool management_owned, terminal_closed;
 static void (*terminal_output_ready)(void);
 static int disconnect_error;
 static int terminal_open_error;
+
+static size_t peer_index(struct bt_conn *conn)
+{
+	if (conn == peer) return 0;
+	if (conn == other) return 1;
+	if (conn == third) return 2;
+	zassert_unreachable("Unknown synthetic connection");
+	return 0;
+}
+
+void __real_k_work_queue_start(struct k_work_q *queue, k_thread_stack_t *stack,
+	size_t stack_size, int prio, const struct k_work_queue_config *cfg);
+
+void __wrap_k_work_queue_start(struct k_work_q *queue, k_thread_stack_t *stack,
+	size_t stack_size, int prio, const struct k_work_queue_config *cfg)
+{
+	if (cfg && cfg->name && !strcmp(cfg->name, "host_ble")) radio_work_queue = queue;
+	__real_k_work_queue_start(queue, stack, stack_size, prio, cfg);
+}
+
+static void radio_barrier(struct k_work *work)
+{
+	k_sem_give(&radio_drained);
+}
+static K_WORK_DEFINE(radio_barrier_work, radio_barrier);
+
+static void drain_radio_worker(void)
+{
+	zassert_not_null(radio_work_queue);
+	zassert_true(k_work_submit_to_queue(radio_work_queue, &radio_barrier_work) > 0);
+	zassert_ok(k_sem_take(&radio_drained, K_SECONDS(1)));
+}
 
 int hub_bluetooth_power_off(void)
 {
@@ -53,6 +94,7 @@ int __wrap_bt_disable(void)
 int __wrap_bt_le_adv_start(const struct bt_le_adv_param *param,
 	const struct bt_data *ad, size_t ad_len, const struct bt_data *sd, size_t sd_len)
 {
+	if (!atomic_cas(&advertising_active, 0, 1)) return -EALREADY;
 	starts++;
 	return 0;
 }
@@ -60,6 +102,7 @@ int __wrap_bt_le_adv_start(const struct bt_le_adv_param *param,
 int __wrap_bt_le_adv_stop(void)
 {
 	stops++;
+	atomic_clear(&advertising_active);
 	/* Stopping advertising can recycle its reserved connection object. */
 	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
 		if (callback->recycled) {
@@ -71,15 +114,13 @@ int __wrap_bt_le_adv_stop(void)
 
 struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
 {
-	zassert_equal(conn, peer);
-	atomic_inc(&peer_refs);
+	atomic_inc(&peer_refs[peer_index(conn)]);
 	return conn;
 }
 
 void __wrap_bt_conn_unref(struct bt_conn *conn)
 {
-	zassert_equal(conn, peer);
-	atomic_val_t previous = atomic_dec(&peer_refs);
+	atomic_val_t previous = atomic_dec(&peer_refs[peer_index(conn)]);
 	zassert_true(previous > 0);
 	if (previous == 1) {
 		k_sem_give(&peer_released);
@@ -88,11 +129,21 @@ void __wrap_bt_conn_unref(struct bt_conn *conn)
 
 int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 {
-	zassert_equal(conn, peer);
+	peer_index(conn);
 	zassert_not_equal(k_current_get(), &k_sys_work_q.thread);
+	disconnect_current = conn;
 	k_sem_give(&disconnect_entered);
 	zassert_ok(k_sem_take(&disconnect_continue, K_SECONDS(1)));
 	return disconnect_error;
+}
+
+int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
+{
+	memset(info, 0, sizeof(*info));
+	info->type = BT_CONN_TYPE_LE;
+	info->role = peer_roles[peer_index((struct bt_conn *)conn)];
+	info->state = BT_CONN_STATE_CONNECTED;
+	return 0;
 }
 
 bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
@@ -121,7 +172,7 @@ void host_ble_request_end(void) {}
 
 int host_ble_acquire(void)
 {
-	zassert_false(management_owned);
+	if (management_owned) return -EBUSY;
 	management_owned = true;
 	return 0;
 }
@@ -186,12 +237,32 @@ static void expect_status(const char *text)
 	zassert_not_null(strstr(reply, text), "%s", reply);
 }
 
-static void connect_peer(void)
+static void connection_event(struct bt_conn *conn, uint8_t err)
 {
+	if (!err && peer_roles[peer_index(conn)] == BT_CONN_ROLE_PERIPHERAL) {
+		/* Connectable advertising is consumed when a peripheral link arrives. */
+		atomic_clear(&advertising_active);
+	}
 	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
 		if (callback->connected) {
-			callback->connected(peer, 0);
+			callback->connected(conn, err);
 		}
+	}
+}
+
+static void disconnect_event(struct bt_conn *conn)
+{
+	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
+		if (callback->disconnected) {
+			callback->disconnected(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		}
+	}
+}
+
+static void recycle_connection(void)
+{
+	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
+		if (callback->recycled) callback->recycled();
 	}
 }
 
@@ -232,7 +303,26 @@ ZTEST(radio, test_startup_control_and_failure)
 	zassert_ok(shell_execute_cmd(shell, "bluetooth on"));
 	expect_status("Bluetooth: on");
 	zassert_equal(host_ble_status(), HOST_BLE_WAITING);
-	connect_peer();
+	/* A central link does not acquire the computer session or consume our
+	 * connectable advertisement, including after its slot is recycled. */
+	connection_event(other, 0);
+	zassert_equal(host_ble_status(), HOST_BLE_WAITING);
+	zassert_false(management_owned);
+	disconnect_event(other);
+	recycle_connection();
+	drain_radio_worker();
+	zassert_equal(starts, 2);
+	zassert_equal(atomic_get(&peer_refs[1]), 0);
+	connection_event(peer, 0);
+	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED);
+	/* Recycling a central slot while a management connection is present must
+	 * not restart advertising or disturb that owner. */
+	connection_event(other, 0);
+	disconnect_event(other);
+	recycle_connection();
+	drain_radio_worker();
+	zassert_equal(starts, 2);
+	zassert_true(management_owned);
 	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED);
 	/* Shared Device Information reads do not select a protocol. */
 	extern const struct bt_gatt_service_static device_information, pybricks_service;
@@ -261,28 +351,48 @@ ZTEST(radio, test_startup_control_and_failure)
 		      "Pybricks discovery must not recolor an open native terminal");
 	terminal_output_ready();
 	expect_responsive_disconnect();
+	zassert_equal(disconnect_current, peer);
 	zassert_true(terminal_closed);
 	zassert_true(management_owned, "A disconnect request cannot release the session");
+	/* The first HCI command is stalled. Both arriving peripheral peers must be
+	 * queued independently, and repeated rejection of one must not add a ref. */
+	peer_roles[1] = BT_CONN_ROLE_PERIPHERAL;
+	connection_event(other, 0);
+	connection_event(third, 0);
+	connection_event(other, 0);
+	zassert_equal(atomic_get(&peer_refs[1]), 1);
+	zassert_equal(atomic_get(&peer_refs[2]), 1);
+	zassert_true(management_owned);
 	/* An actual disconnect may arrive while the command still waits for HCI. */
-	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
-		if (callback->disconnected) {
-			callback->disconnected(peer, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		}
-	}
+	disconnect_event(peer);
 	zassert_false(management_owned);
 	zassert_equal(host_ble_status(), HOST_BLE_WAITING);
-	zassert_equal(atomic_get(&peer_refs), 1, "Worker must retain the disconnected peer");
+	zassert_equal(atomic_get(&peer_refs[0]), 1, "Worker must retain the disconnected peer");
 	k_sem_give(&disconnect_continue);
 	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
-	connect_peer();
+	bool saw_other = false, saw_third = false;
+	for (size_t i = 0; i < 2; i++) {
+		zassert_ok(k_sem_take(&disconnect_entered, K_SECONDS(1)));
+		if (disconnect_current == other) {
+			zassert_false(saw_other);
+			saw_other = true;
+		} else {
+			zassert_equal(disconnect_current, third);
+			zassert_false(saw_third);
+			saw_third = true;
+		}
+		k_sem_give(&disconnect_continue);
+		zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
+	}
+	zassert_true(saw_other && saw_third);
+	zassert_equal(atomic_get(&peer_refs[0]), 0);
+	zassert_equal(atomic_get(&peer_refs[1]), 0);
+	zassert_equal(atomic_get(&peer_refs[2]), 0);
+	connection_event(peer, 0);
 	zassert_equal(host_ble_status(), HOST_BLE_CONNECTED, "New link must forget old profile");
 	zassert_equal(py_cfg->cfg_write(peer, py_ccc, BT_GATT_CCC_NOTIFY), 2);
 	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
-	STRUCT_SECTION_FOREACH(bt_conn_cb, callback) {
-		if (callback->disconnected) {
-			callback->disconnected(peer, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		}
-	}
+	disconnect_event(peer);
 	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
 	zassert_ok(shell_execute_cmd(shell, "bluetooth off"));
@@ -307,7 +417,7 @@ ZTEST(radio, test_startup_control_and_failure)
 	/* Failed-radio rejection uses the same asynchronous path and cannot
 	 * replace the first lifecycle error with a disconnect failure. */
 	disconnect_error = -EIO;
-	connect_peer();
+	connection_event(peer, 0);
 	expect_responsive_disconnect();
 	k_sem_give(&disconnect_continue);
 	zassert_ok(k_sem_take(&peer_released, K_SECONDS(1)));

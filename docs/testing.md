@@ -867,7 +867,10 @@ ownership correctly, and preserve the first lifecycle error. GATT reads and
 subscriptions also check BLE profile indication: shared identity and rejected
 operations do not select a profile, native Shell retains its indication, and a
 fresh connection forgets the previous selection. This does
-not simulate RF or the HCI controller. The standard pytest run executes this suite;
+not simulate RF or the HCI controller. Multiple synthetic connection slots check
+that central-role events preserve management ownership and advertising, and that
+queued rejected peers are all disconnected even while an earlier HCI call waits.
+The standard pytest run executes this suite;
 it can also run directly as `build/radio-tests/zephyr/zephyr.exe`;
 its clock is accelerated by default. On the Inventor F4, automatic boot discovery,
 Pybricks identification, subsequent SMP connection and repeated on/off are checked

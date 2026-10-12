@@ -18,14 +18,13 @@
 #include <zephyr/sys/byteorder.h>
 
 LOG_MODULE_REGISTER(host_ble);
-BUILD_ASSERT(CONFIG_BT_MAX_CONN == 1, "One management connection");
 
 static struct bt_uuid_128 service_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 command_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 /* Connection and GATT callbacks execute on the Bluetooth RX workqueue. */
 static struct bt_conn *owner;
-static struct bt_conn *disconnect_pending;
+static struct bt_conn *disconnect_pending[CONFIG_BT_MAX_CONN];
 static struct k_spinlock session_lock;
 static enum host_ble_status profile = HOST_BLE_CONNECTED;
 static void request_disconnect(struct bt_conn *conn);
@@ -46,6 +45,9 @@ static K_MUTEX_DEFINE(radio_lock);
 enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
 static atomic_t radio_state;
 static atomic_t shutting_down;
+/* Only incoming peripheral links consume the management advertisement.
+ * Central links and their recycled connection objects do not. */
+static atomic_t advertising;
 static int radio_error;
 static const char *failed_operation;
 static struct k_work_q radio_queue;
@@ -538,10 +540,17 @@ static void shell_output(struct k_work *work)
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	struct bt_conn_info info;
+	if (bt_conn_get_info(conn, &info) || info.type != BT_CONN_TYPE_LE ||
+	    info.role != BT_CONN_ROLE_PERIPHERAL) {
+		return;
+	}
 	if (err) {
+		atomic_clear(&advertising);
 		return;
 	}
 	if (atomic_get(&radio_state) == RADIO_FAILED || host_ble_acquire()) {
+		atomic_clear(&advertising);
 		request_disconnect(conn);
 		return;
 	}
@@ -551,6 +560,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	pybricks_tx_deadline = 0;
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	owner = bt_conn_ref(conn);
+	atomic_clear(&advertising);
 	profile = HOST_BLE_CONNECTED;
 	exit_compatibility = false;
 	shell_retired = false;
@@ -609,6 +619,12 @@ static const struct smp_bt_request_callbacks request_callbacks = {
 
 static int advertise(void)
 {
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	bool start = !owner && atomic_cas(&advertising, 0, 1);
+	k_spin_unlock(&session_lock, key);
+	if (!start) return 0;
+	/* Publish before issuing HCI: a connection callback may arrive before
+	 * bt_le_adv_start() returns and must be able to clear this reservation. */
 #if !defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	uint8_t pnp[2 + PBIO_PYBRICKS_PNP_ID_SIZE];
 	sys_put_le16(PBIO_GATT_PNP_ID_CHAR_UUID, pnp);
@@ -628,8 +644,10 @@ static int advertise(void)
 #endif
 		BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 	};
-	return bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, data, ARRAY_SIZE(data),
+	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, data, ARRAY_SIZE(data),
 		response, ARRAY_SIZE(response));
+	if (err) atomic_clear(&advertising);
+	return err;
 }
 
 /* Serialized by radio_lock after setup. Keep the first failure until reboot:
@@ -648,34 +666,48 @@ static int radio_failed(const char *operation, int error)
 
 static void disconnect_peer(struct k_work *work)
 {
-	k_spinlock_key_t key = k_spin_lock(&session_lock);
-	struct bt_conn *conn = disconnect_pending;
-	k_spin_unlock(&session_lock, key);
+	for (;;) {
+		k_spinlock_key_t key = k_spin_lock(&session_lock);
+		size_t index = 0;
+		while (index < ARRAY_SIZE(disconnect_pending) && !disconnect_pending[index]) index++;
+		struct bt_conn *conn = index < ARRAY_SIZE(disconnect_pending) ? disconnect_pending[index] : NULL;
+		k_spin_unlock(&session_lock, key);
+		if (!conn) return;
 
-	k_mutex_lock(&radio_lock, K_FOREVER);
-	int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	if (err && err != -ENOTCONN) {
-		radio_failed("disconnect", err);
+		k_mutex_lock(&radio_lock, K_FOREVER);
+		int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		if (err && err != -ENOTCONN) {
+			radio_failed("disconnect", err);
+		}
+		k_mutex_unlock(&radio_lock);
+
+		key = k_spin_lock(&session_lock);
+		disconnect_pending[index] = NULL;
+		k_spin_unlock(&session_lock, key);
+		bt_conn_unref(conn);
 	}
-	k_mutex_unlock(&radio_lock);
-
-	key = k_spin_lock(&session_lock);
-	disconnect_pending = NULL;
-	k_spin_unlock(&session_lock, key);
-	bt_conn_unref(conn);
 }
 static K_WORK_DEFINE(disconnect_work, disconnect_peer);
 
 static void request_disconnect(struct bt_conn *conn)
 {
-	/* One connection slot, retained until the worker finishes. HCI waits must
-	 * not block either the system/button queue or Bluetooth RX callbacks.
+	/* Retain each distinct connection until its HCI command finishes. HCI
+	 * waits must not block the system/button queue or Bluetooth RX callbacks.
 	 * Only the real disconnection callback releases management ownership. */
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
-	if (!disconnect_pending) {
-		disconnect_pending = bt_conn_ref(conn);
-		k_work_submit_to_queue(&radio_queue, &disconnect_work);
+	size_t free = ARRAY_SIZE(disconnect_pending);
+	for (size_t i = 0; i < ARRAY_SIZE(disconnect_pending); i++) {
+		if (disconnect_pending[i] == conn) {
+			k_spin_unlock(&session_lock, key);
+			return;
+		}
+		if (!disconnect_pending[i]) free = i;
 	}
+	/* Every occupied entry holds a reference to a different Zephyr slot,
+	 * so a new connection always has room in this equally sized array. */
+	__ASSERT_NO_MSG(free < ARRAY_SIZE(disconnect_pending));
+	disconnect_pending[free] = bt_conn_ref(conn);
+	k_work_submit_to_queue(&radio_queue, &disconnect_work);
 	k_spin_unlock(&session_lock, key);
 }
 
@@ -701,6 +733,7 @@ static int set_radio(bool enable)
 		if (!err) {
 			operation = enable ? "initialization" : "advertising stop";
 			err = enable ? bt_enable(NULL) : bt_le_adv_stop();
+			if (!enable && !err) atomic_clear(&advertising);
 		}
 		if (!err) {
 			operation = enable ? "advertising start" : "controller shutdown";

@@ -127,6 +127,8 @@ int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *inf
 {
 	zassert_equal(conn, peer);
 	memset(info, 0, sizeof(*info));
+	info->type = BT_CONN_TYPE_LE;
+	info->role = BT_CONN_ROLE_PERIPHERAL;
 	info->state = peer_connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
 	return 0;
 }

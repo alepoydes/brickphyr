@@ -163,6 +163,15 @@ after this startup fault; USB and BLE terminals work in the restored image.
 Controller loss during an active BLE session, radio recovery, Bluetooth throughput, pairing,
 controller input, and behavior under combined application traffic remain unverified.
 
+The management adapter accepts incoming LE peripheral-role links only. Outgoing
+central-role connection events do not acquire or release management, change its
+profile, or consume its advertisement. Recycled connection objects restart
+advertising only when no management owner and no active advertisement remain.
+Pending disconnects retain each distinct connection separately, so a slow HCI
+command cannot discard another rejected client's cleanup. These boundaries have
+synthetic checks with multiple connection slots. The F4 profile still reserves
+one slot; application-side LEGO device connection support remains unfinished.
+
 The local H:4 close-path correction discards partial framing and releases pending
 buffers even when board teardown reports an error. UART-emulator checks cover
 reopening after partial RX/TX and teardown failure. This does not make a failed
