@@ -14,6 +14,7 @@ enum bp_port_phase {
 	BP_PORT_OFF,
 	BP_PORT_NEGOTIATING,
 	BP_PORT_READY,
+	BP_PORT_SERIAL,
 };
 
 #define BP_PORT_COUNT 6

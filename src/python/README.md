@@ -115,6 +115,14 @@ there is no PBIO cooperative device scheduler. No second parser or driver is
 linked. Explicit reset records the resulting connection generation; a later
 hotplug cannot silently rebind an old object.
 
+`uartdevice.c` adapts `pybricks/iodevices/pb_type_uart_device.c` at the same
+revision. The existing port worker owns direct UART configuration, copied TX,
+RX and cleanup instead of PBIO's UART process. Python owns its rooted immutable
+buffers and exact-length/pattern waits; prefix matching handles overlapping
+patterns without consuming trailing bytes. The existing Pybricks awaitable serves
+both directions. Custom P1/P2 supply is not implemented; see
+[UART semantics and limitations](../../docs/ports.md#custom-serial-devices).
+
 `pupsensors.c` adapts the ForceSensor, TiltSensor, InfraredSensor, ColorSensor,
 UltrasonicSensor and ColorDistanceSensor bindings from `pybricks/pupdevices` at
 the same revision, plus palette parsing from `util_pb/pb_color_map.c` and

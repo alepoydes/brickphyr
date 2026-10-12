@@ -563,7 +563,7 @@ static void wire_data(const struct shell *shell, const struct bp_port_state *v)
 static int cmd_port(const struct shell *shell, size_t argc, char **argv)
 {
 	static const char *const phases[] = {"detecting", "empty", "passive", "UART", "fault",
-		"off", "negotiating", "ready"};
+		"off", "negotiating", "ready", "serial"};
 	bool all = argc == 1;
 	if (!all && (strlen(argv[1]) != 1 || argv[1][0] < 'A' || argv[1][0] > 'F')) return -EINVAL;
 	uint32_t first = all ? 0 : argv[1][0] - 'A';
@@ -580,6 +580,10 @@ static int cmd_port(const struct shell *shell, size_t argc, char **argv)
 		if (all) continue;
 		shell_print(shell, "Updated_ms=%" PRId64 " changed_ms=%" PRId64 " failures=%u cleanup=%d",
 			v.sample_ms, v.changed_ms, v.failures, v.cleanup_error);
+		if (v.phase == BP_PORT_SERIAL) {
+			shell_print(shell, "Custom UART: baud=%u; no LEGO identity or mode metadata", v.baudrate);
+			return 0;
+		}
 		if (v.phase != BP_PORT_READY) {
 			shell_print(shell, v.phase == BP_PORT_PASSIVE ?
 				"Passive device: no UART metadata" : "UART metadata: unavailable until negotiation completes");

@@ -82,6 +82,45 @@ unchanged ownership/outputs. Physical third-party compatibility and USB/BLE
 inspection on the hub remain unverified. First inspect what a device advertises;
 a matching ID alone does not establish compatibility.
 
+## Custom serial devices
+
+`pybricks.iodevices.UARTDevice(port, baudrate=115200, timeout=None, power_pin=0)`
+claims a coasting port for ordinary 8N1 UART through the existing Zephyr driver.
+LEGO detection and protocol traffic stop until the application releases the port.
+`port A` then reports `serial`, its baud rate and any error, without inventing a
+LEGO device identity. A second UART object cannot take over the live claim.
+
+The binding provides blocking/awaitable `read(length=1)`, `write(data)` and
+`wait_until(pattern)`, plus immediate `waiting()` and `read_all()`. Reads return
+exactly the requested bytes; `timeout` is a positive whole-operation timeout in
+milliseconds, or `None` for an interruptible indefinite wait. `wait_until` has no
+timeout, consumes through the matched pattern, and leaves subsequent bytes for
+reading. Read and write can run concurrently through `multitask`; replacing an
+operation exhausts the previous awaitable in that direction. Async writes retain
+immutable data, copying bytearrays before yielding; temporary patterns remain
+rooted through garbage collection.
+
+`clear()` cancels both directions and flushes the receive buffer.
+`set_baudrate()` does likewise while configuring a positive baud supported by the
+driver. Receive overflow reports `OSError(errno.ENOBUFS)`; clearing or explicit
+reconfiguration starts a new exchange. The 512-byte RX ring is shared with the
+existing UART implementation. Write completion includes the final stop bit,
+without acknowledging reception by the external device. Physical baud accuracy
+and custom-device wiring remain unverified. Ordinary UART cannot identify an
+unplugged/replaced peer; connection generations identify the application's lease.
+
+Only `power_pin=0` is currently implemented. Values 1/2 report `ENOTSUP` before
+claiming the port or changing outputs; custom-supply permission and persistence
+remain pending. This does not complete the full reference UART surface.
+
+Native applications use `bp_uart_open/configure/clear/waiting/read/write` with
+bounded copied buffers and `bp_port_get()` for asynchronous configuration/write
+completion. No application pointer survives a syscall. Return, forced stop and
+REPL reset use the common port release, stopping UART IRQ access and coasting
+outputs before restoring LEGO detection. Cleanup errors retain the claim and are
+reported by the supervisor; ordinary host disconnection leaves the application
+and its port running.
+
 ## Arbitrary UART modes
 
 `bp_port_select(port, generation, mode)` claims an idle UART port and queues an

@@ -20,6 +20,11 @@ struct port_uart_write {
 /* Trusted port worker only. Start with the buffer disabled, then enable it
  * before the first poll. Stop IRQ access before reclaiming GPIO pins. */
 int port_uart_start(uint32_t port);
+int port_uart_serial_start(uint32_t port, uint32_t baud);
+int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write, uint32_t *completed);
+/* Caller excludes reconfiguration; bounded copies, no application pointers retained. */
+int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size);
+int port_uart_serial_waiting(uint32_t port);
 int port_uart_poll(uint32_t port, struct bp_port_state *value,
 	struct bp_sensor_sample *sensor, uint32_t measurement,
 	const struct port_uart_write *write, bool cancel);
@@ -30,6 +35,11 @@ int port_uart_get_mode(uint32_t port, uint32_t mode, struct bp_port_mode *value)
 #else
 static inline bool port_uart_available(uint32_t port) { return false; }
 static inline int port_uart_start(uint32_t port) { return -ENOTSUP; }
+static inline int port_uart_serial_start(uint32_t port, uint32_t baud) { return -ENOTSUP; }
+static inline int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write,
+	uint32_t *completed) { return -ENOTSUP; }
+static inline int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size) { return -ENOTSUP; }
+static inline int port_uart_serial_waiting(uint32_t port) { return -ENOTSUP; }
 static inline int port_uart_poll(uint32_t port, struct bp_port_state *value,
 	struct bp_sensor_sample *sensor, uint32_t measurement,
 	const struct port_uart_write *write, bool cancel) { return -ENOTSUP; }

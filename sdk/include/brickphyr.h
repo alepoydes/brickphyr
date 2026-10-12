@@ -106,6 +106,25 @@ __syscall int bp_battery_get(struct bp_battery_sample *sample);
 /* Copy port identity and raw UART data; no I/O or port reconfiguration.
  * Ports are numbered 0..5 (A..F). */
 __syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
+/* Claim a coasting port for custom 8N1 UART, without P1/P2 supply or LEGO
+ * negotiation. baud must be positive and supported by the Zephyr driver.
+ * Configuration is asynchronous: wait for bp_port_get().error != -EAGAIN,
+ * matching the returned generation. Release restores electrical detection.
+ * Raw mode cannot detect unplugging; generation identifies this lease. */
+__syscall int bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation);
+/* Queue a new positive baud, or clear RX/TX at the current baud. Both cancel
+ * outstanding I/O, retain the lease and complete through bp_port_get().error. */
+__syscall int bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud);
+__syscall int bp_uart_clear(uint32_t port, uint32_t generation);
+/* Nonblocking count / read, with negative errno on failure. Reads consume up
+ * to 128 bytes; no caller buffer is retained. RX capacity is 512 bytes; overrun
+ * fails the session explicitly until clear/reconfiguration or release. */
+__syscall int bp_uart_waiting(uint32_t port, uint32_t generation);
+__syscall int bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size);
+/* Copy 1..32 bytes, one pending write. Match request against port.write;
+ * completion includes the last UART stop bit, with no device acknowledgement. */
+__syscall int bp_uart_write(uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request);
 /* Read one advertised mode after negotiation. Use generation from bp_port_get;
  * ESTALE means a different connection. No mode change, ownership or device I/O. */
 __syscall int bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,

@@ -44,7 +44,7 @@ static struct link {
 	uint8_t rx_buffer[RX_CAPACITY], tx[37];
 	size_t tx_size, tx_pos;
 	int error;
-	bool active, tx_busy;
+	bool active, tx_busy, serial;
 	int64_t tx_done_ms, tx_deadline, born_ms, deadline, keepalive_ms, data_ms;
 	uint32_t baud;
 	uint32_t measurement;
@@ -94,7 +94,7 @@ static void interrupt(const struct device *dev, void *arg)
 		/* A Powered Up peer can signal BREAK before TYPE after acknowledging
 		 * the fast baud. Synchronize on a valid TYPE, as PBIO does; once TYPE
 		 * is known, any receive error invalidates the session. */
-		if (err < 0 || (err & ~(UART_ERROR_FRAMING | UART_BREAK)) || l->lump.phase != LUMP_TYPE) {
+		if (err < 0 || l->serial || (err & ~(UART_ERROR_FRAMING | UART_BREAK)) || l->lump.phase != LUMP_TYPE) {
 			err = err < 0 ? err : -EIO;
 			goto failed;
 		}
@@ -208,7 +208,7 @@ static int set_baud(uint32_t port, uint32_t baud)
 	return 0;
 }
 
-int port_uart_start(uint32_t port)
+static int start(uint32_t port, uint32_t baud, bool serial)
 {
 	if (!port_uart_available(port) || !device_is_ready(config[port].uart)) {
 		return -ENODEV;
@@ -216,6 +216,7 @@ int port_uart_start(uint32_t port)
 	port_uart_stop(port);
 	struct link *l = &links[port];
 	*l = (struct link){0};
+	l->serial = serial;
 	lump_reset(&l->lump);
 	l->measurement = UINT32_MAX;
 	l->sensor.value.error = -EAGAIN;
@@ -227,11 +228,14 @@ int port_uart_start(uint32_t port)
 	}
 #endif
 	if (!err) {
-		err = set_baud(port, 115200);
+		err = set_baud(port, baud);
 	}
 	l->born_ms = k_uptime_get();
 	return err;
 }
+
+int port_uart_start(uint32_t port) { return start(port, 115200, false); }
+int port_uart_serial_start(uint32_t port, uint32_t baud) { return start(port, baud, true); }
 
 static int transmit(uint32_t port, const uint8_t *bytes, size_t count)
 {
@@ -243,11 +247,50 @@ static int transmit(uint32_t port, const uint8_t *bytes, size_t count)
 		l->tx_pos = 0;
 		l->tx_size = count;
 		l->tx_busy = true;
-		l->tx_deadline = k_uptime_get() + IO_TIMEOUT_MS;
+		/* Custom UART can run below LEGO's 2400 baud. Include the full 8N1
+		 * wire time, then the existing driver-service allowance. */
+		l->tx_deadline = k_uptime_get() + IO_TIMEOUT_MS +
+			(l->serial ? DIV_ROUND_UP((uint64_t)count * 10000, l->baud) : 0);
 		uart_irq_tx_enable(config[port].uart);
 	}
 	irq_unlock(key);
 	return err;
+}
+
+int port_uart_serial_waiting(uint32_t port)
+{
+	struct link *l = &links[port];
+	unsigned int key = irq_lock();
+	int result = l->error ? l->error : ring_buf_size_get(&l->rx);
+	irq_unlock(key);
+	return result;
+}
+
+int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size)
+{
+	struct link *l = &links[port];
+	unsigned int key = irq_lock();
+	int result = l->error ? l->error : ring_buf_get(&l->rx, data, size);
+	irq_unlock(key);
+	return result;
+}
+
+int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write, uint32_t *completed)
+{
+	struct link *l = &links[port];
+	unsigned int key = irq_lock();
+	int err = l->error;
+	bool busy = l->tx_busy;
+	if (!err && busy && k_uptime_get() >= l->tx_deadline) err = -ETIMEDOUT;
+	irq_unlock(key);
+	if (err) return err;
+	if (write && l->write_request != write->request) {
+		err = transmit(port, write->data, write->size);
+		if (err) return err;
+		l->write_request = write->request;
+	} else if (write && !busy) l->write_completed = write->request;
+	*completed = l->write_completed;
+	return 0;
 }
 
 static int receive(uint32_t port, int64_t now)

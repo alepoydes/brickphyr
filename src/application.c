@@ -634,6 +634,81 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 }
 #include <zephyr/syscalls/bp_port_write_mrsh.c>
 
+int z_impl_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
+{
+	return hub_uart_open(BP_PORT_APPLICATION, port, baud, generation);
+}
+static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(generation, __alignof__(*generation))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(generation, sizeof(*generation)));
+	return z_impl_bp_uart_open(port, baud, generation);
+}
+#include <zephyr/syscalls/bp_uart_open_mrsh.c>
+
+int z_impl_bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud)
+{
+	return baud ? hub_uart_configure(BP_PORT_APPLICATION, port, generation, baud) : -EINVAL;
+}
+static inline int z_vrfy_bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud)
+{
+	return z_impl_bp_uart_configure(port, generation, baud);
+}
+#include <zephyr/syscalls/bp_uart_configure_mrsh.c>
+
+int z_impl_bp_uart_clear(uint32_t port, uint32_t generation)
+{
+	return hub_uart_configure(BP_PORT_APPLICATION, port, generation, 0);
+}
+static inline int z_vrfy_bp_uart_clear(uint32_t port, uint32_t generation)
+{
+	return z_impl_bp_uart_clear(port, generation);
+}
+#include <zephyr/syscalls/bp_uart_clear_mrsh.c>
+
+int z_impl_bp_uart_waiting(uint32_t port, uint32_t generation)
+{
+	return hub_uart_read(BP_PORT_APPLICATION, port, generation, NULL, 0);
+}
+static inline int z_vrfy_bp_uart_waiting(uint32_t port, uint32_t generation)
+{
+	return z_impl_bp_uart_waiting(port, generation);
+}
+#include <zephyr/syscalls/bp_uart_waiting_mrsh.c>
+
+int z_impl_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
+{
+	return hub_uart_read(BP_PORT_APPLICATION, port, generation, data, size);
+}
+static inline int z_vrfy_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
+{
+	if (!size || size > 128) return size ? -EINVAL : 0;
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(data, size));
+	uint8_t copy[128];
+	int count = z_impl_bp_uart_read(port, generation, copy, size);
+	if (count > 0) memcpy(data, copy, count);
+	return count;
+}
+#include <zephyr/syscalls/bp_uart_read_mrsh.c>
+
+int z_impl_bp_uart_write(uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	return hub_uart_write(BP_PORT_APPLICATION, port, generation, data, size, request);
+}
+static inline int z_vrfy_bp_uart_write(uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	if (!size || size > 32) return -EINVAL;
+	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	uint8_t copy[32];
+	memcpy(copy, data, size);
+	return z_impl_bp_uart_write(port, generation, copy, size, request);
+}
+#include <zephyr/syscalls/bp_uart_write_mrsh.c>
+
 int z_impl_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 {
 	return hub_port_reset(BP_PORT_APPLICATION, port, generation, request);

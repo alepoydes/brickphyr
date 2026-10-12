@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-/* Synthetic LUMP peer for the protected Python port tests. Wire values are
- * chosen independently of the firmware's parser and conversion code. */
+/* Synthetic LUMP and raw UART peer for protected Python port tests. Wire values
+ * are chosen independently of the firmware's parser and conversion code. */
 #include "../ports/wiring.h"
 
 #include <errno.h>
@@ -10,6 +10,7 @@
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/util.h>
 
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(pup_uart));
 static const uint8_t samples[4][8] = {
@@ -56,7 +57,7 @@ static struct pf_record { int64_t ms; uint16_t message; } pf_history[PF_HISTORY_
 static uint8_t pf_count;
 static uint32_t pf_dropped;
 static K_MUTEX_DEFINE(peer_lock);
-static bool installed, connected, hold_mode, hold_reset;
+static bool installed, connected, serial_mode, hold_mode, hold_reset;
 static uint8_t command[34], used, needed;
 static int selected = -1;
 static uint8_t metadata_mode;
@@ -242,6 +243,12 @@ static void transmitted(const struct device *dev, size_t size, void *user_data)
 		size_t count = uart_emul_get_tx_data(dev, bytes, MIN(size, sizeof(bytes)));
 		if (!count) break;
 		size -= count;
+		if (serial_mode) {
+			/* Raw serial is a byte stream; never feed it to the LUMP parser. */
+			uint32_t echoed = uart_emul_put_rx_data(dev, bytes, count);
+			__ASSERT_NO_MSG(echoed == count);
+			continue;
+		}
 		for (size_t i = 0; i < count && connected; i++) {
 			uint8_t byte = bytes[i];
 			if (!used) {
@@ -319,8 +326,26 @@ static void transmitted(const struct device *dev, size_t size, void *user_data)
 
 static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 {
-	ARG_UNUSED(argc);
 	if (!device_is_ready(uart)) return -ENODEV;
+	if (!strcmp(argv[1], "serial_rx")) {
+		uint8_t bytes[64];
+		if (argc != 3) return -EINVAL;
+		size_t length = strlen(argv[2]);
+		if (!length || (length & 1) || length > sizeof(bytes) * 2 ||
+		    hex2bin(argv[2], length, bytes, sizeof(bytes)) != length / 2) return -EINVAL;
+		k_mutex_lock(&peer_lock, K_FOREVER);
+		int err = serial_mode ? 0 : -ENODEV;
+		if (!err && uart_emul_put_rx_data(uart, bytes, length / 2) != length / 2) err = -ENOSPC;
+		k_mutex_unlock(&peer_lock);
+		return err;
+	}
+	if (argc != 2) return -EINVAL;
+	if (!strcmp(argv[1], "serial_close_error")) {
+		k_mutex_lock(&peer_lock, K_FOREVER);
+		pup_test_circuits[0].coast_error = -EIO;
+		k_mutex_unlock(&peer_lock);
+		return 0;
+	}
 	if (!strcmp(argv[1], "output")) {
 		static const char digits[] = "0123456789abcdef";
 		char hex[sizeof(output_wire) * 2 + 1];
@@ -373,13 +398,14 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		return 0;
 	}
 	if (strcmp(argv[1], "connect") && strcmp(argv[1], "force") &&
+	    strcmp(argv[1], "generic") && strcmp(argv[1], "serial") &&
 	    strcmp(argv[1], "tilt") && strcmp(argv[1], "infrared") &&
 	    strcmp(argv[1], "color") && strcmp(argv[1], "ultrasonic") &&
 	    strcmp(argv[1], "color_distance") && strcmp(argv[1], "matrix") &&
 	    strcmp(argv[1], "light") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
+		shell_error(shell, "Expected a peer kind, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -388,6 +414,7 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		installed = true;
 	}
 	connected = false;
+	serial_mode = false;
 	hold_mode = false;
 	hold_reset = false;
 	(void)k_work_cancel_delayable(&work);
@@ -411,13 +438,16 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	pf_count = 0;
 	pf_dropped = 0;
 	pup_test_circuits[0].kind = !strcmp(argv[1], "light") ? LIGHT :
-		!strcmp(argv[1], "connect") || peer_kind != GENERIC ? UART_DEVICE :
+		!strcmp(argv[1], "serial") ? UNPLUGGED :
+		!strcmp(argv[1], "connect") || !strcmp(argv[1], "generic") ||
+		peer_kind != GENERIC ? UART_DEVICE :
 		!strcmp(argv[1], "unplug") ? UNPLUGGED : TOUCH_SWITCH;
 	pup_test_circuits[0].pressed = !strcmp(argv[1], "press");
 	connected = pup_test_circuits[0].kind == UART_DEVICE;
+	serial_mode = !strcmp(argv[1], "serial");
 	k_mutex_unlock(&peer_lock);
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
-	pup_peer, 2, 0);
+	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	pup_peer, 2, 1);

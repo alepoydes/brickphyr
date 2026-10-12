@@ -274,6 +274,7 @@ static const mp_rom_map_elem_t iodevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_iodevices)},
 	{MP_ROM_QSTR(MP_QSTR_PUPDevice), MP_ROM_PTR(&pup_type)},
 	{MP_ROM_QSTR(MP_QSTR_LUMPDevice), MP_ROM_PTR(&pup_type)},
+	{MP_ROM_QSTR(MP_QSTR_UARTDevice), MP_ROM_PTR(&python_uart_type)},
 };
 static MP_DEFINE_CONST_DICT(iodevices_dict, iodevices_globals);
 const mp_obj_module_t pb_module_iodevices = {{&mp_type_module}, (mp_obj_dict_t *)&iodevices_dict};

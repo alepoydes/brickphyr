@@ -58,6 +58,8 @@ static struct port {
 	uint8_t pf_used, pf_coasting;
 	int pf_error;
 	uint32_t pf_generation;
+	enum { SERIAL_OFF, SERIAL_CONFIGURE, SERIAL_ACTIVE, SERIAL_CLOSE, SERIAL_FAILING, SERIAL_FAILED } serial;
+	uint32_t serial_baud;
 	uint16_t reset_type;
 	bool reset_start;
 	int64_t reset_deadline;
@@ -148,7 +150,7 @@ static void finish_write(struct port *p, int error)
 static uint32_t queue_write(struct port *p, uint8_t mode, const uint8_t *data, uint32_t size)
 {
 	uint32_t selection = PORT_RAW_MODE | mode;
-	if (p->measurement != selection) {
+	if (!p->serial && p->measurement != selection) {
 		p->measurement = selection;
 		p->command++;
 		p->value.selected_mode = mode;
@@ -233,7 +235,7 @@ static void finish_reset(uint32_t port, int cleanup)
 		p->motor.valid = false;
 		if (!p->motor.error) p->motor.error = cleanup;
 		motor_activity(port, true);
-	} else if (!reset_pending(p) && !p->pf_used) {
+	} else if (!reset_pending(p) && !p->pf_used && !p->serial) {
 		drop_claim(p);
 	}
 	k_spin_unlock(&lock, key);
@@ -314,7 +316,7 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 	/* A request admitted during the preceding UART poll invalidates that
 	 * poll's observation; only the next worker round may start resync.
 	 * An I/O or cleanup failure still fails the accepted request explicitly. */
-	if (p->reset_start && !error) {
+	if (p->serial || (p->reset_start && !error)) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
@@ -745,6 +747,68 @@ static int64_t apply_motor(uint32_t port)
 	return deadline;
 }
 
+/* The worker owns pinmux and UART configuration. Reads are admitted only in
+ * ACTIVE; marking CONFIGURE/CLOSE excludes them before touching the driver.
+ * A raw peer has no identity/keepalive protocol: errors retain the lease until
+ * explicit reconfiguration or release, never silently resume LEGO probing. */
+static void serial_advance(uint32_t port)
+{
+	struct port *p = &ports[port];
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int action = p->serial;
+	uint32_t baud = p->serial_baud;
+	int err = 0, cleanup = 0;
+	uint32_t completed = 0;
+	if (action == SERIAL_ACTIVE) {
+		/* TX admission and cancellation share this lock. The driver only
+		 * copies a bounded packet and enables IRQs here; no configuration. */
+		err = port_uart_serial_poll(port, write_pending(p) ? &p->write : NULL, &completed);
+		if (err) {
+			p->serial = action = SERIAL_FAILING;
+			p->value.error = err;
+			finish_write(p, err);
+		} else if (write_pending(p) && completed == p->write.request) finish_write(p, 0);
+	}
+	k_spin_unlock(&lock, key);
+	if (action == SERIAL_CONFIGURE || action == SERIAL_CLOSE) {
+		port_uart_stop(port);
+		err = release_pins(port);
+		if (!err && action == SERIAL_CONFIGURE) err = port_uart_serial_start(port, baud);
+		if (!err && action == SERIAL_CONFIGURE) err = set_pin(port, BUFFER, GPIO_OUTPUT_ACTIVE);
+	}
+	if (err) {
+		port_uart_stop(port);
+		cleanup = release_pins(port);
+		if (action == SERIAL_CLOSE && !cleanup) cleanup = err;
+	}
+	key = k_spin_lock(&lock);
+	p->value.sample_ms = k_uptime_get();
+	p->value.sequence++;
+	if (err) {
+		if (!p->value.error || p->value.error == -EAGAIN) p->value.error = err;
+		p->value.cleanup_error = p->motor.cleanup_error = cleanup;
+		p->value.failures += p->value.failures != UINT32_MAX;
+		finish_write(p, err);
+		if (p->serial == action) p->serial = SERIAL_FAILED;
+	} else if (action == SERIAL_CLOSE) {
+		finish_write(p, -ECANCELED);
+		p->serial = SERIAL_OFF;
+		p->value.phase = BP_PORT_DETECTING;
+		p->value.generation++;
+		p->value.changed_ms = p->value.sample_ms;
+		p->value.error = -EAGAIN;
+		p->value.cleanup_error = 0;
+		p->motor.releasing = false;
+		drop_claim(p);
+		p->step = START;
+	} else if (action == SERIAL_CONFIGURE && p->serial == action) {
+		p->serial = SERIAL_ACTIVE;
+		p->value.error = p->value.cleanup_error = 0;
+		p->value.baudrate = baud;
+	}
+	k_spin_unlock(&lock, key);
+}
+
 static void scan(struct k_work *item)
 {
 	int64_t next = INT64_MAX;
@@ -753,7 +817,12 @@ static void scan(struct k_work *item)
 			continue;
 		}
 		if (k_uptime_get() >= ports[i].next_ms) {
-			int err = advance(i);
+			k_spinlock_key_t key = k_spin_lock(&lock);
+			bool serial = ports[i].serial != SERIAL_OFF;
+			k_spin_unlock(&lock, key);
+			int err = 0;
+			if (serial) serial_advance(i);
+			else err = advance(i);
 			if (err) {
 				invalidate_motor(i, err);
 				port_uart_stop(i);
@@ -765,7 +834,10 @@ static void scan(struct k_work *item)
 			ports[i].next_ms = k_uptime_get() + (err ? RETRY_MS : SETTLE_MS);
 		}
 		next = MIN(next, ports[i].next_ms);
-		int64_t deadline = apply_motor(i);
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		bool serial = ports[i].serial != SERIAL_OFF;
+		k_spin_unlock(&lock, key);
+		int64_t deadline = serial ? 0 : apply_motor(i);
 		if (deadline) next = MIN(next, deadline);
 	}
 	if (!atomic_get(&stopping) && next != INT64_MAX) {
@@ -1111,6 +1183,95 @@ int hub_sensor_select(enum bp_port_owner owner, uint32_t port, uint32_t generati
 	return sensor_configure(owner, port, measurement, &generation);
 }
 
+int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || !baud || !generation ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_uart_available(port)) return -ENODEV;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		(p->owner && p->owner != owner) || p->serial || p->pf_used || reset_pending(p) ||
+		p->motor.pending || p->motor.releasing || write_pending(p) || !p->motor.valid ||
+		p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			p->serial = SERIAL_CONFIGURE;
+			p->serial_baud = baud;
+			p->owner = owner;
+			uint32_t next = p->value.generation + 1;
+			p->value = (struct bp_port_state){.generation = next, .phase = BP_PORT_SERIAL,
+				.error = -EAGAIN, .sample_ms = k_uptime_get(), .changed_ms = k_uptime_get(),
+				.selected_mode = UINT8_MAX, .mode_error = -ENOTSUP};
+			p->sensor = (struct bp_sensor_sample){.generation = next, .owner = owner, .error = -ENOTSUP};
+			*generation = next;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+static int serial_access(struct port *p, enum bp_port_owner owner, uint32_t generation)
+{
+	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
+		!p->serial ? -ENODEV : p->owner != owner ? -EBUSY :
+		p->serial == SERIAL_CLOSE ? -ECANCELED : 0;
+}
+
+/* baud=0 is the private clear operation, retaining the selected baud. */
+int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = serial_access(p, owner, generation);
+	if (!err && (p->serial == SERIAL_CONFIGURE || p->serial == SERIAL_FAILING)) err = -EBUSY;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			finish_write(p, -ECANCELED);
+			if (baud) p->serial_baud = baud;
+			p->serial = SERIAL_CONFIGURE;
+			p->value.error = -EAGAIN;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || size > 128 || (!data && size)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = serial_access(p, owner, generation);
+	if (!err) err = p->value.error;
+	if (!err) err = data ? port_uart_serial_read(port, data, size) : port_uart_serial_waiting(port);
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || !size || size > 32 || !data || !request) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = serial_access(p, owner, generation);
+	if (!err) err = p->value.error;
+	if (!err && write_pending(p)) err = -EBUSY;
+	if (!err) *request = queue_write(p, 0, data, size);
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
 int hub_port_release(enum bp_port_owner owner, uint32_t port)
 {
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
@@ -1119,6 +1280,16 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = p->owner && p->owner != owner ? -EBUSY : 0;
+	if (!err && p->owner && p->serial) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			p->serial = SERIAL_CLOSE;
+			if (!p->value.error || p->value.error == -EAGAIN) p->value.error = -ECANCELED;
+			finish_write(p, -ECANCELED);
+		}
+		k_spin_unlock(&lock, key);
+		return err < 0 ? err : 0;
+	}
 	if (!err && p->owner) {
 		finish_resync(p, -ECANCELED, 0);
 		/* A later cleanup attempt may use a reconnected transmitter solely
@@ -1183,6 +1354,7 @@ int hub_ports_release(enum bp_port_owner owner)
 			if (ports[i].owner != owner) continue;
 			remaining_pf += POPCOUNT(ports[i].pf_used);
 			pending |= ports[i].motor.pending;
+			uart_pending |= ports[i].serial == SERIAL_CLOSE || ports[i].serial == SERIAL_CONFIGURE;
 			uart_pending |= write_pending(&ports[i]);
 			uart_pending |= ports[i].motor.releasing && ports[i].pf_used && !ports[i].pf_error;
 			if (!result) result = ports[i].pf_error;
@@ -1297,7 +1469,7 @@ int hub_motor_coast(enum bp_port_owner owner, uint32_t port)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	err = atomic_get(&stopping) ? -ESHUTDOWN :
-		p->owner && p->owner != owner ? -EBUSY :
+		p->serial || (p->owner && p->owner != owner) ? -EBUSY :
 		p->owner && (p->motor.pending || p->motor.mode != BP_MOTOR_COAST ||
 			!p->motor.valid || p->motor.releasing) ? 0 : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
@@ -1325,6 +1497,9 @@ int hub_ports_shutdown(void)
 		}
 		invalidate_motor(i, -ESHUTDOWN);
 		int err = release_pins(i);
+		k_spinlock_key_t serial_key = k_spin_lock(&lock);
+		if (!err) ports[i].serial = SERIAL_OFF;
+		k_spin_unlock(&lock, serial_key);
 		finish_reset(i, err);
 		if (!result) {
 			result = err;

@@ -77,6 +77,8 @@ lights and port cleanup. `Light` and `ColorLightMatrix` additionally have protec
 ARM checks for shared PWM/UART output, stale commands and cleanup. `PFMotor`
 has synthetic UART coverage for IR commands, cleanup and reconnect errors;
 physical PF output, other sensor acceptance and wired motor bindings remain pending.
+`UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;
+custom P1/P2 supply and physical serial acceptance remain pending.
 Repeated BLE application transfers still cause occasional IMU acquisition
 failures; isolate the cause before claiming combined-load reliability. Account
 separately for static reservations, stacks, Python heap and peak loading memory

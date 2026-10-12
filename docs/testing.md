@@ -149,6 +149,11 @@ transmitted bytes separately from the firmware status snapshots.
 sensor-mode reuse, eight-output coast on stop and cleanup failure/reconnection.
 Its long asynchronous command sequence uses QEMU's normal paced clock; the
 hotplug case uses instruction time. Neither establishes physical IR reception.
+`tests/test_python_uartdevice.py` uses the same build for direct UART echo,
+concurrent read/write, copied bytearray/GC lifetime, pattern overlap, timeout,
+overflow recovery and return/forced-stop release. A one-shot coast failure checks
+that cleanup errors survive a successful supervisor retry; subsequent LEGO negotiation
+checks that ordinary port use is restored. This is synthetic UART evidence.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

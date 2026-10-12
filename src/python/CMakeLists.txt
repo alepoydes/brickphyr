@@ -38,7 +38,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
       ${CMAKE_CURRENT_SOURCE_DIR}/matrix.c ${CMAKE_CURRENT_SOURCE_DIR}/speaker.c
       ${CMAKE_CURRENT_SOURCE_DIR}/system.c ${CMAKE_CURRENT_SOURCE_DIR}/imu.c
       ${CMAKE_CURRENT_SOURCE_DIR}/pupdevice.c ${CMAKE_CURRENT_SOURCE_DIR}/pupsensors.c
-      ${CMAKE_CURRENT_SOURCE_DIR}/pupaccessories.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/pupaccessories.c ${CMAKE_CURRENT_SOURCE_DIR}/uartdevice.c
       ${pybricks}/pybricks/hubs/pb_module_hubs.c
       ${pybricks}/pybricks/common/pb_type_keypad.c
       ${pybricks}/pybricks/common/pb_type_colorlight_external.c

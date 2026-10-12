@@ -131,6 +131,7 @@ subpackages and application modules.
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
 | Hub system | `name`, `info`, `reset_reason`, `set_stop_button`, `storage` and supervised `shutdown`; shared boot cause, launch identity, management connection and persistent user data |
 | `PUPDevice`, `LUMPDevice` | `info`, blocking/awaitable `read` and `write`, asynchronous UART `reset`; shared raw modes, signed/float wire values, passive touch input and connection generation checks |
+| `UARTDevice` | Shared custom UART, exact reads, copied writes, pattern waits, concurrent read/write, timeout/overflow and supervised release; `power_pin=1/2` remains unsupported |
 | `ForceSensor`, `TiltSensor`, `InfraredSensor` | Blocking/awaitable native measurements with reference units, force calibration, tilt axis order and infrared count offset; generation-bound selection and cleanup |
 | `ColorSensor`, `UltrasonicSensor`, `ColorDistanceSensor` | Native measurements, HSV/color matching, shared copied palettes and blocking/awaitable sensor lights |
 | `Light`, `ColorLightMatrix` | Passive light brightness/off and UART 3×3 colors/off, native output encoding, connection-bound commands and port cleanup |
@@ -161,6 +162,10 @@ construction, native conversions and Python results. Color checks include
 custom/shared palettes and captured UART light commands. Physical acceptance of
 these classes remains pending. See
 [raw device usage and ownership](ports.md#arbitrary-uart-modes).
+Custom UART checks cover binary/chunked duplex, mutable input/GC, overlapping
+patterns, timeout/overflow recovery and failed cleanup with a synthetic echo peer.
+Physical UART acceptance and custom-supply support remain pending; see
+[custom serial devices](ports.md#custom-serial-devices).
 Accessory checks exercise real port PWM/UART services with synthetic peers:
 brightness, matrix palette/brightness encoding, short-iterable rejection without
 output, stale Light rejection and forced-stop coast. These are not physical

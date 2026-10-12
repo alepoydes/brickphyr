@@ -6,6 +6,11 @@
 #include <brickphyr_motor.h>
 
 #ifdef CONFIG_BRICKPHYR_PORTS
+int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation);
+int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud);
+int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size);
+int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request);
 int hub_port_get(uint32_t port, struct bp_port_state *value);
 int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value);
@@ -39,6 +44,11 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
 #else
+static inline int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation) { return -ENOTSUP; }
+static inline int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud) { return -ENOTSUP; }
+static inline int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size) { return -ENOTSUP; }
+static inline int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const uint8_t *data, uint32_t size, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_port_get(uint32_t port, struct bp_port_state *value)
 {
 	return -ENOTSUP;
