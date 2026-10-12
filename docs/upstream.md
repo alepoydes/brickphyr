@@ -362,6 +362,14 @@ and enabled, including a check that a surviving thread keeps its grant and a
 reused thread cannot regain the departed owner's access. Publication and manifest
 integration remain pending.
 
+Local Zephyr commit `3fa06829` on `topic/user-stack-placement` places the
+MPU-aligned user-stack group before ordinary `.noinit` objects. This avoids the
+interior alignment gap caused by the F4 Python stack while preserving stack
+sizes, alignment and kernel-object bounds. Both linker definitions carry the
+same order. ARM checks cover stack metadata and access, and Brickphyr's protected
+native-Python execution, fault recovery and forced stop. Publication and manifest
+integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in
