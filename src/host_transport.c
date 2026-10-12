@@ -538,6 +538,10 @@ static void host_thread(void *a, void *b, void *c)
 		 * pending, pause further commands until it can be queued intact. */
 		for (;;) {
 			bool queued = false;
+			if (event_length && !host_protocol_event_valid(&protocol)) {
+				event_length = 0;
+				protocol.message_request = 0;
+			}
 			key = k_spin_lock(&lock);
 			if (generation != session_generation) {
 				k_spin_unlock(&lock, key);
@@ -555,6 +559,7 @@ static void host_thread(void *a, void *b, void *c)
 			}
 			if (event_length && ring_buf_space_get(&transmit_buffer) >= event_length) {
 				ring_buf_put(&transmit_buffer, event_reply, event_length);
+				host_protocol_event_sent(&protocol);
 				tx_idle = false;
 				event_length = 0;
 				queued = true;

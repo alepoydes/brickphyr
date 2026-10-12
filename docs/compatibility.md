@@ -264,8 +264,14 @@ including idle operation and USB/BLE application transfers. Subsequent reads
 recover, but sustained error-free combined operation and physical calibration
 accuracy remain unverified.
 
+`messaging.AppData` and its `tools.AppData` alias use the shared Pybricks USB/BLE
+channel, with protected ARM checks for receive snapshots, blocking/awaitable
+sends and lifecycle cleanup. See [application data](host.md#application-data)
+for limits and the distinction between transport acceptance and remote delivery.
+Physical client acceptance remains pending.
+
 Radio constructor arguments, charger source detection (`connected()`),
-system `reset_storage` and messaging remain unfinished required work.
+system `reset_storage`, `BLERadio` and `HubNetwork` remain unfinished required work.
 Charger `current()` and `status()` read the shared native snapshot and propagate
 acquisition errors; this does not establish BC1.2 source classification.
 Battery chemistry, voltage/current and temperature use the common observation

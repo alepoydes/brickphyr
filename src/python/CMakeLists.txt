@@ -25,6 +25,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
     ${pybricks}/pybricks/parameters/pb_type_side.c
     ${pybricks}/pybricks/parameters/pb_type_stop.c
     ${pybricks}/pybricks/tools/pb_module_tools.c
+    ${pybricks}/pybricks/messaging/pb_module_messaging.c
     ${pybricks}/pybricks/tools/pb_type_async.c
     ${pybricks}/pybricks/tools/pb_type_matrix.c
     ${pybricks}/pybricks/tools/pb_type_stopwatch.c
@@ -41,6 +42,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
       ${CMAKE_CURRENT_SOURCE_DIR}/pupaccessories.c ${CMAKE_CURRENT_SOURCE_DIR}/uartdevice.c
       ${CMAKE_CURRENT_SOURCE_DIR}/motor.c ${CMAKE_CURRENT_SOURCE_DIR}/robotics.c
       ${CMAKE_CURRENT_SOURCE_DIR}/car.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/messaging.c
       ${pybricks}/pybricks/hubs/pb_module_hubs.c
       ${pybricks}/pybricks/common/pb_type_keypad.c
       ${pybricks}/pybricks/common/pb_type_colorlight_external.c

@@ -22,10 +22,12 @@ static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static uintptr_t peer_token;
 static struct bt_conn *const peer = (void *)&peer_token;
 static atomic_t refs, reject_notifications;
+static atomic_t reject_app_notifications;
 static atomic_t negotiated_mtu = ATOMIC_INIT(23);
 static atomic_t shell_max_notify;
 static bool peer_connected;
 static unsigned int notifications_retried;
+static unsigned int app_notifications_retried;
 static struct k_work_q rx_queue;
 static K_KERNEL_STACK_DEFINE(rx_stack, CONFIG_BT_RX_STACK_SIZE);
 static K_SEM_DEFINE(command_done, 0, 1);
@@ -95,9 +97,12 @@ int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params 
 	zassert_equal(conn, peer);
 	zassert_true(params->len <= atomic_get(&negotiated_mtu) - 3);
 	zassert_true(params->len <= sizeof(((struct event *)0)->data));
-	if (atomic_get(&reject_notifications)) {
-		atomic_dec(&reject_notifications);
+	bool app_message = params->attr == &pybricks_service.attrs[2] &&
+		((const uint8_t *)params->data)[0] == PBIO_PYBRICKS_EVENT_WRITE_APP_DATA;
+	if (atomic_get(&reject_notifications) || (app_message && atomic_get(&reject_app_notifications))) {
+		if (atomic_get(&reject_notifications)) atomic_dec(&reject_notifications);
 		notifications_retried++;
+		if (app_message) app_notifications_retried++;
 		return -ENOMEM;
 	}
 	if (params->attr == &brickphyr_terminal.attrs[2] &&
@@ -185,22 +190,34 @@ static void download(const uint8_t *module, size_t length)
 static char output[4608];
 static size_t output_size;
 static bool running;
+static uint8_t message_data[63];
+static size_t message_size;
+static void record_event(const uint8_t *data, size_t length, bool ble)
+{
+	if (data[0] == PBIO_PYBRICKS_EVENT_STATUS_REPORT) {
+		uint32_t flags = sys_get_le32(data + 1);
+		zassert_true(flags & BIT(ble ? PBIO_PYBRICKS_STATUS_BLE_HOST_CONNECTED :
+			PBIO_PYBRICKS_STATUS_USB_HOST_CONNECTED));
+		running = flags & BIT(PBIO_PYBRICKS_STATUS_USER_PROGRAM_RUNNING);
+	} else if (data[0] == PBIO_PYBRICKS_EVENT_WRITE_APP_DATA) {
+		message_size = length - 1;
+		zassert_true(message_size <= sizeof(message_data));
+		memcpy(message_data, data + 1, message_size);
+	} else {
+		zassert_equal(data[0], PBIO_PYBRICKS_EVENT_WRITE_STDOUT);
+		zassert_true(output_size + length < sizeof(output));
+		memcpy(output + output_size, data + 1, length - 1);
+		output_size += length - 1;
+		output[output_size] = 0;
+	}
+}
+
 static void event(void)
 {
 	struct event event;
 	int err = k_msgq_get(&events, &event, K_SECONDS(1));
 	zassert_ok(err, "Missing event: running %d, output '%s'", running, output);
-	if (event.data[0] == PBIO_PYBRICKS_EVENT_STATUS_REPORT) {
-		uint32_t flags = sys_get_le32(event.data + 1);
-		zassert_true(flags & BIT(PBIO_PYBRICKS_STATUS_BLE_HOST_CONNECTED));
-		running = flags & BIT(PBIO_PYBRICKS_STATUS_USER_PROGRAM_RUNNING);
-	} else {
-		zassert_equal(event.data[0], PBIO_PYBRICKS_EVENT_WRITE_STDOUT);
-		zassert_true(output_size + event.length < sizeof(output));
-		memcpy(output + output_size, event.data + 1, event.length - 1);
-		output_size += event.length - 1;
-		output[output_size] = 0;
-	}
+	record_event(event.data, event.length, true);
 }
 
 static void start(const char *ready)
@@ -641,6 +658,172 @@ static void usb_send(uint8_t type, const void *data, size_t length)
 	uint8_t frame[HOST_PROTOCOL_FRAME_MAX];
 	size_t size = pbio_cobs_encode_prefixed(type, data, length, frame);
 	zassert_equal(uart_emul_put_rx_data(uart, frame, size), size);
+}
+
+static void message_event(bool usb)
+{
+	if (!usb) {
+		event();
+		return;
+	}
+	uint8_t frame[HOST_PROTOCOL_FRAME_MAX], data[HOST_PROTOCOL_PAYLOAD_MAX], byte, type;
+	size_t size = 0;
+	int64_t deadline = k_uptime_get() + 1000;
+	for (;;) {
+		if (!uart_emul_get_tx_data(uart, &byte, 1)) {
+			zassert_true(k_uptime_get() < deadline, "USB event missing: %s", output);
+			k_msleep(1);
+			continue;
+		}
+		if (byte != PBIO_COBS_DELIMITER) {
+			zassert_true(size < sizeof(frame));
+			frame[size++] = byte;
+			continue;
+		}
+		if (!size) continue;
+		size_t count = pbio_cobs_decode_prefixed(frame, size, &type, data, sizeof(data));
+		zassert_true(count > 0);
+		size = 0;
+		if (type == PBIO_PYBRICKS_IN_EP_MSG_RESPONSE) {
+			zassert_equal(count, 5);
+			zassert_equal(sys_get_le32(data + 1), 0);
+		} else {
+			zassert_equal(type, PBIO_PYBRICKS_IN_EP_MSG_EVENT);
+			record_event(data, count, false);
+			return;
+		}
+	}
+}
+
+static void message_command(bool usb, const void *data, size_t length)
+{
+	if (usb) {
+		uint8_t packet[64] = {1};
+		zassert_true(length < sizeof(packet));
+		memcpy(packet + 1, data, length);
+		usb_send(PBIO_PYBRICKS_OUT_EP_MSG_COMMAND, packet, length + 1);
+	} else {
+		zassert_equal(command(data, length), length);
+	}
+}
+
+static void message_until(bool usb, const char *marker)
+{
+	int64_t deadline = k_uptime_get() + 2000;
+	while (!strstr(output, marker)) {
+		message_event(usb);
+		zassert_true(k_uptime_get() < deadline, "%s", output);
+	}
+}
+
+ZTEST(python_ble, test_app_data_transports_and_lifetime)
+{
+	static const uint8_t program[] = {
+#include <messaging.inc>
+	};
+	k_msgq_purge(&events);
+	connected(true);
+	download(program, sizeof(program));
+	for (unsigned int usb = 0; usb < 2; usb++) {
+		output_size = message_size = 0;
+		output[0] = 0;
+		if (usb) {
+			zassert_ok(host_interface_select(HOST_PYBRICKS));
+			uart_emul_flush_tx_data(uart);
+			host_connection_changed(true);
+			const uint8_t subscribe = 1;
+			usb_send(PBIO_PYBRICKS_OUT_EP_MSG_SUBSCRIBE, &subscribe, 1);
+		}
+		const uint8_t start = PBIO_PYBRICKS_COMMAND_START_USER_PROGRAM;
+		message_command(usb, &start, 1);
+		message_until(usb, "ready");
+		zassert_equal(message_size, 3);
+		zassert_mem_equal(message_data, "\0\1\11", 3);
+		const uint8_t write[] = {PBIO_PYBRICKS_COMMAND_WRITE_APP_DATA, 0, 0,
+			'a', 'b', 'c', 'd', 'e', 'f'};
+		message_command(usb, write, sizeof(write));
+		if (!usb) {
+			const uint8_t bad[] = {PBIO_PYBRICKS_COMMAND_WRITE_APP_DATA, 6, 0, 1};
+			zassert_equal(command(bad, sizeof(bad)),
+				BT_GATT_ERR(PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED));
+		}
+		const uint8_t read[] = "\x06" "read\n";
+		message_command(usb, read, sizeof(read) - 1);
+		message_until(usb, "read done");
+		zassert_equal(message_size, 5);
+		zassert_mem_equal(message_data, "\1\11\3ok", 5);
+		const uint8_t large[] = "\x06" "large\n";
+		if (!usb) {
+			message_command(false, large, sizeof(large) - 1);
+			message_until(false, "too large");
+			atomic_set(&negotiated_mtu, 64);
+		}
+		message_command(usb, large, sizeof(large) - 1);
+		message_until(usb, "large done");
+		zassert_equal(message_size, 60);
+		for (size_t i = 0; i < message_size; i++) zassert_equal(message_data[i], i);
+		const uint8_t replace[] = "\x06" "replace\n";
+		message_command(usb, replace, sizeof(replace) - 1);
+		message_until(usb, "replace done");
+		zassert_equal(message_size, 5);
+		zassert_mem_equal(message_data, "final", 5);
+		const uint8_t close[] = "\x06" "close\n";
+		message_command(usb, close, sizeof(close) - 1);
+		message_until(usb, "close done");
+		zassert_equal(message_size, 2);
+		zassert_mem_equal(message_data, "\0\2", 2);
+		const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+		message_command(usb, &stop, 1);
+		int64_t deadline = k_uptime_get() + 1000;
+		do {
+			message_event(usb);
+			zassert_true(k_uptime_get() < deadline);
+		} while (running);
+		struct application_status status;
+		application_get_status(&status);
+		zassert_equal(status.state, APPLICATION_STOPPED);
+		zassert_equal(status.cleanup_error, 0);
+		if (usb) host_connection_changed(false);
+		else connected(false);
+		uint8_t state[8];
+		do {
+			k_msleep(1);
+			host_interface_status(state);
+			zassert_true(k_uptime_get() < deadline);
+		} while (state[2] || !state[3]);
+	}
+	/* Force-stop freed the singleton; detach aborts an outstanding send but
+	 * leaves its Python application alive, able to reopen after reconnect. */
+	atomic_set(&negotiated_mtu, 23);
+	k_msgq_purge(&events);
+	connected(true);
+	start("ready");
+	atomic_set(&reject_app_notifications, 1);
+	unsigned int previous = app_notifications_retried;
+	const uint8_t blocked[] = "\x06" "blocked\n";
+	message_command(false, blocked, sizeof(blocked) - 1);
+	int64_t deadline = k_uptime_get() + 1000;
+	while (app_notifications_retried == previous) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	connected(false);
+	atomic_set(&reject_app_notifications, 0);
+	struct application_status status;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_equal(status.state, APPLICATION_RUNNING);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.output_bytes < strlen("disconnected\r\n"));
+	k_msgq_purge(&events);
+	connected(true);
+	const uint8_t reopen[] = "\x06" "reopen\n";
+	message_command(false, reopen, sizeof(reopen) - 1);
+	message_until(false, "reopened");
+	const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+	message_command(false, &stop, 1);
+	connected(false);
 }
 
 ZTEST(python_ble, test_usb_stop_with_unread_output)

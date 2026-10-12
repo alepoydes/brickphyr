@@ -91,6 +91,16 @@ static inline void application_session_closed(void) { }
 /* The selected continuous output consumer owns this attachment. A session
  * close releases backpressure without stopping the autonomous application. */
 void application_output_stream(bool attached);
+/* Only the selected Pybricks consumer attaches this mailbox. Zero detaches;
+ * otherwise capacity is the transport's current event-data limit. */
+void application_message_attach(size_t capacity);
+int application_message_receive(size_t offset, const void *data, size_t length);
+/* A copied event stays pending until transport acceptance. A replacement,
+ * close or disconnect invalidates its token before a queued retry. */
+size_t application_message_event(void *data, size_t capacity, uint32_t *request);
+bool application_message_pending(uint32_t request);
+void application_message_sent(uint32_t request);
 #else
 static inline void application_output_stream(bool attached) { }
+static inline void application_message_attach(size_t capacity) { }
 #endif

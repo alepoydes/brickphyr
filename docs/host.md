@@ -504,6 +504,41 @@ Builds with `CONFIG_BRICKPHYR_PYBRICKS_SLOTS=0` retain the RAM-only adapter:
 complete uploads survive disconnection until replacement or reboot. Native
 Brickphyr temporary uploads stay in RAM in both configurations.
 
+#### Application data
+
+`pybricks.messaging.AppData` (also `pybricks.tools.AppData`) exchanges binary data
+with a subscribed Pybricks client through these same USB/BLE handlers. It is
+separate from standard input/output and does not open another connection.
+
+`AppData([(mode, size), ...])` sorts unique byte-sized mode numbers and assigns
+contiguous receive regions, initially zeroed. The combined receive capacity is
+1,024 bytes. `get_bytes(mode)` returns a snapshot; `get_bytes(mode, index)` reads
+one byte. Client command 7 contains a little-endian 16-bit offset followed by
+data; valid writes atomically overwrite that part of the receive buffer.
+
+Construction announces `[0, sorted mode numbers...]`. `write_bytes(data)` sends
+opaque data; `configure(mode, parameter, value)` sends
+`[1, mode, parameter, value...]`. All use event 2. One outgoing payload fits one
+event: at most 63 bytes over USB, and `min(63, ATT_MTU - 4)` over BLE (19 bytes
+at the initial MTU of 23). The setup/configuration headers count toward that
+limit. Oversized messages fail before replacing a pending send.
+
+Ordinary calls wait; inside `run_task` they return awaitables. A newer send
+replaces a pending one. Completion means acceptance by the existing transport
+queue, not acknowledgment from the remote application. Status and stdout retain
+priority. Disconnect or selecting native management aborts a pending send with
+an error; the Python program continues if it handles that error. Reconnection
+allows another send. Empty writes complete without emitting an event.
+
+Only one AppData object may be open. `close()`, collection, forced application
+stop and REPL reset release its mailbox. Failed construction also releases it.
+The supervisor copies all exchanged bytes; transport callbacks never retain
+pointers into Python memory. ARM checks cover both transports, mode layout,
+size limits, replacement/cancellation, disconnect and lifetime cleanup using a
+synthetic GATT peer and UART. Physical AppData client acceptance remains pending.
+
+#### Program representation
+
 The reference client's module records are normalized to the common
 [Python file map](applications.md#named-python-programs), retaining one importer
 and application lifecycle. The first record is the entry point, including when

@@ -169,6 +169,14 @@ protected motor commands, with a torque-percentage variant of the existing stall
 objective. Request tokens limit error cleanup to this object's commands; there
 is no second servo loop or hardware driver.
 
+`messaging.c` adapts `pybricks/messaging/pb_type_app_data.c` at that revision;
+the module table and legacy alias compile directly from Pybricks. The binding
+retains mode layout, setup/configuration messages and the maintained awaitable
+implementation. Supervisor-owned copied buffers replace PBIO's Python-object
+callback and pending-data pointer. Lease/request tokens bind cleanup and sends
+to their object and operation; forced stop requires no Python finalizer.
+See [AppData limits and evidence](../../docs/host.md#application-data).
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, charger observations, internal color-light, light-matrix, speaker, system
 and IMU bindings from Pybricks

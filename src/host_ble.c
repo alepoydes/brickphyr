@@ -67,6 +67,7 @@ static void observe_pybricks(struct bt_conn *conn)
 	if (conn == owner && !shell_session) {
 		profile = HOST_BLE_PYBRICKS;
 		application_output_stream(pybricks.subscribed);
+		application_message_attach(pybricks.subscribed ? bt_gatt_get_mtu(conn) - 4 : 0);
 	}
 	k_spin_unlock(&session_lock, key);
 	k_mutex_unlock(&pybricks_lock);
@@ -118,6 +119,7 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	exit_compatibility = pybricks.exit_compatibility;
 	profile = HOST_BLE_PYBRICKS;
 	application_output_stream(pybricks.subscribed);
+	application_message_attach(pybricks.subscribed ? bt_gatt_get_mtu(conn) - 4 : 0);
 	k_spin_unlock(&session_lock, key);
 	k_mutex_unlock(&pybricks_lock);
 	k_work_schedule(&pybricks_output_work, K_NO_WAIT);
@@ -155,6 +157,9 @@ static void subscribed(const struct bt_gatt_attr *attr, uint16_t value)
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	application_output_stream(pybricks.subscribed && !shell_session &&
 		profile == HOST_BLE_PYBRICKS);
+	application_message_attach(pybricks.subscribed && !shell_session &&
+		profile == HOST_BLE_PYBRICKS ? bt_gatt_get_mtu(owner) - 4 : 0);
+	pybricks.message_request = 0;
 	k_spin_unlock(&session_lock, key);
 	k_mutex_unlock(&pybricks_lock);
 	k_work_reschedule(&pybricks_output_work, K_NO_WAIT);
@@ -183,6 +188,11 @@ static void pybricks_output(struct k_work *work)
 		k_mutex_unlock(&pybricks_lock);
 		return;
 	}
+	application_message_attach(bt_gatt_get_mtu(conn) - 4);
+	if (!host_protocol_event_valid(&pybricks)) {
+		pybricks_pending_size = 0;
+		pybricks.message_request = 0;
+	}
 	if (!pybricks_pending_size) {
 		pybricks_pending_size = host_protocol_event(&pybricks, true, k_uptime_get_32(), pybricks_pending,
 			MIN(sizeof(pybricks_pending), bt_gatt_get_mtu(conn) - 3));
@@ -191,6 +201,7 @@ static void pybricks_output(struct k_work *work)
 	int err = pending ? bt_gatt_notify(conn, &pybricks_service.attrs[2],
 		pybricks_pending, pybricks_pending_size) : 0;
 	if (!err) {
+		if (pending) host_protocol_event_sent(&pybricks);
 		pybricks_pending_size = 0;
 		pybricks_tx_deadline = 0;
 	} else if (!pybricks_tx_deadline) {
@@ -266,6 +277,7 @@ static ssize_t shell_subscription(struct bt_conn *conn, const struct bt_gatt_att
 			shell_tx_deadline = 0;
 			profile = HOST_BLE_NATIVE;
 			application_output_stream(false);
+			application_message_attach(0);
 		}
 	} else if (!value && shell_session) {
 		host_ble_shell_close(shell_session);
@@ -381,6 +393,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bool owned = conn == owner;
 	if (owned) {
 		owner = NULL;
+		application_message_attach(0);
 		host_protocol_reset(&pybricks);
 		pybricks_pending_size = 0;
 		k_work_cancel_delayable(&pybricks_output_work);
@@ -406,6 +419,7 @@ static bool request_begin(struct bt_conn *conn)
 	if (valid && profile != HOST_BLE_NATIVE) {
 		profile = HOST_BLE_NATIVE;
 		application_output_stream(false);
+		application_message_attach(0);
 	}
 	k_spin_unlock(&session_lock, key);
 	return valid;

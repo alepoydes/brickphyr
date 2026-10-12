@@ -237,6 +237,200 @@ static void verify_python_thread(void)
 		status.format != APPLICATION_NATIVE));
 }
 
+/* Host callbacks never retain or dereference a Python-heap pointer. This one
+ * bounded mailbox belongs to the supervisor, including forced-stop cleanup. */
+static struct k_spinlock message_lock;
+/* RX is zeroed on open; TX is filled before publication. Keep these buffers
+ * with noinit storage, avoiding a large MPU stack-alignment gap after BSS. */
+static __noinit uint8_t message_rx[APPLICATION_MESSAGE_RX_MAX];
+static __noinit uint8_t message_tx[APPLICATION_MESSAGE_TX_MAX];
+static struct {
+	size_t rx_size, tx_size, capacity;
+	uint32_t sequence, lease, request;
+	int result;
+} message;
+
+/* Positive syscall results carry tokens, negative results carry errno. */
+static uint32_t message_token(void)
+{
+	message.sequence = message.sequence % INT32_MAX + 1;
+	return message.sequence;
+}
+
+int z_impl_application_message_open(size_t capacity)
+{
+	if (capacity > sizeof(message_rx)) return -EMSGSIZE;
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	int result = -EBUSY;
+	if (!message.lease) {
+		memset(message_rx, 0, capacity);
+		message.rx_size = capacity;
+		message.tx_size = message.request = 0;
+		message.result = 0;
+		result = message.lease = message_token();
+	}
+	k_spin_unlock(&message_lock, key);
+	return result;
+}
+static inline int z_vrfy_application_message_open(size_t capacity)
+{
+	verify_python_thread();
+	return z_impl_application_message_open(capacity);
+}
+#include <zephyr/syscalls/application_message_open_mrsh.c>
+
+int z_impl_application_message_close(uint32_t lease)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	if (lease && message.lease == lease) {
+		message.lease = message.request = 0;
+		message.tx_size = message.rx_size = 0;
+	}
+	k_spin_unlock(&message_lock, key);
+	return 0;
+}
+static inline int z_vrfy_application_message_close(uint32_t lease)
+{
+	verify_python_thread();
+	return z_impl_application_message_close(lease);
+}
+#include <zephyr/syscalls/application_message_close_mrsh.c>
+
+int z_impl_application_message_read(uint32_t lease, size_t offset, void *data, size_t length)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	int err = !lease || message.lease != lease ? -EBADF :
+		offset > message.rx_size || length > message.rx_size - offset ? -EINVAL : 0;
+	if (!err && length) memcpy(data, message_rx + offset, length);
+	k_spin_unlock(&message_lock, key);
+	return err;
+}
+static inline int z_vrfy_application_message_read(uint32_t lease, size_t offset, void *data, size_t length)
+{
+	verify_python_thread();
+	if (length > sizeof(message_rx)) return -EMSGSIZE;
+	if (length) K_OOPS(K_SYSCALL_MEMORY_WRITE(data, length));
+	return z_impl_application_message_read(lease, offset, data, length);
+}
+#include <zephyr/syscalls/application_message_read_mrsh.c>
+
+int z_impl_application_message_send(uint32_t lease, const void *data, size_t length)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	int result = !lease || message.lease != lease ? -EBADF :
+		!message.capacity ? -ENOTCONN : length > message.capacity ? -EMSGSIZE : 0;
+	if (!result) {
+		if (length) memcpy(message_tx, data, length);
+		message.tx_size = length;
+		message.result = length ? -EAGAIN : 0;
+		result = message.request = message_token();
+	}
+	k_spin_unlock(&message_lock, key);
+	return result;
+}
+static inline int z_vrfy_application_message_send(uint32_t lease, const void *data, size_t length)
+{
+	verify_python_thread();
+	if (length > sizeof(message_tx)) return -EMSGSIZE;
+	if (length) K_OOPS(K_SYSCALL_MEMORY_READ(data, length));
+	return z_impl_application_message_send(lease, data, length);
+}
+#include <zephyr/syscalls/application_message_send_mrsh.c>
+
+int z_impl_application_message_status(uint32_t lease, uint32_t request)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	int result = !lease || message.lease != lease ? -EBADF :
+		!request || request != message.request ? -ECANCELED : message.result;
+	k_spin_unlock(&message_lock, key);
+	return result;
+}
+static inline int z_vrfy_application_message_status(uint32_t lease, uint32_t request)
+{
+	verify_python_thread();
+	return z_impl_application_message_status(lease, request);
+}
+#include <zephyr/syscalls/application_message_status_mrsh.c>
+
+int z_impl_application_message_cancel(uint32_t lease, uint32_t request)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	if (lease && lease == message.lease && request && request == message.request &&
+	    message.result == -EAGAIN) {
+		message.result = -ECANCELED;
+	}
+	k_spin_unlock(&message_lock, key);
+	return 0;
+}
+static inline int z_vrfy_application_message_cancel(uint32_t lease, uint32_t request)
+{
+	verify_python_thread();
+	return z_impl_application_message_cancel(lease, request);
+}
+#include <zephyr/syscalls/application_message_cancel_mrsh.c>
+
+void application_message_attach(size_t capacity)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	bool changed = message.capacity != MIN(capacity, sizeof(message_tx));
+	message.capacity = MIN(capacity, sizeof(message_tx));
+	if (message.result == -EAGAIN && (!capacity || message.tx_size > capacity)) {
+		message.result = capacity ? -EMSGSIZE : -ENOTCONN;
+	}
+	k_spin_unlock(&message_lock, key);
+	if (changed) k_sem_give(&io_ready);
+}
+
+int application_message_receive(size_t offset, const void *data, size_t length)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	/* The reference ignores writes when no AppData object is listening. */
+	int err = message.lease && (!length || offset > message.rx_size ||
+		length > message.rx_size - offset) ? -EINVAL : 0;
+	if (message.lease && !err) memcpy(message_rx + offset, data, length);
+	k_spin_unlock(&message_lock, key);
+	if (!err) k_sem_give(&io_ready);
+	return err;
+}
+
+size_t application_message_event(void *data, size_t capacity, uint32_t *request)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	size_t size = 0;
+	bool failed = false;
+	if (message.lease && message.result == -EAGAIN && message.capacity) {
+		if (message.tx_size > capacity) {
+			message.result = -EMSGSIZE;
+			failed = true;
+		} else {
+			size = message.tx_size;
+			memcpy(data, message_tx, size);
+			*request = message.request;
+		}
+	}
+	k_spin_unlock(&message_lock, key);
+	if (failed) k_sem_give(&io_ready);
+	return size;
+}
+
+bool application_message_pending(uint32_t request)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	bool pending = message.lease && request == message.request && message.result == -EAGAIN;
+	k_spin_unlock(&message_lock, key);
+	return pending;
+}
+
+void application_message_sent(uint32_t request)
+{
+	k_spinlock_key_t key = k_spin_lock(&message_lock);
+	if (message.lease && request == message.request && message.result == -EAGAIN) {
+		message.result = 0;
+	}
+	k_spin_unlock(&message_lock, key);
+	k_sem_give(&io_ready);
+}
+
 int z_impl_application_stdin(void *data, size_t capacity)
 {
 	k_spinlock_key_t key = k_spin_lock(&input_lock);
@@ -350,6 +544,7 @@ void application_session_closed(void)
 	atomic_inc(&session_generation);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	application_output_stream(false);
+	application_message_attach(0);
 	k_sem_give(&io_ready);
 #endif
 }
@@ -1517,6 +1712,8 @@ static int release(void)
 	/* A queued worker acquires lifecycle before reading the request. Joining
 	 * its caller and clearing pending here also cancels an unstarted copy. */
 	atomic_clear(&code_pending);
+	/* The caller has joined the application; no new lease can race cleanup. */
+	z_impl_application_message_close(message.lease);
 	k_sem_reset(&code_done);
 	if (!err) {
 		k_free(code_memory);

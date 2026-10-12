@@ -315,6 +315,10 @@ uint8_t host_protocol_command(struct host_protocol *protocol, const uint8_t *com
 	case PBIO_PYBRICKS_COMMAND_WRITE_STDIN:
 		err = length == 1 ? 0 : application_input(command + 1, length - 1);
 		break;
+	case PBIO_PYBRICKS_COMMAND_WRITE_APP_DATA:
+		err = application_message_receive(length > 3 ? pbio_get_uint16_le(command + 1) : 0,
+			length > 3 ? command + 3 : NULL, length > 3 ? length - 3 : 0);
+		break;
 	default:
 		return PBIO_PYBRICKS_ERROR_INVALID_COMMAND;
 	}
@@ -377,7 +381,31 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 		protocol->last_slot = slot;
 		return pbio_pybricks_event_status_report(output, flags, protocol->program_id, slot);
 	}
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	size_t length = application_message_event(output + 1, capacity - 1, &protocol->message_request);
+	if (length) {
+		output[0] = PBIO_PYBRICKS_EVENT_WRITE_APP_DATA;
+		return length + 1;
+	}
+#endif
 	return 0;
+}
+
+bool host_protocol_event_valid(struct host_protocol *protocol)
+{
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	return !protocol->message_request || application_message_pending(protocol->message_request);
+#else
+	return true;
+#endif
+}
+
+void host_protocol_event_sent(struct host_protocol *protocol)
+{
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (protocol->message_request) application_message_sent(protocol->message_request);
+#endif
+	protocol->message_request = 0;
 }
 
 size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
@@ -423,6 +451,7 @@ size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 		protocol->subscribed = message[0];
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		application_output_stream(protocol->subscribed);
+		application_message_attach(protocol->subscribed ? HOST_PROTOCOL_PAYLOAD_MAX - 1 : 0);
 #endif
 		if (!message[0]) {
 			return 0;

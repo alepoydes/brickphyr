@@ -16,6 +16,7 @@
 #define HOST_COMMAND_EXIT_COMPATIBILITY 0x80
 
 struct host_protocol {
+	uint32_t message_request;
 	uint8_t frame[HOST_PROTOCOL_FRAME_MAX];
 	size_t length;
 	bool overflow;
@@ -53,3 +54,5 @@ size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 uint8_t host_protocol_command(struct host_protocol *protocol, const uint8_t *command, size_t length);
 size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 	uint32_t now_ms, uint8_t *output, size_t capacity);
+bool host_protocol_event_valid(struct host_protocol *protocol);
+void host_protocol_event_sent(struct host_protocol *protocol);
