@@ -469,7 +469,8 @@ Durations use the port worker's monotonic clock and are not hard real-time stop
 guarantees. GPIO settling intervals remain at least 2 ms; waking the worker for a
 command does not shorten them. Scheduler starvation or a stalled driver can delay
 command completion and timeout handling. Waveforms, stopping latency and operation
-under physical hub load remain unverified. DriveBase is subsequent work.
+under physical hub load remain unverified. See [paired drive control](#paired-drive-control)
+for the shared native and Python DriveBase service.
 
 ## Python DC motors
 
@@ -671,8 +672,69 @@ additionally checks long-origin tracking, smart relative motion and stall-to-hol
 Settings updates, gearing, active-trajectory preservation and diagnostics also
 have numerical and protected ARM checks. Model tuning, CSV units/downsampling,
 retained logs and forced-stop memory cleanup have synthetic checks too. These
-are not physical motion or tuning measurements. Coordinated robotics remains
-unimplemented; complete Motor compatibility has not been established.
+are not physical motion or tuning measurements. Complete Motor compatibility has
+not been established.
+
+## Paired drive control
+
+`pybricks.robotics.DriveBase` combines two configured `Motor` objects with the
+same gearing. Both shafts use the existing port worker and observers on a common
+5 ms cadence. The ported PBIO distance/heading controllers and synchronized
+trajectories supply the outputs; there is no Python control loop or second motor
+driver.
+
+```python
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Direction, Port
+from pybricks.robotics import DriveBase
+
+left = Motor(Port.A, Direction.COUNTERCLOCKWISE)
+right = Motor(Port.B)
+robot = DriveBase(left, right, wheel_diameter=56, axle_track=112)
+robot.straight(100)
+robot.turn(90)
+robot.stop()
+```
+
+This example moves both motors. Choose ports, motor directions and dimensions
+for the actual robot. Distance is in millimetres and heading in degrees.
+`straight`, `turn`, `arc` and `curve` block, support `wait=False`, or can be awaited
+inside `run_task`; `turn` also accepts `absolute=True`. `drive(speed, turn_rate)`
+runs until replaced or stopped. As in Pybricks, `done()` is true for this
+non-waiting operation even while its controllers remain active. `stop`, `brake`
+and `hold` select passive coast, electrical brake and position hold.
+`distance`, `angle`, `state`, `stalled`, `reset` and `settings` expose the shared
+native state. Acceleration settings accept a scalar or an acceleration/deceleration
+pair.
+
+`use_gyro(True)` selects the application's shared IMU heading; it defaults to
+encoder heading. Changing the selection stops the pair, while selecting its
+current value leaves motion intact. In gyro mode, `reset(distance, angle)` also
+resets the shared IMU heading. Direct IMU configuration is rejected while a
+gyro-controlled pair is active. Acquisition failure or a changed IMU reference
+epoch stops both motors and reports the cause.
+
+An individual Motor command cancels active paired motion and coasts the other
+motor; the DriveBase can be reused. Closing or reconstructing either Motor, or
+losing its physical connection, invalidates the pair. Rejected geometry or
+replacement motion preserves existing output. Rejected replacement also retains
+the prior Python awaitable; closing a superseded awaitable cannot stop its
+replacement. Application cleanup releases both associations without relying on
+Python finalizers. Normal host disconnect leaves autonomous motion running.
+
+Native applications use `bp_drivebase_open/get/command/settings_set/close`.
+Setup contains both port generations and dimensions in micrometres. Open and
+queued commands expose request/completion tokens; completion acknowledges
+application of the command, while `done` reports maneuver completion separately.
+Settings do not replace the motion token. Close is asynchronous: `get` returns
+`ENODEV` after retirement. Error, command rejection and cleanup error are separate
+fields. A failed pair must be closed and reconstructed before reuse.
+
+Numerical, native simulator and protected ARM checks cover paired scheduling,
+replacement, gyro configuration/reset, cancellation, hotplug, output failure and
+application cleanup with synthetic devices. Physical paired motion and gyro
+accuracy remain unverified. `move_by`, `heading_control`, `distance_control`,
+`SpikeBase` and `Car` remain required work.
 
 ## Speed and position control
 

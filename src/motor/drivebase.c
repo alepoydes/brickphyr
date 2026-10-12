@@ -70,21 +70,29 @@ static void drivebase_adopt_settings(pbio_control_settings_t *s_distance, pbio_c
     s_heading->actuation_max = s_distance->actuation_max * 2;
 }
 
+int drivebase_control_scales(int32_t gear_scale, int32_t wheel_um, int32_t track_um,
+    bool spike, int32_t scales[DRIVEBASE_AXES])
+{
+    if (gear_scale < 1 || wheel_um < 1000 || track_um < 1000) return -EINVAL;
+    int64_t distance = spike ? 1000 : (int64_t)gear_scale * 114592 / wheel_um;
+    int64_t heading = spike ? 1000 : (int64_t)gear_scale * track_um / wheel_um;
+    if (distance < 1 || heading < 1 || distance > 360000 || heading > 360000) return -EINVAL;
+    scales[0] = distance;
+    scales[1] = heading;
+    return 0;
+}
+
 int drivebase_control_init(struct drivebase_control *db,
     const pbio_control_settings_t *left, const pbio_control_settings_t *right,
     int32_t gear_scale, int32_t wheel_um, int32_t track_um, bool spike)
 {
-    /* Validate geometry before changing either controller. The reference
-     * constructor acquires servos first, which can strand a rejected pair. */
-    if (gear_scale < 1 || wheel_um < 1000 || track_um < 1000) return -EINVAL;
-    int64_t distance_scale = spike ? 1000 : (int64_t)gear_scale * 114592 / wheel_um;
-    int64_t heading_scale = spike ? 1000 : (int64_t)gear_scale * track_um / wheel_um;
-    if (distance_scale < 1 || heading_scale < 1 ||
-        distance_scale > 360000 || heading_scale > 360000) return -EINVAL;
+    int32_t scales[DRIVEBASE_AXES];
+    int err = drivebase_control_scales(gear_scale, wheel_um, track_um, spike, scales);
+    if (err) return err;
     *db = (struct drivebase_control){0};
     drivebase_adopt_settings(&db->control[0].settings, &db->control[1].settings, left, right);
-    db->control[0].settings.ctl_steps_per_app_step = distance_scale;
-    db->control[1].settings.ctl_steps_per_app_step = heading_scale;
+    db->control[0].settings.ctl_steps_per_app_step = scales[0];
+    db->control[1].settings.ctl_steps_per_app_step = scales[1];
     for (size_t i = 0; i < DRIVEBASE_AXES; i++) pbio_control_reset(&db->control[i]);
     return 0;
 }
@@ -114,11 +122,11 @@ void drivebase_control_stop(struct drivebase_control *db)
     db->paused = false;
 }
 
-int drivebase_control_reset(struct drivebase_control *db,
-    const struct drivebase_state *state, int32_t distance, int32_t angle)
+static int reset_offsets(const struct drivebase_control *db,
+    const struct drivebase_state *state, int32_t distance, int32_t angle,
+    pbio_angle_t offset[DRIVEBASE_AXES])
 {
     int32_t values[] = {distance, angle};
-    pbio_angle_t offset[DRIVEBASE_AXES];
     for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
         int64_t raw = (int64_t)state->axis[i].position.rotations * 360000 + state->axis[i].position.millidegrees +
             (int64_t)db->offset[i].rotations * 360000 + db->offset[i].millidegrees;
@@ -130,6 +138,22 @@ int drivebase_control_reset(struct drivebase_control *db,
         pbio_angle_from_low_res(&target, values[i], db->control[i].settings.ctl_steps_per_app_step);
         pbio_angle_diff(&measured, &target, &offset[i]);
     }
+    return 0;
+}
+
+int drivebase_control_reset_check(const struct drivebase_control *db,
+    const struct drivebase_state *state, int32_t distance, int32_t angle)
+{
+    pbio_angle_t offset[DRIVEBASE_AXES];
+    return reset_offsets(db, state, distance, angle, offset);
+}
+
+int drivebase_control_reset(struct drivebase_control *db,
+    const struct drivebase_state *state, int32_t distance, int32_t angle)
+{
+    pbio_angle_t offset[DRIVEBASE_AXES];
+    int err = reset_offsets(db, state, distance, angle, offset);
+    if (err) return err;
     drivebase_control_stop(db);
     for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
         db->offset[i] = offset[i];
@@ -283,10 +307,10 @@ void drivebase_control_output(const struct drivebase_reference *value,
         .active = value->active, .done = value->done, .stalled = value->stalled};
 }
 
-void drivebase_settings_get(const struct drivebase_control *db, struct drivebase_settings *value)
+void drivebase_settings_get(const struct drivebase_control *db, struct bp_drivebase_settings *value)
 {
     const pbio_control_settings_t *d = &db->control[0].settings, *h = &db->control[1].settings;
-    *value = (struct drivebase_settings){
+    *value = (struct bp_drivebase_settings){
         .speed = pbio_control_settings_ctl_to_app(d, d->speed_default),
         .acceleration = pbio_control_settings_ctl_to_app(d, d->acceleration),
         .deceleration = pbio_control_settings_ctl_to_app(d, d->deceleration),
@@ -295,7 +319,7 @@ void drivebase_settings_get(const struct drivebase_control *db, struct drivebase
         .turn_deceleration = pbio_control_settings_ctl_to_app(h, h->deceleration)};
 }
 
-int drivebase_settings_set(struct drivebase_control *db, const struct drivebase_settings *value)
+int drivebase_settings_set(struct drivebase_control *db, const struct bp_drivebase_settings *value)
 {
     int32_t speeds[] = {value->speed, value->turn_rate};
     int32_t acceleration[] = {value->acceleration, value->turn_acceleration};

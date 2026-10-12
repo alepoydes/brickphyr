@@ -82,6 +82,7 @@ void python_event_wait(int64_t timeout_ms);
 #define PYBRICKS_PY_TOOLS_HUB_MENU 1
 #define PYBRICKS_PY_IODEVICES 1
 #define PYBRICKS_PY_PUPDEVICES 1
+#define PYBRICKS_PY_ROBOTICS 1
 #define PYBRICKS_PY_HUBS 1
 #define PYBRICKS_HUB_PRIMEHUB 1
 #define PYBRICKS_HUB_CLASS_NAME MP_QSTR_PrimeHub

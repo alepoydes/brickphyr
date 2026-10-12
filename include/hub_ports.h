@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <errno.h>
+#include <stdbool.h>
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
 #include <brickphyr_motor.h>
+#include <brickphyr_drivebase.h>
 
 #ifdef CONFIG_BRICKPHYR_PORTS
+int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle);
+int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state);
+int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_command *command, uint32_t *request);
+int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_settings *settings, uint32_t *request);
+int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle);
+bool hub_drivebase_uses_gyro(void);
 int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation);
 int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud);
 int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size);
@@ -71,6 +81,14 @@ int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generat
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
 #else
+static inline bool hub_drivebase_uses_gyro(void) { return false; }
+static inline int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle) { return -ENOTSUP; }
+static inline int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state) { return -ENOTSUP; }
+static inline int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_command *command, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_settings *settings, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle) { return -ENOTSUP; }
 static inline int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation) { return -ENOTSUP; }
 static inline int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud) { return -ENOTSUP; }
 static inline int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size) { return -ENOTSUP; }

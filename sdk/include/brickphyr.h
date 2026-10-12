@@ -15,6 +15,7 @@
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
 #include <brickphyr_motor.h>
+#include <brickphyr_drivebase.h>
 #include <brickphyr_system.h>
 
 /* Every image carries the identity generated with its SDK. */
@@ -250,6 +251,18 @@ __syscall int bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t k
 __syscall int bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value);
 
+/* Pair two configured servos. Open queues origin/settings initialization as
+ * request 1; command/settings return later tokens. Completion means both
+ * outputs accepted, not motion finished: get().done reports that separately.
+ * A direct Motor command cancels paired motion but preserves the handle.
+ * Closing either Motor or the pair invalidates it. Close is asynchronous;
+ * get returns ENODEV once the worker has retired it. Gyro uses the shared IMU
+ * heading; reset also resets that heading. A lost IMU epoch stops the pair. */
+__syscall int bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle);
+__syscall int bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value);
+__syscall int bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request);
+__syscall int bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request);
+__syscall int bp_drivebase_close(uint32_t handle);
 
 
 /* Acquire the free speaker and queue a square tone: 20..24000 Hz, 0..100 volume.

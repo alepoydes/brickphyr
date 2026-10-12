@@ -250,6 +250,24 @@ static void apply_frame(struct k_work *work)
 }
 static K_WORK_DEFINE(frame_work, apply_frame);
 
+int hub_imu_try_heading(float heading)
+{
+	if (!isfinite(heading)) return -EINVAL;
+	if (k_mutex_lock(&processing_lock, K_NO_WAIT)) return -EAGAIN;
+	k_spinlock_key_t key = k_spin_lock(&snapshot_lock);
+	bool busy = frame_published.pending || frame_releasing;
+	k_spin_unlock(&snapshot_lock, key);
+	struct bp_imu_state state = current;
+	check_age(&state);
+	int err = busy ? -EAGAIN : state.error;
+	if (!err) {
+		imu_processing_frame_set_heading(&application_frame, heading);
+		publish();
+	}
+	k_mutex_unlock(&processing_lock);
+	return err;
+}
+
 int hub_imu_configure(const struct bp_imu_command *command)
 {
 	if (!command) return -EINVAL;

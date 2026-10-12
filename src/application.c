@@ -546,6 +546,7 @@ static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 
 int z_impl_bp_imu_configure(const struct bp_imu_command *command)
 {
+	if (hub_drivebase_uses_gyro()) return -EBUSY;
 	return hub_imu_configure(command);
 }
 
@@ -1123,6 +1124,72 @@ static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generatio
 }
 #include <zephyr/syscalls/bp_servo_settings_set_mrsh.c>
 
+int z_impl_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
+{
+	return hub_drivebase_open(BP_PORT_APPLICATION, setup, handle);
+}
+static inline int z_vrfy_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(setup, sizeof(*setup)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	struct bp_drivebase_setup copy;
+	memcpy(&copy, setup, sizeof(copy));
+	return z_impl_bp_drivebase_open(&copy, handle);
+}
+#include <zephyr/syscalls/bp_drivebase_open_mrsh.c>
+
+int z_impl_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
+{
+	return hub_drivebase_get(BP_PORT_APPLICATION, handle, value);
+}
+static inline int z_vrfy_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_drivebase_get(handle, value);
+}
+#include <zephyr/syscalls/bp_drivebase_get_mrsh.c>
+
+int z_impl_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
+{
+	return hub_drivebase_command(BP_PORT_APPLICATION, handle, command, request);
+}
+static inline int z_vrfy_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_drivebase_command copy;
+	memcpy(&copy, command, sizeof(copy));
+	return z_impl_bp_drivebase_command(handle, &copy, request);
+}
+#include <zephyr/syscalls/bp_drivebase_command_mrsh.c>
+
+int z_impl_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
+{
+	return hub_drivebase_settings_set(BP_PORT_APPLICATION, handle, settings, request);
+}
+static inline int z_vrfy_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(settings, sizeof(*settings)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_drivebase_settings copy;
+	memcpy(&copy, settings, sizeof(copy));
+	return z_impl_bp_drivebase_settings_set(handle, &copy, request);
+}
+#include <zephyr/syscalls/bp_drivebase_settings_set_mrsh.c>
+
+int z_impl_bp_drivebase_close(uint32_t handle)
+{
+	return hub_drivebase_close(BP_PORT_APPLICATION, handle);
+}
+static inline int z_vrfy_bp_drivebase_close(uint32_t handle)
+{
+	return z_impl_bp_drivebase_close(handle);
+}
+#include <zephyr/syscalls/bp_drivebase_close_mrsh.c>
 
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {

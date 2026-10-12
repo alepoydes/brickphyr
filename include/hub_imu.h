@@ -10,6 +10,9 @@ int hub_imu_get(struct bp_imu_sample *sample);
 int hub_imu_get_state(struct bp_imu_state *state);
 int hub_imu_configure(const struct bp_imu_command *command);
 int hub_imu_get_application(struct bp_imu_application_state *state);
+/* Bounded DriveBase reset at a motor-frame boundary. EAGAIN makes no change
+ * when acquisition or an application frame command owns processing. */
+int hub_imu_try_heading(float heading);
 void hub_imu_release(void);
 int hub_imu_shutdown(void);
 #else
@@ -17,6 +20,7 @@ static inline int hub_imu_get(struct bp_imu_sample *sample) { return -ENOTSUP; }
 static inline int hub_imu_get_state(struct bp_imu_state *state) { return -ENOTSUP; }
 static inline int hub_imu_configure(const struct bp_imu_command *command) { return -ENOTSUP; }
 static inline int hub_imu_get_application(struct bp_imu_application_state *state) { return -ENOTSUP; }
+static inline int hub_imu_try_heading(float heading) { return -ENOTSUP; }
 static inline void hub_imu_release(void) {}
 static inline int hub_imu_shutdown(void) { return 0; }
 #endif

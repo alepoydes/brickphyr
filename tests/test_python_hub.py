@@ -48,11 +48,15 @@ async def frame(port, captured):
 
 async def ready(client):
     text = bytearray()
-    async with asyncio.timeout(3):
-        while not text.endswith(b"ready\r\n"):
-            text.extend(await output(client))
-            assert (await checked(client, Status())).state == 1, bytes(text)
-            await asyncio.sleep(0.01)
+    try:
+        async with asyncio.timeout(3):
+            while not text.endswith(b"ready\r\n"):
+                text.extend(await output(client))
+                assert (await checked(client, Status())).state == 1, bytes(text)
+                await asyncio.sleep(0.01)
+    except TimeoutError as error:
+        error.add_note(f"Output before readiness timeout: {bytes(text)!r}")
+        raise
     assert text.strip() == b"ready", bytes(text)
 
 

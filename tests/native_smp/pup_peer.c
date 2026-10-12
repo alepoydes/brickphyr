@@ -12,7 +12,6 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/util.h>
 
-static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(pup_uart));
 static const uint8_t samples[4][8] = {
 	{0x80, 0x7f},
 	{0x85, 0xff, 0xff, 0x7f},
@@ -49,71 +48,84 @@ static const uint8_t color_rgb[] = {0, 4, 0, 0, 0, 0, 0, 0}; /* 1024, 0, 0, 0. *
 static const uint8_t color_shsv[] = {120, 0, 0xe8, 3, 0xe8, 3, 0, 0};
 static const uint8_t ultrasonic_distance[] = {0x41, 1}; /* 321 mm. */
 static const uint8_t color_distance_rgb[] = {0x90, 1, 0, 0, 0, 0}; /* 400, 0, 0. */
-static enum { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE, MATRIX,
-	ENCODED_MOTOR } peer_kind;
-static int16_t shaft_angle, shaft_step;
-static uint8_t infrared_count[4];
-static uint8_t written[4][8];
-static bool has_written[4], extension_valid;
-static uint8_t extension, extension_packet[3];
-static uint8_t output_wire[37], output_mode, output_length;
-static bool has_output;
+enum peer_kind { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE, MATRIX,
+	ENCODED_MOTOR };
+enum peer_phase { WAIT_SPEED, SEND_METADATA, STREAM };
 #define PF_HISTORY_CAPACITY 24
-static struct pf_record { int64_t ms; uint16_t message; } pf_history[PF_HISTORY_CAPACITY];
-static uint8_t pf_count;
-static uint32_t pf_dropped;
+struct pf_record { int64_t ms; uint16_t message; };
+struct peer {
+	const struct device *uart;
+	uint8_t port;
+	struct k_work_delayable work;
+	enum peer_kind kind;
+	enum peer_phase phase;
+	int16_t shaft_angle, shaft_step;
+	uint8_t infrared_count[4];
+	uint8_t written[4][8];
+	bool has_written[4], extension_valid;
+	uint8_t extension, extension_packet[3];
+	uint8_t output_wire[37], output_mode, output_length;
+	bool has_output;
+	struct pf_record pf_history[PF_HISTORY_CAPACITY];
+	uint8_t pf_count;
+	uint32_t pf_dropped;
+	bool installed, connected, serial_mode, hold_mode, hold_reset;
+	uint8_t command[34], used, needed;
+	int selected;
+	uint8_t metadata_mode;
+	bool metadata_header_sent;
+};
+static struct peer peers[] = {
+	{.uart = DEVICE_DT_GET(DT_NODELABEL(pup_uart)), .port = 0, .selected = -1},
+	{.uart = DEVICE_DT_GET(DT_NODELABEL(pup_uart_b)), .port = 1, .selected = -1},
+};
 static K_MUTEX_DEFINE(peer_lock);
-static bool installed, connected, serial_mode, hold_mode, hold_reset;
-static uint8_t command[34], used, needed;
-static int selected = -1;
-static uint8_t metadata_mode;
-static bool metadata_header_sent;
-static enum { WAIT_SPEED, SEND_METADATA, STREAM } phase;
 
-static uint8_t mode_count(void)
+static uint8_t mode_count(const struct peer *peer)
 {
-	return peer_kind == FORCE ? 7 : peer_kind == TILT ? 1 : peer_kind == INFRARED ? 3 :
-		peer_kind == COLOR ? ARRAY_SIZE(color_formats) :
-		peer_kind == ULTRASONIC ? ARRAY_SIZE(ultrasonic_formats) :
-		peer_kind == COLOR_DISTANCE ? ARRAY_SIZE(color_distance_formats) :
-		peer_kind == MATRIX ? ARRAY_SIZE(matrix_formats) :
-		peer_kind == ENCODED_MOTOR ? ARRAY_SIZE(motor_formats) : 4;
+	return peer->kind == FORCE ? 7 : peer->kind == TILT ? 1 : peer->kind == INFRARED ? 3 :
+		peer->kind == COLOR ? ARRAY_SIZE(color_formats) :
+		peer->kind == ULTRASONIC ? ARRAY_SIZE(ultrasonic_formats) :
+		peer->kind == COLOR_DISTANCE ? ARRAY_SIZE(color_distance_formats) :
+		peer->kind == MATRIX ? ARRAY_SIZE(matrix_formats) :
+		peer->kind == ENCODED_MOTOR ? ARRAY_SIZE(motor_formats) : 4;
 }
 
-static const uint8_t *mode_format(uint8_t mode)
+static const uint8_t *mode_format(const struct peer *peer, uint8_t mode)
 {
-	return peer_kind == FORCE ? force_formats[mode] :
-		peer_kind == INFRARED ? infrared_formats[mode] :
-		peer_kind == COLOR ? color_formats[mode] :
-		peer_kind == ULTRASONIC ? ultrasonic_formats[mode] :
-		peer_kind == COLOR_DISTANCE ? color_distance_formats[mode] :
-		peer_kind == MATRIX ? matrix_formats[mode] :
-		peer_kind == ENCODED_MOTOR ? motor_formats[mode] : NULL;
+	return peer->kind == FORCE ? force_formats[mode] :
+		peer->kind == INFRARED ? infrared_formats[mode] :
+		peer->kind == COLOR ? color_formats[mode] :
+		peer->kind == ULTRASONIC ? ultrasonic_formats[mode] :
+		peer->kind == COLOR_DISTANCE ? color_distance_formats[mode] :
+		peer->kind == MATRIX ? matrix_formats[mode] :
+		peer->kind == ENCODED_MOTOR ? motor_formats[mode] : NULL;
 }
 
-static int output_size(uint8_t mode)
+static int output_size(const struct peer *peer, uint8_t mode)
 {
-	return peer_kind == GENERIC && mode < 4 ? sample_lengths[mode] :
-		peer_kind == COLOR && mode == 3 ? 3 :
-		peer_kind == ULTRASONIC && mode == 5 ? 4 :
-		peer_kind == COLOR_DISTANCE && mode == 5 ? 1 :
-		peer_kind == COLOR_DISTANCE && mode == 7 ? 2 :
-		peer_kind == MATRIX && mode == 2 ? 9 : 0;
+	return peer->kind == GENERIC && mode < 4 ? sample_lengths[mode] :
+		peer->kind == COLOR && mode == 3 ? 3 :
+		peer->kind == ULTRASONIC && mode == 5 ? 4 :
+		peer->kind == COLOR_DISTANCE && mode == 5 ? 1 :
+		peer->kind == COLOR_DISTANCE && mode == 7 ? 2 :
+		peer->kind == MATRIX && mode == 2 ? 9 : 0;
 }
 
-static bool writable_mode(uint8_t mode)
+static bool writable_mode(const struct peer *peer, uint8_t mode)
 {
-	return output_size(mode) || peer_kind == MATRIX;
+	return output_size(peer, mode) || peer->kind == MATRIX;
 }
 
-static void send_byte(uint8_t byte)
+static void send_byte(struct peer *peer, uint8_t byte)
 {
-	uint32_t written = uart_emul_put_rx_data(uart, &byte, 1);
-	__ASSERT_NO_MSG(written == 1);
-	ARG_UNUSED(written);
+	uint32_t count = uart_emul_put_rx_data(peer->uart, &byte, 1);
+	__ASSERT_NO_MSG(count == 1);
+	ARG_UNUSED(count);
 }
 
-static void send_packet(uint8_t type, uint8_t mode, int info, const uint8_t *data, size_t length)
+static void send_packet(struct peer *peer, uint8_t type, uint8_t mode, int info,
+	const uint8_t *data, size_t length)
 {
 	uint8_t packet[35];
 	size_t padded = 1, exponent = 0;
@@ -129,217 +141,216 @@ static void send_packet(uint8_t type, uint8_t mode, int info, const uint8_t *dat
 	uint8_t checksum = 0xff;
 	for (size_t i = 0; i < count; i++) checksum ^= packet[i];
 	packet[count++] = checksum;
-	uint32_t written = uart_emul_put_rx_data(uart, packet, count);
-	__ASSERT_NO_MSG(written == count);
-	ARG_UNUSED(written);
+	uint32_t sent = uart_emul_put_rx_data(peer->uart, packet, count);
+	__ASSERT_NO_MSG(sent == count);
+	ARG_UNUSED(sent);
 }
 
 static void peer_work(struct k_work *item);
-static K_WORK_DELAYABLE_DEFINE(work, peer_work);
 
-static void send_sample(void)
+static void send_sample(struct peer *peer)
 {
 	static const uint8_t zero[32];
 	static const uint8_t ultrasonic_presence[] = {1};
 	static const uint8_t color_distance_proximity[] = {7};
 	static const uint8_t color_distance_ambient[] = {25};
+	uint8_t calib[4];
 	const uint8_t *data = zero;
 	size_t length = 1;
-	if (peer_kind == GENERIC) {
-		data = has_written[selected] ? written[selected] : samples[selected];
-		length = sample_lengths[selected];
-	} else if (peer_kind == FORCE) {
-		if (selected == 6) {
+	if (peer->kind == GENERIC) {
+		data = peer->has_written[peer->selected] ? peer->written[peer->selected] : samples[peer->selected];
+		length = sample_lengths[peer->selected];
+	} else if (peer->kind == FORCE) {
+		if (peer->selected == 6) {
 			data = force_calibration;
 			length = sizeof(force_calibration);
-		} else if (selected == 4) {
+		} else if (peer->selected == 4) {
 			data = force_raw;
 			length = sizeof(force_raw);
 		}
-	} else if (peer_kind == TILT) {
+	} else if (peer->kind == TILT) {
 		data = tilt_raw;
 		length = sizeof(tilt_raw);
-	} else if (peer_kind == INFRARED && selected == 1) {
-		data = infrared_count;
-		length = sizeof(infrared_count);
-	} else if (peer_kind == INFRARED && selected == 2) {
+	} else if (peer->kind == INFRARED && peer->selected == 1) {
+		data = peer->infrared_count;
+		length = sizeof(peer->infrared_count);
+	} else if (peer->kind == INFRARED && peer->selected == 2) {
 		data = infrared_cal;
 		length = sizeof(infrared_cal);
-	} else if (peer_kind == COLOR || peer_kind == ULTRASONIC ||
-		   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX ||
-		   peer_kind == ENCODED_MOTOR) {
-		const uint8_t *format = mode_format(selected);
+	} else if (peer->kind == COLOR || peer->kind == ULTRASONIC ||
+		   peer->kind == COLOR_DISTANCE || peer->kind == MATRIX ||
+		   peer->kind == ENCODED_MOTOR) {
+		const uint8_t *format = mode_format(peer, peer->selected);
 		length = format[0] * (format[1] >= 2 ? 4 : 1U << format[1]);
-		if (peer_kind == COLOR && selected == 5) data = color_rgb;
-		else if (peer_kind == COLOR && selected == 7) data = color_shsv;
-		else if (peer_kind == ULTRASONIC && selected == 0) data = ultrasonic_distance;
-		else if (peer_kind == ULTRASONIC && selected == 3) data = ultrasonic_presence;
-		else if (peer_kind == COLOR_DISTANCE && selected == 1) data = color_distance_proximity;
-		else if (peer_kind == COLOR_DISTANCE && selected == 4) data = color_distance_ambient;
-		else if (peer_kind == COLOR_DISTANCE && selected == 6) data = color_distance_rgb;
-		else if (peer_kind == ENCODED_MOTOR && selected == 4) {
-			static uint8_t calib[4];
-			shaft_angle = (shaft_angle + shaft_step + 3600) % 3600;
+		if (peer->kind == COLOR && peer->selected == 5) data = color_rgb;
+		else if (peer->kind == COLOR && peer->selected == 7) data = color_shsv;
+		else if (peer->kind == ULTRASONIC && peer->selected == 0) data = ultrasonic_distance;
+		else if (peer->kind == ULTRASONIC && peer->selected == 3) data = ultrasonic_presence;
+		else if (peer->kind == COLOR_DISTANCE && peer->selected == 1) data = color_distance_proximity;
+		else if (peer->kind == COLOR_DISTANCE && peer->selected == 4) data = color_distance_ambient;
+		else if (peer->kind == COLOR_DISTANCE && peer->selected == 6) data = color_distance_rgb;
+		else if (peer->kind == ENCODED_MOTOR && peer->selected == 4) {
+			peer->shaft_angle = (peer->shaft_angle + peer->shaft_step + 3600) % 3600;
 			calib[0] = calib[1] = 0; /* First CALIB word is ignored by PBIO. */
-			calib[2] = shaft_angle;
-			calib[3] = shaft_angle >> 8;
+			calib[2] = peer->shaft_angle;
+			calib[3] = peer->shaft_angle >> 8;
 			data = calib;
 		}
 	}
-	send_packet(LUMP_MSG_TYPE_DATA, selected, -1, data, length);
+	send_packet(peer, LUMP_MSG_TYPE_DATA, peer->selected, -1, data, length);
 }
 
 static void peer_work(struct k_work *item)
 {
-	ARG_UNUSED(item);
+	struct peer *peer = CONTAINER_OF(k_work_delayable_from_work(item), struct peer, work);
 	k_mutex_lock(&peer_lock, K_FOREVER);
-	if (!connected || pup_test_circuits[0].kind != UART_DEVICE) {
+	if (!peer->connected || pup_test_circuits[peer->port].kind != UART_DEVICE) {
 		k_mutex_unlock(&peer_lock);
 		return;
 	}
-	if (phase == SEND_METADATA) {
-		if (hold_reset) {
+	if (peer->phase == SEND_METADATA) {
+		if (peer->hold_reset) {
 			/* Expose an incomplete handshake until the test releases metadata. */
-			send_byte(LUMP_SYS_SYNC);
-			(void)k_work_reschedule(&work, K_MSEC(50));
+			send_byte(peer, LUMP_SYS_SYNC);
+			(void)k_work_reschedule(&peer->work, K_MSEC(50));
 			k_mutex_unlock(&peer_lock);
 			return;
 		}
-		const uint8_t id = peer_kind == FORCE ? 63 : peer_kind == TILT ? 34 :
-			peer_kind == INFRARED ? 35 : peer_kind == COLOR ? 61 :
-			peer_kind == ULTRASONIC ? 62 : peer_kind == COLOR_DISTANCE ? 37 :
-			peer_kind == MATRIX ? 64 : peer_kind == ENCODED_MOTOR ? 46 : 201;
-		uint8_t count = mode_count();
+		const uint8_t id = peer->kind == FORCE ? 63 : peer->kind == TILT ? 34 :
+			peer->kind == INFRARED ? 35 : peer->kind == COLOR ? 61 :
+			peer->kind == ULTRASONIC ? 62 : peer->kind == COLOR_DISTANCE ? 37 :
+			peer->kind == MATRIX ? 64 : peer->kind == ENCODED_MOTOR ? 46 : 201;
+		uint8_t count = mode_count(peer);
 		const uint8_t modes[] = {MIN(count - 1, 7), 0, count - 1, 0};
 		const uint8_t speed[] = {0, 0xc2, 1, 0}; /* 115200 baud. */
-		if (!metadata_header_sent) {
-			send_packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_TYPE, -1, &id, 1);
-			send_packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_MODES, -1, modes, sizeof(modes));
-			send_packet(LUMP_MSG_TYPE_CMD, LUMP_CMD_SPEED, -1, speed, sizeof(speed));
-			metadata_header_sent = true;
+		if (!peer->metadata_header_sent) {
+			send_packet(peer, LUMP_MSG_TYPE_CMD, LUMP_CMD_TYPE, -1, &id, 1);
+			send_packet(peer, LUMP_MSG_TYPE_CMD, LUMP_CMD_MODES, -1, modes, sizeof(modes));
+			send_packet(peer, LUMP_MSG_TYPE_CMD, LUMP_CMD_SPEED, -1, speed, sizeof(speed));
+			peer->metadata_header_sent = true;
 		}
-		for (uint8_t end = MIN(metadata_mode + 2, count); metadata_mode < end; metadata_mode++) {
-			uint8_t mode = metadata_mode;
+		for (uint8_t end = MIN(peer->metadata_mode + 2, count); peer->metadata_mode < end; peer->metadata_mode++) {
+			uint8_t mode = peer->metadata_mode;
 			const uint8_t name[] = {'R', 'A', 'W', mode < 10 ? (uint8_t)('0' + mode) : 'X'};
 			const uint8_t calib_name[] = {'C', 'A', 'L', 'I', 'B', 0,
 				LUMP_MODE_FLAGS0_MOTOR_ABS_POS | LUMP_MODE_FLAGS0_MOTOR, 0x40,
 				0, 0, 5, 4};
-			const uint8_t *known = mode_format(mode);
-			uint8_t values = peer_kind == GENERIC ? 2 : peer_kind == TILT ? 2 : known[0];
-			uint8_t type = peer_kind == GENERIC ? mode : peer_kind == TILT ? 0 : known[1];
+			const uint8_t *known = mode_format(peer, mode);
+			uint8_t values = peer->kind == GENERIC ? 2 : peer->kind == TILT ? 2 : known[0];
+			uint8_t type = peer->kind == GENERIC ? mode : peer->kind == TILT ? 0 : known[1];
 			const uint8_t format[] = {values, type, 6, 0};
-			const uint8_t mapping[] = {writable_mode(mode) ? 0 : 0x10,
-				writable_mode(mode) ? 1 : 0};
-			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME,
-				peer_kind == ENCODED_MOTOR && mode == 4 ? calib_name : name,
-				peer_kind == ENCODED_MOTOR && mode == 4 ? sizeof(calib_name) : sizeof(name));
-			if (peer_kind == GENERIC) {
+			const uint8_t mapping[] = {writable_mode(peer, mode) ? 0 : 0x10,
+				writable_mode(peer, mode) ? 1 : 0};
+			send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME,
+				peer->kind == ENCODED_MOTOR && mode == 4 ? calib_name : name,
+				peer->kind == ENCODED_MOTOR && mode == 4 ? sizeof(calib_name) : sizeof(name));
+			if (peer->kind == GENERIC) {
 				const uint8_t generic_mapping[] = {0x10, 0x10};
-				send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING,
+				send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING,
 					generic_mapping, sizeof(generic_mapping));
-			} else if (peer_kind == COLOR || peer_kind == ULTRASONIC ||
-				   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX) {
-				send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
+			} else if (peer->kind == COLOR || peer->kind == ULTRASONIC ||
+				   peer->kind == COLOR_DISTANCE || peer->kind == MATRIX) {
+				send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
 			}
-			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
+			send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
 		}
-		if (metadata_mode == count) {
-			send_byte(LUMP_SYS_ACK);
-			phase = WAIT_SPEED;
+		if (peer->metadata_mode == count) {
+			send_byte(peer, LUMP_SYS_ACK);
+			peer->phase = WAIT_SPEED;
 		} else {
-			(void)k_work_reschedule(&work, K_MSEC(2));
+			(void)k_work_reschedule(&peer->work, K_MSEC(2));
 		}
-	} else if (phase == STREAM && selected >= 0) {
-		send_sample();
-		(void)k_work_reschedule(&work, K_MSEC(20));
+	} else if (peer->phase == STREAM && peer->selected >= 0) {
+		send_sample(peer);
+		(void)k_work_reschedule(&peer->work, K_MSEC(20));
 	}
 	k_mutex_unlock(&peer_lock);
 }
 
 static void transmitted(const struct device *dev, size_t size, void *user_data)
 {
-	ARG_UNUSED(user_data);
+	struct peer *peer = user_data;
 	uint8_t bytes[16];
 	k_mutex_lock(&peer_lock, K_FOREVER);
 	while (size) {
 		size_t count = uart_emul_get_tx_data(dev, bytes, MIN(size, sizeof(bytes)));
 		if (!count) break;
 		size -= count;
-		if (serial_mode) {
+		if (peer->serial_mode) {
 			/* Raw serial is a byte stream; never feed it to the LUMP parser. */
 			uint32_t echoed = uart_emul_put_rx_data(dev, bytes, count);
 			__ASSERT_NO_MSG(echoed == count);
 			continue;
 		}
-		for (size_t i = 0; i < count && connected; i++) {
+		for (size_t i = 0; i < count && peer->connected; i++) {
 			uint8_t byte = bytes[i];
-			if (!used) {
-				needed = byte == 0x52 ? 6 : byte == 0x43 || byte == 0x46 ? 3 :
+			if (!peer->used) {
+				peer->needed = byte == 0x52 ? 6 : byte == 0x43 || byte == 0x46 ? 3 :
 					(byte & 0xc0) == 0xc0 ? (1 << ((byte >> 3) & 7)) + 2 : 0;
-				if (needed > sizeof(command)) needed = 0;
-				if (!needed) continue;
+				if (peer->needed > sizeof(peer->command)) peer->needed = 0;
+				if (!peer->needed) continue;
 			}
-			command[used++] = byte;
-			if (used != needed) continue;
-			used = 0;
+			peer->command[peer->used++] = byte;
+			if (peer->used != peer->needed) continue;
+			peer->used = 0;
 			uint8_t checksum = 0xff;
-			for (size_t j = 0; j < needed; j++) checksum ^= command[j];
+			for (size_t j = 0; j < peer->needed; j++) checksum ^= peer->command[j];
 			if (checksum) continue;
-			if (needed == 6 && (phase == WAIT_SPEED || phase == STREAM) &&
-			    !memcmp(command, (const uint8_t[]){0x52, 0, 0xc2, 1, 0, 0x6e}, 6)) {
+			if (peer->needed == 6 && (peer->phase == WAIT_SPEED || peer->phase == STREAM) &&
+			    !memcmp(peer->command, (const uint8_t[]){0x52, 0, 0xc2, 1, 0, 0x6e}, 6)) {
 				/* The host offers fast baud for only 10 ms. The RX FIFO
 				 * retains this ACK until OFFER_ACK handles it. */
-				selected = -1;
-				infrared_count[0] = 41;
-				extension_valid = false;
-				metadata_mode = 0;
-				metadata_header_sent = false;
-				has_output = false;
-				memset(has_written, 0, sizeof(has_written));
-				send_byte(LUMP_SYS_ACK);
-				phase = SEND_METADATA;
-				(void)k_work_reschedule(&work, K_MSEC(2));
-			} else if (command[0] == 0x43 && command[1] < mode_count() &&
-				   command[2] == (uint8_t)(0xbc ^ command[1])) {
-				if (hold_mode) continue;
-				if (peer_kind == INFRARED && selected == 1 && command[1] == 2) {
-					infrared_count[0] = 46;
+				peer->selected = -1;
+				peer->infrared_count[0] = 41;
+				peer->extension_valid = false;
+				peer->metadata_mode = 0;
+				peer->metadata_header_sent = false;
+				peer->has_output = false;
+				memset(peer->has_written, 0, sizeof(peer->has_written));
+				send_byte(peer, LUMP_SYS_ACK);
+				peer->phase = SEND_METADATA;
+				(void)k_work_reschedule(&peer->work, K_MSEC(2));
+			} else if (peer->command[0] == 0x43 && peer->command[1] < mode_count(peer) &&
+				   peer->command[2] == (uint8_t)(0xbc ^ peer->command[1])) {
+				if (peer->hold_mode) continue;
+				if (peer->kind == INFRARED && peer->selected == 1 && peer->command[1] == 2) {
+					peer->infrared_count[0] = 46;
 				}
-				selected = command[1];
-				phase = STREAM;
-				(void)k_work_reschedule(&work, K_MSEC(2));
-			} else if (command[0] == 0x46 && (command[1] == 0 || command[1] == 8)) {
-				extension = command[1];
-				memcpy(extension_packet, command, sizeof(extension_packet));
-				extension_valid = true;
-			} else if ((command[0] & 0xc0) == 0xc0 && extension_valid) {
-				uint8_t mode = extension | (command[0] & 7);
-				extension_valid = false;
-				int size = output_size(mode);
-				if (!size || mode != selected) continue;
+				peer->selected = peer->command[1];
+				peer->phase = STREAM;
+				(void)k_work_reschedule(&peer->work, K_MSEC(2));
+			} else if (peer->command[0] == 0x46 && (peer->command[1] == 0 || peer->command[1] == 8)) {
+				peer->extension = peer->command[1];
+				memcpy(peer->extension_packet, peer->command, sizeof(peer->extension_packet));
+				peer->extension_valid = true;
+			} else if ((peer->command[0] & 0xc0) == 0xc0 && peer->extension_valid) {
+				uint8_t mode = peer->extension | (peer->command[0] & 7);
+				peer->extension_valid = false;
+				int size = output_size(peer, mode);
+				if (!size || mode != peer->selected) continue;
 				int padded = 1;
 				while (padded < size) padded *= 2;
-				if (needed - 2 != padded) continue;
-				output_mode = mode;
-				output_length = sizeof(extension_packet) + needed;
-				memcpy(output_wire, extension_packet, sizeof(extension_packet));
-				memcpy(output_wire + sizeof(extension_packet), command, needed);
-				has_output = true;
-				if (peer_kind == COLOR_DISTANCE && mode == 7) {
-					if (pf_count < ARRAY_SIZE(pf_history)) {
-						pf_history[pf_count++] = (struct pf_record){
+				if (peer->needed - 2 != padded) continue;
+				peer->output_mode = mode;
+				peer->output_length = sizeof(peer->extension_packet) + peer->needed;
+				memcpy(peer->output_wire, peer->extension_packet, sizeof(peer->extension_packet));
+				memcpy(peer->output_wire + sizeof(peer->extension_packet), peer->command, peer->needed);
+				peer->has_output = true;
+				if (peer->kind == COLOR_DISTANCE && mode == 7) {
+					if (peer->pf_count < ARRAY_SIZE(peer->pf_history)) {
+						peer->pf_history[peer->pf_count++] = (struct pf_record){
 							.ms = k_uptime_get(),
-							.message = command[1] | (command[2] << 8),
+							.message = peer->command[1] | (peer->command[2] << 8),
 						};
 					} else {
-						pf_dropped++;
+						peer->pf_dropped++;
 					}
 				}
-				if (peer_kind == GENERIC) {
-					memcpy(written[mode], command + 1, size);
-					has_written[mode] = true;
+				if (peer->kind == GENERIC) {
+					memcpy(peer->written[mode], peer->command + 1, size);
+					peer->has_written[mode] = true;
 				}
-				(void)k_work_reschedule(&work, K_MSEC(2));
+				(void)k_work_reschedule(&peer->work, K_MSEC(2));
 			}
 		}
 	}
@@ -348,7 +359,13 @@ static void transmitted(const struct device *dev, size_t size, void *user_data)
 
 static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 {
-	if (!device_is_ready(uart)) return -ENODEV;
+	struct peer *peer = &peers[0];
+	if (argc >= 3 && !strcmp(argv[1], "B")) {
+		peer = &peers[1];
+		argc--;
+		argv++;
+	}
+	if (!device_is_ready(peer->uart)) return -ENODEV;
 	if (!strcmp(argv[1], "serial_rx")) {
 		uint8_t bytes[64];
 		if (argc != 3) return -EINVAL;
@@ -356,8 +373,8 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		if (!length || (length & 1) || length > sizeof(bytes) * 2 ||
 		    hex2bin(argv[2], length, bytes, sizeof(bytes)) != length / 2) return -EINVAL;
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		int err = serial_mode ? 0 : -ENODEV;
-		if (!err && uart_emul_put_rx_data(uart, bytes, length / 2) != length / 2) err = -ENOSPC;
+		int err = peer->serial_mode ? 0 : -ENODEV;
+		if (!err && uart_emul_put_rx_data(peer->uart, bytes, length / 2) != length / 2) err = -ENOSPC;
 		k_mutex_unlock(&peer_lock);
 		return err;
 	}
@@ -368,10 +385,10 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		bool angle = !strcmp(argv[1], "motor_angle");
 		if (err || (angle ? value < 0 || value >= 3600 : value < -100 || value > 100)) return -EINVAL;
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		err = connected && peer_kind == ENCODED_MOTOR ? 0 : -ENODEV;
+		err = peer->connected && peer->kind == ENCODED_MOTOR ? 0 : -ENODEV;
 		if (!err) {
-			if (angle) shaft_angle = value;
-			else shaft_step = value;
+			if (angle) peer->shaft_angle = value;
+			else peer->shaft_step = value;
 		}
 		k_mutex_unlock(&peer_lock);
 		return err;
@@ -379,21 +396,21 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	if (argc != 2) return -EINVAL;
 	if (!strcmp(argv[1], "serial_close_error")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		pup_test_circuits[0].coast_error = -EIO;
+		pup_test_circuits[peer->port].coast_error = -EIO;
 		k_mutex_unlock(&peer_lock);
 		return 0;
 	}
 	if (!strcmp(argv[1], "output")) {
 		static const char digits[] = "0123456789abcdef";
-		char hex[sizeof(output_wire) * 2 + 1];
+		char hex[sizeof(peer->output_wire) * 2 + 1];
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		bool found = has_output;
-		uint8_t mode = output_mode;
-		for (uint8_t i = 0; found && i < output_length; i++) {
-			hex[2 * i] = digits[output_wire[i] >> 4];
-			hex[2 * i + 1] = digits[output_wire[i] & 15];
+		bool found = peer->has_output;
+		uint8_t mode = peer->output_mode;
+		for (uint8_t i = 0; found && i < peer->output_length; i++) {
+			hex[2 * i] = digits[peer->output_wire[i] >> 4];
+			hex[2 * i + 1] = digits[peer->output_wire[i] & 15];
 		}
-		if (found) hex[2 * output_length] = 0;
+		if (found) hex[2 * peer->output_length] = 0;
 		k_mutex_unlock(&peer_lock);
 		if (found) shell_print(shell, "mode=%u bytes=%s", mode, hex);
 		else shell_print(shell, "none");
@@ -408,9 +425,9 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	if (!strcmp(argv[1], "pf")) {
 		struct pf_record records[PF_HISTORY_CAPACITY];
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		uint8_t count = pf_count;
-		uint32_t dropped = pf_dropped;
-		memcpy(records, pf_history, count * sizeof(records[0]));
+		uint8_t count = peer->pf_count;
+		uint32_t dropped = peer->pf_dropped;
+		memcpy(records, peer->pf_history, count * sizeof(records[0]));
 		k_mutex_unlock(&peer_lock);
 		shell_print(shell, "pf count=%u dropped=%u", count, dropped);
 		for (uint8_t i = 0; i < count; i++) {
@@ -421,15 +438,15 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	}
 	if (!strcmp(argv[1], "hold") || !strcmp(argv[1], "resume")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		hold_mode = !strcmp(argv[1], "hold");
+		peer->hold_mode = !strcmp(argv[1], "hold");
 		k_mutex_unlock(&peer_lock);
 		return 0;
 	}
 	if (!strcmp(argv[1], "hold_reset") || !strcmp(argv[1], "resume_reset")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
-		hold_reset = !strcmp(argv[1], "hold_reset");
-		if (!hold_reset && phase == SEND_METADATA) {
-			(void)k_work_reschedule(&work, K_NO_WAIT);
+		peer->hold_reset = !strcmp(argv[1], "hold_reset");
+		if (!peer->hold_reset && peer->phase == SEND_METADATA) {
+			(void)k_work_reschedule(&peer->work, K_NO_WAIT);
 		}
 		k_mutex_unlock(&peer_lock);
 		return 0;
@@ -447,48 +464,49 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
-	if (!installed) {
-		uart_emul_callback_tx_data_ready_set(uart, transmitted, NULL);
-		installed = true;
+	if (!peer->installed) {
+		k_work_init_delayable(&peer->work, peer_work);
+		uart_emul_callback_tx_data_ready_set(peer->uart, transmitted, peer);
+		peer->installed = true;
 	}
-	connected = false;
-	serial_mode = false;
-	hold_mode = false;
-	hold_reset = false;
-	(void)k_work_cancel_delayable(&work);
-	(void)uart_emul_flush_rx_data(uart);
-	(void)uart_emul_flush_tx_data(uart);
-	used = needed = 0;
-	selected = -1;
-	peer_kind = !strcmp(argv[1], "force") ? FORCE : !strcmp(argv[1], "tilt") ? TILT :
+	peer->connected = false;
+	peer->serial_mode = false;
+	peer->hold_mode = false;
+	peer->hold_reset = false;
+	(void)k_work_cancel_delayable(&peer->work);
+	(void)uart_emul_flush_rx_data(peer->uart);
+	(void)uart_emul_flush_tx_data(peer->uart);
+	peer->used = peer->needed = 0;
+	peer->selected = -1;
+	peer->kind = !strcmp(argv[1], "force") ? FORCE : !strcmp(argv[1], "tilt") ? TILT :
 		!strcmp(argv[1], "infrared") ? INFRARED : !strcmp(argv[1], "color") ? COLOR :
 		!strcmp(argv[1], "ultrasonic") ? ULTRASONIC :
 		!strcmp(argv[1], "color_distance") ? COLOR_DISTANCE :
 		!strcmp(argv[1], "matrix") ? MATRIX :
 		!strcmp(argv[1], "encoded_motor") ? ENCODED_MOTOR : GENERIC;
-	shaft_angle = shaft_step = 0;
-	memset(infrared_count, 0, sizeof(infrared_count));
-	infrared_count[0] = 41;
-	phase = WAIT_SPEED;
-	metadata_mode = 0;
-	metadata_header_sent = false;
-	memset(has_written, 0, sizeof(has_written));
-	extension_valid = false;
-	has_output = false;
-	pf_count = 0;
-	pf_dropped = 0;
-	pup_test_circuits[0].kind = !strcmp(argv[1], "light") ? LIGHT :
+	peer->shaft_angle = peer->shaft_step = 0;
+	memset(peer->infrared_count, 0, sizeof(peer->infrared_count));
+	peer->infrared_count[0] = 41;
+	peer->phase = WAIT_SPEED;
+	peer->metadata_mode = 0;
+	peer->metadata_header_sent = false;
+	memset(peer->has_written, 0, sizeof(peer->has_written));
+	peer->extension_valid = false;
+	peer->has_output = false;
+	peer->pf_count = 0;
+	peer->pf_dropped = 0;
+	pup_test_circuits[peer->port].kind = !strcmp(argv[1], "light") ? LIGHT :
 		!strcmp(argv[1], "motor") ? TRAIN_MOTOR :
 		!strcmp(argv[1], "serial") ? UNPLUGGED :
 		!strcmp(argv[1], "connect") || !strcmp(argv[1], "generic") ||
-		peer_kind != GENERIC ? UART_DEVICE :
+		peer->kind != GENERIC ? UART_DEVICE :
 		!strcmp(argv[1], "unplug") ? UNPLUGGED : TOUCH_SWITCH;
-	pup_test_circuits[0].pressed = !strcmp(argv[1], "press");
-	connected = pup_test_circuits[0].kind == UART_DEVICE;
-	serial_mode = !strcmp(argv[1], "serial");
+	pup_test_circuits[peer->port].pressed = !strcmp(argv[1], "press");
+	peer->connected = pup_test_circuits[peer->port].kind == UART_DEVICE;
+	peer->serial_mode = !strcmp(argv[1], "serial");
 	k_mutex_unlock(&peer_lock);
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
-	pup_peer, 2, 1);
+	"Synthetic port A (default) or B: [B] connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	pup_peer, 2, 2);

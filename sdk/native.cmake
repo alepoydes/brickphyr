@@ -18,6 +18,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_drivebase.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_system.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
@@ -33,6 +34,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_drivebase.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_system.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h

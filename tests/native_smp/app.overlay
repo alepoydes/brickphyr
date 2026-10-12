@@ -10,6 +10,12 @@
 		rx-fifo-size = <1024>;
 		tx-fifo-size = <128>;
 	};
+	pup_uart_b: pup-uart-b {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <1024>;
+		tx-fifo-size = <128>;
+	};
 	hub_speaker: speaker {
 		compatible = "vnd,sound-output";
 		status = "okay";
@@ -18,6 +24,7 @@
 };
 &hub_ports {
 	port@0 { uart = <&pup_uart>; };
+	port@1 { uart = <&pup_uart_b>; };
 };
 
 #include "storage.overlay"

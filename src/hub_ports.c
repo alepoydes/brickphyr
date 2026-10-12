@@ -15,6 +15,9 @@
 #include "motor/voltage.h"
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 #include "motor/control.h"
+#include "motor/drivebase.h"
+#include "hub_imu.h"
+#include <math.h>
 #endif
 #include <lego/device.h>
 #include <lego/lump.h>
@@ -79,6 +82,7 @@ static struct port {
 	int64_t reset_deadline;
 	uint32_t motor_duration, motor_generation, zero_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	struct drivebase *drivebase;
 	struct motor_control controller; /* touched only by the port worker */
 	int64_t control_due;
 	/* Publication copy: readers never lock out computation or inspect the
@@ -108,6 +112,24 @@ static struct k_spinlock lock;
 static atomic_t stopping;
 static atomic_t activity;
 static uint32_t active_ports; /* lock protects mask; parity token is atomic */
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+/* Membership/publication uses lock; only the existing port worker computes. */
+static struct drivebase {
+	struct port *motor[2];
+	uint32_t handle;
+	enum bp_port_owner owner;
+	struct bp_drivebase_setup setup;
+	struct bp_drivebase_state value;
+	struct bp_drivebase_command command;
+	struct bp_drivebase_settings settings;
+	struct drivebase_control controller;
+	struct drivebase_reference reference;
+	uint32_t applied, imu_epoch;
+	bool initializing, configure, cancelled, detach, frame;
+} drivebases[BP_PORT_COUNT / 2];
+static uint32_t drivebase_handle;
+static void cancel_drivebase(struct port *p, int error, bool detach);
+#endif
 static void scan(struct k_work *item);
 static K_WORK_DELAYABLE_DEFINE(work, scan);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -116,7 +138,9 @@ static K_WORK_DELAYABLE_DEFINE(work, scan);
  * and applications (14) on F4.
  * Cooperative threads and interrupts still count against the frame deadline. */
 static struct k_work_q port_queue;
-K_THREAD_STACK_DEFINE(port_stack, 2048);
+/* ARM static call depth reaches about 2 KiB for a paired command, before
+ * exception/FPU context. Leave room for shared IMU snapshot conversion. */
+K_THREAD_STACK_DEFINE(port_stack, 3072);
 #define PORT_QUEUE (&port_queue)
 #define CONTROL_MS PBIO_CONFIG_CONTROL_LOOP_TIME_MS
 BUILD_ASSERT(CONFIG_SYS_CLOCK_TICKS_PER_SEC % (1000 / CONTROL_MS) == 0);
@@ -254,6 +278,7 @@ static void free_motor_logs(enum bp_port_owner owner)
 static void drop_claim(struct port *p)
 {
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	cancel_drivebase(p, -ENODEV, true);
 	stop_motor_logs(p, 0);
 #endif
 	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
@@ -275,6 +300,7 @@ static void invalidate_motor(uint32_t port, int reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	cancel_drivebase(&ports[port], reason, true);
 	stop_motor_logs(&ports[port], reason);
 #endif
 	finish_write(&ports[port], reason);
@@ -639,10 +665,36 @@ static void set_motor_request(struct port *p, uint8_t mode, int32_t duty, uint32
 	if (mode < BP_MOTOR_SPEED) p->motor.command = (struct bp_motor_command){0};
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+/* Caller holds lock. An individual command cancels only active paired work;
+ * association survives so the same DriveBase can be commanded again. */
+static void cancel_drivebase(struct port *p, int error, bool detach)
+{
+	struct drivebase *db = p->drivebase;
+	if (!db) return;
+	if (db->value.active || db->value.pending || db->frame) {
+		for (size_t i = 0; i < 2; i++) set_motor_request(db->motor[i], BP_MOTOR_COAST, 0, 0);
+		db->cancelled = true;
+		db->frame = false;
+		db->value.command_error = error ? error : -ECANCELED;
+		db->value.completed = db->value.request;
+		db->value.pending = db->value.active = false;
+		db->value.done = true;
+	}
+	if (detach) {
+		db->detach = true;
+		if (!db->value.error) db->value.error = error;
+	}
+}
+#endif
+
 static int request_motor(struct port *p, uint8_t mode, int32_t duty, uint32_t duration)
 {
 	int err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 	if (err < 0) return err;
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	cancel_drivebase(p, -ECANCELED, false);
+#endif
 	set_motor_request(p, mode, duty, duration);
 	return 0;
 }
@@ -664,6 +716,9 @@ static void start_observation(struct port *p)
 	p->motor.control.observing = true;
 	p->observer_reset = true;
 	p->observer_rebase = false;
+	/* All shafts sample on the same grid, including separately opened Motors.
+	 * A paired controller must not advance either observer twice to align it. */
+	p->control_due = (k_uptime_get() / CONTROL_MS + 1) * CONTROL_MS;
 	p->observation.error = -EAGAIN;
 }
 
@@ -726,14 +781,33 @@ static void append_motor_log(struct port *p, uint32_t kind, uint32_t ticks,
 
 static int control_frame(struct port *p, int64_t angle,
 	const struct bp_motor_command *command, struct motor_reference *ref,
-	int32_t *duty, int32_t *voltage, uint32_t ticks, int32_t max_voltage, struct motor_pid_sample *log)
+	int32_t *duty, int32_t *voltage, uint32_t ticks, int32_t max_voltage, struct motor_pid_sample *log,
+	const struct drivebase_reference *paired, bool right, int direction, int64_t zero)
 {
 	struct bp_battery_sample battery;
 	int err = hub_battery_get(&battery);
 	if (!err) err = battery.error;
 	if (err) return err;
 	if (!battery.voltage_mv || battery.voltage_mv > 12000) return -ERANGE;
-	if (command) {
+	if (paired) {
+		drivebase_control_output(paired, &p->controller, right, ref);
+		int64_t position[2];
+		for (size_t i = 0; i < 2; i++) {
+			const pbio_angle_t *a = &paired->axis[i].position, *offset = &p->drivebase->controller.offset[i];
+			position[i] = ((int64_t)a->rotations + offset->rotations) * 360000 + a->millidegrees + offset->millidegrees;
+		}
+		int64_t shaft = (position[0] + (right ? -position[1] : position[1])) * direction;
+		if (__builtin_add_overflow(shaft, zero, &ref->angle_mdeg)) return -ERANGE;
+		ref->speed_mdeg_s *= direction;
+		ref->acceleration_mdeg_s2 *= direction;
+		ref->voltage_mv *= direction;
+		ref->feedback_torque *= direction;
+		ref->feedforward_torque *= direction;
+		pbio_angle_t unused_position;
+		int32_t unused_speed;
+		pbio_observer_get_estimated_state(&p->controller.observer, &unused_speed,
+			&unused_position, &ref->estimated_speed);
+	} else if (command) {
 		/* Enum values are an explicit adapter mapping, not SDK PBIO types. */
 		BUILD_ASSERT((int)BP_MOTOR_FINISH_COAST == (int)PBIO_CONTROL_ON_COMPLETION_COAST);
 		BUILD_ASSERT((int)BP_MOTOR_FINISH_BRAKE == (int)PBIO_CONTROL_ON_COMPLETION_BRAKE);
@@ -744,11 +818,215 @@ static int control_frame(struct port *p, int64_t angle,
 		err = motor_control_command(&p->controller, ticks, angle, command, battery.voltage_mv);
 		if (err) return err;
 	}
-	err = motor_control_step(&p->controller, ticks, angle, ref, log);
+	if (!paired) err = motor_control_step(&p->controller, ticks, angle, ref, log);
 	if (err) return err;
 	*duty = CLAMP((int64_t)CLAMP(ref->voltage_mv, -max_voltage, max_voltage) * 1000 / battery.voltage_mv, -1000, 1000);
 	*voltage = (int64_t)*duty * battery.voltage_mv / 1000;
 	return 0;
+}
+
+static int directed_state(struct port *p, int64_t angle, int64_t zero, int direction,
+	pbio_control_state_t *value)
+{
+	int err = motor_control_state_get(&p->controller, angle, value);
+	if (err) return err;
+	pbio_angle_t *positions[] = {&value->position, &value->position_estimate};
+	for (size_t i = 0; i < ARRAY_SIZE(positions); i++) {
+		int64_t raw = (int64_t)positions[i]->rotations * 360000 + positions[i]->millidegrees;
+		if (__builtin_sub_overflow(raw, zero, &raw) ||
+		    raw < -(int64_t)(INT32_MAX / 4) * 360000 || raw > (int64_t)(INT32_MAX / 4) * 360000) return -ERANGE;
+		raw *= direction;
+		*positions[i] = (pbio_angle_t){.rotations = raw / 360000, .millidegrees = raw % 360000};
+	}
+	if (value->speed == INT32_MIN || value->speed_estimate == INT32_MIN) return -ERANGE;
+	value->speed *= direction;
+	value->speed_estimate *= direction;
+	return 0;
+}
+
+static int drivebase_gyro(struct drivebase *db, struct drivebase_state *state, bool check_epoch)
+{
+	struct bp_imu_application_state imu;
+	int err = hub_imu_get_application(&imu);
+	if (!err) err = imu.physical.error;
+	if (!err && imu.pending) err = -EBUSY;
+	if (!err && check_epoch && drivebase_control_active(&db->controller) &&
+	    db->imu_epoch != imu.physical.epoch) err = -ESTALE;
+	if (err) return err;
+	int32_t scale = db->controller.control[DRIVEBASE_HEADING].settings.ctl_steps_per_app_step;
+	/* PBIO imu.c's scaled heading, using the shared application's axes.
+	 * Keep the motor-derived estimates for the controller's derivative term. */
+	float rotations = imu.heading_3d / (360000.0f / scale);
+	float speed = 0;
+	for (size_t i = 0; i < 3; i++) speed -= imu.base[6 + i] * imu.physical.angular_velocity[i];
+	speed *= scale / 1000.0f;
+	if (!isfinite(rotations) || fabsf(rotations) >= INT32_MAX / 4 ||
+	    !isfinite(speed) || fabsf(speed) >= INT32_MAX) return -ERANGE;
+	pbio_control_state_t *heading = &state->axis[DRIVEBASE_HEADING];
+	heading->position.rotations = (int32_t)rotations;
+	heading->position.millidegrees = (int32_t)((imu.heading_3d -
+		heading->position.rotations * (360000.0f / scale)) * scale);
+	heading->speed = (int32_t)speed;
+	db->imu_epoch = imu.physical.epoch;
+	return 0;
+}
+
+static void prepare_drivebase(struct drivebase *db, int64_t now)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	db->frame = false;
+	if (!db->owner) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	if (db->cancelled) {
+		drivebase_control_stop(&db->controller);
+		db->cancelled = false;
+	}
+	if (db->detach) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	bool initializing = db->initializing;
+	uint32_t request = db->value.request;
+	bool pending = db->value.pending && db->applied != request;
+	struct bp_drivebase_command command = db->command;
+	bool configure = db->configure;
+	bool gyro = db->value.gyro;
+	bool gyro_change = pending && !configure && command.action == BP_DRIVEBASE_GYRO && command.gyro != gyro;
+	struct bp_drivebase_settings settings = db->settings;
+	/* Passive commands already use the ordinary output queue. Numerical
+	 * work waits for both motors to reach the common observation grid. */
+	if (db->motor[0]->motor.pending || db->motor[1]->motor.pending ||
+	    now < db->motor[0]->control_due || now < db->motor[1]->control_due) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	int err = db->value.error;
+	int64_t angles[2], zeros[2];
+	int directions[2];
+	pbio_control_settings_t initial_settings[2];
+	for (size_t i = 0; i < 2 && !err; i++) {
+		struct port *p = db->motor[i];
+		err = p->value.generation != db->setup.generations[i] || p->owner != db->owner ||
+			!p->motor.control.observing ? -ENODEV : output_device_error(p, false);
+		if (!err) err = p->motor.error ? p->motor.error : control_input_error(p);
+		if (!err && (p->observer_reset || p->observer_rebase || !p->settings_ready ||
+		    p->observation_revision != p->geometry_revision)) err = -EAGAIN;
+		angles[i] = p->sensor.angle_mdeg;
+		zeros[i] = p->motor.zero_mdeg;
+		directions[i] = p->motor.direction;
+		if (initializing) initial_settings[i] = p->control_settings;
+	}
+	int32_t scale = db->motor[0]->motor.gear_ratio;
+	bool independently_stalled = db->motor[0]->observation.stalled || db->motor[1]->observation.stalled;
+	k_spin_unlock(&lock, key);
+	/* Rebase/setup is applied by each motor's ordinary frame first. */
+	if (err == -EAGAIN) return;
+	pbio_control_state_t wheels[2];
+	for (size_t i = 0; i < 2 && !err; i++) err = directed_state(db->motor[i], angles[i], zeros[i], directions[i], &wheels[i]);
+	if (!err && initializing) err = drivebase_control_init(&db->controller, &initial_settings[0], &initial_settings[1],
+		scale, db->setup.wheel_um, db->setup.track_um, db->setup.spike);
+	struct drivebase_state state = {0};
+	if (!err) drivebase_control_state(&db->controller, &wheels[0], &wheels[1], &state);
+	struct drivebase_state encoder_state = state;
+	if (!err && gyro && !(gyro_change && !command.gyro)) err = drivebase_gyro(db, &state, true);
+	int command_error = 0;
+	bool reset = false, retry = false;
+	if (!err && pending) {
+		if (initializing || (!configure && command.action == BP_DRIVEBASE_RESET)) {
+			int32_t distance = initializing ? 0 : command.distance, angle = initializing ? 0 : command.angle;
+			command_error = drivebase_control_reset_check(&db->controller, &encoder_state, distance, angle);
+			if (!command_error && gyro) command_error = hub_imu_try_heading(angle);
+			if (command_error == -EAGAIN) retry = true;
+			else if (!command_error) {
+				command_error = drivebase_control_reset(&db->controller, &encoder_state, distance, angle);
+				reset = !command_error;
+				if (reset) {
+					drivebase_control_state(&db->controller, &wheels[0], &wheels[1], &state);
+					if (gyro) err = drivebase_gyro(db, &state, false);
+				}
+			}
+		} else if (configure) {
+			command_error = drivebase_settings_set(&db->controller, &settings);
+		} else if (command.action == BP_DRIVEBASE_GYRO) {
+			if (gyro_change) {
+				if (command.gyro) command_error = drivebase_gyro(db, &state, false);
+				if (!command_error) {
+					gyro = command.gyro;
+					if (!gyro) state = encoder_state;
+					drivebase_control_stop(&db->controller);
+					reset = true;
+				}
+			}
+		} else {
+			struct drivebase_command move = {.distance = command.distance, .angle = command.angle,
+				.speed = command.speed, .turn_rate = command.turn_rate, .duration_ms = command.duration_ms,
+				.finish = command.finish, .motion = command.action == BP_DRIVEBASE_TIMED ? DRIVEBASE_TIMED :
+				command.action == BP_DRIVEBASE_TURN ? DRIVEBASE_ABSOLUTE_TURN : DRIVEBASE_RELATIVE};
+			if (command.action >= BP_DRIVEBASE_ARC_ANGLE && command.action <= BP_DRIVEBASE_CURVE) {
+				command_error = drivebase_arc_command(command.radius,
+					command.action == BP_DRIVEBASE_ARC_DISTANCE ? command.distance : command.angle,
+					command.action == BP_DRIVEBASE_ARC_DISTANCE, command.action == BP_DRIVEBASE_CURVE, &move);
+			} else if (command.action == BP_DRIVEBASE_TANK_ANGLE || command.action == BP_DRIVEBASE_TANK_TIME) {
+				command_error = db->setup.spike ? drivebase_tank_command(command.speed, command.turn_rate,
+					command.angle, command.action == BP_DRIVEBASE_TANK_TIME, &move) : -EINVAL;
+			}
+			if (!command_error) command_error = drivebase_control_command(&db->controller, now * 10, &state, &move);
+			if (!command_error) {
+				for (size_t i = 0; i < 2; i++) pbio_control_stop(&db->motor[i]->controller.control);
+			}
+		}
+	}
+	bool active = !err && drivebase_control_active(&db->controller);
+	struct drivebase_reference reference;
+	if (active) err = drivebase_control_step(&db->controller, now * 10, &state, &reference);
+	struct bp_drivebase_state value = {0};
+	if (!err) {
+		int32_t distance_scale = db->controller.control[0].settings.ctl_steps_per_app_step;
+		int32_t heading_scale = db->controller.control[1].settings.ctl_steps_per_app_step;
+		int64_t distance = ((int64_t)state.axis[0].position.rotations * 360000 + state.axis[0].position.millidegrees) / distance_scale;
+		int64_t heading = ((int64_t)state.axis[1].position.rotations * 360000 + state.axis[1].position.millidegrees) / heading_scale;
+		if (distance <= INT32_MIN || distance >= INT32_MAX || heading <= INT32_MIN || heading >= INT32_MAX) err = -ERANGE;
+		else value = (struct bp_drivebase_state){.sample_ms = now,
+			.distance = pbio_control_settings_ctl_to_app_long(&db->controller.control[0].settings, &state.axis[0].position),
+			.heading = pbio_control_settings_ctl_to_app_long(&db->controller.control[1].settings, &state.axis[1].position),
+			.speed = state.axis[0].speed / distance_scale, .turn_rate = state.axis[1].speed / heading_scale,
+			.angle = ((int64_t)state.axis[1].position.rotations * 360000 + state.axis[1].position.millidegrees) / (float)heading_scale,
+			.active = drivebase_control_active(&db->controller), .done = drivebase_control_done(&db->controller),
+			.stalled = active ? reference.stalled : independently_stalled, .valid = true, .gyro = gyro};
+		drivebase_settings_get(&db->controller, &value.settings);
+	}
+	key = k_spin_lock(&lock);
+	if (db->cancelled || db->detach) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	if (err) {
+		if (!db->value.error) db->value.error = err;
+		db->value.valid = false;
+		cancel_drivebase(db->motor[0], err, false);
+	} else {
+		value.request = db->value.request;
+		value.completed = db->value.completed;
+		value.motion = db->value.motion;
+		value.pending = db->value.pending;
+		value.command_error = db->value.command_error;
+		db->value = value;
+		db->initializing = false;
+		if (active) db->reference = reference;
+		db->frame = active;
+		if (pending && !retry) {
+			db->applied = request;
+			if (request == db->value.request) db->value.command_error = command_error;
+			if (!configure && !command_error && (command.action != BP_DRIVEBASE_GYRO || gyro_change)) {
+				db->value.motion = request;
+				for (size_t i = 0; i < 2; i++) stop_motor_log(&db->motor[i]->log[BP_CONTROL_LOG], 0);
+			}
+		}
+		if (reset) for (size_t i = 0; i < 2; i++) set_motor_request(db->motor[i], BP_MOTOR_COAST, 0, 0);
+	}
+	k_spin_unlock(&lock, key);
 }
 #endif
 
@@ -772,13 +1050,20 @@ static int64_t apply_motor(uint32_t port)
 	uint8_t mode = command_pending ? m->requested_mode : m->mode;
 	bool controlled = mode >= BP_MOTOR_SPEED;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	bool paired = p->drivebase && p->drivebase->frame;
+	struct drivebase_reference paired_reference;
+	bool right = paired && p == p->drivebase->motor[1];
+	int direction = m->direction;
+	int64_t zero = m->zero_mdeg;
+	if (paired) paired_reference = p->drivebase->reference;
+	controlled |= paired;
 	bool reset = observing && p->observer_reset;
 	bool rebase = observing && p->observer_rebase;
-	int64_t next_frame = observing && !reset && !rebase ? p->control_due : 0;
+	int64_t next_frame = observing ? p->control_due : 0;
 	bool frame = observing && (!next_frame || k_uptime_get() >= next_frame || device_error);
 	/* New trajectories join the existing sample cadence. Direct coast/brake
 	 * and duty take effect immediately, without advancing the model early. */
-	if (controlled && observing && !frame) {
+	if (observing && !frame && (controlled || reset || rebase)) {
 		k_spin_unlock(&lock, key);
 		return next_frame;
 	}
@@ -819,7 +1104,7 @@ static int64_t apply_motor(uint32_t port)
 	bool logging[BP_MOTOR_LOG_COUNT];
 	uint32_t log_revision[BP_MOTOR_LOG_COUNT];
 	for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
-		logging[kind] = frame && p->log[kind].status.active && (kind == BP_MOTOR_LOG || controlled);
+		logging[kind] = frame && p->log[kind].status.active && (kind == BP_MOTOR_LOG || (controlled && !paired));
 		log_revision[kind] = p->log[kind].status.revision;
 	}
 	int64_t angle = p->sensor.angle_mdeg;
@@ -854,7 +1139,8 @@ static int64_t apply_motor(uint32_t port)
 	}
 	if (!err && controlled) {
 		err = control_frame(p, angle, command_pending ? &command : NULL,
-			&ref, &duty, &voltage, ticks, max_voltage, logging[BP_CONTROL_LOG] ? &pid_sample : NULL);
+			&ref, &duty, &voltage, ticks, max_voltage, logging[BP_CONTROL_LOG] ? &pid_sample : NULL,
+			paired ? &paired_reference : NULL, right, direction, zero);
 		passive = ref.coast;
 	}
 #endif
@@ -896,7 +1182,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 	p->control_due = !err && observing ? next_frame : 0;
 	struct bp_servo_trajectory trajectory = {0};
-	if (!err && observing && (frame || command_pending)) motor_control_trajectory_get(&p->controller, &trajectory);
+	if (!err && observing && !paired && (frame || command_pending)) motor_control_trajectory_get(&p->controller, &trajectory);
 #endif
 	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
 	key = k_spin_lock(&lock);
@@ -953,6 +1239,9 @@ static int64_t apply_motor(uint32_t port)
 	}
 	if (m->valid && (output || err)) {
 		m->mode = err || passive ? BP_MOTOR_COAST : controlled && !m->control.active ? BP_MOTOR_DUTY : mode;
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+		if (paired && !err && !passive) m->mode = BP_MOTOR_DUTY;
+#endif
 		m->duty = err || passive ? 0 : duty;
 		m->applied_ms = k_uptime_get();
 		m->deadline_ms = !err && mode == BP_MOTOR_DUTY && duration ? m->applied_ms + duration : 0;
@@ -970,6 +1259,55 @@ static int64_t apply_motor(uint32_t port)
 	k_spin_unlock(&lock, key);
 	return deadline;
 }
+
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+static void finish_drivebase(struct drivebase *db)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (!db->owner) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	int err = 0;
+	if (db->frame || (db->value.pending && db->applied == db->value.request)) {
+		for (size_t i = 0; i < 2; i++) {
+			const struct bp_motor_state *m = &db->motor[i]->motor;
+			if (!err) err = m->error ? m->error : m->cleanup_error;
+		}
+		if (err) {
+			if (!db->value.error) db->value.error = err;
+			db->value.valid = false;
+			cancel_drivebase(db->motor[0], err, false);
+		}
+	}
+	bool cancelled = db->cancelled;
+	k_spin_unlock(&lock, key);
+	/* If either output failed, coast the other in this same worker pass. The
+	 * ordinary path owns PWM, observer timing and first-error preservation.
+	 * Concurrent single-Motor replacements remain queued on their own port. */
+	if (cancelled) {
+		for (size_t i = 0; i < 2; i++) apply_motor(db->motor[i] - ports);
+	}
+	key = k_spin_lock(&lock);
+	bool pending = false;
+	for (size_t i = 0; i < 2; i++) {
+		const struct bp_motor_state *m = &db->motor[i]->motor;
+		pending |= m->pending;
+		if (!db->value.cleanup_error) db->value.cleanup_error = m->cleanup_error;
+	}
+	if (!pending) {
+		if (db->value.pending && db->applied == db->value.request) {
+			db->value.completed = db->value.request;
+			db->value.pending = false;
+		}
+		if (db->detach) {
+			for (size_t i = 0; i < 2; i++) db->motor[i]->drivebase = NULL;
+			db->owner = BP_PORT_UNOWNED;
+		}
+	}
+	k_spin_unlock(&lock, key);
+}
+#endif
 
 /* The worker owns pinmux and UART configuration. Reads are admitted only in
  * ACTIVE; marking CONFIGURE/CLOSE excludes them before touching the driver.
@@ -1058,12 +1396,24 @@ static void scan(struct k_work *item)
 			ports[i].next_ms = k_uptime_get() + (err ? RETRY_MS : SETTLE_MS);
 		}
 		next = MIN(next, ports[i].next_ms);
+	}
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	/* Acquire both encoders before computing a pair; neither motor advances
+	 * its observer until the common reference has been calculated. */
+	int64_t now = k_uptime_get();
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) prepare_drivebase(&drivebases[i], now);
+#endif
+	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		if (!pins[i][P5].port) continue;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool serial = ports[i].serial != SERIAL_OFF;
 		k_spin_unlock(&lock, key);
 		int64_t deadline = serial ? 0 : apply_motor(i);
 		if (deadline) next = MIN(next, deadline);
 	}
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) finish_drivebase(&drivebases[i]);
+#endif
 	if (!atomic_get(&stopping) && next != INT64_MAX) {
 		k_work_schedule_for_queue(PORT_QUEUE, &work,
 			IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL) ? K_TIMEOUT_ABS_MS(next) :
@@ -1601,6 +1951,13 @@ int hub_ports_release(enum bp_port_owner owner)
 			if (!result) result = ports[i].pf_error;
 			if (!ports[i].motor.pending && !result) result = ports[i].motor.cleanup_error;
 		}
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+		/* Drop even an idle pair before the next application can claim its
+		 * ports; detached numerical state is retired by the worker. */
+		for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+			pending |= drivebases[i].owner == owner && drivebases[i].detach;
+		}
+#endif
 		k_spin_unlock(&lock, key);
 		/* Eight outputs already need 2 s of settling, before selection and
 		 * bounded UART waits. Feed only for a completed coast, never for a
@@ -1652,6 +2009,9 @@ int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	if (!err) err = p->motor.pending || p->motor.control.active ? -EBUSY : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+		cancel_drivebase(p, -ENODEV, true);
+#endif
 		p->owner = p->sensor.owner = owner;
 		p->motor.direction = direction;
 		p->motor.gear_ratio = 0;
@@ -1758,6 +2118,7 @@ int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	}
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
+		cancel_drivebase(p, -ENODEV, true);
 		p->owner = p->sensor.owner = owner;
 		p->motor.direction = setup->direction;
 		p->motor.gear_ratio = setup->gear_ratio;
@@ -1866,6 +2227,164 @@ static int servo_control_error(struct port *p, uint32_t generation)
 	if (!p->settings_ready || p->observation_revision != p->geometry_revision) return -EAGAIN;
 	return control_input_error(p);
 }
+
+static struct drivebase *find_drivebase(enum bp_port_owner owner, uint32_t handle)
+{
+	if (!handle || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+		if (drivebases[i].handle == handle && drivebases[i].owner == owner) return &drivebases[i];
+	}
+	return NULL;
+}
+
+int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle)
+{
+	if (!setup || !handle || setup->ports[0] >= BP_PORT_COUNT || setup->ports[1] >= BP_PORT_COUNT ||
+	    setup->ports[0] == setup->ports[1] || setup->spike > 1 ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p[2] = {&ports[setup->ports[0]], &ports[setup->ports[1]]};
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : 0;
+	for (size_t i = 0; i < 2 && !err; i++) {
+		err = servo_control_error(p[i], setup->generations[i]);
+		if (!err && (p[i]->owner != owner || p[i]->drivebase || p[i]->motor.pending || p[i]->motor.releasing)) err = -EBUSY;
+	}
+	if (!err && p[0]->motor.gear_ratio != p[1]->motor.gear_ratio) err = -EINVAL;
+	int32_t scales[2];
+	if (!err) err = drivebase_control_scales(p[0]->motor.gear_ratio, setup->wheel_um, setup->track_um, setup->spike, scales);
+	struct drivebase *db = NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases) && !db; i++) if (!drivebases[i].owner) db = &drivebases[i];
+	if (!err && !db) err = -ENOSPC;
+	if (!err && drivebase_handle == UINT32_MAX) err = -EOVERFLOW;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			*db = (struct drivebase){.motor = {p[0], p[1]}, .owner = owner, .setup = *setup,
+				.handle = ++drivebase_handle, .initializing = true,
+				.value = {.request = 1, .pending = true}};
+			for (size_t i = 0; i < 2; i++) {
+				set_motor_request(p[i], BP_MOTOR_COAST, 0, 0);
+				p[i]->drivebase = db;
+				stop_motor_log(&p[i]->log[BP_CONTROL_LOG], 0);
+			}
+			*handle = db->handle;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *value)
+{
+	if (!value) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	if (db) {
+		*value = db->value;
+		if (value->valid && !value->error && k_uptime_get() - value->sample_ms >= 2 * CONTROL_MS) {
+			value->error = -ETIMEDOUT;
+			value->valid = false;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return db ? 0 : -ENODEV;
+}
+
+int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_command *command, uint32_t *request)
+{
+	if (!command || !request || command->action > BP_DRIVEBASE_TANK_TIME ||
+	    command->finish > BP_MOTOR_FINISH_BRAKE_SMART || command->gyro > 1) return -EINVAL;
+	if (command->action == BP_DRIVEBASE_GYRO && command->gyro && !IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : !db || db->detach ? -ENODEV : db->initializing ||
+		(db->value.pending && command->action != BP_DRIVEBASE_COAST && command->action != BP_DRIVEBASE_BRAKE) ? -EBUSY : 0;
+	if (!err && db->value.error) err = db->value.error;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			db->command = *command;
+			db->configure = false;
+			db->value.command_error = 0;
+			db->value.pending = true;
+			*request = ++db->value.request;
+			if (command->action == BP_DRIVEBASE_COAST || command->action == BP_DRIVEBASE_BRAKE) {
+				/* Cancel a calculation already outside the lock before it can
+				 * publish another paired output after this stop was accepted. */
+				db->cancelled = true;
+				db->frame = false;
+				db->applied = *request;
+				db->value.motion = *request;
+				db->value.active = false;
+				db->value.done = true;
+				for (size_t i = 0; i < 2; i++) set_motor_request(db->motor[i],
+					command->action == BP_DRIVEBASE_COAST ? BP_MOTOR_COAST : BP_MOTOR_DUTY, 0, 0);
+			}
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_settings *settings, uint32_t *request)
+{
+	if (!settings || !request) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : !db || db->detach ? -ENODEV :
+		db->value.pending ? -EBUSY : db->value.error;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			db->settings = *settings;
+			db->configure = true;
+			db->value.command_error = 0;
+			db->value.pending = true;
+			*request = ++db->value.request;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = !db ? -ENODEV : k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+	if (err >= 0) {
+		cancel_drivebase(db->motor[0], -ECANCELED, true);
+		err = 0;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+bool hub_drivebase_uses_gyro(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool used = false;
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+		const struct drivebase *db = &drivebases[i];
+		used |= db->owner && !db->detach && db->value.gyro && (db->value.active || db->value.pending);
+	}
+	k_spin_unlock(&lock, key);
+	return used;
+}
+#else
+bool hub_drivebase_uses_gyro(void) { return false; }
+int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle) { return -ENOTSUP; }
+int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state) { return -ENOTSUP; }
+int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_command *command, uint32_t *request) { return -ENOTSUP; }
+int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
+	const struct bp_drivebase_settings *settings, uint32_t *request) { return -ENOTSUP; }
+int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle) { return -ENOTSUP; }
 #endif
 
 int hub_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
@@ -1985,6 +2504,8 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
 	int err = servo_control_error(p, generation);
+	if (!err && kind == BP_CONTROL_LOG && p->drivebase &&
+	    (p->drivebase->value.active || p->drivebase->value.pending)) err = -EBUSY;
 	if (!err && (p->motor.releasing || p->owner != owner ||
 	    (log->owner && log->owner != owner))) err = -EBUSY;
 	if (!err) {

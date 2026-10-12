@@ -78,9 +78,15 @@ static void command_check(int err)
 static void configure(const struct bp_imu_command *command)
 {
 	int err;
-	while ((err = bp_imu_configure(command)) == -EBUSY) mp_hal_delay_ms(1);
-	command_check(err);
 	struct bp_imu_application_state state;
+	while ((err = bp_imu_configure(command)) == -EBUSY) {
+		python_device_check(bp_imu_get_application(&state));
+		/* Retry a queued frame update, but do not wait indefinitely for a
+		 * DriveBase that needs this same application to stop using the gyro. */
+		if (!state.pending) break;
+		mp_hal_delay_ms(1);
+	}
+	command_check(err);
 	do {
 		python_device_check(bp_imu_get_application(&state));
 		if (state.pending) mp_hal_delay_ms(1);

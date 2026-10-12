@@ -45,6 +45,16 @@ static void configured(motor_obj_t *self, struct bp_motor_state *value)
 	if (value->owner != BP_PORT_APPLICATION || !value->direction) check(-ENODEV);
 }
 
+void python_motor_connection(mp_obj_t motor, uint32_t *port, uint32_t *generation)
+{
+	if (!mp_obj_is_type(motor, &python_motor_type)) mp_raise_TypeError(MP_ERROR_TEXT("expected Motor"));
+	motor_obj_t *self = MP_OBJ_TO_PTR(motor);
+	struct bp_motor_state value;
+	configured(self, &value);
+	*port = self->port;
+	*generation = self->generation;
+}
+
 static void applied(motor_obj_t *self, uint32_t request)
 {
 	for (;;) {

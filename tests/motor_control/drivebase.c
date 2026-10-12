@@ -237,7 +237,7 @@ ZTEST(drivebase, test_rejected_configuration_and_conversion_edges)
 	advance(f, 0, &reference, output);
 	zassert_not_equal(drivebase_control_init(&f->db, &f->motor[0].control.settings,
 		&f->motor[1].control.settings, 1000, 1, 112000, false), 0);
-	struct drivebase_settings before, invalid, after;
+	struct bp_drivebase_settings before, invalid, after;
 	drivebase_settings_get(&f->db, &before);
 	invalid = before;
 	invalid.turn_rate = 0;

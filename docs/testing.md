@@ -582,8 +582,23 @@ motor stopping or service jitter on the hub.
 The same numerical fixture covers the drivebase computation with two independent
 synthetic shafts: straight/turn/arc motion, synchronized trajectories, hold
 feedback, timed pair completion, long origins, rejected second-axis commands and
-configuration, and tank/steering signs. These cases do not exercise paired port
-ownership, scheduling, gyro acquisition or Python bindings, which remain pending.
+configuration, and tank/steering signs. `tests/drivebase` checks the paired port
+worker with two synthetic UART encoders and PWM-driven shafts: ownership,
+settings without motion replacement, individual-motor takeover, hotplug,
+reconstruction, rejected setup and stopping both outputs after one PWM failure.
+`tests/test_python_drivebase.py` uses the IMU-enabled protected ARM fixture for
+binding units, gyro reset/configuration exclusion, blocking/awaitable completion,
+rejected replacement, cancellation and supervised cleanup. These checks do not
+establish physical paired-motion accuracy or gyro reliability.
+
+Build fixtures separately; the focused checks below do not rebuild them:
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/drivebase -d build/drivebase-tests
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+build/drivebase-tests/zephyr/zephyr.exe
+uv run --locked pytest -q tests/test_python_drivebase.py
+```
 
 An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:
 

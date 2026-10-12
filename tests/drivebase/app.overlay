@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "../ports/ports.dtsi"
+#include "../ports/motor-pwm.dtsi"
+/ {
+	left_uart: left-uart {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <1024>;
+		tx-fifo-size = <128>;
+	};
+	right_uart: right-uart {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <1024>;
+		tx-fifo-size = <128>;
+	};
+};
+&hub_ports {
+	port@0 { uart = <&left_uart>; };
+	port@1 { uart = <&right_uart>; };
+};
+adc1: &adc0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	ref-internal-mv = <3300>;
+	nchannels = <12>;
+};
+#include "../../boards/lego/spike_prime_f4/battery.dtsi"
