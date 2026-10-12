@@ -2,6 +2,7 @@
 """Imports and atomic Python installation through the production ARM/SMP path."""
 
 import asyncio
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,8 +14,10 @@ from smpclient.requests.file_management import FileUpload
 from test_native import native_console
 from test_python import completed, output
 
+from brickphyrdev import console
 from brickphyrdev.application import (
     Format,
+    Input,
     Output,
     Publish,
     Remove,
@@ -116,6 +119,69 @@ print('native import recovered')
                 assert b"truncated import caught" in text
             finally:
                 await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+def test_python_file_map_releases_system_heap():
+    source = b"""import native_module
+assert native_module.add(30) == 42
+print('ready')
+input()
+print('returned 42')
+"""
+    entries = {
+        "main.py": source,
+        "native_module.mpy": (BUILD / "python-fixtures/native_module.mpy").read_bytes(),
+        "payload.bin": b"x",
+    }
+    # A full-size synthetic bundle retains a resource alongside real native code.
+    entries["payload.bin"] = b"x" * (32768 - len(cbor2.dumps(entries)) - 1)
+    image = cbor2.dumps(entries)
+    assert len(image) == 32768
+
+    async def exercise(port):
+        shell = bytearray()
+        async with console.connection(shell.extend, management=True, port=port) as (
+            transport,
+            client,
+        ):
+            async def heap_allocated():
+                shell.clear()
+                await transport.write(b"kernel heap\r")
+                async with asyncio.timeout(2):
+                    while not shell.endswith(b"brickphyr> "):
+                        await asyncio.sleep(0.005)
+                match = re.search(rb"\r\nallocated:\s+(\d+)", shell)
+                assert match, bytes(shell)
+                return int(match[1])
+
+            baseline = await heap_allocated()
+            for stored in (False, True):
+                if stored:
+                    await install(client, image, "memory", Format.FILES)
+                    await checked(client, RunStored(name="memory"))
+                else:
+                    await upload(client, transport, image, Format.FILES)
+                    await checked(client, Start())
+                text = bytearray()
+                async with asyncio.timeout(3):
+                    while b"ready\r\n" not in text:
+                        text.extend(await output(client))
+                        status = await checked(client, Status())
+                        assert status.state == 1, (status, bytes(text))
+                        await asyncio.sleep(0.005)
+                assert await heap_allocated() > baseline
+                await checked(client, Input(data=b"\n"))
+                status = await completed(client)
+                text.extend(await output(client))
+                assert status.result == status.cleanup == 0, (status, bytes(text))
+                assert b"returned 42" in text, bytes(text)
+                await checked(client, Stop())
+                assert await heap_allocated() == baseline
+                if stored:
+                    await checked(client, Remove(name="memory"))
 
     with native_console(BUILD) as port:
         asyncio.run(exercise(port))

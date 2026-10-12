@@ -323,6 +323,27 @@ the selected isolation policy explicit. Inactive engines should not each reserve
 their maximum heap. The first resource figures must identify board, configuration,
 compiler settings, and instrumentation.
 
+### Memory diagnostics
+
+Append `boards/spike_prime_f4_memory.conf` to the F4 build's existing
+`EXTRA_CONF_FILE` list to enable Zephyr's kernel Shell and heap counters. For
+example, the full Python profile uses:
+
+```sh
+uv run west build -b spike_prime_f4/stm32f413xx -d build/python-memory . -- -DEXTRA_CONF_FILE='boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_memory.conf'
+```
+
+Run `kernel heap` before loading, after loading and after application cleanup.
+The peak counter persists until reboot; a fresh boot separates unrelated workloads.
+Use `app status` for application stack/native-code figures and Python's
+`gc.mem_free()`/`gc.mem_alloc()` for its own heap. See
+[the memory boundaries](applications.md#experimental-python-profile).
+
+This fragment also exposes upstream kernel commands such as `kernel reboot`,
+which bypass Brickphyr's supervised shutdown. Use the ordinary `reboot` command
+to preserve its application cleanup and user-data saving behavior. The diagnostic
+fragment is not part of the normal Python profile.
+
 ## Acceptance milestones
 
 Continue from the existing F4 image, USB shell, image/package checks, and native

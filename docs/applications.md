@@ -158,6 +158,24 @@ MicroPython margin. These are admission limits, not guarantees that every image
 within them has enough compiler memory or stack. Status reports an execution error
 or protection fault when applicable.
 
+The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
+Zephyr's `kernel heap` Shell command. It reports
+current free/allocated system-heap bytes and the allocation high-water mark since
+boot. This heap holds uploads, package conversion buffers and executable native
+code; its free bytes are not the Python GC budget. In REPL, `gc.mem_free()` and
+`gc.mem_alloc()` report the separate GC heap. Use `app status` after a program
+ends to inspect its stack high-water and native-code usage. A live application's
+`unused` stack field is not a current stack measurement.
+
+Measure cold upload, start and cleanup separately. Pybricks normalization briefly
+retains both incoming module records and the common file map. A completed upload
+or a linker report alone cannot establish this peak. Heap counters also do not
+report the largest contiguous allocation or prove absence of fragmentation.
+ARM/QEMU checks exercise a synthetic 32 KiB bundle with a native import through
+RAM and stored starts and verify system-heap reclamation. Its fixture has the
+same heap/arena sizes, but does not establish F4 USB/BLE driver overhead or the
+compiler requirements of other programs.
+
 Output uses the shared [bounded queue](#python-input-and-output), with flow control
 for subscribed Pybricks output and counted overflow for detached logging.
 Upload admission checks the format envelope; Python parsing and full
