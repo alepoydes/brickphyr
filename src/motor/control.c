@@ -228,12 +228,13 @@ int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_comman
     if (command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
         command->speed_mdeg_s < -d->rated_max_speed * 1000 ||
         command->speed_mdeg_s > d->rated_max_speed * 1000) return -EINVAL;
-    if (command->action > BP_MOTOR_UNTIL_STALLED ||
-        (command->action == BP_MOTOR_UNTIL_STALLED &&
+    bool until_stalled = command->action == BP_MOTOR_UNTIL_STALLED || command->action == BP_MOTOR_UNTIL_STALLED_TORQUE;
+    if (command->action > BP_MOTOR_UNTIL_STALLED_TORQUE ||
+        (until_stalled &&
          (command->duty_limit < -1 || command->duty_limit > 1000 ||
           command->finish == BP_MOTOR_FINISH_CONTINUE))) return -EINVAL;
     if (command->action != BP_MOTOR_TRAJECTORY &&
-        (command->mode != ((command->action == BP_MOTOR_TIMED || command->action == BP_MOTOR_UNTIL_STALLED) ?
+        (command->mode != ((command->action == BP_MOTOR_TIMED || until_stalled) ?
          BP_MOTOR_SPEED : BP_MOTOR_POSITION))) return -EINVAL;
     pbio_angle_t checked;
     int err = angle_from_mdeg(angle, &checked);
@@ -533,7 +534,7 @@ int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t a
     if (command->action == BP_MOTOR_TIMED) {
         return run_duration(motor, ticks, angle, speed, command->duration_ms, finish, false);
     }
-    if (command->action == BP_MOTOR_UNTIL_STALLED) {
+    if (command->action == BP_MOTOR_UNTIL_STALLED || command->action == BP_MOTOR_UNTIL_STALLED_TORQUE) {
         /* Smart endpoints belong to finite angle moves. Waiting for the end
          * of a forever trajectory after stall would keep driving the stop. */
         if (finish == PBIO_CONTROL_ON_COMPLETION_COAST_SMART) finish = PBIO_CONTROL_ON_COMPLETION_COAST;
@@ -544,6 +545,8 @@ int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t a
         motor->control.on_completion = motor->timed_hold ? PBIO_CONTROL_ON_COMPLETION_BRAKE : finish;
         motor->control.type |= PBIO_CONTROL_TYPE_FLAG_OBJECTIVE_IS_STALL;
         if (command->duty_limit >= 0) motor->control.settings.actuation_max_temporary =
+            command->action == BP_MOTOR_UNTIL_STALLED_TORQUE ?
+            (int64_t)motor->control.settings.actuation_max * command->torque_limit / 1000 :
             pbio_observer_voltage_to_torque(motor->observer.model, battery_mv * command->duty_limit / 1000);
         return 0;
     }

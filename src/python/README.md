@@ -162,6 +162,12 @@ from the same revision. Model changes cross that shared settings boundary;
 both independent logger buffers belong to the firmware, and their shared CSV
 export implementation uses application stdout.
 
+`car.c` adapts `pybricks/robotics/pb_type_car.c` at the same revision. The
+reference end-stop calibration, steering margin and drive-power mapping use the
+protected motor commands, with a torque-percentage variant of the existing stall
+objective. Request tokens limit error cleanup to this object's commands; there
+is no second servo loop or hardware driver.
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, charger observations, internal color-light, light-matrix, speaker, system
 and IMU bindings from Pybricks

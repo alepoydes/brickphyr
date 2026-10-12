@@ -40,6 +40,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
       ${CMAKE_CURRENT_SOURCE_DIR}/pupdevice.c ${CMAKE_CURRENT_SOURCE_DIR}/pupsensors.c
       ${CMAKE_CURRENT_SOURCE_DIR}/pupaccessories.c ${CMAKE_CURRENT_SOURCE_DIR}/uartdevice.c
       ${CMAKE_CURRENT_SOURCE_DIR}/motor.c ${CMAKE_CURRENT_SOURCE_DIR}/robotics.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/car.c
       ${pybricks}/pybricks/hubs/pb_module_hubs.c
       ${pybricks}/pybricks/common/pb_type_keypad.c
       ${pybricks}/pybricks/common/pb_type_colorlight_external.c

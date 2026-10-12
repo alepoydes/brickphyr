@@ -775,7 +775,49 @@ two phases and cancellation; protected ARM checks cover its wait/await behavior
 and SpikeBase's wheel directions, timed completion and interruption. Physical
 paired motion and gyro accuracy remain unverified. Protected ARM checks also
 cover shared control settings, trajectory preservation, CSV units, retained rows
-and log-memory cleanup. `Car` remains required work.
+and log-memory cleanup.
+
+## Car steering and drive
+
+`pybricks.robotics.Car(steer_motor, drive_motors, torque_limit=100)` uses the
+same native Motor controllers. `drive_motors` accepts one Motor or a list/tuple
+of up to five, on distinct ports from each other and the steering motor.
+Construction moves the steering motor to both mechanical end stops at
+300 degrees/s, resets the midpoint to zero and starts tracking that center.
+It returns after accepting the center target, without waiting to reach it.
+Construct the car before starting `run_task`.
+
+`torque_limit` is a percentage of the steering motor's configured maximum
+torque, not battery voltage. Each end-stop search times out after ten seconds;
+an interrupted or failed search coasts its command. A steering half-range
+smaller than the ten-degree margin is rejected. Use a mechanism with real
+end stops and a suitable torque limit; construction actively moves it.
+
+- `steer(percentage)` selects −100…100% of the calibrated range, leaving ten
+  degrees before each end stop.
+- `drive_power(power)` accepts −100…100. Values with magnitude below 10 coast;
+  other values use Pybricks' friction-compensated duty mapping.
+- `drive_speed(speed)` runs every drive motor at the given output degrees/s,
+  respecting its direction, gearing and control limits.
+
+The motors retain independent controllers. They do not form a synchronized
+DriveBase pair. Errors detected during a Car operation coast commands still
+owned by that object, preserving newer commands issued through other objects.
+Between Car calls, device faults are handled per port; another drive motor may
+continue running. The application supervisor releases all ports on program exit
+or forced stop. `drive_power(0)` stops the drive by coasting; steering keeps its
+target until replaced or the application ends.
+
+Native programs select `BP_SERVO_UNTIL_STALLED_TORQUE` and `torque_limit` in
+`bp_servo_move` for the same torque-capped search. The limit is 0…1000 permille
+of configured torque, or −1 for the full configured limit. The existing
+`BP_SERVO_UNTIL_STALLED` retains its battery-relative `duty_limit` semantics.
+
+Numerical checks cover torque saturation, stall completion and restoration of
+the configured limit for subsequent commands. Protected ARM checks exercise
+calibration, steering targets, drive commands, interruption and application
+cleanup with synthetic UART encoders. These encoders move independently of PWM;
+physical steering calibration, torque and vehicle behavior remain unverified.
 
 ## Speed and position control
 

@@ -2766,10 +2766,10 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 #else
 	if (port >= BP_PORT_COUNT || !command || !request ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) ||
-	    command->action > BP_SERVO_UNTIL_STALLED || command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
+	    command->action > BP_SERVO_UNTIL_STALLED_TORQUE || command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
 	    command->duration_ms >= PBIO_TRAJECTORY_DURATION_FOREVER_MS ||
 	    (command->action != BP_SERVO_TIME && command->duration_ms) ||
-	    (command->action == BP_SERVO_UNTIL_STALLED &&
+	    ((command->action == BP_SERVO_UNTIL_STALLED || command->action == BP_SERVO_UNTIL_STALLED_TORQUE) &&
 	     (command->finish == BP_MOTOR_FINISH_CONTINUE || command->duty_limit < -1 || command->duty_limit > 1000))) return -EINVAL;
 	struct bp_battery_sample battery;
 	int err = hub_battery_get(&battery);
@@ -2793,8 +2793,10 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	case BP_SERVO_RUN:
 	case BP_SERVO_TIME:
 	case BP_SERVO_UNTIL_STALLED:
+	case BP_SERVO_UNTIL_STALLED_TORQUE:
 		raw.mode = BP_MOTOR_SPEED;
 		raw.action = command->action == BP_SERVO_TIME ? BP_MOTOR_TIMED :
+			command->action == BP_SERVO_UNTIL_STALLED_TORQUE ? BP_MOTOR_UNTIL_STALLED_TORQUE :
 			command->action == BP_SERVO_UNTIL_STALLED ? BP_MOTOR_UNTIL_STALLED : BP_MOTOR_TRAJECTORY;
 		if (command->action == BP_SERVO_RUN) raw.finish = BP_MOTOR_FINISH_CONTINUE;
 		break;

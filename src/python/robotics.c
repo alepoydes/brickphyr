@@ -458,6 +458,7 @@ static const mp_rom_map_elem_t robotics_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_robotics)},
 	{MP_ROM_QSTR(MP_QSTR_DriveBase), MP_ROM_PTR(&drivebase_type)},
 	{MP_ROM_QSTR(MP_QSTR_SpikeBase), MP_ROM_PTR(&spike_type)},
+	{MP_ROM_QSTR(MP_QSTR_Car), MP_ROM_PTR(&python_car_type)},
 };
 static MP_DEFINE_CONST_DICT(robotics_dict, robotics_globals);
 const mp_obj_module_t pb_module_robotics = {{&mp_type_module}, (mp_obj_dict_t *)&robotics_dict};

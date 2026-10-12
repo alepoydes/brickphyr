@@ -71,6 +71,11 @@ static void applied(motor_obj_t *self, uint32_t request)
 	}
 }
 
+void python_motor_applied(mp_obj_t motor, uint32_t request)
+{
+	applied(MP_OBJ_TO_PTR(motor), request);
+}
+
 /* Parse single or compounded gear trains using Python integers so valid ratios
  * do not overflow intermediate products. Interior gears do not change ratio. */
 static int32_t gear_ratio(mp_obj_t gears)

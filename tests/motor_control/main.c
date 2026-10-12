@@ -230,6 +230,35 @@ ZTEST(motor_control, test_servo_motion_commands)
 	}
 }
 
+ZTEST(motor_control, test_stall_torque_limit)
+{
+	/* Car limits configured torque, independently of battery voltage. A fixed
+	 * encoder exercises saturation and stall completion in the real controller. */
+	for (int32_t voltage = 6000; voltage <= 9000; voltage += 3000) {
+		struct motor_control motor;
+		zassert_ok(motor_control_init(&motor, 48, 0));
+		motor.control.settings.actuation_max = 100000; /* 100 mNm */
+		struct bp_motor_command command = {.mode = BP_MOTOR_SPEED,
+			.action = BP_MOTOR_UNTIL_STALLED_TORQUE, .speed_mdeg_s = -300000,
+			.finish = BP_MOTOR_FINISH_COAST, .torque_limit = 500};
+		zassert_ok(motor_control_check(48, 0, &command));
+		zassert_ok(motor_control_command(&motor, 0, 0, &command, voltage));
+		struct motor_reference out;
+		bool saturated = false;
+		for (uint32_t ticks = 0; ticks < 30000; ticks += 50) {
+			zassert_ok(motor_control_step(&motor, ticks, 0, &out, NULL));
+			zassert_true(abs(out.feedback_torque) <= 50000);
+			if (out.feedback_torque == -50000) saturated = true;
+			zassert_ok(motor_control_predict(&motor, ticks, 0, out.coast, out.voltage_mv));
+			if (out.done) break;
+		}
+		zassert_true(saturated && out.done && out.coast && !out.active);
+		zassert_equal(motor.control.settings.actuation_max, 100000);
+		zassert_ok(motor_control_run(&motor, 30000, 0, 100000, 0, PBIO_CONTROL_ON_COMPLETION_CONTINUE));
+		zassert_equal(motor.control.settings.actuation_max_temporary, 100000);
+	}
+}
+
 ZTEST(motor_control, test_settings_during_motion)
 {
 	struct motor_control motor;

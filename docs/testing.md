@@ -591,6 +591,12 @@ binding units, gyro reset/configuration exclusion, blocking/awaitable completion
 rejected replacement, cancellation and supervised cleanup. These checks do not
 establish physical paired-motion accuracy or gyro reliability.
 
+`tests/test_python_car.py` uses that same ARM image with host-controlled encoder
+travel and stationary end stops. It checks calibration, steering targets, drive
+power/speed, interrupted calibration and cleanup. It does not model mechanical
+torque or steering dynamics. The numerical motor fixture separately checks the
+torque cap and stall completion at different battery voltages.
+
 Build fixtures separately; the focused checks below do not rebuild them:
 
 ```sh
@@ -598,6 +604,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 build/drivebase-tests/zephyr/zephyr.exe
 uv run --locked pytest -q tests/test_python_drivebase.py
+uv run --locked pytest -q tests/test_python_car.py
 ```
 
 An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:

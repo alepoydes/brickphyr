@@ -8,14 +8,16 @@ enum bp_motor_finish { BP_MOTOR_FINISH_COAST, BP_MOTOR_FINISH_BRAKE,
 	BP_MOTOR_FINISH_HOLD, BP_MOTOR_FINISH_CONTINUE,
 	BP_MOTOR_FINISH_COAST_SMART, BP_MOTOR_FINISH_BRAKE_SMART };
 enum bp_motor_action { BP_MOTOR_TRAJECTORY, BP_MOTOR_TIMED, BP_MOTOR_RELATIVE,
-	BP_MOTOR_TRACK, BP_MOTOR_HOLD, BP_MOTOR_UNTIL_STALLED };
+	BP_MOTOR_TRACK, BP_MOTOR_HOLD, BP_MOTOR_UNTIL_STALLED, BP_MOTOR_UNTIL_STALLED_TORQUE };
 
 struct bp_motor_command {
 	int64_t target_mdeg; /* POSITION: physical angle, or displacement for RELATIVE; SPEED: zero */
 	int32_t speed_mdeg_s; /* SPEED: signed; POSITION: positive, zero uses model limit */
 	uint32_t duration_ms; /* SPEED: 1..299999; zero is forever except TIMED; POSITION: zero */
 	uint8_t mode, finish, action;
-	int16_t duty_limit; /* UNTIL_STALLED only: -1 uses control limit, else 0..1000 */
+	/* Stall actions: -1 uses the control limit; 0..1000 selects permille of
+	 * battery voltage (UNTIL_STALLED) or configured torque (_TORQUE). */
+	union { int16_t duty_limit; int16_t torque_limit; };
 };
 
 struct bp_motor_control_state {
@@ -97,11 +99,12 @@ struct bp_servo_state {
 };
 
 enum bp_servo_action { BP_SERVO_RUN, BP_SERVO_TIME, BP_SERVO_ANGLE,
-	BP_SERVO_TARGET, BP_SERVO_TRACK, BP_SERVO_HOLD, BP_SERVO_UNTIL_STALLED };
+	BP_SERVO_TARGET, BP_SERVO_TRACK, BP_SERVO_HOLD, BP_SERVO_UNTIL_STALLED, BP_SERVO_UNTIL_STALLED_TORQUE };
 struct bp_servo_command {
 	int32_t speed, angle; /* output degrees/s and degrees */
 	uint32_t duration_ms;
-	int16_t duty_limit; /* UNTIL_STALLED: -1 or 0..1000 permille */
+	/* Same stall limits and units as bp_motor_command. */
+	union { int16_t duty_limit; int16_t torque_limit; };
 	uint8_t action, finish;
 };
 
