@@ -204,6 +204,7 @@ m = Motor(Port.A, Direction.COUNTERCLOCKWISE, [12, 24])
 alias = Motor(Port.A, Direction.COUNTERCLOCKWISE, [12, 24], reset_angle=False)
 model = m.model
 assert model is m.model and m.log is m.log
+assert m.control.log is m.control.log and m.control.log is not m.log
 settings = list(model.settings())
 settings[4] += 1
 assert model.settings(settings) is None
@@ -226,17 +227,31 @@ m.close()
 # Closing the motor stops collection but retains already initialized rows.
 m.log.save('closed.csv')
 
+m = Motor(Port.A, Direction.COUNTERCLOCKWISE, [12, 24])
+m.reset_angle(15)
+m.control.log.start(40, down_sample=2)
+wait(20)
+m.control.log.save('idle-control.csv')
+m.log.start(40, down_sample=2)
+m.control.log.start(40, down_sample=2)
+m.run_time(80, 60)
+m.close()
+m.log.save('servo.csv')
+m.control.log.save('control.csv')
+
 m = Motor(Port.A)
-# This buffer exceeds half the kernel heap: a leaked copy prevents the next
-# application from starting its equally sized log after forced cleanup.
-m.log.start(4000)
+# Together these buffers occupy most of the kernel heap: leaking either
+# prevents the next application's equally sized pair after forced cleanup.
+m.log.start(2600)
+m.control.log.start(2600)
 print('ready'); input()
 """
     second = b"""
 from pybricks.pupdevices import Motor
 from pybricks.parameters import Port
 m = Motor(Port.A)
-m.log.start(4000)
+m.log.start(2600)
+m.control.log.start(2600)
 print('log memory reclaimed')
 """
 
@@ -250,19 +265,28 @@ print('log memory reclaimed')
                 await checked(client, Start())
                 text = await until(client, b"ready\r\n")
                 logs = re.findall(rb"PB_OF:([^\r\n]+)\r\n(.*?)PB_EOF\r\n", text, re.S)
-                assert [name for name, _ in logs] == [b"motor.csv", b"closed.csv"], text
+                assert [name for name, _ in logs] == [b"motor.csv", b"closed.csv", b"idle-control.csv", b"servo.csv", b"control.csv"], text
                 for name, data in logs:
                     rows = [[int(v) for v in row.split(b", ")] for row in data.splitlines()]
-                    assert len(rows) == 4 and all(len(row) == 11 for row in rows), rows
+                    if name == b"idle-control.csv":
+                        assert rows == [], rows
+                        continue
+                    columns = 13 if name == b"control.csv" else 11
+                    assert len(rows) == 4 and all(len(row) == columns for row in rows), rows
                     assert all(row[2] == 15 and row[3] == 0 for row in rows), rows
-                    period = 10 if name == b"motor.csv" else 5
+                    period = 5 if name == b"closed.csv" else 10
                     assert all(b[0] - a[0] == period and b[1] - a[1] == period * 10
                                for a, b in zip(rows, rows[1:])), rows
                     if name == b"motor.csv":
                         assert all(row[4] & 3 == 2 and row[5] > 0 for row in rows), rows
                         assert all(row[8] == row[9] == 0 for row in rows), rows
-                    else:
+                    elif name == b"closed.csv":
                         assert all(row[4] & 3 == 0 and row[5] == 0 for row in rows), rows
+                    elif name == b"control.csv":
+                        # The fixed synthetic shaft remains at 15 output degrees;
+                        # its positive command/torque must survive CCW+2:1 conversion.
+                        assert rows[-1][6] > 15 and all(row[7] > 0 for row in rows), rows
+                        assert all(row[5] > 0 and row[10] > 0 and row[12] > 0 for row in rows), rows
                 await checked(client, Stop())
                 await completed(client, state=3)
                 await motor_matches(client, owner=0, mode=0, duty_permille=0)

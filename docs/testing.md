@@ -154,8 +154,11 @@ controller enabled and a synthetic encoded UART motor. It checks shared
 direction/gearing/origin, measurements, reset, timed/relative/stall motion,
 blocking/awaitable completion, alias cancellation, shared control settings,
 trajectory units/direction, settings reset and supervised stop. A separate case
-checks model aliases and shaft coordinates, CSV downsampling/output units,
-retention after close and kernel log-buffer reclamation after forced stop. The peer
+checks model aliases and shaft coordinates, simultaneous motor/controller CSV
+logs, downsampling/output units, retention after close and reclamation of both
+kernel log buffers after forced stop. The numerical motor suite checks actual
+PID terms and that enabling logging does not change control, including range
+rejection confined to the diagnostic sample. The peer
 can set a shaft angle or advance it each UART frame; it does not simulate a plant
 responding to PWM. Run the focused case with:
 

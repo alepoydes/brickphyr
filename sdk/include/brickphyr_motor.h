@@ -72,12 +72,14 @@ struct bp_motor_model_state {
 };
 
 #define BP_MOTOR_LOG_COLUMNS 11
+#define BP_CONTROL_LOG_COLUMNS 13
+enum bp_motor_log_kind { BP_MOTOR_LOG, BP_CONTROL_LOG, BP_MOTOR_LOG_COUNT };
 struct bp_motor_log_status {
 	uint32_t revision, rows, capacity;
 	int32_t error;
-	uint8_t active;
+	uint8_t active, columns;
 };
-struct bp_motor_log_row { int32_t values[BP_MOTOR_LOG_COLUMNS]; };
+struct bp_motor_log_row { int32_t values[BP_CONTROL_LOG_COLUMNS]; };
 
 /* Pybricks trajectory diagnostics: relative shaft angles in degrees, speeds in
  * degrees/s, accelerations in degrees/s² and phase times in ms. Signs follow

@@ -4,6 +4,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/pbio.cmake)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/motor/control.c
   ${pbio}/src/angle.c ${pbio}/src/trajectory.c
   ${pbio}/src/integrator.c ${pbio}/src/control_settings.c ${pbio}/src/control.c
-  ${pbio}/src/differentiator.c ${pbio}/src/observer.c)
+  ${pbio}/src/logger.c ${pbio}/src/differentiator.c ${pbio}/src/observer.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/src/motor
   ${BRICKPHYR_ROOT}/sdk/include ${BRICKPHYR_ROOT}/drivers/pybricks ${pbio}/include ${pbio}/../lego)

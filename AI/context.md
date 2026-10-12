@@ -84,8 +84,8 @@ physical PF output and other sensor acceptance remain pending. `DCMotor` has
 ARM checks for the shared native direction/voltage configuration, PWM, hotplug
 and cleanup. `Motor` adds shared gearing/origin, measurements, regulated motion,
 blocking/awaitable completion, replacement and shared `control` settings/trajectory
-checks. Model tuning/state and motor CSV logging also have synthetic checks;
-`Motor.control.log` and physical Python motor acceptance remain pending.
+checks. Model tuning/state and motor/controller CSV logging also have synthetic checks;
+physical Python motor acceptance remains pending.
 The native motor observer now continues through DC/brake/coast while claimed;
 synthetic service checks cover speed, model load/stall and feedback loss.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;

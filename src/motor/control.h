@@ -31,6 +31,11 @@ struct motor_observation {
 	bool stalled, model_stalled;
 };
 
+struct motor_pid_sample {
+	int32_t values[BP_CONTROL_LOG_COLUMNS];
+	int error;
+};
+
 struct motor_log_sample {
 	int64_t angle_mdeg, estimated_angle;
 	int32_t speed, estimated_speed, flags, voltage, feedback_torque, feedforward_torque, feedback_voltage;
@@ -60,7 +65,7 @@ int motor_control_target(struct motor_control *motor, uint32_t time_ticks, int64
 /* Call once per PBIO_CONFIG_CONTROL_LOOP_TIME_MS. The owner checks acquisition
  * validity and missed periods before calling. A rejected step never actuates. */
 int motor_control_step(struct motor_control *motor, uint32_t time_ticks, int64_t angle_mdeg,
-	struct motor_reference *result);
+	struct motor_reference *result, struct motor_pid_sample *log);
 /* Predict the next state using the successfully applied voltage, after step.
  * This is separate from requesting voltage: a failed PWM write is not applied. */
 int motor_control_predict(struct motor_control *motor, uint32_t time_ticks,

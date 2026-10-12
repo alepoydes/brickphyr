@@ -9,8 +9,8 @@ It preserves the [Pybricks MIT](../../LICENSES/Pybricks-MIT.txt) and
 `voltage.h` supplies the model voltage cap to both this controller and the
 port service's DC commands, using that same source and revision.
 
-The numerical control, trajectory, observer, integrator, differentiator, angle
-and integer-math implementations compile directly from the west dependency.
+The numerical control, trajectory, observer, integrator, differentiator, angle,
+logger and integer-math implementations compile directly from the west dependency.
 No PBIO scheduler, device driver or PBSYS service runs. The configuration disables
 the optional non-free PBSYS telemetry reached through PBIO header dependencies.
 
@@ -58,3 +58,13 @@ with validation before changing the next frame's settings. `motor_control_log_sa
 adapts the pre-prediction servo row in `servo.c`, reusing computed controller
 torques and observer feedback. The port service adapts `logger.c` downsampling
 and bounded row publication into firmware-owned memory, independently of Python GC.
+
+`motor_control_step` optionally captures one PID row through PBIO's existing
+control logger into caller-owned stack storage. The hook retains no pointer after
+the call. Its real P/I/D terms and adjusted reference require no second evaluation
+of the control law. PBIO's pinned control row width omits D; the adapter requests
+all 13 values already produced by the hook. Its int32 position conversion is
+range-checked separately from motion, so a logging overflow cannot stop a valid
+long-angle maneuver. Both log kinds share the same port-owned buffer lifecycle,
+protected row API and Python Logger implementation. PBIO tools and logging use
+the same Zephyr monotonic clock, including builds without Python.

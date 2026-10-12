@@ -592,7 +592,7 @@ defaults. These controller settings are runtime state, not persistent hub settin
 accelerations. Times are in ms. The other fields use shaft degrees and seconds,
 with the configured positive direction but without gearing. Legacy
 `control.done/load/stalled` expose controller status; `Motor.load/stalled` also
-cover passive observation. Controller logging is not exposed.
+cover passive observation.
 
 `motor.model.settings()` returns the observer's eight raw settings: stall speed
 (shaft mdeg/s), stall time (100 µs ticks), negligible feedback voltage (mV), stall
@@ -623,6 +623,27 @@ hub flash. Columns are:
 | 8, 9 | Feedback and feedforward torque, µNm |
 | 10 | Observer feedback voltage, mV |
 
+`motor.control.log` uses the same `start`, `stop` and `save` methods with an
+independent buffer (52 bytes per row). It records only regulated control updates;
+DC, brake and coast do not advance this log. Its columns are:
+
+| Index | Value |
+| --- | --- |
+| 0 | Elapsed log time, ms |
+| 1 | Time since trajectory start, 100 µs ticks |
+| 2, 6, 8 | Measured, reference and estimated output angle, degrees |
+| 3, 7, 9 | Measured, reference and estimated output speed, degrees/s |
+| 4 | Actuation in bits 0–1; stalled, complete and paused integration in bits 2–4 |
+| 5 | Requested control payload (torque in µNm for regulated actuation) |
+| 10, 11, 12 | Actual proportional, integral and derivative torque, µNm |
+
+The reference angle includes PBIO's speed-integrator pause adjustment. These
+values come from PBIO's existing logging hook, without recalculating PID terms.
+The final D column repairs an omission in the pinned reference logger's declared
+row width. Its intermediate positions use signed 32-bit shaft millidegrees;
+exceeding that range stops the control log with a range error, while motion
+continues with its existing long-angle support.
+
 The worker captures values before predicting the next state. Signed values use
 the configured direction. Logs belong to the port; aliases share them. Closing
 or disconnecting the motor stops collection and retains captured rows. A later
@@ -640,6 +661,8 @@ request. Reads and commands validate the physical connection generation. The
 existing raw motor APIs continue to use physical shaft units without applying
 this transform. `bp_servo_model_get` and `bp_motor_log_start/status/read` expose
 the same model snapshot and bounded row access without retaining user buffers.
+Select `BP_MOTOR_LOG` or `BP_CONTROL_LOG`; status reports the row width.
+Rows use only that many entries in the fixed maximum-size output structure.
 
 Protected ARM checks cover coordinate sharing, absolute/explicit reset, externally
 moved encoder feedback, motion, voltage limiting, blocking/awaitable completion,
@@ -648,9 +671,8 @@ additionally checks long-origin tracking, smart relative motion and stall-to-hol
 Settings updates, gearing, active-trajectory preservation and diagnostics also
 have numerical and protected ARM checks. Model tuning, CSV units/downsampling,
 retained logs and forced-stop memory cleanup have synthetic checks too. These
-are not physical motion or tuning measurements. `Motor.control.log` and
-coordinated robotics remain unimplemented; complete Motor compatibility has not
-been established.
+are not physical motion or tuning measurements. Coordinated robotics remains
+unimplemented; complete Motor compatibility has not been established.
 
 ## Speed and position control
 

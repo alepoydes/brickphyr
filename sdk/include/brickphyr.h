@@ -241,9 +241,9 @@ __syscall int bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct
 __syscall int bp_servo_model_get(uint32_t port, uint32_t generation, struct bp_motor_model_state *value);
 /* Motor logs own firmware RAM until restart or application cleanup. Rows are
  * immutable once published; a changed revision rejects an interrupted export. */
-__syscall int bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t duration_ms, uint32_t down_sample);
-__syscall int bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t stop, struct bp_motor_log_status *value);
-__syscall int bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t revision, uint32_t row,
+__syscall int bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t kind, uint32_t duration_ms, uint32_t down_sample);
+__syscall int bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value);
+__syscall int bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value);
 
 

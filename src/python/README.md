@@ -157,9 +157,10 @@ See [encoded motors](../../docs/ports.md#python-encoded-motors) for the implemen
 methods and remaining compatibility limits. `Motor.control` adapts the reference
 `pb_type_control.c` through native settings/trajectory snapshots, without exporting
 a privileged PBIO pointer. Updates and application waits share the port worker.
-`Motor.model` and `Motor.log` adapt `pb_type_motor_model.c` and `pb_type_logger.c`
+`Motor.model`, `Motor.log` and `Motor.control.log` adapt `pb_type_motor_model.c` and `pb_type_logger.c`
 from the same revision. Model changes cross that shared settings boundary;
-logger buffers belong to the firmware, and CSV export uses application stdout.
+both independent logger buffers belong to the firmware, and their shared CSV
+export implementation uses application stdout.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks

@@ -53,6 +53,15 @@ static const struct gpio_dt_spec pins[BP_PORT_COUNT][PIN_COUNT] = {
 #define CHECK_INDEX(node) BUILD_ASSERT(DT_REG_ADDR(node) < BP_PORT_COUNT);
 DT_FOREACH_CHILD_STATUS_OKAY(PORTS, CHECK_INDEX)
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+struct motor_log {
+	int32_t *data;
+	struct bp_motor_log_status status;
+	enum bp_port_owner owner;
+	uint32_t generation, down_sample, skipped, start_ms;
+};
+#endif
+
 static struct port {
 	struct bp_port_state value;
 	struct bp_sensor_sample sensor;
@@ -79,12 +88,7 @@ static struct port {
 	pbio_control_settings_t control_settings;
 	pbio_observer_settings_t model_settings;
 	struct bp_motor_model_state model_state;
-	struct {
-		struct bp_motor_log_row *data;
-		struct bp_motor_log_status status;
-		enum bp_port_owner owner;
-		uint32_t generation, down_sample, skipped, start_ms;
-	} log;
+	struct motor_log log[BP_MOTOR_LOG_COUNT];
 	struct bp_servo_trajectory trajectory;
 	uint32_t settings_revision, settings_applied;
 	bool settings_ready;
@@ -219,22 +223,29 @@ static void pf_release(struct port *p)
 
 /* Caller holds lock. One port claim covers measurement selection and drive. */
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-static void stop_motor_log(struct port *p, int error)
+static void stop_motor_log(struct motor_log *log, int error)
 {
-	if (p->log.status.active && !p->log.status.error) p->log.status.error = error;
-	p->log.status.active = false;
+	if (log->status.active && !log->status.error) log->status.error = error;
+	log->status.active = false;
+}
+
+static void stop_motor_logs(struct port *p, int error)
+{
+	for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) stop_motor_log(&p->log[kind], error);
 }
 
 static void free_motor_logs(enum bp_port_owner owner)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	for (size_t i = 0; i < BP_PORT_COUNT; i++) {
-		struct port *p = &ports[i];
-		if (p->log.owner != owner) continue;
-		k_free(p->log.data);
-		p->log.data = NULL;
-		p->log.owner = BP_PORT_UNOWNED;
-		p->log.status = (struct bp_motor_log_status){.revision = p->log.status.revision + 1};
+		for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
+			struct motor_log *log = &ports[i].log[kind];
+			if (log->owner != owner) continue;
+			k_free(log->data);
+			log->data = NULL;
+			log->owner = BP_PORT_UNOWNED;
+			log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1};
+		}
 	}
 	k_spin_unlock(&lock, key);
 }
@@ -243,7 +254,7 @@ static void free_motor_logs(enum bp_port_owner owner)
 static void drop_claim(struct port *p)
 {
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-	p->log.status.active = false;
+	stop_motor_logs(p, 0);
 #endif
 	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
 	p->motor.direction = 0;
@@ -264,7 +275,7 @@ static void invalidate_motor(uint32_t port, int reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-	stop_motor_log(&ports[port], reason);
+	stop_motor_logs(&ports[port], reason);
 #endif
 	finish_write(&ports[port], reason);
 	if (ports[port].pf_used && !ports[port].pf_error) ports[port].pf_error = reason;
@@ -672,32 +683,50 @@ static int servo_angle(const struct bp_motor_state *motor, int64_t shaft, int32_
 
 /* PBIO logger.c's bounded row append/downsampling, with explicit sample time
  * and firmware-owned memory. Caller holds lock; never copies a whole log. */
-static void append_motor_log(struct port *p, uint32_t ticks, const struct motor_log_sample *s)
+static void append_motor_log(struct port *p, uint32_t kind, uint32_t ticks,
+	const struct motor_log_sample *s, const struct motor_pid_sample *pid)
 {
-	if (!p->log.status.active || ++p->log.skipped != p->log.down_sample) return;
-	p->log.skipped = 0;
+	struct motor_log *log = &p->log[kind];
+	if (!log->status.active || ++log->skipped != log->down_sample) return;
+	log->skipped = 0;
 	struct bp_motor_state *m = &p->motor;
 	if (!m->gear_ratio || !m->direction) {
-		stop_motor_log(p, -ENODEV);
+		stop_motor_log(log, -ENODEV);
 		return;
 	}
-	struct bp_motor_log_row row = {.values = {(uint32_t)(k_uptime_get_32() - p->log.start_ms), ticks,
-		0, s->speed / m->gear_ratio * m->direction, s->flags, s->voltage * m->direction,
-		0, s->estimated_speed / m->gear_ratio * m->direction,
-		s->feedback_torque * m->direction, s->feedforward_torque * m->direction, s->feedback_voltage * m->direction}};
-	int err = servo_angle(m, s->angle_mdeg, &row.values[2]);
-	if (!err) err = servo_angle(m, s->estimated_angle, &row.values[6]);
+	struct bp_motor_log_row row;
+	int err;
+	if (kind == BP_MOTOR_LOG) {
+		row = (struct bp_motor_log_row){.values = {0, ticks,
+			0, s->speed / m->gear_ratio * m->direction, s->flags, s->voltage * m->direction,
+			0, s->estimated_speed / m->gear_ratio * m->direction,
+			s->feedback_torque * m->direction, s->feedforward_torque * m->direction, s->feedback_voltage * m->direction}};
+		err = servo_angle(m, s->angle_mdeg, &row.values[2]);
+		if (!err) err = servo_angle(m, s->estimated_angle, &row.values[6]);
+	} else {
+		memcpy(row.values, pid->values, sizeof(row.values));
+		err = servo_angle(m, pid->values[2], &row.values[2]);
+		if (!err) err = servo_angle(m, pid->values[6], &row.values[6]);
+		if (!err) err = servo_angle(m, pid->values[8], &row.values[8]);
+		row.values[3] = pid->values[3] / m->gear_ratio * m->direction;
+		row.values[7] = pid->values[7] / m->gear_ratio * m->direction;
+		row.values[9] = pid->values[9] / m->gear_ratio * m->direction;
+		row.values[5] *= m->direction;
+		for (size_t col = 10; col < BP_CONTROL_LOG_COLUMNS; col++) row.values[col] *= m->direction;
+	}
 	if (err) {
-		stop_motor_log(p, err);
+		stop_motor_log(log, err);
 		return;
 	}
-	p->log.data[p->log.status.rows++] = row;
-	if (p->log.status.rows == p->log.status.capacity) p->log.status.active = false;
+	row.values[0] = k_uptime_get_32() - log->start_ms;
+	memcpy(log->data + log->status.rows++ * log->status.columns,
+		row.values, log->status.columns * sizeof(int32_t));
+	if (log->status.rows == log->status.capacity) log->status.active = false;
 }
 
 static int control_frame(struct port *p, int64_t angle,
 	const struct bp_motor_command *command, struct motor_reference *ref,
-	int32_t *duty, int32_t *voltage, uint32_t ticks, int32_t max_voltage)
+	int32_t *duty, int32_t *voltage, uint32_t ticks, int32_t max_voltage, struct motor_pid_sample *log)
 {
 	struct bp_battery_sample battery;
 	int err = hub_battery_get(&battery);
@@ -715,7 +744,7 @@ static int control_frame(struct port *p, int64_t angle,
 		err = motor_control_command(&p->controller, ticks, angle, command, battery.voltage_mv);
 		if (err) return err;
 	}
-	err = motor_control_step(&p->controller, ticks, angle, ref);
+	err = motor_control_step(&p->controller, ticks, angle, ref, log);
 	if (err) return err;
 	*duty = CLAMP((int64_t)CLAMP(ref->voltage_mv, -max_voltage, max_voltage) * 1000 / battery.voltage_mv, -1000, 1000);
 	*voltage = (int64_t)*duty * battery.voltage_mv / 1000;
@@ -787,8 +816,12 @@ static int64_t apply_motor(uint32_t port)
 		settings = p->control_settings;
 		model_settings = p->model_settings;
 	}
-	bool logging = frame && p->log.status.active;
-	uint32_t log_revision = p->log.status.revision;
+	bool logging[BP_MOTOR_LOG_COUNT];
+	uint32_t log_revision[BP_MOTOR_LOG_COUNT];
+	for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
+		logging[kind] = frame && p->log[kind].status.active && (kind == BP_MOTOR_LOG || controlled);
+		log_revision[kind] = p->log[kind].status.revision;
+	}
 	int64_t angle = p->sensor.angle_mdeg;
 	if (frame && !err) err = device_error;
 	bool overrun = frame && next_frame && k_uptime_get() >= next_frame + CONTROL_MS;
@@ -804,6 +837,7 @@ static int64_t apply_motor(uint32_t port)
 	struct motor_reference ref = {0};
 	struct motor_observation observation = {0};
 	struct motor_log_sample log_sample;
+	struct motor_pid_sample pid_sample;
 	int log_error = 0;
 	int32_t voltage = 0;
 	uint32_t ticks = k_ticks_to_us_floor64(k_uptime_ticks()) / 100;
@@ -820,7 +854,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 	if (!err && controlled) {
 		err = control_frame(p, angle, command_pending ? &command : NULL,
-			&ref, &duty, &voltage, ticks, max_voltage);
+			&ref, &duty, &voltage, ticks, max_voltage, logging[BP_CONTROL_LOG] ? &pid_sample : NULL);
 		passive = ref.coast;
 	}
 #endif
@@ -839,15 +873,18 @@ static int64_t apply_motor(uint32_t port)
 			if (!err && (!battery.voltage_mv || battery.voltage_mv > 12000)) err = -ERANGE;
 			if (!err) voltage = (int64_t)duty * battery.voltage_mv / 1000;
 		}
-		if (!err && logging) log_error = motor_control_log_sample(&p->controller, ticks, angle,
+		if (!err && logging[BP_MOTOR_LOG]) log_error = motor_control_log_sample(&p->controller, ticks, angle,
 			passive, voltage, &ref, &log_sample);
 		if (!err) err = motor_control_predict(&p->controller, ticks, angle, passive, voltage);
 		if (!err) err = motor_control_observe(&p->controller, ticks, angle, passive, &observation);
-		if (logging) {
+		if (logging[BP_MOTOR_LOG] || logging[BP_CONTROL_LOG]) {
 			key = k_spin_lock(&lock);
-			if (p->log.status.revision == log_revision && p->geometry_revision == geometry_revision) {
-				if (err || log_error) stop_motor_log(p, err ? err : log_error);
-				else append_motor_log(p, ticks, &log_sample);
+			for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
+				if (!logging[kind] || p->log[kind].status.revision != log_revision[kind] ||
+				    p->geometry_revision != geometry_revision) continue;
+				int sample_error = err ? err : kind == BP_MOTOR_LOG ? log_error : pid_sample.error;
+				if (sample_error) stop_motor_log(&p->log[kind], sample_error);
+				else append_motor_log(p, kind, ticks, &log_sample, &pid_sample);
 			}
 			k_spin_unlock(&lock, key);
 		}
@@ -886,7 +923,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 	if (!err && observing && (frame || command_pending)) p->trajectory = trajectory;
 	if (observing && err) {
-		stop_motor_log(p, err);
+		stop_motor_logs(p, err);
 		p->observation.error = err;
 		m->control.observing = false;
 	} else if (frame) {
@@ -1933,37 +1970,39 @@ int hub_servo_model_get(uint32_t port, uint32_t generation, struct bp_motor_mode
 #endif
 }
 
-int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t kind,
 	uint32_t duration_ms, uint32_t down_sample)
 {
 #ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	return -ENOTSUP;
 #else
-	if (port >= BP_PORT_COUNT || !down_sample ||
+	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !down_sample ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
 	uint32_t rows = duration_ms / CONTROL_MS / down_sample;
-	if (rows > SIZE_MAX / sizeof(struct bp_motor_log_row)) return -EOVERFLOW;
+	uint32_t columns = kind == BP_MOTOR_LOG ? BP_MOTOR_LOG_COLUMNS : BP_CONTROL_LOG_COLUMNS;
+	if (rows > SIZE_MAX / sizeof(int32_t) / columns) return -EOVERFLOW;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
+	struct motor_log *log = &p->log[kind];
 	int err = servo_control_error(p, generation);
 	if (!err && (p->motor.releasing || p->owner != owner ||
-	    (p->log.owner && p->log.owner != owner))) err = -EBUSY;
+	    (log->owner && log->owner != owner))) err = -EBUSY;
 	if (!err) {
 		/* Nonwaiting heap allocation under the service lock leaves no
 		 * unpublished buffer to leak if the application is forcibly stopped.
 		 * Only initialized rows are readable; no bulk zero/copy is needed. */
-		struct bp_motor_log_row *data = rows ? k_malloc(rows * sizeof(*data)) : NULL;
+		int32_t *data = rows ? k_malloc(rows * columns * sizeof(*data)) : NULL;
 		if (rows && !data) err = -ENOMEM;
 		else {
-			k_free(p->log.data);
-			p->log.data = data;
-			p->log.owner = owner;
-			p->log.generation = generation;
-			p->log.down_sample = down_sample;
-			p->log.skipped = 0;
-			p->log.start_ms = k_uptime_get_32();
-			p->log.status = (struct bp_motor_log_status){.revision = p->log.status.revision + 1,
-				.capacity = rows, .active = rows != 0};
+			k_free(log->data);
+			log->data = data;
+			log->owner = owner;
+			log->generation = generation;
+			log->down_sample = down_sample;
+			log->skipped = 0;
+			log->start_ms = k_uptime_get_32();
+			log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1,
+				.capacity = rows, .columns = columns, .active = rows != 0};
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -1972,50 +2011,55 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 }
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-static int motor_log_access(struct port *p, enum bp_port_owner owner, uint32_t generation)
+static int motor_log_access(struct port *p, struct motor_log *log, enum bp_port_owner owner, uint32_t generation)
 {
-	if (p->log.owner && p->log.owner != owner) return -EBUSY;
+	if (log->owner && log->owner != owner) return -EBUSY;
 	/* A stopped log outlives Motor.close or disconnection, until application
 	 * cleanup or a later start replaces it. Reading never energizes a port. */
-	return p->log.owner ? p->log.generation == generation ? 0 : -ESTALE :
+	return log->owner ? log->generation == generation ? 0 : -ESTALE :
 		p->value.generation == generation ? 0 : -ESTALE;
 }
 #endif
 
-int hub_motor_log_status(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+int hub_motor_log_status(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t kind,
 	uint32_t stop, struct bp_motor_log_status *value)
 {
 #ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	return -ENOTSUP;
 #else
-	if (port >= BP_PORT_COUNT || !value || stop > 1 ||
+	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value || stop > 1 ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
-	int err = motor_log_access(p, owner, generation);
+	struct motor_log *log = &p->log[kind];
+	int err = motor_log_access(p, log, owner, generation);
 	if (!err) {
-		if (stop) p->log.status.active = false;
-		*value = p->log.status;
+		if (stop) log->status.active = false;
+		*value = log->status;
 	}
 	k_spin_unlock(&lock, key);
 	return err;
 #endif
 }
 
-int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t kind,
 	uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
 #ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	return -ENOTSUP;
 #else
-	if (port >= BP_PORT_COUNT || !value ||
+	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
-	int err = motor_log_access(p, owner, generation);
-	if (!err) err = revision != p->log.status.revision ? -ECANCELED :
-		row >= p->log.status.rows ? -ENOENT : 0;
-	if (!err) *value = p->log.data[row];
+	struct motor_log *log = &p->log[kind];
+	int err = motor_log_access(p, log, owner, generation);
+	if (!err) err = revision != log->status.revision ? -ECANCELED :
+		row >= log->status.rows ? -ENOENT : 0;
+	if (!err) {
+		*value = (struct bp_motor_log_row){0};
+		memcpy(value->values, log->data + row * log->status.columns, log->status.columns * sizeof(int32_t));
+	}
 	k_spin_unlock(&lock, key);
 	return err;
 #endif

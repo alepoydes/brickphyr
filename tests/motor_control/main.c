@@ -14,7 +14,7 @@ ZTEST(motor_control, test_models_and_rejection)
 		zassert_ok(motor_control_init(&motor, ids[i], 0));
 		zassert_ok(motor_control_run(&motor, 0, 0, 300000, 1000, PBIO_CONTROL_ON_COMPLETION_COAST));
 		struct motor_reference out;
-		zassert_ok(motor_control_step(&motor, 0, 0, &out));
+		zassert_ok(motor_control_step(&motor, 0, 0, &out, NULL));
 		zassert_true(out.active);
 		zassert_equal(out.angle_mdeg, 0);
 		zassert_equal(out.speed_mdeg_s, 0);
@@ -29,10 +29,10 @@ ZTEST(motor_control, test_models_and_rejection)
 	zassert_equal(motor_control_target(&motor, 0, 0, 360000, -10000, PBIO_CONTROL_ON_COMPLETION_HOLD), -EINVAL);
 	zassert_equal(motor_control_predict(&motor, 0, 0, true, 1), -EINVAL);
 	struct motor_reference out;
-	zassert_ok(motor_control_step(&motor, 50, 0, &out));
+	zassert_ok(motor_control_step(&motor, 50, 0, &out, NULL));
 	zassert_true(out.active, "Rejected request stopped previous control");
 	zassert_true(out.speed_mdeg_s > 0);
-	zassert_equal(motor_control_step(&motor, 100, INT64_MIN, &out), -ERANGE);
+	zassert_equal(motor_control_step(&motor, 100, INT64_MIN, &out, NULL), -ERANGE);
 }
 
 /* A deliberately simple, independent synthetic plant, not the PBIO observer
@@ -42,7 +42,7 @@ static void advance(struct motor_control *motor, uint32_t ticks, double *angle,
 	double *speed, struct motor_reference *out)
 {
 	int64_t measured = (int64_t)*angle;
-	zassert_ok(motor_control_step(motor, ticks, measured, out));
+	zassert_ok(motor_control_step(motor, ticks, measured, out, NULL));
 	zassert_true(abs(out->voltage_mv) <= motor->max_voltage);
 	zassert_ok(motor_control_predict(motor, ticks, measured, out->coast, out->voltage_mv));
 	*speed += (out->voltage_mv * (1000000.0 / 9000) - *speed) * (0.005 / 0.040);
@@ -108,7 +108,7 @@ ZTEST(motor_control, test_rejected_trajectory_preserves_motion)
 	zassert_equal(motor_control_target(&motor, 0, 0, 1000000000, 1000,
 		PBIO_CONTROL_ON_COMPLETION_HOLD), -ERANGE);
 	struct motor_reference out;
-	zassert_ok(motor_control_step(&motor, 50, 0, &out));
+	zassert_ok(motor_control_step(&motor, 50, 0, &out, NULL));
 	zassert_true(out.active && out.speed_mdeg_s > 0);
 	zassert_equal(out.acceleration_mdeg_s2, 2000000);
 }
@@ -168,9 +168,9 @@ ZTEST(motor_control, test_servo_motion_commands)
 	zassert_ok(motor_control_check(48, origin, &command));
 	zassert_ok(motor_control_command(&motor, 0, origin, &command, 9000));
 	struct motor_reference out;
-	zassert_ok(motor_control_step(&motor, 0, origin, &out));
+	zassert_ok(motor_control_step(&motor, 0, origin, &out, NULL));
 	zassert_true(out.done && out.active, "Zero time became an infinite run");
-	zassert_ok(motor_control_step(&motor, 50, origin, &out));
+	zassert_ok(motor_control_step(&motor, 50, origin, &out, NULL));
 	zassert_equal(out.angle_mdeg, origin);
 
 	/* Tracking replaces the reference immediately, without narrowing the long
@@ -178,7 +178,7 @@ ZTEST(motor_control, test_servo_motion_commands)
 	command = (struct bp_motor_command){.mode = BP_MOTOR_POSITION, .action = BP_MOTOR_TRACK,
 		.target_mdeg = origin - 30000, .finish = BP_MOTOR_FINISH_HOLD};
 	zassert_ok(motor_control_command(&motor, 100, origin, &command, 9000));
-	zassert_ok(motor_control_step(&motor, 100, origin, &out));
+	zassert_ok(motor_control_step(&motor, 100, origin, &out, NULL));
 	zassert_equal(out.angle_mdeg, origin - 30000);
 	zassert_true(out.voltage_mv < 0);
 	zassert_ok(motor_control_reset_angle(&motor, origin));
@@ -193,18 +193,18 @@ ZTEST(motor_control, test_servo_motion_commands)
 		.speed_mdeg_s = 500000, .finish = BP_MOTOR_FINISH_HOLD, .duty_limit = 500};
 	zassert_ok(motor_control_command(&motor, 150, origin, &command, 9000));
 	for (uint32_t ticks = 150; ticks < 30000; ticks += 50) {
-		zassert_ok(motor_control_step(&motor, ticks, origin, &out));
+		zassert_ok(motor_control_step(&motor, ticks, origin, &out, NULL));
 		zassert_ok(motor_control_predict(&motor, ticks, origin, out.coast, out.voltage_mv));
 		if (out.done) break;
 	}
 	zassert_true(out.done && out.active);
-	zassert_ok(motor_control_step(&motor, 30000, origin, &out));
+	zassert_ok(motor_control_step(&motor, 30000, origin, &out, NULL));
 	zassert_equal(out.angle_mdeg, origin);
 	zassert_ok(motor_control_reset_angle(&motor, origin));
 	command.finish = BP_MOTOR_FINISH_COAST_SMART;
 	zassert_ok(motor_control_command(&motor, 0, origin, &command, 9000));
 	for (uint32_t time = 0; time < 30000; time += 50) {
-		zassert_ok(motor_control_step(&motor, time, origin, &out));
+		zassert_ok(motor_control_step(&motor, time, origin, &out, NULL));
 		zassert_ok(motor_control_predict(&motor, time, origin, out.coast, out.voltage_mv));
 		if (out.done) break;
 	}
@@ -265,7 +265,7 @@ ZTEST(motor_control, test_settings_during_motion)
 		.finish = BP_MOTOR_FINISH_COAST, .duty_limit = 250};
 	zassert_ok(motor_control_command(&motor, 0, 0, &command, 9000));
 	struct motor_reference out;
-	zassert_ok(motor_control_step(&motor, 0, 0, &out));
+	zassert_ok(motor_control_step(&motor, 0, 0, &out, NULL));
 	zassert_ok(motor_control_predict(&motor, 0, 0, out.coast, out.voltage_mv));
 	int32_t temporary = motor.control.settings.actuation_max_temporary;
 	zassert_true(temporary < motor.control.settings.actuation_max);
@@ -276,20 +276,20 @@ ZTEST(motor_control, test_settings_during_motion)
 	zassert_true(after.active);
 	zassert_equal(memcmp(before.points, after.points, sizeof(before.points)), 0);
 	zassert_equal(motor.control.settings.actuation_max_temporary, temporary);
-	zassert_ok(motor_control_step(&motor, 50, 0, &out));
+	zassert_ok(motor_control_step(&motor, 50, 0, &out, NULL));
 	zassert_true(out.active);
 
 	pbio_control_stop(&motor.control);
 	zassert_ok(motor_control_run(&motor, 100, 0, 500000, 1000, PBIO_CONTROL_ON_COMPLETION_COAST));
 	zassert_equal(motor.control.settings.actuation_max_temporary, motor.control.settings.actuation_max);
-	zassert_ok(motor_control_step(&motor, 100, 0, &out));
+	zassert_ok(motor_control_step(&motor, 100, 0, &out, NULL));
 	zassert_equal(out.acceleration_mdeg_s2, 600000);
 	motor_control_trajectory_get(&motor, &after);
 	zassert_true(after.active);
 	zassert_equal(after.points[11], 600);
 	zassert_equal(motor_control_run(&motor, 100, 0, 500001, 1000,
 		PBIO_CONTROL_ON_COMPLETION_COAST), -EINVAL);
-	zassert_ok(motor_control_step(&motor, 150, 0, &out));
+	zassert_ok(motor_control_step(&motor, 150, 0, &out, NULL));
 	zassert_true(out.active);
 }
 
@@ -330,6 +330,69 @@ ZTEST(motor_control, test_model_settings_and_feedback_guard)
 	motor.observer.settings = settings;
 	zassert_equal(motor_control_predict(&motor, 50, 2, true, 0), -ERANGE);
 	zassert_equal(motor.observer.speed, 0);
+}
+
+ZTEST(motor_control, test_pid_log_is_observational)
+{
+	struct motor_control logged, plain;
+	zassert_ok(motor_control_init(&logged, 48, 0));
+	zassert_ok(motor_control_init(&plain, 48, 0));
+	/* A fixed shaft below the position integrator's target-error range gives
+	 * the ramp a speed error and leaves time for position error to accumulate. */
+	zassert_ok(motor_control_target(&logged, 0, 0, 12000, 120000, PBIO_CONTROL_ON_COMPLETION_HOLD));
+	zassert_ok(motor_control_target(&plain, 0, 0, 12000, 120000, PBIO_CONTROL_ON_COMPLETION_HOLD));
+	bool saw_p = false, saw_i = false, saw_d = false, saw_unsaturated = false;
+	for (uint32_t ticks = 0; ticks < 4000; ticks += 50) {
+		struct motor_reference with_log, without_log;
+		struct motor_pid_sample sample = {0};
+		zassert_ok(motor_control_step(&logged, ticks, 0, &with_log, &sample));
+		zassert_ok(motor_control_step(&plain, ticks, 0, &without_log, NULL));
+		zassert_ok(sample.error);
+		zassert_equal(with_log.angle_mdeg, without_log.angle_mdeg);
+		zassert_equal(with_log.speed_mdeg_s, without_log.speed_mdeg_s);
+		zassert_equal(with_log.acceleration_mdeg_s2, without_log.acceleration_mdeg_s2);
+		zassert_equal(with_log.estimated_speed, without_log.estimated_speed);
+		zassert_equal(with_log.voltage_mv, without_log.voltage_mv);
+		zassert_equal(with_log.feedback_torque, without_log.feedback_torque);
+		zassert_equal(with_log.feedforward_torque, without_log.feedforward_torque);
+		zassert_equal(with_log.coast, without_log.coast);
+		zassert_equal(with_log.active, without_log.active);
+		zassert_equal(with_log.done, without_log.done);
+		zassert_equal(with_log.stalled, without_log.stalled);
+		zassert_equal(sample.values[5], with_log.feedback_torque);
+		int64_t pid = (int64_t)sample.values[10] + sample.values[11] + sample.values[12];
+		int32_t limit = logged.control.settings.actuation_max_temporary;
+		zassert_true(abs(with_log.feedback_torque) <= limit);
+		if (pid >= -limit && pid <= limit) {
+			zassert_equal(pid, with_log.feedback_torque);
+			saw_unsaturated = true;
+		}
+		saw_p |= sample.values[10] != 0;
+		saw_i |= sample.values[11] != 0;
+		saw_d |= sample.values[12] != 0;
+		zassert_ok(motor_control_predict(&logged, ticks, 0, with_log.coast, with_log.voltage_mv));
+		zassert_ok(motor_control_predict(&plain, ticks, 0, without_log.coast, without_log.voltage_mv));
+	}
+	zassert_true(saw_p && saw_i && saw_d && saw_unsaturated,
+		"Expected actual P, I, D and an unsaturated feedback sample");
+
+	/* Diagnostic int32 columns cannot hold every valid long shaft origin.
+	 * That must stop only the sample, never the controller. */
+	const int64_t origin = 3000000000LL;
+	zassert_ok(motor_control_init(&logged, 48, origin));
+	zassert_ok(motor_control_init(&plain, 48, origin));
+	zassert_ok(motor_control_target(&logged, 0, origin, origin + 12000, 120000,
+		PBIO_CONTROL_ON_COMPLETION_HOLD));
+	zassert_ok(motor_control_target(&plain, 0, origin, origin + 12000, 120000,
+		PBIO_CONTROL_ON_COMPLETION_HOLD));
+	struct motor_reference with_log, without_log;
+	struct motor_pid_sample sample = {0};
+	zassert_ok(motor_control_step(&logged, 50, origin, &with_log, &sample));
+	zassert_equal(sample.error, -ERANGE);
+	zassert_ok(motor_control_step(&plain, 50, origin, &without_log, NULL));
+	zassert_true(with_log.active);
+	zassert_equal(with_log.feedback_torque, without_log.feedback_torque);
+	zassert_equal(with_log.voltage_mv, without_log.voltage_mv);
 }
 
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

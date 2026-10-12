@@ -1058,37 +1058,37 @@ static inline int z_vrfy_bp_servo_model_get(uint32_t port, uint32_t generation, 
 }
 #include <zephyr/syscalls/bp_servo_model_get_mrsh.c>
 
-int z_impl_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t stop, struct bp_motor_log_status *value)
+int z_impl_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
-	return hub_motor_log_status(BP_PORT_APPLICATION, port, generation, stop, value);
+	return hub_motor_log_status(BP_PORT_APPLICATION, port, generation, kind, stop, value);
 }
-static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t stop, struct bp_motor_log_status *value)
+static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
 	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
-	return z_impl_bp_motor_log_status(port, generation, stop, value);
+	return z_impl_bp_motor_log_status(port, generation, kind, stop, value);
 }
 #include <zephyr/syscalls/bp_motor_log_status_mrsh.c>
 
-int z_impl_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
+int z_impl_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
-	return hub_motor_log_read(BP_PORT_APPLICATION, port, generation, revision, row, value);
+	return hub_motor_log_read(BP_PORT_APPLICATION, port, generation, kind, revision, row, value);
 }
-static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
+static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
 	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
-	return z_impl_bp_motor_log_read(port, generation, revision, row, value);
+	return z_impl_bp_motor_log_read(port, generation, kind, revision, row, value);
 }
 #include <zephyr/syscalls/bp_motor_log_read_mrsh.c>
 
-int z_impl_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t duration_ms, uint32_t down_sample)
+int z_impl_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t kind, uint32_t duration_ms, uint32_t down_sample)
 {
-	return hub_motor_log_start(BP_PORT_APPLICATION, port, generation, duration_ms, down_sample);
+	return hub_motor_log_start(BP_PORT_APPLICATION, port, generation, kind, duration_ms, down_sample);
 }
-static inline int z_vrfy_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t duration_ms, uint32_t down_sample)
+static inline int z_vrfy_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t kind, uint32_t duration_ms, uint32_t down_sample)
 {
-	return z_impl_bp_motor_log_start(port, generation, duration_ms, down_sample);
+	return z_impl_bp_motor_log_start(port, generation, kind, duration_ms, down_sample);
 }
 #include <zephyr/syscalls/bp_motor_log_start_mrsh.c>
 
