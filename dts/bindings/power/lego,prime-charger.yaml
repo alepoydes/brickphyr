@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+description: SPIKE Prime MP2639A charger wiring and Pybricks current presets
+compatible: "lego,prime-charger"
+properties:
+  mode-controller:
+    type: phandle
+    required: true
+    description: TLC5955 holding the reserved charger MODE channel.
+  mode-channel:
+    type: int
+    required: true
+  pwms:
+    type: phandle-array
+    required: true
+    description: ISET PWM, active high, 96 kHz on F4.
+  io-channels:
+    type: phandle-array
+    required: true
+    description: Charger current observation (IBUSBCH).
+  status-ladder:
+    type: phandle
+    required: true
+  status-bit:
+    type: int
+    required: true
+    description: Debounced active-low CHG input bit in the resistor ladder.

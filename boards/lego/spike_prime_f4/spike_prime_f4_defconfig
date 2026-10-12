@@ -14,6 +14,7 @@ CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT=y
 CONFIG_CDC_ACM_SERIAL_MANUFACTURER_STRING="Brickphyr"
 CONFIG_CDC_ACM_SERIAL_PRODUCT_STRING="Brickphyr bring-up console"
 CONFIG_CDC_ACM_SERIAL_SELF_POWERED=y
+CONFIG_CDC_ACM_SERIAL_MAX_POWER=250
 CONFIG_ADC=y
 # Single-channel 15+12 cycles at 24 MHz: 1.125 us. Allow 2 ms for IRQ
 # delivery, then stop failed conversion before releasing the caller's buffer.

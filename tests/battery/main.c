@@ -2,6 +2,7 @@
 /* Production acquisition/observations with synthetic ADC voltages and errors.
  * This does not emulate the STM32 conversion watchdog or analogue accuracy. */
 #include "hub_battery.h"
+#include "hub_power.h"
 #include "input_resistor_ladder.h"
 #include <string.h>
 #include <zephyr/drivers/adc/adc_emul.h>
@@ -72,6 +73,49 @@ static void wait_center(int expected)
 		zassert_true(k_uptime_get() < deadline, "Button did not reach %d", expected);
 		k_msleep(1);
 	}
+}
+
+static void wait_critical(bool critical)
+{
+	int64_t deadline = k_uptime_get() + 5000;
+	while (snapshot().critical != critical) {
+		zassert_true(k_uptime_get() < deadline, "Battery condition did not settle");
+		k_msleep(10);
+	}
+}
+
+static void check_critical_shutdown(void)
+{
+	/* Production ADC/filter/power path, synthetic voltages. Hosts and running
+	 * applications inhibit idle shutdown, never critical-battery protection. */
+	zassert_true(hub_power_connection(HUB_USB));
+	zassert_true(hub_power_application(true));
+	zassert_false(hub_power_update(1, false, 10000));
+	raw[0] = 0;
+	raw[1] = 2253; /* About 5.5 V at this fixture's 10 V ADC scale. */
+	wait_critical(true);
+	zassert_true(snapshot().low);
+	zassert_false(hub_power_update(1, false, 20000));
+	zassert_false(hub_power_update(1, false, 22999));
+	/* 6.4 V remains critical until the recovery threshold is crossed. */
+	raw[1] = 2621;
+	k_msleep(2000);
+	zassert_true(snapshot().critical);
+	raw[1] = 3031; /* About 7.4 V. */
+	wait_critical(false);
+	zassert_false(hub_power_update(1, false, 23000));
+	raw[1] = 2253;
+	wait_critical(true);
+	zassert_false(hub_power_update(0, false, 30000));
+	/* A failed conversion cannot revoke an established critical condition. */
+	error[1] = -EIO;
+	k_msleep(25);
+	zassert_equal(snapshot().error, -EIO);
+	zassert_true(hub_power_update(0, false, 33000));
+	zassert_false(hub_power_connection(HUB_BLE));
+	zassert_false(hub_power_application(true));
+	zassert_true(hub_power_application(false));
+	error[1] = 0;
 }
 
 ZTEST(battery, test_acquisition)
@@ -183,6 +227,7 @@ ZTEST(battery, test_acquisition)
 	k_sem_give(&resume);
 	value = next(value.sequence);
 	zassert_equal(value.failures, failures + 1, "Reject a pair spanning an excessive delay");
+	check_critical_shutdown();
 
 	hold = true;
 	zassert_ok(k_sem_take(&entered, K_MSEC(30)));

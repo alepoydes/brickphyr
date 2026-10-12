@@ -6,6 +6,7 @@
 #include <zephyr/drivers/emul.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/drivers/led.h>
+#include <zephyr/drivers/pwm/pwm_fake.h>
 #include <zephyr/drivers/spi_emul.h>
 #include <zephyr/input/input.h>
 #include <zephyr/ztest.h>
@@ -16,6 +17,7 @@
 #include "hub_menu.h"
 #include "hub_matrix.h"
 #include "led_tlc5955.h"
+#include "hub_charger.h"
 
 DEFINE_FFF_GLOBALS;
 
@@ -127,6 +129,77 @@ ZTEST(hub, test_led_frames)
 static uint16_t duty(unsigned int channel)
 {
 	return ((uint16_t)last_frame[1 + 2 * channel] << 8) | last_frame[2 + 2 * channel];
+}
+
+ZTEST(hub, test_charger_usb_budget_and_shared_latch)
+{
+	const struct device *adc = DEVICE_DT_GET(DT_NODELABEL(adc1));
+	const struct device *led = DEVICE_DT_GET(DT_NODELABEL(hub_leds));
+	struct bp_charger_state value;
+	/* Synthetic ladder levels: CHG active without a center press. */
+	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 3600));
+	zassert_ok(adc_emul_const_raw_value_set(adc, 1, 4095));
+	zassert_ok(adc_emul_const_raw_value_set(adc, 3, 0));
+	k_msleep(60);
+	hub_charger_update(1, k_uptime_get());
+	zassert_equal(duty(14), UINT16_MAX, "VBUS alone grants no charge current");
+	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
+	int64_t start = k_uptime_get();
+	hub_charger_update(1, start);
+	zassert_ok(hub_charger_get(&value));
+	zassert_ok(value.error);
+	zassert_true(value.enabled && value.configured);
+	zassert_equal(value.current_ma, 0, "Zero-offset subtraction must not wrap");
+	zassert_equal(value.status, BP_CHARGER_CHARGING);
+	zassert_equal(fake_pwm_set_cycles_fake.arg2_val, 1000);
+	zassert_equal(fake_pwm_set_cycles_fake.arg3_val, 20);
+	zassert_equal(duty(14), 0);
+	const uint8_t rgb[] = {255, 255, 255};
+	zassert_ok(led_set_color(led, 0, 3, rgb));
+	zassert_equal(duty(14), 0, "LED updates must preserve MODE");
+	const uint16_t blinking[] = {3600, 3600, 4095, 4095, 3600, 3600, 4095};
+	for (size_t i = 0; i < ARRAY_SIZE(blinking); i++) {
+		zassert_ok(adc_emul_const_raw_value_set(adc, 14, blinking[i]));
+		k_msleep(250);
+		hub_charger_update(1, k_uptime_get());
+	}
+	zassert_ok(hub_charger_get(&value));
+	zassert_ok(value.error);
+	zassert_equal(value.status, BP_CHARGER_FAULT);
+	zassert_equal(duty(14), 0, "Keep MODE enabled to observe the hardware fault signal");
+	const uint8_t reserved = 14;
+	const uint16_t off = UINT16_MAX;
+	zassert_equal(tlc5955_set_channels16(led, &reserved, &off, 1), -EACCES);
+	hub_charger_usb(HUB_CHARGER_USB_SUSPEND);
+	spi_error = -EIO;
+	hub_charger_update(1, k_uptime_get());
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.error, -EIO);
+	zassert_equal(fake_pwm_set_cycles_fake.arg3_val, 0, "Failed MODE still lowers ISET");
+	spi_error = 0;
+	k_msleep(250);
+	hub_charger_update(1, k_uptime_get());
+	zassert_equal(duty(14), UINT16_MAX);
+	hub_charger_usb(HUB_CHARGER_USB_RESUME);
+	hub_charger_update(1, k_uptime_get());
+	zassert_equal(duty(14), 0);
+	start = k_uptime_get();
+	/* A stale observation must neither rewrite MODE nor restart its timeout. */
+	unsigned int before = writes;
+	hub_charger_update(1, start + 1000);
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.error, -ETIMEDOUT);
+	zassert_equal(writes, before);
+	hub_charger_update(1, start + 3600000);
+	zassert_ok(hub_charger_get(&value));
+	zassert_true(value.paused && !value.enabled);
+	zassert_equal(duty(14), UINT16_MAX);
+	hub_charger_update(1, start + 3630000);
+	zassert_equal(duty(14), 0);
+	hub_charger_update(0, start + 3630001);
+	zassert_equal(duty(14), UINT16_MAX);
+	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 4095));
+	k_msleep(30);
 }
 
 static void check_bluetooth_lighting(void)

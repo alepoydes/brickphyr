@@ -46,8 +46,8 @@ static int transfer(const struct tlc_config *cfg, const uint8_t *frame)
 	return gpio_pin_set_dt(&cfg->latch, 0);
 }
 
-int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
-			  const uint16_t *values, size_t count)
+static int set_channels(const struct device *dev, const uint8_t *channels,
+			const uint16_t *values, size_t count, bool reserved)
 {
 	const struct tlc_config *cfg = dev->config;
 	struct tlc_data *data = dev->data;
@@ -62,11 +62,9 @@ int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
 		}
 		used |= BIT64(channels[i]);
 	}
-	for (size_t i = 0; i < cfg->full_count; i++) {
-		if (used & BIT64(cfg->full_channels[i])) {
-			return -EACCES;
-		}
-	}
+	uint64_t controls = 0;
+	for (size_t i = 0; i < cfg->full_count; i++) controls |= BIT64(cfg->full_channels[i]);
+	if (reserved ? (used & controls) != used : (used & controls) != 0) return -EACCES;
 	uint8_t frame[TLC5955_DATA_SIZE];
 	k_mutex_lock(&data->lock, K_FOREVER);
 	memcpy(frame, data->frame, sizeof(frame));
@@ -81,6 +79,17 @@ int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
 
 	k_mutex_unlock(&data->lock);
 	return err;
+}
+
+int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
+			  const uint16_t *values, size_t count)
+{
+	return set_channels(dev, channels, values, count, false);
+}
+
+int tlc5955_set_reserved_channel16(const struct device *dev, uint8_t channel, uint16_t value)
+{
+	return set_channels(dev, &channel, &value, 1, true);
 }
 
 int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t count,

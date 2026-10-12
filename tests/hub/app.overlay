@@ -23,3 +23,24 @@ adc1: &adc0 {
 	};
 };
 #include "../../boards/lego/spike_prime_f4/lights.dtsi"
+
+/ {
+	hub_charger: charger {
+		compatible = "lego,prime-charger";
+		mode-controller = <&hub_leds>;
+		mode-channel = <14>;
+		pwms = <&test_pwm 1 10417>;
+		io-channels = <&adc1 3>;
+		status-ladder = <&center_keys>;
+		status-bit = <2>;
+	};
+};
+&adc1 {
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};

@@ -120,6 +120,17 @@ config BRICKPHYR_BATTERY
 	  Shared native/Shell/SMP snapshots from Zephyr ADC, using the board's
 	  Pybricks scaling. No charging control or state-of-charge estimate.
 
+config BRICKPHYR_CHARGER
+	bool "Prime hub battery charger"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on DT_HAS_LEGO_PRIME_CHARGER_ENABLED
+	select ADC
+	select PWM
+	help
+	  MP2639A charging and observations using the shared TLC5955 frame and
+	  Pybricks current presets. Standard USB charging requires configuration;
+	  dedicated charger detection is a separate USB BC1.2 capability.
+
 config BRICKPHYR_SOUND
 	bool "Hub tone and PCM service"
 	default y if BOARD_SPIKE_PRIME_F4

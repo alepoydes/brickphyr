@@ -223,7 +223,7 @@ zephyr_udc0: &usbotg_fs {
 #include "ports.dtsi"
 
 &adc1 {
-	pinctrl-0 = <&adc1_in1_pa1 &adc1_in14_pc4 &adc1_in10_pc0 &adc1_in11_pc1 &adc1_in8_pb0>;
+	pinctrl-0 = <&adc1_in1_pa1 &adc1_in14_pc4 &adc1_in10_pc0 &adc1_in11_pc1 &adc1_in8_pb0 &adc1_in3_pa3>;
 	pinctrl-names = "default";
 	st,adc-prescaler = <4>;
 	status = "okay";
@@ -256,6 +256,7 @@ zephyr_udc0: &usbotg_fs {
 
 #include "lights.dtsi"
 #include "sound.dtsi"
+#include "charger.dtsi"
 
 /* Keep the reboot request above the RAM used by the existing bootloaders. */
 &sram0 {

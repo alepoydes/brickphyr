@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2018-2020 The Pybricks Authors
+// Copyright (c) 2018-2025 The Pybricks Authors
 /* Scaling ported from lib/pbio/drv/battery/battery_adc.c at a7b1b04ae.
  * Acquisition uses Zephyr ADC; board coefficients live in devicetree.
  * See docs/hardware.md, Hub battery, for provenance and validity limits. */
@@ -16,6 +16,11 @@ static const struct adc_dt_spec current = ADC_DT_SPEC_GET_BY_NAME(BATTERY, curre
 static const struct adc_dt_spec voltage = ADC_DT_SPEC_GET_BY_NAME(BATTERY, voltage);
 static const struct adc_dt_spec temperature = ADC_DT_SPEC_GET_BY_NAME(BATTERY, temperature);
 static int temperature_init_error;
+/* PBIO battery.c's fixed-point moving average, scaled for our 10 ms cadence
+ * instead of 5 ms: 64 samples retain the nominal 640 ms time constant.
+ * Thresholds/hysteresis are from lib/pbio/sys/battery.c at the same revision. */
+static uint32_t average_scaled;
+static bool average_initialized;
 static struct k_spinlock lock;
 static atomic_t stopping;
 static struct bp_battery_sample sample = {
@@ -91,6 +96,20 @@ static void acquire(struct k_work *item)
 		sample.voltage_mv = voltage_mv;
 		sample.current_raw = current_raw;
 		sample.voltage_raw = voltage_raw;
+		if (!average_initialized) {
+			average_scaled = voltage_mv * 64;
+			average_initialized = true;
+		} else {
+			average_scaled = (average_scaled * 63 + voltage_mv * 64) / 64;
+		}
+		sample.average_mv = average_scaled / 64;
+		uint32_t critical = sample.type == BP_BATTERY_LI_ION ? 6000 : 4800;
+		uint32_t low = sample.type == BP_BATTERY_LI_ION ? 6800 : 5400;
+		uint32_t okay = sample.type == BP_BATTERY_LI_ION ? 7200 : 6000;
+		if (sample.average_mv <= critical) sample.critical = true;
+		else if (sample.average_mv >= low) sample.critical = false;
+		if (sample.average_mv <= low) sample.low = true;
+		else if (sample.average_mv >= okay) sample.low = false;
 		sample.sample_ms = sample.read_ms;
 		sample.sequence++;
 	}

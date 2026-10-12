@@ -104,16 +104,12 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	if (k_mutex_lock(&pybricks_lock, K_NO_WAIT)) {
 		return BT_GATT_ERR(PBIO_PYBRICKS_ERROR_BUSY);
 	}
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (!host_ble_request_begin()) {
 		k_mutex_unlock(&pybricks_lock);
 		return BT_GATT_ERR(PBIO_PYBRICKS_ERROR_BUSY);
 	}
-#endif
 	uint8_t error = host_protocol_command(&pybricks, buf, len);
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	host_ble_request_end();
-#endif
 	if (error) {
 		k_mutex_unlock(&pybricks_lock);
 		return BT_GATT_ERR(error);

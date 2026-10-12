@@ -497,7 +497,7 @@ Pybricks helpers over Zephyr's ADC, SPI, GPIO emulators and a fake PWM timer.
 It uses the F4 button configuration and exercises the observed 3141–3147 center
 voltage range, all resistor-ladder button combinations, invalid voltage and ADC
 failure release, TLC5955 initialization, RGB channel ordering, invalid LED
-requests, SPI errors, and preservation of the charger-disable channel. These
+requests, SPI errors, and preservation of the reserved charger channel. These
 checks use synthetic inputs; they do not verify electrical behavior or a bootloader.
 
 The same SPI path checks the readiness animation with synthetic time: startup
@@ -509,8 +509,12 @@ board gains, gamma response, and exact raw PWM including zero and full duty.
 Bluetooth lighting checks exercise the three-second blue flash, steady unclassified
 connection, shared reactor output, independent USB/BLE palettes, menu priority and
 busy blanking, manual overrides, disconnect, radio off and shutdown. All three
-LEDs must latch in one frame without changing the charger-disable channel.
+LEDs must latch in one frame without changing the charger-control channel.
 These checks establish output behavior, not perceived color or visual quality.
+The charger case adds USB configuration/suspend/removal, MODE/ISET writes through
+the same TLC/PWM drivers, CHG fault detection, zero-current clamping, first-error
+preservation and the hourly pause despite sensing errors. Its ADC levels and
+long-duration clock jumps are synthetic, not an electrical or overnight test.
 Matrix checks use the same SPI driver and production service: brightness and
 corner wiring, preservation of RGB/charger channels, owner exclusion, malformed
 Shell arguments, disconnect during an unfinished write, and failed-write isolation.

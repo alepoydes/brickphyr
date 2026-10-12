@@ -15,7 +15,7 @@ properties:
     description: External GSCLK; the period must be exactly representable by the timer.
   initial-full-channels:
     type: array
-    description: Channels held at full duty from initialization, including non-LED loads.
+    description: Non-LED channels initialized at full duty and reserved from LED writes.
 child-binding:
   properties:
     channels:

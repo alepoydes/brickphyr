@@ -13,4 +13,7 @@ int tlc5955_set_colors16(const struct device *dev, uint32_t first, uint32_t coun
 int tlc5955_set_channels16(const struct device *dev, const uint8_t *channels,
 			  const uint16_t *values, size_t count);
 
+/* Privileged board-control path. Accepts only channels reserved from LEDs. */
+int tlc5955_set_reserved_channel16(const struct device *dev, uint8_t channel, uint16_t value);
+
 #endif

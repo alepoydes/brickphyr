@@ -4,6 +4,7 @@
 #include "hub_imu.h"
 #include "hub_sound.h"
 #include "hub_battery.h"
+#include "hub_charger.h"
 #include "hub_ports.h"
 #include "input_resistor_ladder.h"
 #include "application.h"
@@ -34,13 +35,13 @@ enum source { POWER, CENTER, SIDE, APPLICATION, MATRIX, IMU, IMU_CALIBRATED, IMU
 	SOUND, BATTERY, PORT_A, PORT_B, PORT_C, PORT_D, PORT_E, PORT_F,
 	SENSOR_A, SENSOR_B, SENSOR_C, SENSOR_D, SENSOR_E, SENSOR_F,
 	MOTOR_A, MOTOR_B, MOTOR_C, MOTOR_D, MOTOR_E, MOTOR_F,
-	CONTROL_A, CONTROL_B, CONTROL_C, CONTROL_D, CONTROL_E, CONTROL_F };
+	CONTROL_A, CONTROL_B, CONTROL_C, CONTROL_D, CONTROL_E, CONTROL_F, CHARGER };
 static const char *const names[] = {"power", "buttons.center", "buttons.side", "application", "matrix",
 	"imu", "imu.calibrated", "imu.orientation", "sound", "battery",
 	"port.A", "port.B", "port.C", "port.D", "port.E", "port.F",
 	"sensor.A", "sensor.B", "sensor.C", "sensor.D", "sensor.E", "sensor.F",
 	"motor.A", "motor.B", "motor.C", "motor.D", "motor.E", "motor.F",
-	"control.A", "control.B", "control.C", "control.D", "control.E", "control.F"};
+	"control.A", "control.B", "control.C", "control.D", "control.E", "control.F", "charger"};
 
 /* A bounded presentation of current numeric observations. Device state and
  * behavior remain in their owning services. Shell and SMP share this capture,
@@ -66,6 +67,7 @@ static bool available(enum source source)
 	case MATRIX: return IS_ENABLED(CONFIG_BRICKPHYR_MATRIX);
 	case SOUND: return IS_ENABLED(CONFIG_BRICKPHYR_SOUND);
 	case BATTERY: return IS_ENABLED(CONFIG_BRICKPHYR_BATTERY);
+	case CHARGER: return IS_ENABLED(CONFIG_BRICKPHYR_CHARGER);
 	case PORT_A: case PORT_B: case PORT_C: case PORT_D: case PORT_E: case PORT_F:
 		return IS_ENABLED(CONFIG_BRICKPHYR_PORTS);
 	case SENSOR_A: case SENSOR_B: case SENSOR_C: case SENSOR_D: case SENSOR_E: case SENSOR_F:
@@ -347,6 +349,25 @@ static void capture(enum source source, struct observation *out)
 			field(out, "temperature_ms", value.temperature_ms);
 			field(out, "temperature_failures", value.temperature_failures);
 			field(out, "temperature_raw", value.temperature_raw);
+			field(out, "average_mv", value.average_mv);
+			field(out, "low", value.low);
+			field(out, "critical", value.critical);
+		}
+	} else if (source == CHARGER) {
+		struct bp_charger_state value;
+		out->error = hub_charger_get(&value);
+		if (!out->error) {
+			out->error = value.error;
+			field(out, "sample_ms", value.sample_ms);
+			field(out, "failures", value.failures);
+			field(out, "current_ma", value.current_ma);
+			field(out, "current_raw", value.current_raw);
+			field(out, "limit_ma", value.limit_ma);
+			field(out, "status", value.status);
+			field(out, "enabled", value.enabled);
+			field(out, "paused", value.paused);
+			field(out, "configured", value.configured);
+			field(out, "suspended", value.suspended);
 		}
 	} else if (source == SOUND) {
 		struct bp_sound_state value;

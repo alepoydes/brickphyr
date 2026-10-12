@@ -3,7 +3,7 @@
 `observe` or `observe all` reads current observations in the shared USB/BLE Shell.
 Use `observe power`, `observe buttons.center`, `observe buttons.side`,
 `observe application`, `observe matrix`, `observe imu`, `observe imu.calibrated`
-`observe imu.orientation`, `observe sound`, `observe battery`, `observe port.A`
+`observe imu.orientation`, `observe sound`, `observe battery`, `observe charger`, `observe port.A`
 (through `port.F`) or `observe sensor.A` (through `sensor.F`) for one source. Unsupported sources
 report an error; `all` includes the sources compiled into the image.
 

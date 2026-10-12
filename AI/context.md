@@ -25,6 +25,10 @@ installer/DFU recovery. USB and BLE share one management owner. The installed
 `brickphyrdev` CLI provides USB/BLE terminal, monitoring and application
 commands. The owning documents state each procedure and its evidence limits.
 
+F4 charging works from a configured, awake USB host and continues after shutdown;
+dedicated charging adapters remain unsupported. Critical-battery cutoff has
+synthetic ADC checks. See [battery and charger support](../docs/hardware.md#hub-battery).
+
 One protected application lifecycle serves the native C SDK and optional
 MicroPython engine. RAM uploads and named LittleFS programs use the same
 supervisor, store, Shell/SMP operations and USB/BLE transports. Application stop,

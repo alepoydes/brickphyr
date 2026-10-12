@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_transport.h"
+#include "hub_charger.h"
 
 #include <errno.h>
 #include <zephyr/drivers/uart.h>
@@ -19,6 +20,15 @@ static bool port_open(void)
 
 static void usb_message(struct usbd_context *const ctx, const struct usbd_msg *msg)
 {
+	if (msg->type == USBD_MSG_RESET || msg->type == USBD_MSG_VBUS_REMOVED) {
+		hub_charger_usb(HUB_CHARGER_USB_RESET);
+	} else if (msg->type == USBD_MSG_CONFIGURATION) {
+		hub_charger_usb(msg->status ? HUB_CHARGER_USB_CONFIGURED : HUB_CHARGER_USB_RESET);
+	} else if (msg->type == USBD_MSG_SUSPEND) {
+		hub_charger_usb(HUB_CHARGER_USB_SUSPEND);
+	} else if (msg->type == USBD_MSG_RESUME) {
+		hub_charger_usb(HUB_CHARGER_USB_RESUME);
+	}
 	if (msg->type == USBD_MSG_CDC_ACM_CONTROL_LINE_STATE && msg->dev == uart) {
 		host_connection_changed(port_open());
 	} else if (msg->type == USBD_MSG_RESET || msg->type == USBD_MSG_VBUS_REMOVED ||

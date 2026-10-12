@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_power.h"
+#include "hub_battery.h"
 #include "configuration.h"
 
 #include <errno.h>
@@ -25,6 +26,7 @@ static bool application;
 static bool shutting_down;
 static int64_t idle_since;
 static int64_t sampled_ms;
+static int64_t critical_since = -1;
 
 void hub_power_get(struct hub_power_state *state)
 {
@@ -125,6 +127,8 @@ bool hub_power_application(bool running)
 
 bool hub_power_update(int vbus, bool activity, int64_t now)
 {
+	struct bp_battery_sample battery;
+	bool critical = hub_battery_get(&battery) == 0 && battery.critical;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	sampled_ms = now;
 	if (source != vbus || activity) {
@@ -135,6 +139,12 @@ bool hub_power_update(int vbus, bool activity, int64_t now)
 	    now - idle_since >= (int64_t)timeout_s[source] * 1000) {
 		shutting_down = true;
 	}
+	/* Reference Pybricks battery protection: three seconds continuously below
+	 * the hysteretic critical threshold. An app or host cannot inhibit it.
+	 * Read failures retain a previously established critical condition. */
+	if (!critical) critical_since = -1;
+	else if (critical_since < 0) critical_since = now;
+	else if (now - critical_since >= 3000) shutting_down = true;
 	bool expired = shutting_down;
 	k_spin_unlock(&lock, key);
 	return expired;

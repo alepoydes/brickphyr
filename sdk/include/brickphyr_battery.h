@@ -28,4 +28,8 @@ struct bp_battery_sample {
 	int64_t temperature_ms;
 	uint32_t temperature_failures;
 	uint16_t temperature_raw;
+	/* Filtered voltage and hysteretic protection flags. These retain the last
+	 * established condition on acquisition failure; they are not fresh readings. */
+	uint32_t average_mv;
+	uint8_t low, critical;
 };

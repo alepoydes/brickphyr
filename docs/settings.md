@@ -220,8 +220,16 @@ USB power presence, USB enumeration, and an active management session are distin
 states. Define session acquisition and release with the [host interface](host.md);
 do not infer an active owner from the cable alone. After a session ends, apply the
 relevant idle policy. Normal disconnection does not stop an autonomous application.
-Future critical-battery protection must remain independent of automatic shutdown;
-battery-voltage monitoring is not implemented in this build.
+Critical-battery protection is independent of these inactivity rules. On F4,
+filtered voltage at or below 6.0 V sets the critical condition, which clears at
+6.8 V. Three seconds continuously critical requests the normal shutdown and
+resource cleanup, even with an application or management session. Low-voltage
+warning sets at 6.8 V and clears at 7.2 V. These Pybricks thresholds are not
+user-adjustable inactivity settings. A read error retains an already established
+critical condition; startup waits for a real measurement. `observe battery`
+reports the values and acquisition errors. Synthetic ADC checks cover hysteresis,
+recovery, error retention and shutdown despite both power holds; deliberate
+physical battery depletion is not an acceptance procedure.
 
 Diagnostics must expose the power source, configured timeout, remaining idle time,
 and the reason shutdown is inhibited. `power` reports these values. The F4 reads
@@ -238,10 +246,10 @@ attempts rejected during BLE ownership cannot release it. These policy boundarie
 are checked with synthetic time, including USB disconnect during an accepted
 Shell command and BLE disconnect during an accepted SMP operation. Both retain
 the power hold through completion. BLE inhibition beyond a one-second USB-power
-timeout is also verified on the Inventor F4. With a three-second USB timeout,
-closing the terminal releases
-ownership and triggers shutdown, including USB disconnection and observed lights
-off. The same terminal holds power beyond that timeout while open.
+timeout is also verified on the Inventor F4. In a profile without charging, a
+three-second USB timeout is checked to release ownership, disconnect USB and
+turn the lights off after the terminal closes. The same terminal holds power
+beyond that timeout while open.
 
 The native BLE terminal also holds battery power for over 13 seconds without
 commands with a three-second battery timeout. USB removal and reconnection change
@@ -252,10 +260,21 @@ their saved zero values on startup. With the battery timeout disabled, the hub
 continues advertising after the owner closes. These are functional checks on the
 Inventor F4, not measurements of residual current or exact physical cutoff timing.
 
+With charger support enabled, shutdown closes existing management sessions and
+stops applications, motors, sensors, Bluetooth and lighting, while keeping the
+USB device configured. This retains the computer's current budget for charging;
+USB presence after shutdown does not mean a working terminal or running program.
+Removing USB disables charging. USB suspend also pauses charging, and resume or
+reconfiguration can restore it. Other profiles retain USB disconnection at shutdown.
+On the Inventor F4, command shutdown leaves USB configured, rejects both old and
+new terminal input, turns off the lights, and permits center-button restart.
+Charge-current observation resumes after restart. Current while off and a full
+charge cycle have not been measured with instruments.
+
 If USB keeps the processor powered after shutdown, the existing ADC button driver
 continues running. A debounced center release followed by a new press performs a
 full reboot; the shutdown hold itself, ADC errors and contact bounce cannot wake
-the hub. No USB connection or menu is active in this state. USB-attached restart
+the hub. No management session or menu is active in this state. USB-attached restart
 after both command shutdown and a long center hold is checked on the Inventor F4.
 Holding the button through shutdown does not restart it. Battery-only long-press
 shutdown and subsequent button startup are also checked, followed by a working

@@ -8,5 +8,6 @@ project(hub_drivers)
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/hub_light.c ${BRICKPHYR_ROOT}/src/hub_menu.c ${BRICKPHYR_ROOT}/drivers/input_resistor_ladder.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c ${BRICKPHYR_ROOT}/src/hub_matrix.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/telemetry.c ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c)
+target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_charger.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${BRICKPHYR_ROOT}/sdk/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)

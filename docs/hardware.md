@@ -88,16 +88,18 @@ button together with non-button inputs; PA1/ADC1 contains left, right, and
 Bluetooth. The decoder and nominal resistor-ladder cutoffs come from Pybricks.
 With charging disabled, the measured center-button level on the Inventor F4
 was 3141–3147 ADC counts, straddling Pybricks' loaded-ladder cutoff of 3142.
-This build uses the nominal ladder cutoffs for both ladders; adding charger
-control requires rechecking these levels. The Zephyr Input adapter
+This build uses the nominal ladder cutoffs for both ladders. With charging
+enabled, the released center/CHG level and a short center press are checked on
+the Inventor F4; all combined ladder inputs still need characterization. The Zephyr Input adapter
 samples every 10 ms after startup settling and requires two matching samples.
 An invalid sample releases reported keys so it cannot sustain a shutdown hold.
 
 The TLC5955 drives both central RGB LEDs and the Bluetooth RGB LED over SPI1,
 with a TIM12 clock and PA15 latch. The driver reuses Pybricks control/grayscale
 encoding over Zephyr SPI/PWM/GPIO and exposes Zephyr LED operations. Its initial
-3.2 mA setting matches Pybricks. The shared charger-control channel remains at
-the Pybricks disabled value. Charging is not implemented. The matrix uses the
+3.2 mA setting matches Pybricks. The shared charger-control channel starts at
+the Pybricks disabled value; [charging](#hub-charger) owns subsequent changes.
+Ordinary LED writes cannot change that reserved channel. The matrix uses the
 same controller and frame; see [hub matrix](#hub-matrix).
 
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
@@ -215,7 +217,7 @@ driver. Its row-major wiring comes from Pybricks `prime_hub_f4`'s
 `LED_ARRAY_DEV_0_LIGHT_MATRIX`. Brightness is 0–100 with Pybricks' gamma-2
 conversion to 16-bit PWM. Coordinates start at the top left in the upright hub
 orientation. Matrix and button writes serialize through the same persistent
-controller frame, preserving each other's channels and the charger-disable output.
+controller frame, preserving each other's channels and the charger-control output.
 
 The [Shell commands](builds.md#diagnostic-shell) and native SDK use one display
 service. The first accepted write acquires the matrix for the terminal or the
@@ -548,6 +550,14 @@ timer. The thermistor conversion adds one `logf` per successful acquisition;
 cached readers perform neither conversion nor floating-point calculation.
 Combined CPU/IRQ cost and measurement accuracy still require physical testing.
 
+`average_mv`, `low` and `critical` expose the filtered voltage and hysteretic
+protection state. The moving average and thresholds are adapted from Pybricks
+`lib/pbio/src/battery.c` and `lib/pbio/sys/battery.c` at the revision above.
+The filter uses 64 samples at the nominal 10 ms acquisition period, retaining
+the reference's nominal 640 ms time constant. Acquisition failures retain an
+established condition; they do not turn an invalid reading into a healthy battery.
+See [critical-battery shutdown](settings.md#inactivity-shutdown).
+
 Synthetic ADC checks exercise startup, scaling boundaries, first-error preservation,
 partial-pair rejection, the 25 °C reference point, negative temperatures, thermistor
 fault isolation, stale snapshots, shutdown and continued button sampling.
@@ -556,6 +566,50 @@ USB/BLE observations provide changing voltage/current readings, including during
 the short motor checks. Python and Shell/SMP checks also return Li-ion chemistry
 and fresh thermistor readings, without reported ADC failures. Absolute accuracy and
 the hardware timeout path have not been verified with instruments or fault injection.
+
+## Hub charger
+
+`CONFIG_BRICKPHYR_CHARGER` controls the F4 MP2639A charger using Zephyr drivers.
+Its implementation is adapted from Pybricks
+[`charger_mp2639a.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/drv/charger/charger_mp2639a.c),
+with its MIT notice preserved. TLC5955 channel 14 controls MODE, TIM5/PA0 sets
+ISET, PA3/ADC3 reads IB, and bit 2 of the center-button ladder reads CHG.
+The charger chip controls the charge phases and its analogue protections.
+
+Charging requires USB host configuration; VBUS alone grants no current budget.
+The USB descriptor requests 500 mA for the whole device. The current profile uses
+Pybricks' smaller standard-port ISET preset, nominally 100 mA (2% duty), because
+the larger preset's IB readings exceeded 500 mA on the Inventor F4.
+This is an empirical preset, not a calibrated guarantee of total input current.
+Wall adapters and their higher BC1.2 current budgets are not yet supported.
+No open terminal or keep-alive application is required. Charging continues after
+[shutdown](settings.md#inactivity-shutdown) while USB remains configured and awake.
+
+Read the same cached observations in the terminal or host monitor:
+
+```text
+observe charger
+observe battery
+```
+
+```sh
+uv run brickphyrdev monitor --source charger --source battery --log charging.jsonl
+```
+
+`enabled` is the last successfully applied charge-enable state; `limit_ma` names
+the selected reference preset. `current_ma` is the empirical IB conversion,
+clamped at zero instead of wrapping below its offset. `status` is 0 discharging,
+1 charging, 2 complete/suspended by the chip, or 3 fault. It is not a state-of-charge
+percentage. Inspect the observation error before trusting these fields: an I/O
+failure can leave the actual output unknown. Status is sampled every 250 ms;
+the reused seven-sample CHG transition detector identifies the chip's blinking
+fault indication. Stable output does not cause repeated SPI writes. After one
+hour enabled, charging pauses for 30 seconds and restarts, as in Pybricks.
+Suspend or removal revokes charging at the next hub-loop update.
+
+Initial charging and recovery of battery voltage, lighting and the center button
+are checked on the Inventor F4. Full-charge termination, all temperature/fault
+conditions, adapter recognition and instrumented current accuracy remain open.
 
 ## A support claim must be reproducible
 

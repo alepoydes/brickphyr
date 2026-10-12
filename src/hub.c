@@ -19,6 +19,7 @@
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
+#include "hub_charger.h"
 #include "hub_ports.h"
 #include "hub_menu.h"
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
@@ -62,13 +63,27 @@ static void button_event(struct input_event *event, void *user_data)
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(center_keys)), button_event, NULL, center);
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)), button_event, NULL, arrows);
 
-static void shutdown(void)
+static void shutdown(const struct gpio_dt_spec *vbus, int vbus_error)
 {
 	int stopped = application_shutdown();
 	if (stopped) {
 		LOG_ERR("Application shutdown failed: %d", stopped);
-		return;
+		/* The application thread has been joined. A resource cleanup failure
+		 * must not prevent the remaining drivers and power rail from stopping. */
 	}
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+	/* Invalidate input before quiescing outputs. The existing power reservation
+	 * lasts until the Shell and any accepted SMP command have finished cleanup.
+	 * The watchdog still supervises this wait; do not feed a stuck teardown. */
+	host_connection_changed(false);
+	host_ble_release(false);
+	for (;;) {
+		struct hub_power_state state;
+		hub_power_get(&state);
+		if (!state.connected) break;
+		k_msleep(1);
+	}
+#endif
 	int err = hub_imu_shutdown();
 	hub_battery_shutdown();
 	if (err) {
@@ -95,6 +110,9 @@ static void shutdown(void)
 	if (err) {
 		LOG_ERR("Lights off failed: %d", err);
 	}
+	/* Keep the USB configuration while charging: it grants the current budget.
+	 * Shutdown has already closed management/application admission. */
+#if !defined(CONFIG_BRICKPHYR_CHARGER)
 	/* Use the same context registry as Zephyr's USB shell, including the
 	 * standard automatically initialized CDC device. No private CDC symbols.
 	 */
@@ -109,6 +127,7 @@ static void shutdown(void)
 		}
 	}
 #endif
+#endif
 #if defined(CONFIG_BT)
 	host_ble_shutdown();
 #endif
@@ -120,6 +139,7 @@ static void shutdown(void)
 
 	for (;;) {
 		hub_watchdog_feed();
+		hub_charger_update(vbus_error ? vbus_error : gpio_pin_get_dt(vbus), k_uptime_get());
 		int pressed = device_is_ready(center) ?
 			resistor_ladder_get_key(center, INPUT_KEY_ENTER) : -ENODEV;
 		if (pressed == 0) {
@@ -226,6 +246,8 @@ void hub_run(void)
 
 	for (;;) {
 		int64_t now = k_uptime_get();
+		int usb_power = vbus_error ? vbus_error : gpio_pin_get_dt(&vbus);
+		hub_charger_update(usb_power, now);
 		application_poll();
 		bool activity = false;
 		bool down = atomic_test_bit(&buttons, 0);
@@ -240,7 +262,7 @@ void hub_run(void)
 		center_presses = count;
 		if (pressed_at >= 0 && now - pressed_at >= 2000) {
 			hub_power_request_shutdown();
-			shutdown();
+			shutdown(&vbus, vbus_error);
 		}
 		enum host_mode current = host_interface_current();
 		application_buttons(menu.open ? 0 : hub_buttons());
@@ -282,8 +304,8 @@ void hub_run(void)
 			}
 		}
 		center_was_down = down;
-		if (hub_power_update(vbus_error ? vbus_error : gpio_pin_get_dt(&vbus), activity, now)) {
-			shutdown();
+		if (hub_power_update(usb_power, activity, now)) {
+			shutdown(&vbus, vbus_error);
 		}
 		if (menu.open) {
 			/* Refresh completion while presenting the selection menu. */
