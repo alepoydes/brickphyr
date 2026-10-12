@@ -8,6 +8,7 @@ target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_ble.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include
+  ${BRICKPHYR_ROOT}/sdk/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
 zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_le_adv_start -Wl,--wrap=bt_le_adv_stop

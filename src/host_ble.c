@@ -3,6 +3,7 @@
 #include "host_transport.h"
 #include "application.h"
 #include "hub.h"
+#include "hub_radio.h"
 
 #include <string.h>
 #include <pbio/protocol.h>
@@ -31,7 +32,9 @@ static void request_disconnect(struct bt_conn *conn);
 static bool exit_compatibility;
 static K_MUTEX_DEFINE(pybricks_lock);
 static struct host_protocol pybricks;
-static uint8_t pybricks_pending[HOST_PROTOCOL_PAYLOAD_MAX];
+/* Only bytes produced by host_protocol_event() are sent. Keep payload storage
+ * outside BSS to avoid displacing the next MPU-aligned application stack. */
+static __noinit uint8_t pybricks_pending[HOST_PROTOCOL_PAYLOAD_MAX];
 static size_t pybricks_pending_size;
 static int64_t pybricks_tx_deadline;
 static void pybricks_output(struct k_work *work);
@@ -48,6 +51,166 @@ static const char *failed_operation;
 static struct k_work_q radio_queue;
 /* F4 startup/re-advertising measured 548 bytes; 1 KiB leaves 960 usable with MPU. */
 static K_THREAD_STACK_DEFINE(radio_stack, 1024);
+
+#ifdef CONFIG_BRICKPHYR_RADIO
+/* Observation/filter equations are adapted from Pybricks pb_type_ble_radio.c
+ * at a7b1b04ae (MIT, Copyright (c) 2023 The Pybricks Authors).
+ * The shared radio worker owns scan commands; RX callbacks only copy samples. */
+struct observed_channel {
+	struct bp_radio_sample sample;
+	uint8_t channel;
+};
+static struct k_spinlock observe_lock;
+static struct observed_channel *observed;
+static size_t observed_count;
+static uint32_t observe_handle, observe_sequence;
+static int observe_error;
+static bool scanning;
+static void update_scan(struct k_work *work);
+static K_WORK_DEFINE(scan_work, update_scan);
+static int radio_failed(const char *operation, int error);
+
+static void receive_broadcast(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+	struct net_buf_simple *buffer)
+{
+	/* Accept every legacy advertising type, as the reference does for City
+	 * firmware. Walk AD elements instead of assuming manufacturer data is first. */
+	const uint8_t *data = buffer->data;
+	size_t size = buffer->len;
+	uint32_t now = k_uptime_get_32();
+	while (size) {
+		size_t length = data[0];
+		if (!length || length >= size) return;
+		if (length >= 4 && length <= 4 + BP_RADIO_DATA_MAX && data[1] == BT_DATA_MANUFACTURER_DATA &&
+		    sys_get_le16(data + 2) == 0x0397 && rssi != BT_GAP_RSSI_INVALID && rssi != INT8_MIN) {
+			k_spinlock_key_t key = k_spin_lock(&observe_lock);
+			for (size_t i = 0; i < observed_count; i++) {
+				if (observed[i].channel != data[4]) continue;
+				struct bp_radio_sample *sample = &observed[i].sample;
+				uint32_t elapsed = sample->valid ? MIN(now - sample->timestamp_ms, 512U) : 512U;
+				sample->rssi = (sample->rssi * (512 - (int)elapsed) + rssi * (int)elapsed) / 512;
+				sample->timestamp_ms = now;
+				sample->size = length - 4;
+				sample->valid = 1;
+				memcpy(sample->data, data + 5, sample->size);
+				break;
+			}
+			k_spin_unlock(&observe_lock, key);
+		}
+		size -= length + 1;
+		data += length + 1;
+	}
+}
+
+static void update_scan(struct k_work *work)
+{
+	k_mutex_lock(&radio_lock, K_FOREVER);
+	k_spinlock_key_t key = k_spin_lock(&observe_lock);
+	bool desired = observe_handle && observed_count && !atomic_get(&shutting_down);
+	uint32_t handle = observe_handle;
+	k_spin_unlock(&observe_lock, key);
+	int state = atomic_get(&radio_state);
+	int err = atomic_get(&shutting_down) ? -ESHUTDOWN :
+		state == RADIO_FAILED ? (radio_error < 0 ? radio_error : -EIO) :
+		state != RADIO_ON ? -EHOSTDOWN : 0;
+	if (!err && desired != scanning) {
+		/* Reference passive scan: 70 ms interval / 35 ms window, leaving
+		 * radio time for existing connections and advertising. No duplicate
+		 * filter: repeated values still refresh their age and signal strength. */
+		err = desired ? bt_le_scan_start(BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE,
+			0, 0x70, 0x38), receive_broadcast) : bt_le_scan_stop();
+		if (err) radio_failed(desired ? "scan start" : "scan stop", err);
+		else scanning = desired;
+	}
+	key = k_spin_lock(&observe_lock);
+	if (handle == observe_handle) observe_error = err > 0 ? -EIO : err;
+	k_spin_unlock(&observe_lock, key);
+	k_mutex_unlock(&radio_lock);
+}
+
+int hub_radio_observe(const uint8_t *channels, size_t count, uint32_t *handle)
+{
+	if (count > BP_RADIO_CHANNELS_MAX) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&observe_lock);
+	int state = atomic_get(&radio_state);
+	int err = observe_handle ? -EBUSY : atomic_get(&shutting_down) ? -ESHUTDOWN :
+		state == RADIO_FAILED ? (radio_error < 0 ? radio_error : -EIO) :
+		state != RADIO_ON ? -EHOSTDOWN : 0;
+	if (!err) {
+		/* Bounded, nonblocking allocation/publication under the same lock:
+		 * aborting the caller cannot leak an unpublished system-heap buffer. */
+		struct observed_channel *copy = count ? k_calloc(count, sizeof(*copy)) : NULL;
+		if (count && !copy) err = -ENOMEM;
+		else {
+			for (size_t i = 0; i < count; i++) {
+				copy[i].channel = channels[i];
+				copy[i].sample.rssi = INT8_MIN;
+			}
+			observed = copy;
+			observed_count = count;
+			observe_sequence++;
+			if (!observe_sequence) observe_sequence++;
+			*handle = observe_handle = observe_sequence;
+			observe_error = -EAGAIN;
+			k_work_submit_to_queue(&radio_queue, &scan_work);
+		}
+	}
+	k_spin_unlock(&observe_lock, key);
+	return err;
+}
+
+int hub_radio_ready(uint32_t handle)
+{
+	k_spinlock_key_t key = k_spin_lock(&observe_lock);
+	int err = !handle || handle != observe_handle ? -ESTALE :
+		atomic_get(&shutting_down) ? -ESHUTDOWN : observe_error;
+	if (!err && atomic_get(&radio_state) != RADIO_ON) err = -EHOSTDOWN;
+	k_spin_unlock(&observe_lock, key);
+	return err;
+}
+
+int hub_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
+{
+	k_spinlock_key_t key = k_spin_lock(&observe_lock);
+	int err = !handle || handle != observe_handle ? -ESTALE :
+		atomic_get(&shutting_down) ? -ESHUTDOWN : observe_error;
+	if (!err && atomic_get(&radio_state) != RADIO_ON) err = -EHOSTDOWN;
+	if (!err) {
+		err = -EINVAL;
+		for (size_t i = 0; i < observed_count; i++) {
+			if (observed[i].channel != channel) continue;
+			*sample = observed[i].sample;
+			if (k_uptime_get_32() - sample->timestamp_ms > 1000U) {
+				sample->valid = sample->size = 0;
+				sample->rssi = INT8_MIN;
+			}
+			err = 0;
+			break;
+		}
+	}
+	k_spin_unlock(&observe_lock, key);
+	return err;
+}
+
+static int retire_observer(uint32_t handle, bool force)
+{
+	k_spinlock_key_t key = k_spin_lock(&observe_lock);
+	if (observe_handle && (force || handle == observe_handle)) {
+		/* No driver retains this buffer. Detach under the RX lock, before
+		 * asynchronous scan shutdown, so forced application stop never waits
+		 * for an HCI reply or leaves a callback pointing into released memory. */
+		k_free(observed);
+		observed = NULL;
+		observed_count = observe_handle = 0;
+		k_work_submit_to_queue(&radio_queue, &scan_work);
+	}
+	k_spin_unlock(&observe_lock, key);
+	return 0;
+}
+
+int hub_radio_close(uint32_t handle) { return retire_observer(handle, false); }
+int hub_radio_release(void) { return retire_observer(0, true); }
+#endif
 
 enum host_ble_status host_ble_status(void)
 {
@@ -519,7 +682,17 @@ static int set_radio(bool enable)
 	if (!err && state != (enable ? RADIO_ON : RADIO_OFF)) {
 		atomic_set(&radio_state, enable ? RADIO_STARTING : RADIO_STOPPING);
 		const char *operation = enable ? "initialization" : "advertising stop";
-		err = enable ? bt_enable(NULL) : bt_le_adv_stop();
+#ifdef CONFIG_BRICKPHYR_RADIO
+		if (!enable && scanning) {
+			operation = "scan stop";
+			err = bt_le_scan_stop();
+			if (!err) scanning = false;
+		}
+#endif
+		if (!err) {
+			operation = enable ? "initialization" : "advertising stop";
+			err = enable ? bt_enable(NULL) : bt_le_adv_stop();
+		}
 		if (!err) {
 			operation = enable ? "advertising start" : "controller shutdown";
 			err = enable ? (atomic_get(&shutting_down) ? 0 : advertise()) : bt_disable();
@@ -528,6 +701,19 @@ static int set_radio(bool enable)
 			radio_failed(operation, err);
 		} else {
 			atomic_set(&radio_state, enable ? RADIO_ON : RADIO_OFF);
+#ifdef CONFIG_BRICKPHYR_RADIO
+			k_spinlock_key_t key = k_spin_lock(&observe_lock);
+			if (!enable) {
+				for (size_t i = 0; i < observed_count; i++) {
+					observed[i].sample.valid = observed[i].sample.size = 0;
+					observed[i].sample.rssi = INT8_MIN;
+				}
+			} else if (observe_handle) {
+				observe_error = -EAGAIN;
+				k_work_submit_to_queue(&radio_queue, &scan_work);
+			}
+			k_spin_unlock(&observe_lock, key);
+#endif
 		}
 	}
 	k_mutex_unlock(&radio_lock);

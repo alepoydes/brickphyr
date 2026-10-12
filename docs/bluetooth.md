@@ -168,6 +168,37 @@ buffers even when board teardown reports an error. UART-emulator checks cover
 reopening after partial RX/TX and teardown failure. This does not make a failed
 controller ready or provide automatic recovery of the Bluetooth host stack.
 
+### Application broadcast observation
+
+With `CONFIG_BRICKPHYR_RADIO` and `CONFIG_BT_OBSERVER`,
+`messaging.BLERadio(observe_channels=...)` and
+the legacy hub `observe_channels` argument request passive scans on the existing
+Zephyr radio. A single native observer owns the configured channels; its
+application-visible samples are copied from manufacturer data with Pybricks'
+company ID and channel byte. Typed data is limited to 26 bytes. `observe()`
+returns a decoded scalar or tuple, or `None` when no sample arrived within one
+second. `signal_strength()` reports the reference 512 ms filtered RSSI, with
+`-128` for no current sample. Repeated equal packets refresh presence. An explicit
+close, finalizer or supervised application stop retires the observer; radio HCI
+start/stop remains on the existing radio workqueue. This observation does not
+acquire another management connection. Broadcasting and radio firmware-version
+queries are unfinished and raise `NotImplementedError`. Protected ARM checks
+cover values, expiry and lifecycle through a synthetic scan callback; physical
+reception and coexistence remain to be checked.
+
+For a peer broadcasting on channel 7, run this through either application
+transport; reception itself does not require a connection to that peer:
+
+```python
+from pybricks.messaging import BLERadio
+from pybricks.tools import wait
+
+radio = BLERadio(observe_channels=(7,))
+while True:
+    print(radio.observe(7), radio.signal_strength(7))
+    wait(200)
+```
+
 ## Boundaries
 
 | Part | Owner / work |

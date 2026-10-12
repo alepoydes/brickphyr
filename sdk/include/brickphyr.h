@@ -8,6 +8,7 @@
 #include <brickphyr_abi.h>
 #include <brickphyr_matrix.h>
 #include <brickphyr_light.h>
+#include <brickphyr_radio.h>
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
@@ -32,6 +33,14 @@ __syscall int bp_sleep(uint32_t milliseconds);
 __syscall int bp_write(const void *data, size_t length);
 /* Bit 0 center, 1 left, 2 right, 3 Bluetooth. Read-only, no allocation. */
 __syscall uint32_t bp_buttons(void);
+/* One observer configuration per application, with up to 255 channel entries.
+ * Allocate/copy without waiting; ready reports asynchronous scan startup.
+ * Repeated identical packets refresh age/RSSI. Samples expire after 1000 ms.
+ * Close retires the lease immediately and schedules scanner cleanup. */
+__syscall int bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle);
+__syscall int bp_radio_ready(uint32_t handle);
+__syscall int bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample);
+__syscall int bp_radio_close(uint32_t handle);
 /* Read the calling application's launch identity and current management link.
  * No I/O or wait; name and boot cause share the firmware's existing providers. */
 __syscall int bp_system_get(struct bp_system_info *info);

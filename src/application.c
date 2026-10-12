@@ -14,6 +14,7 @@
 #include "hub.h"
 #include "hub_matrix.h"
 #include "hub_light.h"
+#include "hub_radio.h"
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
@@ -802,6 +803,40 @@ static inline int z_vrfy_bp_port_get(uint32_t port, struct bp_port_state *value)
 	return z_impl_bp_port_get(port, value);
 }
 #include <zephyr/syscalls/bp_port_get_mrsh.c>
+
+int z_impl_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle)
+{
+	return hub_radio_observe(channels, count, handle);
+}
+static inline int z_vrfy_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle)
+{
+	if (count > BP_RADIO_CHANNELS_MAX) return -EINVAL;
+	if (count) K_OOPS(K_SYSCALL_MEMORY_READ(channels, count));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	return z_impl_bp_radio_observe(channels, count, handle);
+}
+#include <zephyr/syscalls/bp_radio_observe_mrsh.c>
+
+int z_impl_bp_radio_ready(uint32_t handle) { return hub_radio_ready(handle); }
+static inline int z_vrfy_bp_radio_ready(uint32_t handle) { return z_impl_bp_radio_ready(handle); }
+#include <zephyr/syscalls/bp_radio_ready_mrsh.c>
+
+int z_impl_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
+{
+	return hub_radio_get(handle, channel, sample);
+}
+static inline int z_vrfy_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(sample, __alignof__(*sample))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(sample, sizeof(*sample)));
+	return z_impl_bp_radio_get(handle, channel, sample);
+}
+#include <zephyr/syscalls/bp_radio_get_mrsh.c>
+
+int z_impl_bp_radio_close(uint32_t handle) { return hub_radio_close(handle); }
+static inline int z_vrfy_bp_radio_close(uint32_t handle) { return z_impl_bp_radio_close(handle); }
+#include <zephyr/syscalls/bp_radio_close_mrsh.c>
 
 int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value)
@@ -1680,6 +1715,8 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 static int release(void)
 {
 	int err = hub_ports_release(BP_PORT_APPLICATION);
+	int radio_error = hub_radio_release();
+	if (!err) err = radio_error;
 	hub_imu_release();
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */

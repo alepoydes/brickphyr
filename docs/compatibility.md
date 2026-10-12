@@ -270,8 +270,24 @@ sends and lifecycle cleanup. See [application data](host.md#application-data)
 for limits and the distinction between transport acceptance and remote delivery.
 Physical client acceptance remains pending.
 
-Radio constructor arguments, charger source detection (`connected()`),
-system `reset_storage`, `BLERadio` and `HubNetwork` remain unfinished required work.
+`messaging.BLERadio(observe_channels=...)` and the legacy
+`PrimeHub`/`InventorHub` `observe_channels` argument use one shared passive BLE
+observer. Configured channels are 0–255. `observe(channel)` decodes the Pybricks
+typed payload into a scalar or tuple of booleans, signed integers, float32,
+strings and bytes; malformed payloads raise `RuntimeError`. A missing or
+more-than-one-second-old sample returns `None`; `signal_strength(channel)` returns
+the filtered RSSI or `-128` for an absent sample. Repeated advertisements refresh
+both sample age and RSSI. The service copies bounded snapshots for the protected
+application, and close, finalization and application stop release its observer.
+Protected ARM checks cover decoding, expiry, reopening and forced-stop cleanup;
+physical reception, coexistence with a management connection and radio timing
+remain unverified. Broadcast selection and
+`broadcast()` are explicitly unfinished, as is `version()`; these raise
+`NotImplementedError` before starting transmission. `HubNetwork` and the
+remaining peripheral wireless bindings are still required.
+
+Charger source detection (`connected()`) and system `reset_storage` remain
+unfinished required work.
 Charger `current()` and `status()` read the shared native snapshot and propagate
 acquisition errors; this does not establish BC1.2 source classification.
 Battery chemistry, voltage/current and temperature use the common observation

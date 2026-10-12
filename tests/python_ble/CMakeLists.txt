@@ -16,10 +16,11 @@ target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_transport.c
 target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
 zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_le_adv_start -Wl,--wrap=bt_le_adv_stop
+  -Wl,--wrap=bt_le_scan_start -Wl,--wrap=bt_le_scan_stop
   -Wl,--wrap=bt_conn_ref -Wl,--wrap=bt_conn_unref -Wl,--wrap=bt_conn_disconnect
   -Wl,--wrap=bt_conn_get_info
   -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb -Wl,--wrap=bt_gatt_get_mtu)
-set(programs echo spin flood native messaging)
+set(programs echo spin flood native messaging radio)
 if(CONFIG_BRICKPHYR_PYBRICKS_SLOTS GREATER 0)
   # A compiler-produced large constant fills the synthetic 64 KiB store.
   string(REPEAT x 24576 padding)

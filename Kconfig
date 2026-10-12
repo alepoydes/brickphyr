@@ -241,6 +241,14 @@ config BRICKPHYR_APP_STORAGE
 	depends on FILE_SYSTEM_MKFS
 	depends on !MCUMGR || MCUMGR_GRP_FS_FILE_ACCESS_HOOK
 
+config BRICKPHYR_RADIO
+	bool "Application BLE observations"
+	depends on BRICKPHYR_NATIVE && BT && BT_PERIPHERAL && BT_OBSERVER
+	default y
+	help
+	  Observe Pybricks broadcasts through the same Zephyr radio as management.
+	  Only requested channels allocate storage; applications get copied samples.
+
 config BRICKPHYR_PYBRICKS_SLOTS
 	int "Persistent Pybricks program slots"
 	depends on BRICKPHYR_PYTHON && BRICKPHYR_APP_STORAGE && SHELL

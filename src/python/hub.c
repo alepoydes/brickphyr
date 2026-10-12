@@ -5,6 +5,7 @@
 #include <brickphyr.h>
 #include <pybricks/common.h>
 #include <pybricks/hubs.h>
+#include <pybricks/messaging/messaging.h>
 #include <pybricks/parameters.h>
 #include <pybricks/parameters/pb_type_button.h>
 #include <pybricks/util_mp/pb_obj_helper.h>
@@ -12,7 +13,7 @@
 
 typedef struct {
 	mp_obj_base_t base;
-	mp_obj_t buttons, light, bluetooth_light, display, battery, charger, speaker, system, imu;
+	mp_obj_t buttons, light, bluetooth_light, display, battery, charger, speaker, system, imu, ble;
 } hub_obj_t;
 
 static mp_obj_t buttons_pressed(mp_obj_t parent)
@@ -123,9 +124,15 @@ static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 {
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args,
 		PB_ARG_DEFAULT_OBJ(top_side, pb_type_Axis_Z_obj),
-		PB_ARG_DEFAULT_OBJ(front_side, pb_type_Axis_X_obj));
+		PB_ARG_DEFAULT_OBJ(front_side, pb_type_Axis_X_obj),
+		PB_ARG_DEFAULT_NONE(broadcast_channel),
+		PB_ARG_DEFAULT_OBJ(observe_channels, mp_const_empty_tuple_obj));
+	if (broadcast_channel_in != mp_const_none) {
+		mp_raise_NotImplementedError(MP_ERROR_TEXT("radio broadcasting"));
+	}
 	/* Default construction remains usable in a profile without an IMU. */
-	if (IS_ENABLED(CONFIG_BRICKPHYR_IMU) || n_args || n_kw) {
+	if (IS_ENABLED(CONFIG_BRICKPHYR_IMU) || top_side_in != MP_OBJ_FROM_PTR(&pb_type_Axis_Z_obj) ||
+	    front_side_in != MP_OBJ_FROM_PTR(&pb_type_Axis_X_obj)) {
 		python_imu_axes(top_side_in, front_side_in);
 	}
 	hub_obj_t *self = mp_obj_malloc(hub_obj_t, type);
@@ -138,6 +145,7 @@ static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 	self->speaker = python_speaker_new();
 	self->system = MP_OBJ_FROM_PTR(&python_system);
 	self->imu = MP_OBJ_FROM_PTR(&python_imu);
+	self->ble = pb_type_BLE_new(broadcast_channel_in, observe_channels_in);
 	return MP_OBJ_FROM_PTR(self);
 }
 
@@ -151,6 +159,7 @@ static const pb_attr_dict_entry_t hub_attributes[] = {
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_speaker, hub_obj_t, speaker),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_system, hub_obj_t, system),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_imu, hub_obj_t, imu),
+	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_ble, hub_obj_t, ble),
 	PB_ATTR_DICT_SENTINEL
 };
 

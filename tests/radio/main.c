@@ -116,6 +116,9 @@ uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn)
 
 /* Ownership itself has production-transport tests; this fixture drives the
  * GATT adapter and its scheduling with a synthetic connection/controller. */
+bool host_ble_request_begin(void) { return management_owned; }
+void host_ble_request_end(void) {}
+
 int host_ble_acquire(void)
 {
 	zassert_false(management_owned);

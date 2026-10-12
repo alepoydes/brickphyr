@@ -177,6 +177,15 @@ callback and pending-data pointer. Lease/request tokens bind cleanup and sends
 to their object and operation; forced stop requires no Python finalizer.
 See [AppData limits and evidence](../../docs/host.md#application-data).
 
+`ble_radio.c` ports the receive codec from
+`pybricks/messaging/pb_type_ble_radio.c` at the same revision, retaining MIT
+attribution. It validates field lengths before decoding a copied sample. The
+shared Zephyr radio owner replaces the PBIO scan callbacks and retains the
+reference channel format, RSSI filter and one-second expiry. No driver retains
+Python memory; closing or stopping the application retires its observer before
+asynchronous HCI cleanup. Broadcasting and version queries remain unfinished.
+See [observation support](../../docs/bluetooth.md#application-broadcast-observation).
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, charger observations, internal color-light, light-matrix, speaker, system
 and IMU bindings from Pybricks

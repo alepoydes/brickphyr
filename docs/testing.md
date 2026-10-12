@@ -352,6 +352,13 @@ with its transmit FIFO unread. The normal lifecycle poll runs independently of
 status reads; UART0 carries test results. This does not emulate USB hardware or
 the complete HCI/ATT receive stack and radio.
 
+The `tests/python_ble` observation case injects literal Pybricks-format
+advertisements through the production BLE scan callback. It checks typed values,
+an empty tuple, malformed and truncated data, repeated-packet refresh, RSSI,
+one-second expiry, legacy `hub.ble` reopening and observer release on forced
+application stop. Controller scan calls are wrapped by the fixture; this case
+cannot establish reception or coexistence on physical BLE hardware.
+
 The slot variant uses that same fixture with the existing 64 KiB simulated
 LittleFS store. It checks multiple slots, selected-slot admission, interrupted
 and malformed replacement, reserved-name protection, and start across BLE/USB.

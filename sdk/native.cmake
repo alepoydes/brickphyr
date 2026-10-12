@@ -11,6 +11,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
@@ -27,6 +28,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
