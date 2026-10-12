@@ -140,14 +140,16 @@ ZTEST(hub, test_charger_usb_budget_and_shared_latch)
 	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 3600));
 	zassert_ok(adc_emul_const_raw_value_set(adc, 1, 4095));
 	zassert_ok(adc_emul_const_raw_value_set(adc, 3, 0));
-	k_msleep(60);
+	/* Cold-start settling must not depend on the button test running first. */
+	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
+	zassert_true(WAIT_FOR(resistor_ladder_get_sample(center).stable, 100000, k_msleep(1)));
 	hub_charger_update(1, k_uptime_get());
 	zassert_equal(duty(14), UINT16_MAX, "VBUS alone grants no charge current");
 	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
 	int64_t start = k_uptime_get();
 	hub_charger_update(1, start);
 	zassert_ok(hub_charger_get(&value));
-	zassert_ok(value.error);
+	zassert_ok(value.error, "charger acquisition failed: %d", value.error);
 	zassert_true(value.enabled && value.configured);
 	zassert_equal(value.current_ma, 0, "Zero-offset subtraction must not wrap");
 	zassert_equal(value.status, BP_CHARGER_CHARGING);

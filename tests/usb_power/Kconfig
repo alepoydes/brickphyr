@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+mainmenu "USB power coordinator fixture"
+source "Kconfig.zephyr"
+
+config BRICKPHYR_USB_BC12
+	bool
+	default y
+
+config BRICKPHYR_CHARGER
+	bool
+	default y

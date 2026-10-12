@@ -24,6 +24,21 @@ Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4
 | Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
 | Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
 
+The F4 USB source path has two focused synthetic fixtures. The Zephyr detector
+test checks BC1.2 timing and classifications; Brickphyr's coordinator test checks
+delayed USB attach, removal/replug, source-code mapping and latched USB errors,
+including suppression of detection after a failed detach:
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s ../zephyr/tests/drivers/usb/stm32_bc12 -d build/stm32-bc12-tests
+build/stm32-bc12-tests/zephyr/zephyr.exe
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/usb_power -d build/usb-power-tests
+build/usb-power-tests/zephyr/zephyr.exe
+```
+
+Both use synthetic USB inputs; they do not verify physical source detection,
+enumeration timing or charging current.
+
 For example, after building the relevant fixture:
 
 ```sh

@@ -157,8 +157,9 @@ LittleFS/Settings. Physical calibration accuracy is not yet verified.
 
 On F4, `shutdown` and a two-second central-button hold request the same shutdown
 on the hub thread: stop applications and hardware outputs, turn off button lights,
-stop Bluetooth and release the PA13 power latch. With charger support, USB stays
-configured to retain its charging current budget; other profiles disconnect USB.
+stop Bluetooth and release the PA13 power latch. With charger support, the USB
+device remains attached after source detection so a valid host or CDP/DCP budget
+can continue charging; other profiles disconnect USB.
 Radio shutdown runs independently of the button
 loop; a failed HCI operation cannot prevent the power latch from being released.
 A held button may keep power on until released. An active host session
@@ -285,10 +286,14 @@ Inventor F4, not measurements of residual current or exact physical cutoff timin
 
 With charger support enabled, shutdown closes existing management sessions and
 stops applications, motors, sensors, Bluetooth and lighting, while keeping the
-USB device configured. This retains the computer's current budget for charging;
+USB device attached after detection. This retains an awake computer's current
+budget; a detected CDP or DCP permits the same conservative charging preset even
+before configuration or during suspend. VBUS alone grants no charging budget;
 USB presence after shutdown does not mean a working terminal or running program.
-Removing USB disables charging. USB suspend also pauses charging, and resume or
-reconfiguration can restore it. Other profiles retain USB disconnection at shutdown.
+The off loop continues BC1.2 classification on cable insertion and cancels it on
+removal. Removing USB disables charging. USB suspend pauses charging on an SDP or
+unknown source; resume or configuration can restore it. Other profiles retain USB
+disconnection at shutdown.
 On the Inventor F4, command shutdown leaves USB configured, rejects both old and
 new terminal input, turns off the lights, and permits center-button restart.
 Charge-current observation resumes after restart. Current while off and a full

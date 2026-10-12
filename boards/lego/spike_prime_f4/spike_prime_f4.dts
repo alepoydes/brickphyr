@@ -196,6 +196,9 @@ zephyr_udc0: &usbotg_fs {
 	cdc_acm_uart: cdc-acm-uart {
 		compatible = "zephyr,cdc-acm-uart";
 	};
+	hub_usb_bc12: charger-detector {
+		compatible = "st,stm32-otg-bc12";
+	};
 };
 
 &flash0 {

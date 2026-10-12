@@ -2,8 +2,10 @@
 // Copyright (c) 2021-2022 The Pybricks Authors
 /* MP2639A control/status from lib/pbio/drv/charger/charger_mp2639a.c at
  * a7b1b04ae. Zephyr PWM/ADC and the shared TLC latch replace PBIO processes.
- * USB configuration grants the standard-port preset; VBUS alone grants none. */
+ * A configured host or detected CDP/DCP grants the conservative preset;
+ * VBUS alone grants none. */
 #include "hub_charger.h"
+#include "host_usb_power.h"
 #include "input_resistor_ladder.h"
 #include "led_tlc5955.h"
 #include <string.h>
@@ -25,7 +27,7 @@ static const struct pwm_dt_spec iset = PWM_DT_SPEC_GET(CHARGER);
 static const struct adc_dt_spec current = ADC_DT_SPEC_GET(CHARGER);
 static struct k_spinlock lock;
 static atomic_t usb;
-static struct bp_charger_state state = {.error = -EINPROGRESS};
+static struct bp_charger_state state = {.error = -EINPROGRESS, .source = -EINPROGRESS};
 static int initialization_error, output_error;
 static uint32_t pwm_cycles;
 static int64_t next_sample, enabled_since, pause_until;
@@ -65,9 +67,11 @@ static int set_enabled(bool active)
  * no allocation and no periodic SPI transfer when the selected output is stable. */
 void hub_charger_update(int vbus, int64_t now)
 {
+	int source = host_usb_source_update(vbus);
 	if (vbus == 0) atomic_set(&usb, 0);
 	atomic_val_t host = atomic_get(&usb);
-	bool allowed = vbus == 1 && host == USB_CONFIGURED;
+	bool allowed = vbus == 1 && (host == USB_CONFIGURED ||
+		source == BP_CHARGER_SOURCE_CDP || source == BP_CHARGER_SOURCE_DCP);
 	if (!allowed) pause_until = 0;
 	bool paused = allowed && now < pause_until;
 	bool active = allowed && !paused;
@@ -76,11 +80,12 @@ void hub_charger_update(int vbus, int64_t now)
 		active = false;
 		paused = true;
 	}
-	/* USB suspend/removal cancels charging on the next hub turn, not after
-	 * waiting for the slower status acquisition deadline. */
-	if (now < next_sample && active == requested) return;
+	/* Budget loss cancels charging on the next hub turn, not after waiting
+	 * for the slower status acquisition deadline. */
+	if (now < next_sample && active == requested && source == state.source) return;
 	requested = active;
 	struct bp_charger_state value = state;
+	value.source = source;
 	value.configured = !!(host & USB_CONFIGURED);
 	value.suspended = !!(host & USB_SUSPENDED);
 	value.paused = paused;
@@ -150,7 +155,10 @@ int hub_charger_get(struct bp_charger_state *value)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*value = state;
 	k_spin_unlock(&lock, key);
-	if (!value->error && k_uptime_get() - value->sample_ms >= 2 * PERIOD_MS) value->error = -ETIMEDOUT;
+	if (k_uptime_get() - value->sample_ms >= 2 * PERIOD_MS) {
+		if (!value->error) value->error = -ETIMEDOUT;
+		if (value->source >= 0) value->source = -ETIMEDOUT;
+	}
 	return 0;
 }
 

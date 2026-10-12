@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+/ {
+	test_udc: test_udc {
+		compatible = "vnd,usb-power-test";
+		status = "okay";
+		hub_usb_bc12: bc12 {
+			compatible = "vnd,usb-power-test";
+			status = "okay";
+		};
+	};
+};

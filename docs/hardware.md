@@ -587,14 +587,28 @@ with its MIT notice preserved. TLC5955 channel 14 controls MODE, TIM5/PA0 sets
 ISET, PA3/ADC3 reads IB, and bit 2 of the center-button ladder reads CHG.
 The charger chip controls the charge phases and its analogue protections.
 
-Charging requires USB host configuration; VBUS alone grants no current budget.
+With `CONFIG_BRICKPHYR_USB_BC12` on F4, the STM32 USB controller classifies the
+source before the existing CDC device attaches. Detection uses a BC1.2 child of
+the same UDC register owner and Pybricks' detection deadlines; it adds no thread.
+The hub loop handles insertion and removal, including while USB keeps the hub
+powered after shutdown. CDC initialization remains automatic, but USB enable waits
+for classification. A source or USB attach failure is reported until the cable
+is removed and reinserted. A failed USB detach leaves the PHY state uncertain
+and requires a restart before another detection can begin.
+
+VBUS alone grants no charging budget. An awake, configured USB host permits
+charging; a detected charging downstream port (CDP) or dedicated charging port
+(DCP) also permits the same conservative preset before enumeration and while USB
+is suspended. A standard downstream port (SDP) or unknown/nonstandard source
+requires host configuration and wakefulness.
 The USB descriptor requests 500 mA for the whole device. The current profile uses
 Pybricks' smaller standard-port ISET preset, nominally 100 mA (2% duty), because
 the larger preset's IB readings exceeded 500 mA on the Inventor F4.
 This is an empirical preset, not a calibrated guarantee of total input current.
-Wall adapters and their higher BC1.2 current budgets are not yet supported.
+Higher BC1.2 current budgets are not used.
 No open terminal or keep-alive application is required. Charging continues after
-[shutdown](settings.md#inactivity-shutdown) while USB remains configured and awake.
+[shutdown](settings.md#inactivity-shutdown) while its host or detected-source
+budget remains valid.
 
 Read the same cached observations in the terminal or host monitor:
 
@@ -614,13 +628,14 @@ from pybricks.hubs import PrimeHub
 hub = PrimeHub()
 print(hub.charger.current())  # empirical charger current, mA
 print(hub.charger.status())   # 0 discharging, 1 charging, 2 complete, 3 fault
+print(hub.charger.connected())  # 0 none, 1 nonstandard, 2 SDP, 3 CDP, 4 DCP
 ```
 
-Both methods raise `OSError` for unavailable, failed or stale observations.
-`hub.charger.connected()` remains unimplemented: its reference result is the
-BC1.2 source class, which cannot be inferred from USB configuration alone. It
-raises `NotImplementedError` until detection is integrated with Zephyr's USB
-controller owner. Reading an observation does not change charging policy.
+`current()` and `status()` raise `OSError` for unavailable, failed or stale
+observations. `connected()` reports the independently cached BC1.2 source class
+or raises `OSError` for a detection/USB failure or stale snapshot; an ADC error
+alone does not invalidate its result. Reading any observation does not change
+charging policy.
 
 `enabled` is the last successfully applied charge-enable state; `limit_ma` names
 the selected reference preset. `current_ma` is the empirical IB conversion,
@@ -631,13 +646,17 @@ failure can leave the actual output unknown. Status is sampled every 250 ms;
 the reused seven-sample CHG transition detector identifies the chip's blinking
 fault indication. Stable output does not cause repeated SPI writes. After one
 hour enabled, charging pauses for 30 seconds and restarts, as in Pybricks.
-Suspend or removal revokes charging at the next hub-loop update.
+Removal revokes charging at the next hub-loop update; suspend also revokes an
+ordinary host's budget. A detected CDP/DCP retains the conservative preset.
 
 Initial charging and recovery of battery voltage, lighting and the center button
 are checked on the Inventor F4. Python current/status readings through the
 protected SDK are checked with synthetic ADC input on ARM and over USB/BLE on
 that F4. Full-charge termination, all temperature/fault
-conditions, adapter recognition and instrumented current accuracy remain open.
+conditions, physical BC1.2 classification, adapter charging and instrumented
+current accuracy remain open. Synthetic checks cover detector timing and the
+coordinator's attach/removal/error handling, and the F4 profile compiles; these
+do not establish electrical behavior on a hub.
 
 ## A support claim must be reproducible
 

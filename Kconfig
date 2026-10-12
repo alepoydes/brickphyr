@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 mainmenu "Brickphyr"
 
+# BC1.2 measures D+/D- before the USB PHY attaches to the host.
+config CDC_ACM_SERIAL_ENABLE_AT_BOOT
+	default n if BRICKPHYR_USB_BC12
+
 # Full source discovery with six controller observations exceeds the upstream
 # 384-byte default (about 430 bytes including the SMP header on F4).
 config MCUMGR_TRANSPORT_NETBUF_SIZE
@@ -132,6 +136,15 @@ config BRICKPHYR_CHARGER
 	  MP2639A charging and observations using the shared TLC5955 frame and
 	  Pybricks current presets. Standard USB charging requires configuration;
 	  dedicated charger detection is a separate USB BC1.2 capability.
+
+config BRICKPHYR_USB_BC12
+	bool "USB charger source detection"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on BRICKPHYR_CHARGER && USB_BC12
+	depends on CDC_ACM_SERIAL_INITIALIZE_AT_BOOT
+	help
+	  Detect the source before attaching the existing CDC device. The hub
+	  power loop handles cable changes, including USB-powered shutdown.
 
 config BRICKPHYR_SOUND
 	bool "Hub tone and PCM service"

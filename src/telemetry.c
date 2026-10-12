@@ -363,6 +363,7 @@ static void capture(enum source source, struct observation *out)
 			field(out, "current_ma", value.current_ma);
 			field(out, "current_raw", value.current_raw);
 			field(out, "limit_ma", value.limit_ma);
+			field(out, "source", value.source);
 			field(out, "status", value.status);
 			field(out, "enabled", value.enabled);
 			field(out, "paused", value.paused);

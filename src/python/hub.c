@@ -106,8 +106,10 @@ static MP_DEFINE_CONST_FUN_OBJ_0(charger_status_obj, charger_status);
 
 static mp_obj_t charger_connected(void)
 {
-	/* Configuration alone cannot distinguish SDP from CDP. */
-	mp_raise_NotImplementedError(MP_ERROR_TEXT("USB charger type detection"));
+	struct bp_charger_state value;
+	python_device_check(bp_charger_get(&value));
+	if (value.source < 0) python_device_check(value.source);
+	return MP_OBJ_NEW_SMALL_INT(value.source);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(charger_connected_obj, charger_connected);
 

@@ -26,9 +26,12 @@ installer/DFU recovery. USB and BLE share one management owner. The installed
 commands. The owning documents state each procedure and its evidence limits.
 
 F4 charging works from a configured, awake USB host and continues after shutdown;
-Python current/status observations have ARM and F4 USB/BLE checks. Charger source
-detection and dedicated charging adapters remain unsupported. Critical-battery cutoff has
-synthetic ADC checks. See [battery and charger support](../docs/hardware.md#hub-battery).
+Python current/status observations have ARM and F4 USB/BLE checks. The F4 build
+also classifies USB charger sources before attaching CDC and exposes the class
+through `connected()`. CDP/DCP may charge without enumeration at the conservative
+100 mA preset; physical source classification and adapter charging are unverified.
+Critical-battery cutoff has synthetic ADC checks. See
+[battery and charger support](../docs/hardware.md#hub-battery).
 
 One protected application lifecycle serves the native C SDK and optional
 MicroPython engine. RAM uploads and named LittleFS programs use the same

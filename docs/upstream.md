@@ -404,6 +404,17 @@ overflowing intermediate 32-bit products. The existing scale limits are retained
 An upstream angle regression and Brickphyr's ARM numerical checks cover the
 conversion; publication and manifest integration remain pending.
 
+## USB charger detection prerequisite
+
+The F4 BC1.2 charger-source path requires local, unpublished Zephyr commit
+`cf010629` on `topic/stm32-bc12`. A standard BC1.2 child API shares the STM32 UDC's registers
+and worker, runs the ported Pybricks detection deadlines before USB attach, and
+waits for an in-flight result callback on cancellation. Failed USB attachment
+rolls back the PHY before another detection. Brickphyr's delayed automatic CDC
+enable uses this API. The detector's native-simulator timing fixture and F4 compilation
+check the local integration; physical USB/source behavior remains unverified.
+Publish and pin the dependency change before a reproducible release.
+
 ## USB acquisition scheduling prerequisite
 
 F4 builds with high-rate acquisition require local Zephyr commit `b4ffd4217`

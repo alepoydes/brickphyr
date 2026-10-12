@@ -130,7 +130,7 @@ subpackages and application modules.
 | `run_task`, `multitask` | Results, concurrent waits, racing, exception propagation, cancellation despite cleanup errors and forced-stop recovery |
 | `hub_menu` | Reference selection loop over the shared buttons and matrix; wraparound, release before return and restoration of the prior stop-button combination |
 | Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
-| `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery chemistry and voltage/current/temperature snapshots; charger current/status |
+| `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery chemistry and voltage/current/temperature snapshots; charger current/status and BC1.2 `connected()` source on F4 |
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
@@ -288,10 +288,13 @@ Broadcast selection and `broadcast()` are explicitly unfinished and raise
 `NotImplementedError` before starting transmission. `HubNetwork` and the
 remaining peripheral wireless bindings are still required.
 
-Charger source detection (`connected()`) and system `reset_storage` remain
-unfinished required work.
-Charger `current()` and `status()` read the shared native snapshot and propagate
-acquisition errors; this does not establish BC1.2 source classification.
+System `reset_storage` remains unfinished required work.
+Charger `connected()` returns the shared native source code: 0 none, 1
+nonstandard, 2 SDP, 3 CDP or 4 DCP. Detection or USB errors are negative in the
+snapshot and raise `OSError` in Python; a stale snapshot also fails. This field
+is independent of the ADC error propagated by `current()` and `status()`.
+The F4 profile and synthetic detector timing are checked, but physical source
+classification and adapter charging remain unverified.
 Battery chemistry, voltage/current and temperature use the common observation
 service; voltage/current and temperature retain independent acquisition errors.
 The remaining device bindings are not yet exposed.

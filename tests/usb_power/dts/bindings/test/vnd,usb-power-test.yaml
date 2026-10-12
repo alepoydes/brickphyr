@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Synthetic USB controller and BC1.2 detector for power coordinator tests
+compatible: "vnd,usb-power-test"
+include: base.yaml
