@@ -217,7 +217,7 @@ A Python program with accompanying modules is one CBOR map from relative file
 paths to byte strings. By default it has exactly one root entry, `main.py` or
 `main.mpy`. An optional empty-string key selects another entry: its byte-string
 value must name an existing `.py` or `.mpy` file in the same map. This metadata is
-not a file. The Pybricks adapter uses it to select `__main__.mpy` while preserving
+not a file. The Pybricks adapter uses it to select the first module while preserving
 an ordinary imported module named `main`.
 The CLI builds this image from a dedicated application directory, or wraps a
 single `.py`/`.mpy` file for installation. Source and compatible bytecode/native

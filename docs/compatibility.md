@@ -68,8 +68,8 @@ ARM serial-client and synthetic BLE-adapter checks. Its
 the hub example executes through both actual clients on the Inventor F4.
 Power-cycle slot retention and complete client acceptance remain open. The optional
 [BLE endpoint](bluetooth.md#experimental-f4-controller) exposes those same handlers.
-Pybricks Code discovery, connection and reconnection
-also pass on the Inventor F4 through Chromium Web Bluetooth; see the
+Pybricks Code discovery, program upload, imports, input/output, stop, repeat and
+reconnection also pass on the Inventor F4 through Chromium Web Bluetooth; see the
 [tested browser and profile limitation](bluetooth.md#pybricks-code).
 
 ## Initial coverage plan
@@ -143,7 +143,7 @@ display orientation or measurement accuracy on a physical hub. The
 It also compiles and runs repeatedly through the actual pybricksdev serial client
 against the ARM fixture and through both USB/BLE clients on the Inventor F4.
 Display cleanup and error-free driver completion are checked there; perceived
-output and browser execution remain separate acceptance items.
+output and running that example through the browser remain separate acceptance items.
 
 Speaker checks use synthetic DMA through the same protected API, including
 ownership during rests, iterator errors, replacement and cleanup. The

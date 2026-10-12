@@ -49,9 +49,10 @@ and [testing](../docs/testing.md) separate simulated from named-board evidence.
 
 The Pybricks execution adapter has ARM checks for transfer, persistent slots,
 imports, interruption, output and reconnection. USB/BLE client uploads and a
-hub example pass on the Inventor F4. Pybricks Code browser discovery and
-reconnection pass, but unchanged browser execution and complete client acceptance
-remain open; see [host coverage](../docs/host.md#implemented-pybricks-subset).
+hub example pass on the Inventor F4. Unchanged Pybricks Code over BLE also passes
+upload, imports, input/output, stop, repeat and reconnection there. Profile
+negotiation and complete client acceptance remain open;
+see [host coverage](../docs/host.md#implemented-pybricks-subset).
 The F4 watchdog has USB-powered fault-recovery checks; battery-only recovery
 remains pending.
 
@@ -62,8 +63,8 @@ surface and delivery order. Use the workspace summary and incremental checks
 linked there. The next blocks finish interactive REPL acceptance and complete
 Pybricks client execution. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
 Both plain Shell `python` and `brickphyrdev terminal --repl` show entry hints and
-have ARM/PTY and Inventor F4 BLE exit/reset checks. Current USB exit/reset and
-combined interactive flow-control acceptance remain open.
+have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Combined interactive
+flow-control acceptance remains open.
 
 Remaining hub, wired-device, motor, robotics and wireless bindings are required
 work. Repeated BLE application transfers still cause occasional IMU acquisition
@@ -73,7 +74,7 @@ before expanding the F4 profile; no capacity figure is established here.
 
 Define `reset_storage` scope before implementing it: decide what happens to
 Pybricks slots, shared user data, named applications and Brickphyr settings.
-Open acceptance includes browser execution, slot retention across power cycles,
+Open acceptance includes browser reference examples, slot retention across power cycles,
 combined interactive flow control, battery-only watchdog recovery and operator
 checks for physical output, sensors, shutdown and persistence. See the owning
 documents for precise procedures and current status; simulation does not close

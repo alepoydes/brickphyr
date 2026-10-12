@@ -87,17 +87,20 @@ supervisor's running state and streams program output.
 
 ### Pybricks Code
 
-Discovery, connection and reconnection through [Pybricks Code](https://code.pybricks.com)
-are verified on the Inventor F4 using Chromium 154 on Linux with experimental web
-platform features enabled. Close any USB terminal, click the website's Bluetooth
-button and select `Brickphyr`. The connected hub name appears
-in the status bar. Disconnecting or closing the browser releases the management
-session so USB can reconnect.
+Discovery, connection, program upload, execution and reconnection through unchanged
+[Pybricks Code](https://code.pybricks.com) are verified on the Inventor F4 using
+Chromium 154 on Linux with experimental web platform features enabled. Close any
+USB terminal, click the website's Bluetooth button and select `Brickphyr`. The
+connected hub name appears in the status bar. In the Python profile, a Python file
+can be uploaded with Run; the website's terminal accepts `input()` and displays
+stdout. Checks cover `PrimeHub` and `math` imports, battery voltage, normal return,
+Stop while waiting for input, repeat execution and a new run after reconnection.
+Disconnecting or closing the browser releases management so USB can reconnect.
 
 The tested website supports profile 1.5.0 and warns about the hub's 1.7.0 profile,
-but completes the connection. This verifies discovery and identification only:
-program upload, execution and REPL through the website remain unverified. Do not install different
-firmware merely to dismiss the profile warning.
+but completes these operations. Browser REPL, native `.mpy` compilation and full
+library compatibility remain unverified; the checks above use ordinary bytecode.
+Do not install different firmware merely to dismiss the profile warning.
 
 ### Controller lifecycle
 

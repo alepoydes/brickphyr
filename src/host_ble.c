@@ -188,7 +188,7 @@ static void pybricks_output(struct k_work *work)
 		return;
 	}
 	if (!pybricks_pending_size) {
-		pybricks_pending_size = host_protocol_event(&pybricks, true, pybricks_pending,
+		pybricks_pending_size = host_protocol_event(&pybricks, true, k_uptime_get_32(), pybricks_pending,
 			MIN(sizeof(pybricks_pending), bt_gatt_get_mtu(conn) - 3));
 	}
 	bool pending = pybricks_pending_size != 0;
@@ -202,10 +202,12 @@ static void pybricks_output(struct k_work *work)
 	}
 	bool retry = !err || ((err == -ENOMEM || err == -EAGAIN) &&
 		k_uptime_get() < pybricks_tx_deadline);
-	if (retry && (IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) || pybricks_pending_size)) {
+	if (retry) {
 		/* Drain available output one notification per work item. Only idle
 		 * status polling and allocation backpressure need the delayed retry. */
-		k_work_reschedule(&pybricks_output_work, pending && !err ? K_NO_WAIT : K_MSEC(20));
+		k_work_reschedule(&pybricks_output_work, pending && !err ? K_NO_WAIT :
+			K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) || pybricks_pending_size ?
+				20 : HOST_PROTOCOL_STATUS_INTERVAL_MS));
 	}
 	k_mutex_unlock(&pybricks_lock);
 	if (!retry) {

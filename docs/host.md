@@ -482,8 +482,11 @@ The installed pybricksdev client supplies host reads and command framing.
 
 The Python profile additionally accepts multi-module format-6 bytecode uploads,
 start/stop, REPL and stdin. It reports connection/running status and stdout through
-the same command/event handlers over USB and BLE. A new start while an application
-runs returns busy; stop uses the common supervisor. In the F4 Python profile,
+the same command/event handlers over USB and BLE. Subscribed status repeats every
+500 ms, as in Pybricks, so clients can recover a notification missed during
+connection setup. A completed program's queued output precedes its stopped status.
+A new start while an application runs returns busy; stop uses the common
+supervisor. In the F4 Python profile,
 completing a Pybricks download installs it in the selected persistent slot.
 Incomplete transfers are discarded without replacing the installed program.
 Builds with `CONFIG_BRICKPHYR_PYBRICKS_SLOTS=0` retain the RAM-only adapter:
@@ -492,8 +495,11 @@ Brickphyr temporary uploads stay in RAM in both configurations.
 
 The reference client's module records are normalized to the common
 [Python file map](applications.md#named-python-programs), retaining one importer
-and application lifecycle. The advertised transfer limit is 31,728 bytes, leaving
-room for file-map metadata within the 32 KiB application limit. The Cortex-M Python
+and application lifecycle. The first record is the entry point, including when
+Pybricks Code names it after the opened file instead of `__main__`; its original
+module name remains available to imports. The advertised transfer limit is
+31,728 bytes, leaving room for file-map metadata within the 32 KiB application
+limit. The Cortex-M Python
 profile also advertises native `.mpy` ABI 6.3. The
 [pybricksdev integration](upstream.md#python-client-prerequisites) selects the
 matching compiler and packages imported `.mpy` files. Native/Viper decorators,
@@ -509,9 +515,10 @@ with a synthetic controller, including notification backpressure and disconnect.
 On the Inventor F4, both actual pybricksdev clients additionally upload, execute
 and repeat the [hub example](../examples/python/hub.py) through a persistent slot.
 The named applications remain unchanged and the test slot is removable through
-native management. This does not establish unchanged Pybricks Code execution or
-complete library compatibility. Persistent slots additionally
-have ARM checks for selection, transfer failure, storage exhaustion and coexistence
+native management. Unchanged [Pybricks Code over BLE](bluetooth.md#pybricks-code)
+also passes upload, imports, input/output, stop, repeat and reconnect checks on
+that hub. This does not establish complete library compatibility. Persistent slots
+additionally have ARM checks for selection, transfer failure, storage exhaustion and coexistence
 with named programs. Physical slot retention across power loss remains unverified.
 Subscribed output applies backpressure through the common
 [application queue](applications.md#python-input-and-output). Python waits

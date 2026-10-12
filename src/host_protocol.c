@@ -332,13 +332,14 @@ uint8_t host_protocol_command(struct host_protocol *protocol, const uint8_t *com
 }
 
 size_t host_protocol_event(struct host_protocol *protocol, bool ble,
-	uint8_t *output, size_t capacity)
+	uint32_t now_ms, uint8_t *output, size_t capacity)
 {
 	if (!protocol->subscribed || capacity < PBIO_PYBRICKS_EVENT_STATUS_REPORT_SIZE) {
 		return 0;
 	}
 	uint32_t flags = 1U << (ble ? PBIO_PYBRICKS_STATUS_BLE_HOST_CONNECTED :
 		PBIO_PYBRICKS_STATUS_USB_HOST_CONNECTED);
+	bool status_due = now_ms - protocol->last_status_ms >= HOST_PROTOCOL_STATUS_INTERVAL_MS;
 	uint8_t slot = 0;
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 	k_spinlock_key_t key = k_spin_lock(&slot_lock);
@@ -356,7 +357,11 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 	if (protocol->start_pending || status.state == APPLICATION_RUNNING) {
 		flags |= 1U << PBIO_PYBRICKS_STATUS_USER_PROGRAM_RUNNING;
 	}
-	if (!protocol->start_pending && !protocol->status_dirty) {
+	/* A periodic running report must not wait behind continuous stdout.
+	 * Drain a completed program's final output before reporting it stopped:
+	 * clients may stop reading as soon as they see that transition. */
+	if (!protocol->start_pending && !protocol->status_dirty &&
+	    (!status_due || status.state != APPLICATION_RUNNING)) {
 		size_t length = application_output(output + 1, capacity - 1);
 		if (length) {
 			output[0] = PBIO_PYBRICKS_EVENT_WRITE_STDOUT;
@@ -364,10 +369,11 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 		}
 	}
 #endif
-	if (protocol->status_dirty || protocol->start_pending || flags != protocol->last_status ||
+	if (status_due || protocol->status_dirty || protocol->start_pending || flags != protocol->last_status ||
 	    slot != protocol->last_slot) {
 		protocol->status_dirty = protocol->start_pending = false;
 		protocol->last_status = flags;
+		protocol->last_status_ms = now_ms;
 		protocol->last_slot = slot;
 		return pbio_pybricks_event_status_report(output, flags, protocol->program_id, slot);
 	}
@@ -375,7 +381,8 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 }
 
 size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
-			    uint16_t hub_variant, uint8_t output[HOST_PROTOCOL_FRAME_MAX])
+			    uint16_t hub_variant, uint32_t now_ms,
+			    uint8_t output[HOST_PROTOCOL_FRAME_MAX])
 {
 	if (byte != PBIO_COBS_DELIMITER) {
 		if (protocol->length < sizeof(protocol->frame)) {
@@ -421,7 +428,7 @@ size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 			return 0;
 		}
 		protocol->status_dirty = true;
-		length = host_protocol_event(protocol, false, reply, sizeof(reply));
+		length = host_protocol_event(protocol, false, now_ms, reply, sizeof(reply));
 		if (!length) {
 			return 0;
 		}

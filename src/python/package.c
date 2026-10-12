@@ -48,16 +48,16 @@ int python_pybricks_package(const void *data, size_t length, void **image, size_
 			return -ENOEXEC;
 		}
 	}
-	/* Each file gains at most 13 bytes (package suffix and CBOR headers);
-	 * 16 more cover the map and explicit __main__.mpy entry. */
-	size_t capacity = MIN(APPLICATION_IMAGE_LIMIT, length + 16 * (count + 1));
+	/* Each file gains at most 13 bytes (package suffix and CBOR headers).
+	 * Reserve the explicit entry path and map headers as well. */
+	size_t capacity = MIN(APPLICATION_IMAGE_LIMIT,
+		length + 13 * count + PYTHON_PATH_LIMIT + 8);
 	void *buffer = k_malloc(capacity);
 	if (!buffer) {
 		return -ENOMEM;
 	}
 	ZCBOR_STATE_E(state, 2, buffer, capacity, 1);
-	bool ok = zcbor_map_start_encode(state, count + 1) &&
-		zcbor_tstr_put_lit(state, "") && zcbor_bstr_put_lit(state, "__main__.mpy");
+	bool ok = zcbor_map_start_encode(state, count + 1);
 	cursor = start;
 	while (ok && cursor < end && next(&cursor, end, &module)) {
 		/* A module with children supplies that package's __init__.py. Missing
@@ -77,7 +77,13 @@ int python_pybricks_package(const void *data, size_t length, void **image, size_
 			path[i] = module.name[i] == '.' ? '/' : module.name[i];
 		}
 		strcpy(path + module.name_size, package ? "/__init__.mpy" : ".mpy");
-		ok = zcbor_tstr_encode_ptr(state, path, strlen(path)) &&
+		/* Pybricks executes the first record, regardless of its module name.
+		 * Preserve that name so ordinary imports keep their own identity. */
+		if (module.name == start + sizeof(uint32_t)) {
+			ok = zcbor_tstr_put_lit(state, "") &&
+				zcbor_bstr_encode_ptr(state, path, strlen(path));
+		}
+		ok = ok && zcbor_tstr_encode_ptr(state, path, strlen(path)) &&
 			zcbor_bstr_encode_ptr(state, module.data, module.size);
 	}
 	ok = ok && zcbor_map_end_encode(state, count + 1);

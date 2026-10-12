@@ -452,8 +452,8 @@ static void host_thread(void *a, void *b, void *c)
 	bool shell_initialized = false;
 
 	for (;;) {
-		k_sem_take(&wake, IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) && protocol.subscribed ?
-			K_MSEC(20) : K_FOREVER);
+		k_sem_take(&wake, protocol.subscribed ? K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ?
+			20 : HOST_PROTOCOL_STATUS_INTERVAL_MS) : K_FOREVER);
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool changed = session_generation != generation;
 		bool open = occupied;
@@ -566,7 +566,8 @@ static void host_thread(void *a, void *b, void *c)
 					break;
 				}
 				uint8_t event[HOST_PROTOCOL_PAYLOAD_MAX];
-				size_t length = host_protocol_event(&protocol, false, event, sizeof(event));
+				size_t length = host_protocol_event(&protocol, false, k_uptime_get_32(),
+					event, sizeof(event));
 				if (length) {
 					event_length = pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_EVENT,
 						event, length, event_reply);
@@ -574,7 +575,7 @@ static void host_thread(void *a, void *b, void *c)
 				}
 				break;
 			}
-			reply_length = host_protocol_receive(&protocol, byte, variant, reply);
+			reply_length = host_protocol_receive(&protocol, byte, variant, k_uptime_get_32(), reply);
 			if (protocol.exit_compatibility) {
 				key = k_spin_lock(&lock);
 				if (generation == session_generation) {

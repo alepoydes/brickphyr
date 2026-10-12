@@ -171,7 +171,7 @@ def test_pybricks_package_admission(tmp_path):
 
         entry = record("__main__")
         invalid = [
-            record("missing_entry"),
+            record(""),
             entry + entry,
             entry + record("pkg..child"),
             entry + record(".escape"),
@@ -187,6 +187,13 @@ def test_pybricks_package_admission(tmp_path):
                 with pytest.raises(RuntimeError, match="Write failed"):
                     await hub.download_user_program(package)
             await asyncio.wait_for(hub.run(str(source), print_output=False), 6)
+            assert hub.output == [b"package recovered"]
+            # Code uses the first file's name for modern profiles. Even a later
+            # __main__ record must not replace it as the entry point.
+            source.write_text("raise RuntimeError('wrong entry')\n")
+            other = await compile_file(str(tmp_path), source.name, 6)
+            await hub.download_user_program(record("a" * 124) + record("__main__", other))
+            await asyncio.wait_for(hub.run(print_output=False), 4)
             assert hub.output == [b"package recovered"]
         finally:
             await hub.disconnect()

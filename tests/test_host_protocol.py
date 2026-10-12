@@ -62,6 +62,10 @@ def protocol(protocol_bridge):
     return client, exchange
 
 
+def test_status_repeated_after_missed_subscription_event(protocol_bridge):
+    subprocess.run([protocol_bridge, "status"], check=True, timeout=2)
+
+
 def test_pybricksdev_serial_client(protocol_bridge, monkeypatch, capsys):
     import usb.util
     from pybricksdev.ble.pybricks import PYBRICKS_COMMAND_EVENT_UUID, SW_REV_UUID

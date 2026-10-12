@@ -29,8 +29,8 @@ record their [runtime](applications.md#experimental-python-profile),
 | --- | --- | --- |
 | 0 | Task and hardware watchdogs; USB recovery checks on F4 | Physical shutdown/button restart and battery-only recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
-| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction checks | Combined interactive flow-control acceptance and exit usability verification |
-| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks and an F4 hub example through both actual clients | Unchanged Pybricks Code, power-cycle slot retention and combined client acceptance |
+| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction and exit/reset checks | Combined interactive flow-control acceptance |
+| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, an F4 hub example through both actual clients and unchanged Pybricks Code execution | Profile negotiation, power-cycle slot retention and combined client acceptance |
 | 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage, battery and IMU observations/frame/heading/calibration controls; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
@@ -42,12 +42,13 @@ The [workspace summary](builds.md#setup-and-board-bring-up), short
 [project orientation](../AI/context.md) and
 [incremental check commands](testing.md#selecting-checks) provide the development
 workflow for these blocks. Plain and managed REPL exit/reset have ARM/PTY and
-Inventor F4 BLE checks; current USB acceptance remains open.
+Inventor F4 USB/BLE checks. Ctrl-D rebuilds Python state and Ctrl-X returns to the
+same usable Shell through both frontends.
 
 | Delivery block | Remaining work | Usable result |
 | --- | --- | --- |
-| Interactive use | Finish current USB exit/reset acceptance for plain Shell `python` and `brickphyrdev terminal --repl`, then combined interactive flow control; retain visible exit/reset hints | Ctrl-X returns to the same usable Shell with REPL stopped and resources released; Ctrl-D still soft-resets Python |
-| Pybricks clients | Complete unchanged Pybricks Code execution, profile negotiation, slot power-cycle retention and combined input/output acceptance | A program with imports and input uploads, runs and stops through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
+| Interactive use | Complete combined interactive flow control; preserve the checked plain Shell and managed REPL exit/reset paths and visible hints | Slow input/output consumers and monitoring remain usable together with interruption, exit and reconnection |
+| Pybricks clients | Resolve the profile warning, complete slot power-cycle retention and combined input/output acceptance; extend browser checks to covered reference examples | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
 | Hub APIs and observations | Complete charger and battery observations, `hub_menu` and storage reset; isolate and fix IMU acquisition gaps under BLE transfers | Reference hub examples share the existing hardware services, with valid observations or explicit errors and reliable cleanup |
 | Wired devices | Bind universal `PUPDevice` and applicable `UARTDevice` operations, wired sensors and accessories, including light/matrix and infrared features | Reference programs use device modes and measurements; generic access and the existing terminal inventory expose unknown compatible devices |
 | Motors | Complete direction, gearing, units, control limits, stall, stop/hold and blocking/awaitable operations over the existing controller | Reference motor programs complete or cancel without stranding port ownership or active outputs |
