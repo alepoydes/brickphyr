@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Watchdog boundary for native system-supervision tests
+compatible: "vnd,watchdog-test"
+include: base.yaml

@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+/ {
+	aliases { watchdog0 = &test_watchdog; };
+	test_watchdog: watchdog {
+		compatible = "vnd,watchdog-test";
+	};
+};

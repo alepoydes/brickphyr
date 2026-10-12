@@ -142,6 +142,51 @@ The physical effects of USB power, charging, and wake-up need separate tests;
 USB disconnection alone is not proof that battery power was cut. Charging remains
 disabled while the charger driver is absent.
 
+## System watchdog
+
+The F4 build enables `CONFIG_BRICKPHYR_WATCHDOG`. Zephyr Task Watchdog supervises
+the hub loop and system workqueue; the STM32 independent watchdog (IWDG) resets
+the MCU if interrupts or the kernel stop servicing the software watchdog. This
+does not depend on an open USB/BLE connection or on a user program yielding.
+It is not a replacement for application isolation, explicit stop or motor
+deadline handling.
+
+Run `watchdog` in either terminal to read its startup status, configured progress
+deadline and captured reset flags. A hardware expiry reports `watchdog`; a task
+watchdog expiry uses a software reset and reports `software`. Software resets
+also include ordinary reboot, so that flag alone does not identify the failed
+service. Reset flags are captured and cleared once at watchdog initialization.
+
+Initialization has a 10-second progress budget, starting immediately after the
+IWDG device is ready at POST_KERNEL priority 51. Bootloader, clock and earlier
+device initialization precede this protection. On entry to the hub loop, the
+budget becomes 3 seconds. The loop normally runs at intervals of at most 20 ms;
+system-queue progress is checked every 750 ms. These are recovery deadlines, not
+measured worst-case execution guarantees. A long legitimate operation must keep
+its work outside those control paths or provide a justified revised budget.
+
+The hardware fallback is configured for 2 seconds at nominal LSI frequency and
+is refreshed at least every second while software supervision works. The F413
+datasheet specifies LSI from 16.1 to 47 kHz around a nominal 32 kHz: the resulting
+hardware interval is approximately 1.36–3.98 seconds. The extra margin prevents
+the faster oscillator from expiring before the software refresh interval.
+See [ST's F413 datasheet, table 46](https://www.st.com/resource/en/datasheet/DM00282249.pdf).
+
+After shutdown, USB may still power the MCU. The off loop continues supervision
+while waiting for release and a new central-button press; the IWDG cannot be
+disabled without reset. DFU entry resets the MCU before entering the existing
+loader, before Brickphyr arms its watchdog again. Reset starts with no application
+running and motor outputs inactive. Stored applications are not launched
+automatically.
+
+One Robot Inventor F4 has passed a one-shot interrupt-lock expiry and a stalled
+system-workqueue reset, with USB console recovery and inactive A/B motor outputs.
+DFU/reinstallation with watchdog armed is checked. Native simulation also covers
+hub-loop starvation and supervision throughout the USB-powered off state.
+Physical shutdown/button restart with watchdog enabled and battery-only recovery
+remain unverified. These checks do not establish recovery from damaged boot code
+or interrupted firmware writes. See [watchdog checks](testing.md#watchdog).
+
 ## Inactivity shutdown
 
 Inactivity means an idle hub with no running user application. Automatic shutdown

@@ -9,3 +9,4 @@ adc1: &adc0 {
 	nchannels = <15>;
 };
 #include "../../boards/lego/spike_prime_f4/buttons.dtsi"
+#include "../watchdog/app.overlay"

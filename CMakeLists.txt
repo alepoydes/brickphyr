@@ -23,6 +23,8 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_WATCHDOG app PRIVATE src/hub_watchdog.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_WATCHDOG_FIXTURE app PRIVATE tests/watchdog/fixture.c)
 if(CONFIG_BRICKPHYR_PORTS)
   target_sources(app PRIVATE src/hub_ports.c src/ports/output.c)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)

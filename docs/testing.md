@@ -32,6 +32,37 @@ the installed pybricksdev library against the production C handler over a PTY.
 USB enumeration/control is simulated. Packaging can be checked with `uv build`;
 the resulting wheel contains the CLI, not firmware sources or development reports.
 
+## Watchdog
+
+The watchdog checks use production supervision and Zephyr Task Watchdog, with a
+synthetic watchdog device and process exit at the board-reset boundary. They
+check healthy progress followed by a stalled hub loop or system queue. The power
+suite runs the production off loop and ADC input with watchdog enabled, including
+held-button, invalid-sample and fresh-press cases.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/watchdog -d build/watchdog-tests
+build/watchdog-tests/zephyr/zephyr.exe
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/watchdog -d build/watchdog-work-tests -- -DSTALL_WORKQUEUE=ON
+build/watchdog-work-tests/zephyr/zephyr.exe
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests
+build/poweroff-tests/zephyr/zephyr.exe
+```
+
+On explicitly authorized hardware, a separate diagnostic build may enable
+`CONFIG_BRICKPHYR_WATCHDOG_FIXTURE`. After verifying `watchdog` reports armed,
+confirm no running application and inactive motor outputs. `watchdog_test service`
+stalls the system workqueue once; `watchdog_test hardware` also locks interrupts.
+Both commands intentionally lose the connection. Check USB recovery, reset cause,
+idle application state and inactive outputs before another operation. Port
+discovery may still be pending immediately after reboot; record that state instead
+of treating it as a successful measurement. Neither diagnostic repeats at boot.
+The normal build contains neither command.
+
+The [power document](settings.md#system-watchdog) records physical coverage and
+the distinction between hardware reset, software reset and still-pending power
+checks. Watchdog-enabled builds require the [Zephyr fixes](upstream.md#watchdog-prerequisites).
+
 ## Run the bring-up checks
 
 After [workspace setup](builds.md), including the experimental

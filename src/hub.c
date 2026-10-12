@@ -19,6 +19,7 @@
 #include "hub_ports.h"
 #include "hub_menu.h"
 #include "hub_power.h"
+#include "hub_watchdog.h"
 #include "input_resistor_ladder.h"
 
 LOG_MODULE_REGISTER(hub);
@@ -108,6 +109,7 @@ static void shutdown(void)
 	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
 
 	for (;;) {
+		hub_watchdog_feed();
 		int pressed = device_is_ready(center) ?
 			resistor_ladder_get_key(center, INPUT_KEY_ENTER) : -ENODEV;
 		if (pressed == 0) {
@@ -197,6 +199,10 @@ SHELL_CMD_ARG_REGISTER(led, NULL,
 
 void hub_run(void)
 {
+	int watchdog_error = hub_watchdog_run();
+	if (watchdog_error) {
+		LOG_ERR("System supervision unavailable: %d", watchdog_error);
+	}
 	const struct gpio_dt_spec vbus = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), vbus_gpios);
 	int vbus_error = gpio_is_ready_dt(&vbus) ? gpio_pin_configure_dt(&vbus, GPIO_INPUT) : -ENODEV;
 	int64_t pressed_at = -1;
@@ -284,6 +290,7 @@ void hub_run(void)
 		if (pressed_at >= 0) {
 			deadline = MIN(deadline, pressed_at + 2000);
 		}
+		hub_watchdog_feed();
 		k_sem_take(&button_changed, deadline == INT64_MAX ? K_FOREVER :
 			   K_TIMEOUT_ABS_MS(deadline));
 	}

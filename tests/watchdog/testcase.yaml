@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  platform_allow: [native_sim/native/64]
+  integration_platforms: [native_sim/native/64]
+  tags: [watchdog]
+  harness: console
+  harness_config:
+    type: one_line
+    regex: ["Watchdog recovery verified"]
+  timeout: 5
+tests:
+  brickphyr.watchdog.hub: {}
+  brickphyr.watchdog.workqueue:
+    extra_args: STALL_WORKQUEUE=ON

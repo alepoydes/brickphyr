@@ -19,7 +19,48 @@ config USBD_CDC_ACM_WORKQUEUE
 config USBD_CDC_ACM_WORKQUEUE_PRIORITY
 	default 8 if BOARD_SPIKE_PRIME_F4
 
+config TASK_WDT_MIN_TIMEOUT
+	default 1000 if BRICKPHYR_WATCHDOG
+
+config TASK_WDT_HW_FALLBACK_DELAY
+	default 1000 if BRICKPHYR_WATCHDOG
+
+config TASK_WDT_CHANNELS
+	default 2 if BRICKPHYR_WATCHDOG
+
 source "Kconfig.zephyr"
+
+config BRICKPHYR_WATCHDOG
+	bool "System progress watchdog"
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on DT_HAS_ST_STM32_WATCHDOG_ENABLED || ARCH_POSIX
+	select WATCHDOG
+	select TASK_WDT
+	select TASK_WDT_HW_FALLBACK
+	select HWINFO
+	help
+	  Supervise initialization, the hub loop and system workqueue using
+	  Zephyr Task Watchdog and an independent hardware fallback. The USB
+	  powered off state continues supervision until a fresh button press.
+
+config BRICKPHYR_WATCHDOG_TIMEOUT_MS
+	int "Maximum interval without system progress (ms)"
+	depends on BRICKPHYR_WATCHDOG
+	default 3000
+	range 100 10000
+
+config BRICKPHYR_WATCHDOG_BOOT_TIMEOUT_MS
+	int "Maximum initialization time after watchdog start (ms)"
+	depends on BRICKPHYR_WATCHDOG
+	default 10000
+	range 100 30000
+
+config BRICKPHYR_WATCHDOG_FIXTURE
+	bool "Enable one-shot watchdog acceptance commands"
+	depends on BRICKPHYR_WATCHDOG && SHELL
+	help
+	  Diagnostic image only. watchdog_test service stalls the system queue;
+	  watchdog_test hardware also locks interrupts until the MCU resets.
 
 config BRICKPHYR_PORTS
 	bool "Powered Up port detection"

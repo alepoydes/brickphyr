@@ -141,6 +141,24 @@ is based on v4.4.2. The pinned
 supplies the CDC client and shared Python COBS codec. The corrections below are
 included in these public pins; no manual dependency patches are required.
 
+## Watchdog prerequisites
+
+The F4 watchdog integration additionally requires two local Zephyr corrections,
+not yet present in the manifest pin:
+
+- Task Watchdog must return a failed hardware `wdt_setup()` result and release
+  the uninstalled channel. Otherwise callers can report protection when setup
+  actually failed. The upstream test in `tests/subsys/task_wdt/setup` exercises
+  failure, retry and unchanged channel capacity through the real subsystem.
+- STM32 IWDG register-update polling must use a cycle-based timeout, because
+  Task Watchdog starts the device with interrupts locked. Kernel uptime alone
+  cannot bound a missing register update in that context. The F4 build and
+  hardware expiry check exercise successful setup; missing hardware register
+  updates remain source-reviewed, not physically injected.
+
+These changes belong to the Zephyr fork; Brickphyr reuses its watchdog interfaces.
+Publish the dependency correction before moving the shared manifest pin.
+
 ## USB experiment prerequisites
 
 The experimental USB path uses these portable dependency changes:

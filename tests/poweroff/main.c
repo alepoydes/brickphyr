@@ -3,6 +3,7 @@
 #include "hub_light.h"
 #include "hub_power.h"
 #include "input_resistor_ladder.h"
+#include "../watchdog/device.h"
 #include <string.h>
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
@@ -107,6 +108,7 @@ ZTEST(poweroff, test_shutdown_requires_real_release_and_new_press)
 	zassert_ok(k_sem_take(&restarted, K_MSEC(100)));
 	zassert_ok(k_thread_join(&hub_thread, K_MSEC(100)));
 	zassert_equal(releases, 1);
+	zassert_true(watchdog_feeds > 30, "Off state stopped feeding the watchdog");
 }
 
 ZTEST_SUITE(poweroff, NULL, NULL, NULL, NULL, NULL);

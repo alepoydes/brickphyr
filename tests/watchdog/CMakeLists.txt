@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+cmake_minimum_required(VERSION 3.20.5)
+get_filename_component(BRICKPHYR_ROOT ../.. ABSOLUTE)
+set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
+list(APPEND DTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(system_watchdog)
+target_sources(app PRIVATE main.c device.c ${BRICKPHYR_ROOT}/src/hub_watchdog.c)
+target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include)
+if(STALL_WORKQUEUE)
+  target_compile_definitions(app PRIVATE STALL_WORKQUEUE)
+endif()
+zephyr_ld_options(-Wl,--wrap=sys_reboot)
