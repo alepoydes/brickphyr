@@ -154,7 +154,9 @@ direction, ratio, zero origin, profile, observations and motion live in the nati
 port/controller service. The existing Pybricks async implementation handles
 awaitables, with request tokens protecting newer motions from older cancellation.
 See [encoded motors](../../docs/ports.md#python-encoded-motors) for the implemented
-methods and unfinished control settings.
+methods and remaining compatibility limits. `Motor.control` adapts the reference
+`pb_type_control.c` through native settings/trajectory snapshots, without exporting
+a privileged PBIO pointer. Updates and application waits share the port worker.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks

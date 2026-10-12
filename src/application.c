@@ -1022,6 +1022,48 @@ static inline int z_vrfy_bp_servo_move(uint32_t port, uint32_t generation,
 }
 #include <zephyr/syscalls/bp_servo_move_mrsh.c>
 
+int z_impl_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
+{
+	return hub_servo_settings_get(port, generation, value);
+}
+static inline int z_vrfy_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_servo_settings_get(port, generation, value);
+}
+#include <zephyr/syscalls/bp_servo_settings_get_mrsh.c>
+
+int z_impl_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value)
+{
+	return hub_servo_trajectory_get(port, generation, value);
+}
+static inline int z_vrfy_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_servo_trajectory_get(port, generation, value);
+}
+#include <zephyr/syscalls/bp_servo_trajectory_get_mrsh.c>
+
+int z_impl_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *revision)
+{
+	return hub_servo_settings_set(BP_PORT_APPLICATION, port, generation, group, value, revision);
+}
+static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *revision)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(value, sizeof(*value)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(revision, __alignof__(*revision))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(revision, sizeof(*revision)));
+	struct bp_servo_settings copy;
+	memcpy(&copy, value, sizeof(copy));
+	return z_impl_bp_servo_settings_set(port, generation, group, &copy, revision);
+}
+#include <zephyr/syscalls/bp_servo_settings_set_mrsh.c>
+
+
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
 	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);

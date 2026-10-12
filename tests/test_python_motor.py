@@ -44,6 +44,44 @@ print('ready'); input()
 wait(25)
 
 m.reset_angle(0)
+c = m.control
+assert c is m.control and c.scale == 6000
+assert c.trajectory() is None and c.done() and c.load() == 0 and not c.stalled()
+limits, pid = c.limits(), c.pid()
+target, stall = c.target_tolerances(), c.stall_tolerances()
+assert c.limits(speed=-60, acceleration=(100, 150), torque=30) is None
+assert alias.control.limits() == (60, (100, 150), 30)
+m.run(1000)
+t = c.trajectory()
+assert len(t) == 13 and t[9] == 360 and t[11] == 600, t
+# A live settings update must retain the trajectory and its request identity.
+c.pid(kp=pid[0] + 1)
+assert alias.control.pid()[0] == pid[0] + 1
+assert c.trajectory() == t
+c.limits(speed=40)
+assert c.trajectory() == t
+m.run(1000)
+assert c.trajectory()[9] == 240, c.trajectory()
+m.stop()
+assert c.trajectory() is None and c.load() == 0
+c.target_tolerances(speed=4, position=2)
+c.stall_tolerances(speed=3, time=30)
+assert alias.control.target_tolerances() == (4, 2)
+assert alias.control.stall_tolerances() == (3, 30)
+try:
+    c.scale = 1
+    assert False, 'scale must be read-only'
+except AttributeError:
+    pass
+c.limits(*limits)
+c.pid(*pid)
+c.target_tolerances(*target)
+c.stall_tolerances(*stall)
+c.limits(speed=30, acceleration=100, torque=30)
+m.reset_angle(0)
+assert c.limits() == (30, 100, 30)
+alias = Motor(Port.A, Direction.COUNTERCLOCKWISE, [10, 60], reset_angle=False)
+assert c.limits() == limits and c.pid() == pid
 assert m.run_target(0, 1000) is None and m.done()
 assert m.angle() == 0
 assert m.run_angle(0, -360) is None and m.done()

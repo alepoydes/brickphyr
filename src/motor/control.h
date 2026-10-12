@@ -31,6 +31,12 @@ struct motor_observation {
 int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_mdeg);
 int motor_control_init_profile(struct motor_control *motor, uint16_t id, int64_t angle_mdeg, int32_t profile);
 int motor_control_reset_angle(struct motor_control *motor, int64_t angle_mdeg);
+void motor_control_settings_get(const pbio_control_settings_t *settings, int32_t scale,
+	struct bp_servo_settings *value);
+int motor_control_settings_set(pbio_control_settings_t *settings, uint32_t group,
+	const struct bp_servo_settings *value);
+void motor_control_settings_apply(struct motor_control *motor, const pbio_control_settings_t *settings);
+void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_trajectory *value);
 int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_command *command);
 int32_t motor_control_speed_limit(uint16_t id);
 int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t angle_mdeg,

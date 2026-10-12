@@ -45,3 +45,10 @@ Synthetic closed-loop and lifecycle tests do not establish physical tuning,
 encoder accuracy, interrupt latency or stopping distance. When updating PBIO,
 compare the two ported source sections and rerun both numerical and port-service
 checks before accepting changed defaults or computation behavior.
+
+Control settings reuse PBIO's public conversion/validation functions on a copy,
+then publish only a fully valid group. The worker applies the snapshot between
+frames without restarting control or erasing its command-local torque limit.
+`pb_type_control.c` at the same pinned revision supplies the diagnostic trajectory
+layout. The port boundary applies direction; the numerical controller and its
+private settings remain in physical shaft units.

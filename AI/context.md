@@ -79,8 +79,8 @@ has synthetic UART coverage for IR commands, cleanup and reconnect errors;
 physical PF output and other sensor acceptance remain pending. `DCMotor` has
 ARM checks for the shared native direction/voltage configuration, PWM, hotplug
 and cleanup. `Motor` adds shared gearing/origin, measurements, regulated motion,
-blocking/awaitable completion and replacement checks. Its `control` settings and
-physical Python motor acceptance remain pending.
+blocking/awaitable completion, replacement and shared `control` settings/trajectory
+checks. Motor model tuning/logging and physical Python motor acceptance remain pending.
 The native motor observer now continues through DC/brake/coast while claimed;
 synthetic service checks cover speed, model load/stall and feedback loss.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;

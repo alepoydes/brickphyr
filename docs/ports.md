@@ -569,18 +569,49 @@ and `settings` reuse the DC implementation; during regulation, voltage-limit
 changes take effect on the next controller frame. Application stop/fault cleanup
 uses the existing common release path.
 
+`motor.control` provides `limits(speed, acceleration, torque)`, `pid(kp, ki, kd,
+integral_deadzone, integral_rate)`, `target_tolerances(speed, position)` and
+`stall_tolerances(speed, time)`. With no arguments each returns its current tuple;
+`None` preserves an omitted parameter. Acceleration accepts one value or an
+(acceleration, deceleration) pair. Speeds, angles and accelerations use output
+shaft units; torque uses mNm and time uses ms. PID gains retain PBIO's shaft
+units. The read-only `scale` reports shaft millidegrees per output degree.
+
+Settings belong to the port, so all aliases see changes. Each setter validates
+its complete update before publication and waits for the next controller frame
+to apply it. A failed update changes nothing. Updating settings preserves the
+active movement: gains and tolerances affect its following steps; trajectory
+limits and the torque cap are sampled when the next movement starts, as in
+Pybricks. A motion's temporary stall torque cap is retained. Stall tolerances
+configure regulated motion; passive DC stall estimation uses the observer's
+model settings. Settings survive `reset_angle`; a new constructor restores
+defaults. These controller settings are runtime state, not persistent hub settings.
+
+`control.trajectory()` returns `None` when inactive, otherwise the reference
+13-item phase tuple: four times, four relative angles, three speeds and two
+accelerations. Times are in ms. The other fields use shaft degrees and seconds,
+with the configured positive direction but without gearing. Legacy
+`control.done/load/stalled` expose controller status; `Motor.load/stalled` also
+cover passive observation. Controller logging is not exposed.
+
 Native applications use `bp_servo_setup`, `bp_servo_get`, `bp_servo_reset` and
 `bp_servo_move` for this same coordinate/configuration view. Setup, reset and move
 return request tokens; wait for driver completion through `bp_motor_get`.
-Reads and commands validate the physical connection generation. The existing raw
-motor APIs continue to use physical shaft units without applying this transform.
+`bp_servo_settings_get/set` and `bp_servo_trajectory_get` expose the same settings
+and diagnostics. A setting update uses the revision from `get`, returns a new
+revision, and reports completion through `applied`; it does not replace the motor
+request. Reads and commands validate the physical connection generation. The
+existing raw motor APIs continue to use physical shaft units without applying
+this transform.
 
 Protected ARM checks cover coordinate sharing, absolute/explicit reset, externally
 moved encoder feedback, motion, voltage limiting, blocking/awaitable completion,
 replacement and supervised cleanup with synthetic UART/PWM. Numerical simulation
 additionally checks long-origin tracking, smart relative motion and stall-to-hold.
-These are not physical motion or tuning measurements. `Motor.control` settings
-and coordinated robotics remain unfinished; this is not complete Motor compatibility.
+Settings updates, gearing, active-trajectory preservation and diagnostics also
+have numerical and protected ARM checks. These are not physical motion or tuning
+measurements. Motor model tuning/logging and coordinated robotics remain
+unimplemented; complete Motor compatibility has not been established.
 
 ## Speed and position control
 

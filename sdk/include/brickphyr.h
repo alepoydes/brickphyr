@@ -232,6 +232,13 @@ __syscall int bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle,
  * TIME with zero duration completes rather than starting an infinite run. */
 __syscall int bp_servo_move(uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request);
+/* Set uses the revision and scale from get; no partial update on invalid input.
+ * It does not replace a movement. Poll applied to observe the control frame. */
+__syscall int bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value);
+__syscall int bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *revision);
+__syscall int bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value);
+
 
 /* Acquire the free speaker and queue a square tone: 20..24000 Hz, 0..100 volume.
  * Frequency zero produces silence. An idle reservation can start another tone.

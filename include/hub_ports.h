@@ -54,6 +54,11 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	int32_t angle, uint32_t absolute, uint32_t *request);
 int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request);
+int hub_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value);
+int hub_servo_settings_set(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	uint32_t group, const struct bp_servo_settings *value, uint32_t *revision);
+int hub_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value);
+
 /* Even means idle, odd active/unknown. Changes also expose short activity
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
@@ -121,5 +126,12 @@ static inline int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint3
 	int32_t angle, uint32_t absolute, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_servo_settings_get(uint32_t port, uint32_t generation,
+	struct bp_servo_settings *value) { return -ENOTSUP; }
+static inline int hub_servo_settings_set(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	uint32_t group, const struct bp_servo_settings *value, uint32_t *revision) { return -ENOTSUP; }
+static inline int hub_servo_trajectory_get(uint32_t port, uint32_t generation,
+	struct bp_servo_trajectory *value) { return -ENOTSUP; }
+
 static inline uint32_t hub_motor_activity(void) { return 0; }
 #endif

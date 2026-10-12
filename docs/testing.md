@@ -152,7 +152,8 @@ motor behavior is a separate acceptance item.
 `tests/test_python_motor.py` uses the same protected fixture with its native
 controller enabled and a synthetic encoded UART motor. It checks shared
 direction/gearing/origin, measurements, reset, timed/relative/stall motion,
-blocking/awaitable completion, alias cancellation and supervised stop. The peer
+blocking/awaitable completion, alias cancellation, shared control settings,
+trajectory units/direction, settings reset and supervised stop. The peer
 can set a shaft angle or advance it each UART frame; it does not simulate a plant
 responding to PWM. Run the focused case with:
 

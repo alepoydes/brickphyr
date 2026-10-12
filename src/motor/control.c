@@ -352,6 +352,80 @@ int motor_control_reset_angle(struct motor_control *motor, int64_t measured)
     return 0;
 }
 
+/* Settings conversions and diagnostics follow pb_type_control.c and
+ * control_settings.c at a7b1b04ae. The running controller remains in shaft
+ * millidegrees; only a temporary settings copy uses the application's scale. */
+void motor_control_settings_get(const pbio_control_settings_t *settings, int32_t scale,
+    struct bp_servo_settings *value)
+{
+    pbio_control_settings_t s = *settings;
+    s.ctl_steps_per_app_step = scale;
+    value->scale = scale;
+    pbio_control_settings_get_trajectory_limits(&s, &value->speed, &value->acceleration, &value->deceleration);
+    value->torque = pbio_control_settings_get_actuation_limit(&s);
+    pbio_control_settings_get_pid(&s, &value->kp, &value->ki, &value->kd,
+        &value->integral_deadzone, &value->integral_rate);
+    pbio_control_settings_get_target_tolerances(&s, &value->target_speed, &value->target_position);
+    pbio_control_settings_get_stall_tolerances(&s, &value->stall_speed, &value->stall_time);
+}
+
+int motor_control_settings_set(pbio_control_settings_t *settings, uint32_t group,
+    const struct bp_servo_settings *value)
+{
+    if (value->scale < 1) return -EINVAL;
+    pbio_control_settings_t s = *settings;
+    s.ctl_steps_per_app_step = value->scale;
+    pbio_error_t err;
+    switch (group) {
+    case BP_SERVO_LIMITS:
+        err = pbio_control_settings_set_trajectory_limits(&s, value->speed, value->acceleration, value->deceleration);
+        if (!err) err = pbio_control_settings_set_actuation_limit(&s, value->torque);
+        break;
+    case BP_SERVO_PID:
+        err = pbio_control_settings_set_pid(&s, value->kp, value->ki, value->kd,
+            value->integral_deadzone, value->integral_rate);
+        break;
+    case BP_SERVO_TARGET_TOLERANCES:
+        err = pbio_control_settings_set_target_tolerances(&s, value->target_speed, value->target_position);
+        break;
+    case BP_SERVO_STALL_TOLERANCES:
+        err = pbio_control_settings_set_stall_tolerances(&s, value->stall_speed, value->stall_time);
+        break;
+    default:
+        return -EINVAL;
+    }
+    if (err) return -EINVAL;
+    s.ctl_steps_per_app_step = 1;
+    *settings = s;
+    return 0;
+}
+
+void motor_control_settings_apply(struct motor_control *motor, const pbio_control_settings_t *settings)
+{
+    /* PBIO samples the torque cap when a command starts, including temporary
+     * stall caps. A settings update must not erase that command-local limit. */
+    int32_t temporary = motor->control.settings.actuation_max_temporary;
+    motor->control.settings = *settings;
+    motor->control.settings.actuation_max_temporary = temporary;
+}
+
+void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_trajectory *value)
+{
+    pbio_control_t *ctl = &motor->control;
+    pbio_trajectory_t *t = &ctl->trajectory;
+    bool active = pbio_control_is_active(ctl);
+    *value = (struct bp_servo_trajectory){
+        .active = active, .done = pbio_control_is_done(ctl),
+        .stalled = active && (ctl->status & PBIO_CONTROL_STATUS_STALLED),
+        .load = active ? ctl->pid_average / 1000 : 0,
+    };
+    if (!active) return;
+    const int32_t points[] = {0, t->t1 / 10, t->t2 / 10, t->t3 / 10,
+        0, t->th1 / 1000, t->th2 / 1000, t->th3 / 1000,
+        t->w0 / 10, t->w1 / 10, t->w3 / 10, t->a0, t->a2};
+    memcpy(value->points, points, sizeof(points));
+}
+
 static int state_get(struct motor_control *motor, int64_t measured, pbio_control_state_t *state)
 {
     int err = angle_from_mdeg(measured, &state->position);
@@ -421,7 +495,7 @@ static int track(struct motor_control *motor, uint32_t ticks, int64_t target)
 int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t angle,
     const struct bp_motor_command *command, int32_t battery_mv)
 {
-    int32_t speed = command->speed_mdeg_s;
+    int32_t speed = pbio_int_math_clamp(command->speed_mdeg_s, motor->control.settings.speed_max);
     pbio_control_on_completion_t finish = command->finish;
     if (command->action == BP_MOTOR_TRAJECTORY) {
         return command->mode == BP_MOTOR_SPEED ?

@@ -76,6 +76,10 @@ static struct port {
 	 * observer while the worker mutates it. Copied once per 5 ms frame. */
 	pbio_differentiator_t speed_history;
 	struct bp_motor_observation observation;
+	pbio_control_settings_t control_settings;
+	struct bp_servo_trajectory trajectory;
+	uint32_t settings_revision, settings_applied;
+	bool settings_ready;
 	uint32_t geometry_revision, observation_revision;
 	bool observer_reset, observer_rebase;
 #endif
@@ -700,6 +704,10 @@ static int64_t apply_motor(uint32_t port)
 	int32_t max_voltage = m->direction ? m->max_voltage : motor_max_voltage(type);
 	uint32_t generation = p->value.generation;
 	uint32_t geometry_revision = p->geometry_revision;
+	uint32_t settings_revision = p->settings_revision;
+	bool settings_pending = frame && p->settings_ready && settings_revision != p->settings_applied;
+	pbio_control_settings_t settings;
+	if (settings_pending) settings = p->control_settings;
 	int64_t angle = p->sensor.angle_mdeg;
 	if (frame && !err) err = device_error;
 	bool overrun = frame && next_frame && k_uptime_get() >= next_frame + CONTROL_MS;
@@ -720,6 +728,7 @@ static int64_t apply_motor(uint32_t port)
 		next_frame = (next_frame ? next_frame : k_uptime_get()) + CONTROL_MS;
 		if (reset) err = motor_control_init_profile(&p->controller, type, angle, profile);
 		else if (rebase) err = motor_control_reset_angle(&p->controller, angle);
+		if (!err && settings_pending) motor_control_settings_apply(&p->controller, &settings);
 	}
 	if (observing && command_pending && !controlled && !err) {
 		pbio_control_stop(&p->controller.control);
@@ -755,6 +764,8 @@ static int64_t apply_motor(uint32_t port)
 		}
 	}
 	p->control_due = !err && observing ? next_frame : 0;
+	struct bp_servo_trajectory trajectory = {0};
+	if (!err && observing && (frame || command_pending)) motor_control_trajectory_get(&p->controller, &trajectory);
 #endif
 	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
 	key = k_spin_lock(&lock);
@@ -779,6 +790,7 @@ static int64_t apply_motor(uint32_t port)
 		m->control.stalled = ref.stalled;
 		m->control.frames++;
 	}
+	if (!err && observing && (frame || command_pending)) p->trajectory = trajectory;
 	if (observing && err) {
 		p->observation.error = err;
 		m->control.observing = false;
@@ -790,6 +802,13 @@ static int64_t apply_motor(uint32_t port)
 			.stalled = observation.stalled};
 		p->speed_history = p->controller.observer.differentiator;
 		p->observation_revision = geometry_revision;
+		if (geometry_revision == p->geometry_revision) {
+			if (reset) {
+				p->control_settings = p->controller.control.settings;
+				p->settings_ready = true;
+			}
+			if (reset || settings_pending) p->settings_applied = settings_revision;
+		}
 	}
 #endif
 	if (err) {
@@ -1609,6 +1628,8 @@ int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 		start_observation(p);
 		/* A new constructor resets settings/model, even on an existing lease. */
 		p->observer_reset = true;
+		p->settings_ready = false;
+		p->settings_revision++;
 		p->observation.error = -EAGAIN;
 		*request = p->motor.request;
 	}
@@ -1695,6 +1716,89 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 		*request = m->request;
 	}
 	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+static int servo_control_error(struct port *p, uint32_t generation)
+{
+	if (p->value.generation != generation || !p->owner || !p->motor.gear_ratio) return -ENODEV;
+	if (p->motor.error) return p->motor.error;
+	if (!p->motor.control.observing) return -ENODEV;
+	if (!p->settings_ready || p->observation_revision != p->geometry_revision) return -EAGAIN;
+	return control_input_error(p);
+}
+#endif
+
+int hub_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = servo_control_error(p, generation);
+	pbio_control_settings_t settings = p->control_settings;
+	*value = (struct bp_servo_settings){.revision = p->settings_revision, .applied = p->settings_applied};
+	int32_t scale = p->motor.gear_ratio;
+	k_spin_unlock(&lock, key);
+	if (!err) motor_control_settings_get(&settings, scale, value);
+	return err;
+#endif
+}
+
+int hub_servo_settings_set(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	uint32_t group, const struct bp_servo_settings *value, uint32_t *revision)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !value || !revision ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = servo_control_error(p, generation);
+	if (!err && (p->owner != owner || p->motor.pending || p->motor.releasing)) err = -EBUSY;
+	if (!err && (p->settings_revision != value->revision || p->motor.gear_ratio != value->scale)) err = -EAGAIN;
+	pbio_control_settings_t settings = p->control_settings;
+	uint32_t request = p->motor.request;
+	k_spin_unlock(&lock, key);
+	if (err) return err;
+	err = motor_control_settings_set(&settings, group, value);
+	if (err) return err;
+	key = k_spin_lock(&lock);
+	err = servo_control_error(p, generation);
+	if (!err && (p->owner != owner || p->motor.request != request ||
+	    p->settings_revision != value->revision)) err = -EAGAIN;
+	if (!err) {
+		p->control_settings = settings;
+		*revision = ++p->settings_revision;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+int hub_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = servo_control_error(p, generation);
+	if (!err) *value = p->trajectory;
+	int32_t direction = p->motor.direction;
+	k_spin_unlock(&lock, key);
+	/* Reference PBIO applies direction in its tacho before planning. Our
+	 * controller uses physical shaft coordinates and converts at this API. */
+	if (!err) {
+		for (size_t i = 4; i < ARRAY_SIZE(value->points); i++) value->points[i] *= direction;
+		value->load *= direction;
+	}
 	return err;
 #endif
 }

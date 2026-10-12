@@ -21,6 +21,7 @@ typedef struct {
 	bool closed;
 	uint32_t motion_request;
 	pb_type_async_t *iter;
+	mp_obj_t control;
 } motor_obj_t;
 
 static void check(int err)
@@ -358,6 +359,176 @@ static MP_DEFINE_CONST_DICT(dc_motor_dict, dc_motor_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_dc_motor_type, MP_QSTR_DCMotor, MP_TYPE_FLAG_NONE,
 	make_new, motor_new, locals_dict, &dc_motor_dict);
 
+/* Adapted from pb_type_control.c at a7b1b04ae. Retain the Motor object rather
+ * than a privileged PBIO pointer; aliases see the native port's live settings. */
+typedef struct {
+	mp_obj_base_t base;
+	motor_obj_t *motor;
+} control_obj_t;
+
+static struct bp_servo_settings control_settings(control_obj_t *self)
+{
+	motor_obj_t *m = self->motor;
+	if (m->closed) check(-ENODEV);
+	struct bp_servo_settings value;
+	check(bp_servo_settings_get(m->port, m->generation, &value));
+	return value;
+}
+
+static mp_obj_t control_set(control_obj_t *self, uint32_t group, struct bp_servo_settings *value)
+{
+	motor_obj_t *m = self->motor;
+	uint32_t revision;
+	check(bp_servo_settings_set(m->port, m->generation, group, value, &revision));
+	for (;;) {
+		struct bp_servo_settings current = control_settings(self);
+		if (current.revision != revision) check(-ECANCELED);
+		if (current.applied == revision) return mp_const_none;
+		mp_hal_delay_ms(2);
+	}
+}
+
+static mp_obj_t control_limits(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(acceleration), PB_ARG_DEFAULT_NONE(torque));
+	struct bp_servo_settings s = control_settings(self);
+	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
+		mp_obj_t accel[] = {mp_obj_new_int(s.acceleration), mp_obj_new_int(s.deceleration)};
+		mp_obj_t result[] = {mp_obj_new_int(s.speed), s.acceleration == s.deceleration ? accel[0] :
+			mp_obj_new_tuple(2, accel), mp_obj_new_int(s.torque)};
+		return mp_obj_new_tuple(3, result);
+	}
+	s.speed = pb_obj_get_default_abs_int(speed_in, s.speed);
+	s.torque = pb_obj_get_default_abs_int(torque_in, s.torque);
+	if (acceleration_in != mp_const_none) {
+		if (pb_obj_is_array(acceleration_in)) {
+			size_t count;
+			mp_obj_t *values;
+			mp_obj_get_array(acceleration_in, &count, &values);
+			if (count != 2) check(-EINVAL);
+			s.acceleration = pb_obj_get_int(values[0]);
+			s.deceleration = pb_obj_get_int(values[1]);
+		} else {
+			s.acceleration = s.deceleration = pb_obj_get_int(acceleration_in);
+		}
+	}
+	return control_set(self, BP_SERVO_LIMITS, &s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(control_limits_obj, 1, control_limits);
+
+static mp_obj_t control_pid(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+		PB_ARG_DEFAULT_NONE(kp), PB_ARG_DEFAULT_NONE(ki), PB_ARG_DEFAULT_NONE(kd),
+		PB_ARG_DEFAULT_NONE(integral_deadzone), PB_ARG_DEFAULT_NONE(integral_rate));
+	struct bp_servo_settings s = control_settings(self);
+	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
+		mp_obj_t result[] = {mp_obj_new_int(s.kp), mp_obj_new_int(s.ki), mp_obj_new_int(s.kd),
+			mp_obj_new_int(s.integral_deadzone), mp_obj_new_int(s.integral_rate)};
+		return mp_obj_new_tuple(5, result);
+	}
+	s.kp = pb_obj_get_default_abs_int(kp_in, s.kp);
+	s.ki = pb_obj_get_default_abs_int(ki_in, s.ki);
+	s.kd = pb_obj_get_default_abs_int(kd_in, s.kd);
+	s.integral_deadzone = pb_obj_get_default_abs_int(integral_deadzone_in, s.integral_deadzone);
+	s.integral_rate = pb_obj_get_default_abs_int(integral_rate_in, s.integral_rate);
+	return control_set(self, BP_SERVO_PID, &s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(control_pid_obj, 1, control_pid);
+
+static mp_obj_t control_target_tolerances(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(position));
+	struct bp_servo_settings s = control_settings(self);
+	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
+		mp_obj_t result[] = {mp_obj_new_int(s.target_speed), mp_obj_new_int(s.target_position)};
+		return mp_obj_new_tuple(2, result);
+	}
+	s.target_speed = pb_obj_get_default_abs_int(speed_in, s.target_speed);
+	s.target_position = pb_obj_get_default_abs_int(position_in, s.target_position);
+	return control_set(self, BP_SERVO_TARGET_TOLERANCES, &s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(control_target_tolerances_obj, 1, control_target_tolerances);
+
+static mp_obj_t control_stall_tolerances(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(time));
+	struct bp_servo_settings s = control_settings(self);
+	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
+		mp_obj_t result[] = {mp_obj_new_int(s.stall_speed), mp_obj_new_int_from_uint(s.stall_time)};
+		return mp_obj_new_tuple(2, result);
+	}
+	s.stall_speed = pb_obj_get_default_abs_int(speed_in, s.stall_speed);
+	s.stall_time = pb_obj_get_default_abs_int(time_in, s.stall_time);
+	return control_set(self, BP_SERVO_STALL_TOLERANCES, &s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(control_stall_tolerances_obj, 1, control_stall_tolerances);
+
+static struct bp_servo_trajectory control_snapshot(mp_obj_t object)
+{
+	motor_obj_t *m = ((control_obj_t *)MP_OBJ_TO_PTR(object))->motor;
+	if (m->closed) check(-ENODEV);
+	struct bp_servo_trajectory value;
+	check(bp_servo_trajectory_get(m->port, m->generation, &value));
+	return value;
+}
+
+static mp_obj_t control_trajectory(mp_obj_t object)
+{
+	struct bp_servo_trajectory t = control_snapshot(object);
+	if (!t.active) return mp_const_none;
+	mp_obj_t points[13];
+	for (size_t i = 0; i < ARRAY_SIZE(points); i++) points[i] = mp_obj_new_int(t.points[i]);
+	return mp_obj_new_tuple(ARRAY_SIZE(points), points);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(control_trajectory_obj, control_trajectory);
+static mp_obj_t control_done(mp_obj_t self) { return mp_obj_new_bool(control_snapshot(self).done); }
+static MP_DEFINE_CONST_FUN_OBJ_1(control_done_obj, control_done);
+static mp_obj_t control_stalled(mp_obj_t self) { return mp_obj_new_bool(control_snapshot(self).stalled); }
+static MP_DEFINE_CONST_FUN_OBJ_1(control_stalled_obj, control_stalled);
+static mp_obj_t control_load(mp_obj_t self) { return mp_obj_new_int(control_snapshot(self).load); }
+static MP_DEFINE_CONST_FUN_OBJ_1(control_load_obj, control_load);
+
+static void control_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
+{
+	if (dest[0] != MP_OBJ_NULL) return;
+	if (name == MP_QSTR_scale) dest[0] = mp_obj_new_int(control_settings(MP_OBJ_TO_PTR(object)).scale);
+	else dest[1] = MP_OBJ_SENTINEL;
+}
+
+static const mp_rom_map_elem_t control_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR_limits), MP_ROM_PTR(&control_limits_obj)},
+	{MP_ROM_QSTR(MP_QSTR_pid), MP_ROM_PTR(&control_pid_obj)},
+	{MP_ROM_QSTR(MP_QSTR_target_tolerances), MP_ROM_PTR(&control_target_tolerances_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stall_tolerances), MP_ROM_PTR(&control_stall_tolerances_obj)},
+	{MP_ROM_QSTR(MP_QSTR_trajectory), MP_ROM_PTR(&control_trajectory_obj)},
+	{MP_ROM_QSTR(MP_QSTR_done), MP_ROM_PTR(&control_done_obj)},
+	{MP_ROM_QSTR(MP_QSTR_load), MP_ROM_PTR(&control_load_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stalled), MP_ROM_PTR(&control_stalled_obj)},
+};
+static MP_DEFINE_CONST_DICT(control_dict, control_methods);
+static MP_DEFINE_CONST_OBJ_TYPE(control_type, MP_QSTR_Control, MP_TYPE_FLAG_NONE,
+	attr, control_attr, locals_dict, &control_dict);
+
+static void motor_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
+{
+	motor_obj_t *self = MP_OBJ_TO_PTR(object);
+	if (dest[0] != MP_OBJ_NULL) return;
+	if (name != MP_QSTR_control) {
+		dest[1] = MP_OBJ_SENTINEL;
+		return;
+	}
+	if (self->control == MP_OBJ_NULL) {
+		control_obj_t *control = mp_obj_malloc(control_obj_t, &control_type);
+		control->motor = self;
+		self->control = MP_OBJ_FROM_PTR(control);
+	}
+	dest[0] = self->control;
+}
+
 static const mp_rom_map_elem_t motor_methods[] = {
 	DC_METHODS,
 	{MP_ROM_QSTR(MP_QSTR_angle), MP_ROM_PTR(&motor_angle_obj)},
@@ -376,4 +547,4 @@ static const mp_rom_map_elem_t motor_methods[] = {
 };
 static MP_DEFINE_CONST_DICT(motor_dict, motor_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_motor_type, MP_QSTR_Motor, MP_TYPE_FLAG_NONE,
-	make_new, motor_new, locals_dict, &motor_dict);
+	make_new, motor_new, attr, motor_attr, locals_dict, &motor_dict);

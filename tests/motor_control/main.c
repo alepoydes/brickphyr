@@ -230,4 +230,67 @@ ZTEST(motor_control, test_servo_motion_commands)
 	}
 }
 
+ZTEST(motor_control, test_settings_during_motion)
+{
+	struct motor_control motor;
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	struct bp_servo_settings shaft, geared, change, actual;
+	motor_control_settings_get(&motor.control.settings, 1000, &shaft);
+	motor_control_settings_get(&motor.control.settings, 5000, &geared);
+	zassert_equal(shaft.speed, 1000);
+	zassert_equal(geared.speed, 200);
+	zassert_equal(shaft.acceleration, geared.acceleration * 5);
+
+	pbio_control_settings_t settings = motor.control.settings;
+	pbio_control_settings_t original = settings;
+	change = geared;
+	change.speed = 100;
+	change.acceleration = 120;
+	change.deceleration = 80;
+	change.torque = INT32_MAX;
+	zassert_equal(motor_control_settings_set(&settings, BP_SERVO_LIMITS, &change), -EINVAL);
+	zassert_equal(memcmp(&settings, &original, sizeof(settings)), 0,
+		"Invalid torque partially changed trajectory limits");
+	change.torque = geared.torque;
+	zassert_ok(motor_control_settings_set(&settings, BP_SERVO_LIMITS, &change));
+	motor_control_settings_get(&settings, 5000, &actual);
+	zassert_equal(actual.speed, 100);
+	zassert_equal(actual.acceleration, 120);
+	zassert_equal(actual.deceleration, 80);
+
+	/* A running stall-limited maneuver keeps its PBIO trajectory and temporary
+	 * torque cap when shared settings change. The next command uses new limits. */
+	struct bp_motor_command command = {.mode = BP_MOTOR_SPEED,
+		.action = BP_MOTOR_UNTIL_STALLED, .speed_mdeg_s = 300000,
+		.finish = BP_MOTOR_FINISH_COAST, .duty_limit = 250};
+	zassert_ok(motor_control_command(&motor, 0, 0, &command, 9000));
+	struct motor_reference out;
+	zassert_ok(motor_control_step(&motor, 0, 0, &out));
+	zassert_ok(motor_control_predict(&motor, 0, 0, out.coast, out.voltage_mv));
+	int32_t temporary = motor.control.settings.actuation_max_temporary;
+	zassert_true(temporary < motor.control.settings.actuation_max);
+	struct bp_servo_trajectory before, after;
+	motor_control_trajectory_get(&motor, &before);
+	motor_control_settings_apply(&motor, &settings);
+	motor_control_trajectory_get(&motor, &after);
+	zassert_true(after.active);
+	zassert_equal(memcmp(before.points, after.points, sizeof(before.points)), 0);
+	zassert_equal(motor.control.settings.actuation_max_temporary, temporary);
+	zassert_ok(motor_control_step(&motor, 50, 0, &out));
+	zassert_true(out.active);
+
+	pbio_control_stop(&motor.control);
+	zassert_ok(motor_control_run(&motor, 100, 0, 500000, 1000, PBIO_CONTROL_ON_COMPLETION_COAST));
+	zassert_equal(motor.control.settings.actuation_max_temporary, motor.control.settings.actuation_max);
+	zassert_ok(motor_control_step(&motor, 100, 0, &out));
+	zassert_equal(out.acceleration_mdeg_s2, 600000);
+	motor_control_trajectory_get(&motor, &after);
+	zassert_true(after.active);
+	zassert_equal(after.points[11], 600);
+	zassert_equal(motor_control_run(&motor, 100, 0, 500001, 1000,
+		PBIO_CONTROL_ON_COMPLETION_COAST), -EINVAL);
+	zassert_ok(motor_control_step(&motor, 150, 0, &out));
+	zassert_true(out.active);
+}
+
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

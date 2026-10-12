@@ -44,6 +44,27 @@ struct bp_servo_setup {
 	uint32_t reset_angle;
 };
 
+/* Shared servo settings in output degrees, degrees/s, degrees/s², mNm and ms.
+ * PID gains retain PBIO's shaft units. Revision identifies an atomic update;
+ * applied catches up at the next control frame. */
+enum bp_servo_setting { BP_SERVO_LIMITS, BP_SERVO_PID, BP_SERVO_TARGET_TOLERANCES, BP_SERVO_STALL_TOLERANCES };
+struct bp_servo_settings {
+	uint32_t revision, applied;
+	int32_t scale;
+	int32_t speed, acceleration, deceleration, torque;
+	int32_t kp, ki, kd, integral_deadzone, integral_rate;
+	int32_t target_speed, target_position, stall_speed;
+	uint32_t stall_time;
+};
+
+/* Pybricks trajectory diagnostics: relative shaft angles in degrees, speeds in
+ * degrees/s, accelerations in degrees/s² and phase times in ms. Signs follow
+ * the configured direction, without gearing. No controller pointers escape. */
+struct bp_servo_trajectory {
+	int32_t points[13], load;
+	uint8_t active, done, stalled;
+};
+
 struct bp_servo_state {
 	int64_t sample_ms;
 	int32_t angle, speed, load; /* output degrees, degrees/s, shaft mNm */
