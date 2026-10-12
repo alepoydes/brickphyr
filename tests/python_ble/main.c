@@ -22,6 +22,8 @@ static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static uintptr_t peer_token;
 static struct bt_conn *const peer = (void *)&peer_token;
 static atomic_t refs, reject_notifications;
+static atomic_t negotiated_mtu = ATOMIC_INIT(23);
+static atomic_t shell_max_notify;
 static bool peer_connected;
 static unsigned int notifications_retried;
 static struct k_work_q rx_queue;
@@ -45,7 +47,7 @@ static void poll_applications(void *a, void *b, void *c)
 	}
 }
 
-struct event { uint16_t length; uint8_t data[20]; };
+struct event { uint16_t length; uint8_t data[61]; };
 K_MSGQ_DEFINE(events, sizeof(struct event), 32, 4);
 extern const struct bt_gatt_service_static pybricks_service;
 extern const struct bt_gatt_service_static brickphyr_terminal;
@@ -83,15 +85,24 @@ int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *inf
 }
 bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
 	const struct bt_gatt_attr *attr, uint16_t ccc) { return true; }
-uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn) { return 23; }
+uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	return atomic_get(&negotiated_mtu);
+}
 int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params *params)
 {
 	zassert_equal(conn, peer);
-	zassert_true(params->len <= 20);
+	zassert_true(params->len <= atomic_get(&negotiated_mtu) - 3);
+	zassert_true(params->len <= sizeof(((struct event *)0)->data));
 	if (atomic_get(&reject_notifications)) {
 		atomic_dec(&reject_notifications);
 		notifications_retried++;
 		return -ENOMEM;
+	}
+	if (params->attr == &brickphyr_terminal.attrs[2] &&
+	    params->len > atomic_get(&shell_max_notify)) {
+		atomic_set(&shell_max_notify, params->len);
 	}
 	struct event event = {.length = params->len};
 	memcpy(event.data, params->data, params->len);
@@ -555,6 +566,8 @@ static void terminal_until(const char *marker)
 
 ZTEST(python_ble, test_native_terminal_output)
 {
+	atomic_set(&negotiated_mtu, 23);
+	atomic_set(&shell_max_notify, 0);
 	atomic_set(&reject_notifications, 0);
 	k_msgq_purge(&events);
 	connected(true);
@@ -599,9 +612,21 @@ ZTEST(python_ble, test_native_terminal_output)
 				zassert_mem_equal(text + 10 * n, "0123456789", 10);
 			}
 			zassert_str_equal(text + 4090, "!\r\n>>> ");
+			zassert_equal(atomic_get(&shell_max_notify), 20);
+			/* A peer exchange raises the ATT MTU on this connection. */
+			atomic_set(&negotiated_mtu, 64);
+			atomic_set(&shell_max_notify, 0);
+			terminal_send("print('x' * 128)\r");
+			terminal_until(">>> ");
+			char line[133] = "\r\n";
+			memset(line + 2, 'x', 128);
+			memcpy(line + 130, "\r\n", 3);
+			zassert_not_null(strstr(output, line), "%s", output);
+			zassert_equal(atomic_get(&shell_max_notify), 61);
 		}
 	}
 	connected(false);
+	atomic_set(&negotiated_mtu, 23);
 	uint8_t state[8];
 	int64_t deadline = k_uptime_get() + 1000;
 	do {

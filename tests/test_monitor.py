@@ -75,7 +75,12 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
             # is the real Zephyr Shell/SMP, not a mocked telemetry response.
             def __init__(self, device, disconnected_callback, **kwargs):
                 self.disconnected = disconnected_callback
-                self.services = SimpleNamespace(get_service=lambda uuid: uuid == console.SERVICE)
+                self.rx = SimpleNamespace(max_write_without_response_size=20)
+                self.services = SimpleNamespace(
+                    get_service=lambda uuid: uuid == console.SERVICE,
+                    get_characteristic=lambda uuid: self.rx if uuid == console.RX else None,
+                )
+                self.max_write = 0
                 self.callback = None
                 self.serial = None
                 self.pause_writes = False
@@ -94,8 +99,10 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
                 for offset in range(0, len(data), 7):
                     self.callback(None, data[offset : offset + 7])
 
-            async def write_gatt_char(self, uuid, data, response):
-                assert uuid == console.RX and response and len(data) <= 20
+            async def write_gatt_char(self, characteristic, data, response):
+                assert characteristic is self.rx and response
+                assert len(data) <= self.rx.max_write_without_response_size
+                self.max_write = max(self.max_write, len(data))
                 if self.pause_writes:
                     await asyncio.Event().wait()
                 self.serial.write(data)
@@ -122,6 +129,9 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
                 client,
             ):
                 assert "power" in (await telemetry.info(client)).sources
+                if ble:
+                    assert instances[0].max_write == 20
+                    instances[0].rx.max_write_without_response_size = 61
                 # SMP traffic between pieces of a human command cannot enter
                 # Shell editing state; keyboard traffic cannot split SMP frames.
                 await stream.write(b"config set power/usb_idle_s 19")
@@ -129,6 +139,8 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
                     checked(client, EchoWrite(d="x" * 330)), stream.write(b"\x7f2\r")
                 )
                 assert echo.r == "x" * 330
+                if ble:
+                    assert instances[0].max_write == 61
                 assert (await telemetry.snapshot(client, "power")).values["usb_idle_s"] == 12
                 await stream.write(b"config get power/usb_idle_s\r")
                 async with asyncio.timeout(2):

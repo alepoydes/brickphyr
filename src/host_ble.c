@@ -301,9 +301,7 @@ BT_GATT_SERVICE_DEFINE(brickphyr_terminal,
 
 static void shell_output(struct k_work *work)
 {
-	/* Minimum ATT MTU (23) minus its header: bounded stack use on the shared
-	 * system queue, with no MTU negotiation required for an interactive stream. */
-	uint8_t data[20];
+	uint8_t data[CONFIG_BT_L2CAP_TX_MTU - 3];
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	struct bt_conn *conn = shell_session && owner ? bt_conn_ref(owner) : NULL;
 	uint32_t session = shell_session;
@@ -311,7 +309,9 @@ static void shell_output(struct k_work *work)
 	if (!conn) {
 		return;
 	}
-	size_t length = host_ble_shell_peek(session, data, sizeof(data));
+	/* Respect the peer's MTU, including before exchange has completed. */
+	size_t capacity = MIN(sizeof(data), bt_gatt_get_mtu(conn) - 3);
+	size_t length = host_ble_shell_peek(session, data, capacity);
 	if (!length) {
 		key = k_spin_lock(&session_lock);
 		if (session == shell_session) {

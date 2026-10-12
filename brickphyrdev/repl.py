@@ -37,29 +37,21 @@ class Session:
             pass
 
     async def watch(self):
-        next_status = 0
         dropped = 0
-        loop = asyncio.get_running_loop()
         while not self.closing.is_set():
-            data = (await checked(self.client, app.Output())).data
-            if data:
-                self.display(data)
-            if loop.time() >= next_status:
-                state = await checked(self.client, app.Status())
-                if state.dropped != dropped:
-                    self.display(f"\r\n[Python output dropped: {state.dropped} bytes]\r\n".encode())
-                    dropped = state.dropped
-                if state.state != 1 or not state.repl:
-                    if not state.queued:
-                        self.display(
-                            f"\r\n[REPL ended: result {state.result}, fault {state.fault}, "
-                            f"cleanup {state.cleanup}]\r\n".encode()
-                        )
-                        return
-                    next_status = 0
-                else:
-                    next_status = loop.time() + 1
-            if not data:
+            state = await checked(self.client, app.Stream())
+            if state.data:
+                self.display(state.data)
+            if state.dropped != dropped:
+                self.display(f"\r\n[Python output dropped: {state.dropped} bytes]\r\n".encode())
+                dropped = state.dropped
+            if (state.state != 1 or not state.repl) and not state.queued:
+                self.display(
+                    f"\r\n[REPL ended: result {state.result}, fault {state.fault}, "
+                    f"cleanup {state.cleanup}]\r\n".encode()
+                )
+                return
+            if not state.data:
                 await self._wait()
         # Explicit exit is different from detaching the host connection. The
         # latter cancels this watcher and leaves the autonomous VM running.

@@ -135,6 +135,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 10 | Write Python input | `data`: at most 128 bytes; accepted atomically or rejected with `EAGAIN` when full |
 | 11 | Write Python interrupt | Discard queued input and request `KeyboardInterrupt`; forced termination remains command 3 |
 | 12 | Write REPL entry | Start fresh interactive Python or reattach to the existing REPL; reject another running application with `EBUSY` |
+| 13 | Read output and state | At most 256 bytes in `data`, plus `state`, `result`, `fault`, `cleanup`, `dropped`, `queued`, and `repl`; `queued` is the output remaining after this read |
 
 Persistent file upload/download/status/close use standard SMP group 8. Only
 the application operations missing from that group are added above.
@@ -236,7 +237,8 @@ Run one command at a time; the second selects BLE. Ctrl-C interrupts, Ctrl-D at 
 empty prompt resets Python, Ctrl-X stops REPL and returns to Shell, and Ctrl-]
 detaches without stopping Python. Repeating the command reattaches to its existing
 state. Entry while another application runs fails without stopping that program.
-The hub must run a Python build with SMP command 12; older builds reject it.
+The hub must run a Python build with SMP commands 12 and 13; older builds reject
+this CLI workflow. Command 4 remains available for 128-byte output reads.
 These CLI workflows have ARM QEMU/PTY coverage. The shared SMP REPL operations
 also pass editing, history/completion, interruption, soft reset, display cleanup
 and raw-protocol checks over USB/BLE on the Inventor F4. See
@@ -327,6 +329,10 @@ write in full or returns an ATT error. Closing or disconnecting discards unfinis
 input and queued commands; an entered handler finishes before ownership is released.
 Terminal history is per session. Reopening after unsubscribe requires a new BLE
 connection, excluding notifications already queued for the old terminal.
+The F4 Bluetooth profile requests ATT MTU 64. Notifications and acknowledged
+client writes use the negotiated capacity; peers at MTU 23 still use 20-byte
+chunks. The CLI reads Bleak's public single-packet write limit, retaining write
+responses to detect rejected input. Larger MTUs do not change the stream format.
 SMP GATT requests cannot execute concurrently with an open terminal stream.
 The combined terminal/monitor instead carries standard serial SMP framing inside
 that same native stream; the client separates responses from human Shell output.

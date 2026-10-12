@@ -68,13 +68,13 @@ remains pending.
 
 Follow the [Python implementation plan](../docs/python.md) for the full required
 surface and delivery order. Use the workspace summary and incremental checks
-linked there. The next blocks finish interactive REPL acceptance and complete
-Pybricks client execution. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
+linked there. The next blocks complete Pybricks client execution and the remaining
+bindings. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
 Both plain Shell `python` and `brickphyrdev terminal --repl` show entry hints and
 have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Native SMP output
-backpressure has F4 USB/BLE checks, and combined REPL/monitor operation passes
-over USB. Competing full status responses limit BLE REPL/monitor output;
-its combined acceptance remains open.
+backpressure and combined REPL/application-monitor operation have F4 USB/BLE
+checks. REPL combines output with compact state; native BLE uses negotiated
+packet sizes. Monitor rates remain best-effort on the shared connection.
 
 Remaining hub, wired-device, motor, robotics and wireless bindings are required
 work. Generic `PUPDevice.info/read/reset` has ARM and idle-encoder F4 USB/BLE checks.
@@ -101,7 +101,7 @@ before expanding the F4 profile; no capacity figure is established here.
 Define `reset_storage` scope before implementing it: decide what happens to
 Pybricks slots, shared user data, named applications and Brickphyr settings.
 Open acceptance includes browser reference examples, slot retention across power cycles,
-combined interactive flow control, battery-only watchdog recovery and operator
+Pybricks-client flow control, battery-only watchdog recovery and operator
 checks for physical output, sensors, shutdown and persistence. See the owning
 documents for precise procedures and current status; simulation does not close
 these physical items.

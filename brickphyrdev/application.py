@@ -123,6 +123,24 @@ class OutputStream(_Group, message.WriteRequest):
     attached: bool
 
 
+class StreamResponse(message.ReadResponse):
+    _GROUP_ID = GROUP
+    _COMMAND_ID = 13
+    data: bytes
+    state: int
+    result: int
+    fault: int
+    cleanup: int
+    dropped: int
+    queued: int
+    repl: bool
+
+
+class Stream(_Group, message.ReadRequest):
+    _COMMAND_ID = 13
+    _Response = StreamResponse
+
+
 class Discard(_Group, message.WriteRequest):
     _COMMAND_ID = 5
     _Response = Done

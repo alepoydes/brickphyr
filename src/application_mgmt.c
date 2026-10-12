@@ -19,6 +19,9 @@
 /* Experimental Brickphyr application group; framing and transports remain SMP. */
 #define APPLICATION_GROUP 65
 BUILD_ASSERT(CONFIG_MCUMGR_SMP_CBOR_MAX_MAIN_MAP_ENTRIES >= 22);
+/* Stream response: 256 data bytes, seven bounded status fields and SMP/CBOR
+ * headers fit in 384 bytes, including worst-case 32-bit result/counter values. */
+BUILD_ASSERT(CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE >= 384);
 
 static int result(struct smp_streamer *stream, int err)
 {
@@ -96,6 +99,21 @@ static int output_read(struct smp_streamer *stream)
 	size_t length = application_output(data, sizeof(data));
 	bool ok = zcbor_tstr_put_lit(stream->writer->zs, "data") &&
 		zcbor_bstr_encode_ptr(stream->writer->zs, data, length);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int stream_read(struct smp_streamer *stream)
+{
+	uint8_t data[256];
+	struct application_status status;
+	size_t length = application_read_output(data, sizeof(data), &status);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = zcbor_tstr_put_lit(zs, "data") &&
+		zcbor_bstr_encode_ptr(zs, data, length) &&
+		number(zs, "state", status.state) && number(zs, "result", status.result) &&
+		number(zs, "fault", status.fault) && number(zs, "cleanup", status.cleanup_error) &&
+		number(zs, "dropped", status.output_dropped) && number(zs, "queued", status.output_bytes) &&
+		zcbor_tstr_put_lit(zs, "repl") && zcbor_bool_put(zs, status.repl);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
@@ -231,6 +249,7 @@ static const struct mgmt_handler handlers[] = {
 	[11] = {.mh_write = interrupt_write},
 	[12] = {.mh_write = repl_write},
 #endif
+	[13] = {.mh_read = stream_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

@@ -69,6 +69,9 @@ void application_get_status(struct application_status *status);
 /* No cleanup, expiration, output consumption or wait; EBUSY during lifecycle work. */
 int application_observe(struct application_status *status);
 size_t application_output(void *data, size_t capacity);
+/* Drain output and capture its remaining count/state against one lifecycle.
+ * Like get_status, this may finish cleanup of a terminated application. */
+size_t application_read_output(void *data, size_t capacity, struct application_status *status);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* Input is accepted atomically; EAGAIN leaves it wholly with the sender.
  * Interrupt discards queued input and asks the VM to raise KeyboardInterrupt. */

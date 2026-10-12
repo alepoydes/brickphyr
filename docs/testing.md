@@ -334,9 +334,9 @@ uv run --locked pytest -q tests/test_native.py -k python-slots
 ```
 
 The BLE fixture uses the real GATT adapter, common host owner and protected
-interpreter with synthetic controller calls and notifications at ATT MTU 23.
-The native Shell REPL checks complete long output and explicit exit while
-notifications are blocked. Standard SMP BLE requests also exercise the real
+interpreter with synthetic controller calls. The native Shell REPL checks
+complete output at ATT MTU 23 and 64, negotiated notification bounds and explicit
+exit while notifications are blocked. Standard SMP BLE requests also exercise the real
 Zephyr transport and application handlers: status polling preserves an attached
 output consumer and interruption remains available while its queue is full.
 It checks input across disconnect, retained and incomplete uploads, repeated

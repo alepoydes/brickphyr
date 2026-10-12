@@ -2007,6 +2007,16 @@ size_t application_output(void *data, size_t capacity)
 	return count;
 }
 
+size_t application_read_output(void *data, size_t capacity, struct application_status *value)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	(void)reap(false);
+	size_t count = application_output(data, capacity);
+	copy_status(value);
+	k_mutex_unlock(&lifecycle);
+	return count;
+}
+
 static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 {
 #ifdef CONFIG_BRICKPHYR_PYTHON

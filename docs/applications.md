@@ -359,10 +359,13 @@ host terminal without stopping Python. A physical session boundary discards
 queued REPL input and cancels an unfinished REPL command line, preserving globals
 and any command already executing. Reattachment does not start another VM.
 
-The CLI reads the existing bounded output log and reports its drop count. An idle
-poll waits 50 ms; busy output drains at the transport's acknowledged pace, with
-status sampled once per second. These are host interaction intervals, not
-device-service timing guarantees. REPL may be combined with `--monitor`.
+The CLI reads the existing bounded output log together with its remaining byte
+count, execution state and errors in one SMP response. It reports any drops and
+drains final output before announcing termination. An idle poll waits 50 ms;
+busy output drains at the transport's acknowledged pace. These are host
+interaction intervals, not device-service timing guarantees. REPL may be
+combined with `--monitor`; monitoring rates are best-effort and its log records
+missed polls when the shared transport cannot keep up.
 
 An ordinary hub Shell also accepts `python` to enter that same VM, using the
 existing connection as a plain byte stream. It has the same editing, reset,
@@ -384,13 +387,12 @@ Plain Shell entry, return and reconnection also have ARM checks through the shar
 host dispatcher. On the Inventor F4, both USB/BLE paths pass friendly/raw REPL,
 editing, history/completion and soft reset. SMP additionally checks interruption
 and display cleanup on reset; plain Shell checks entry/return, retained globals
-and discarded partial input across a physical reconnection. The USB CLI also
-passes combined monitoring, long output before/after reset, reattachment and
-forced exit with queued input. BLE REPL with application monitoring currently
-has low output throughput: frequent full status responses compete with Python
-output on the minimum-MTU link. BLE monitoring with short output, reattachment,
-interruption and forced exit is checked; combined long-output acceptance remains
-open.
+and discarded partial input across a physical reconnection. USB/BLE CLI checks
+also cover combined application monitoring, long output before/after reset,
+reattachment, interruption and forced exit with queued input. BLE remains
+bandwidth-limited; these checks establish lossless output and usable lifecycle
+operations, not a guaranteed monitor rate or interactive latency under arbitrary
+load.
 
 ## Application formats
 

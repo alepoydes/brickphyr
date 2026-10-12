@@ -204,10 +204,14 @@ class ConsoleTransport:
                 if self.closed.is_set():
                     raise self.error or SMPTransportDisconnected("Console closed")
                 if self.radio is not None:
-                    # Works with the minimum ATT MTU; acknowledgement reports
-                    # rejection before a chunk can be mistaken for accepted input.
-                    await self.radio.write_gatt_char(RX, data[offset : offset + 20], response=True)
-                    offset += min(20, len(data) - offset)
+                    characteristic = self.radio.services.get_characteristic(RX)
+                    # Write requests and commands have the same three-byte ATT
+                    # header. This public limit avoids prepared writes; keep the
+                    # response so rejected input is never mistaken for accepted.
+                    capacity = min(512, characteristic.max_write_without_response_size)
+                    chunk = data[offset : offset + capacity]
+                    await self.radio.write_gatt_char(characteristic, chunk, response=True)
+                    offset += len(chunk)
                 else:
                     try:
                         written = os.write(self.serial.fileno(), data[offset:])
