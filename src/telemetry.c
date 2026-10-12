@@ -359,6 +359,7 @@ static void capture(enum source source, struct observation *out)
 			field(out, "owner", value->owner);
 			field(out, "pending", value->pending);
 			field(out, "valid", value->valid);
+			field(out, "animating", value->animating);
 		}
 	}
 	out->read_ms = k_uptime_get();

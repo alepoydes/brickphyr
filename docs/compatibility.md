@@ -65,7 +65,8 @@ identification and explicit unsupported-command errors. The optional Python
 profile adds experimental execution through the shared protocol handlers, with
 ARM serial-client and synthetic BLE-adapter checks. Its
 [persistent slots](host.md#stored-pybricks-programs) share the application store;
-physical execution and persistence acceptance remain open. The optional
+the hub example executes through both actual clients on the Inventor F4.
+Power-cycle slot retention and complete client acceptance remain open. The optional
 [BLE endpoint](bluetooth.md#experimental-f4-controller) exposes those same handlers.
 Pybricks Code discovery, connection and reconnection
 also pass on the Inventor F4 through Chromium Web Bluetooth; see the
@@ -125,7 +126,7 @@ subpackages and application modules.
 | Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
 | `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery voltage/current snapshots |
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
-| Hub display | Static `on`, `off`, `pixel`, `icon`, `char`, `number` and `orientation`; shared display orientation and reference fonts |
+| Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -136,13 +137,14 @@ button/ADC inputs and a TLC5955 SPI peer with the production driver. They cover
 rendering, ownership conflicts, rejected input, I/O errors and cleanup on return,
 exception, forced stop and REPL reset. This does not verify perceived colors,
 display orientation or measurement accuracy on a physical hub. The
-[hub example](../examples/python/hub.py) exercises the static display and background lighting.
+[hub example](../examples/python/hub.py) exercises display text, icons and background lighting.
 It also compiles and runs repeatedly through the actual pybricksdev serial client
-against the ARM fixture. This is client integration with synthetic I/O, not a
-physical USB/BLE or browser result.
+against the ARM fixture and through both USB/BLE clients on the Inventor F4.
+Display cleanup and error-free driver completion are checked there; perceived
+output and browser execution remain separate acceptance items.
 
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-display text and animation, speaker, IMU, charger,
+speaker, IMU, charger,
 system/storage, `hub_menu` and messaging remain unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.

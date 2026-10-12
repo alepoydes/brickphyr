@@ -15,9 +15,13 @@ int app_main(void)
 	if (invalid != -EINVAL) {
 		return 2000 + invalid;
 	}
-	int err = bp_matrix_write(0, &level, 1);
+	uint8_t frames[2 * BP_MATRIX_PIXELS] = {100};
+	int err = bp_matrix_animate(frames, 2, 10);
 	if (err) {
 		return err;
+	}
+	if (bp_buttons()) {
+		return bp_matrix_animate((const void *)(UINTPTR_MAX - 3), 2, 10);
 	}
 	/* A prohibited result buffer must end only this application and release its
 	 * display, even though its previously accepted write may still be running. */

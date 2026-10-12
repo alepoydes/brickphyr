@@ -485,7 +485,8 @@ The manifest-selected MicroPython submodule must be present. Its core and matchi
 Installation uses the [existing recovery procedure](recovery.md). This profile
 provides [temporary and installed Python programs](host.md#python-applications),
 including imports, through Brickphyr management. REPL and the Pybricks execution
-adapter have software checks; their physical acceptance remains in the [plan](python.md).
+adapter have software and bounded Inventor F4 USB/BLE checks; remaining acceptance
+is listed in the [plan](python.md).
 The experimental [Pybricks library](compatibility.md#implemented-library-subset)
 is enabled by default. Set `CONFIG_BRICKPHYR_PYBRICKS=n` for Python without that
 library; native Python execution and REPL retain the same lifecycle and transports.

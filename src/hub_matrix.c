@@ -16,16 +16,64 @@ static struct bp_matrix_state state;
 static bool releasing;
 static bool disabled;
 static uint32_t revision;
+static uint8_t application_rotation;
+static uint8_t *animation;
+static size_t animation_count;
+static uint32_t interval;
+static int64_t epoch;
+
+static void apply(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(update, apply);
+
+/* All helpers below run under lock. No application memory remains borrowed. */
+static void stop_animation(void)
+{
+	k_free(animation);
+	animation = NULL;
+	state.animating = false;
+}
+
+static void copy_pixels(uint32_t first, const uint8_t *pixels, size_t count,
+			uint8_t rotation)
+{
+	for (size_t i = 0; i < count; i++) {
+		size_t row = (first + i) / 5, col = (first + i) % 5;
+		size_t index;
+		switch (rotation) {
+		case 1: index = col * 5 + 4 - row; break;
+		case 2: index = (4 - row) * 5 + 4 - col; break;
+		case 3: index = (4 - col) * 5 + row; break;
+		default: index = first + i; break;
+		}
+		state.requested[index] = pixels[i];
+	}
+}
+
+static int admission(enum bp_matrix_owner owner)
+{
+	return disabled ? -ESHUTDOWN : releasing || state.pending ||
+		(state.owner != BP_MATRIX_FREE && state.owner != owner) ? -EBUSY : 0;
+}
 
 static void apply(struct k_work *work)
 {
 	uint8_t frame[BP_MATRIX_PIXELS];
 	uint16_t pwm[BP_MATRIX_PIXELS];
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (!state.pending) {
+	if (!state.pending && !state.animating) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
+	if (state.animating) {
+		int64_t now = k_uptime_get();
+		if (epoch < 0) {
+			epoch = now;
+		}
+		size_t index = ((uint64_t)(now - epoch) / interval) % animation_count;
+		copy_pixels(0, animation + index * BP_MATRIX_PIXELS, BP_MATRIX_PIXELS,
+			application_rotation);
+	}
+	state.pending = true;
 	memcpy(frame, state.requested, sizeof(frame));
 	uint32_t current = revision;
 	k_spin_unlock(&lock, key);
@@ -47,15 +95,19 @@ static void apply(struct k_work *work)
 	 * That submission is already queued; never release before it completes. */
 	if (current == revision) {
 		state.pending = false;
-		if (releasing && !err) {
+		if (err) {
+			stop_animation();
+		} else if (releasing) {
 			state.owner = BP_MATRIX_FREE;
 			releasing = false;
+		} else if (state.animating) {
+			/* Skip missed frames without accumulating driver/queue latency. */
+			int64_t next = epoch + ((state.applied_ms - epoch) / interval + 1) * interval;
+			k_work_reschedule(&update, K_TIMEOUT_ABS_MS(next));
 		}
 	}
 	k_spin_unlock(&lock, key);
 }
-
-static K_WORK_DEFINE(update, apply);
 
 int hub_matrix_write(enum bp_matrix_owner owner, uint32_t first, const uint8_t *values,
 		     size_t count)
@@ -73,12 +125,20 @@ int hub_matrix_write(enum bp_matrix_owner owner, uint32_t first, const uint8_t *
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	int err = disabled ? -ESHUTDOWN : releasing || state.pending ||
-		(state.owner != BP_MATRIX_FREE && state.owner != owner) ? -EBUSY : 0;
+	int err = admission(owner);
 	if (!err) {
-		err = k_work_submit(&update);
+		bool animated = state.animating;
+		/* Rescheduling and publication are atomic with respect to the worker. */
+		err = k_work_reschedule(&update, K_NO_WAIT);
 		if (err >= 0) {
-			memcpy(state.requested + first, values, count);
+			k_free(animation);
+			animation = NULL;
+			state.animating = false;
+			if (animated) {
+				memset(state.requested, 0, sizeof(state.requested));
+			}
+			copy_pixels(first, values, count,
+				owner == BP_MATRIX_APPLICATION ? application_rotation : 0);
 			state.owner = owner;
 			state.pending = true;
 			revision++;
@@ -87,6 +147,63 @@ int hub_matrix_write(enum bp_matrix_owner owner, uint32_t first, const uint8_t *
 	}
 	k_spin_unlock(&lock, key);
 	return err;
+}
+
+int hub_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms)
+{
+	if (!frames || !count || count > BP_MATRIX_MAX_FRAMES || !interval_ms ||
+	    interval_ms > INT32_MAX) {
+		return -EINVAL;
+	}
+	size_t bytes = count * BP_MATRIX_PIXELS;
+	for (size_t i = 0; i < bytes; i++) {
+		if (frames[i] > 100) {
+			return -EINVAL;
+		}
+	}
+	if (!device_is_ready(leds)) {
+		return -ENODEV;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = admission(BP_MATRIX_APPLICATION);
+	if (!err) {
+		/* Nonwaiting allocation and <=6375-byte publication under the lock
+		 * prevent a forced application stop from leaking an unpublished copy. */
+		uint8_t *copy = k_malloc(bytes);
+		if (!copy) {
+			err = -ENOMEM;
+		} else {
+			err = k_work_reschedule(&update, K_NO_WAIT);
+			if (err >= 0) {
+				memcpy(copy, frames, bytes);
+				k_free(animation);
+				animation = copy;
+				animation_count = count;
+				interval = interval_ms;
+				epoch = -1;
+				state.animating = true;
+				state.pending = true;
+				state.owner = BP_MATRIX_APPLICATION;
+				revision++;
+				err = 0;
+			} else {
+				k_free(copy);
+			}
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_matrix_orientation(uint32_t rotation)
+{
+	if (rotation > 3) {
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	application_rotation = rotation;
+	k_spin_unlock(&lock, key);
+	return 0;
 }
 
 int hub_matrix_get(struct bp_matrix_state *value)
@@ -106,7 +223,8 @@ int hub_matrix_get(struct bp_matrix_state *value)
 /* Caller holds lock. A failed blank retains ownership and can be retried. */
 static int blank(void)
 {
-	int err = k_work_submit(&update);
+	stop_animation();
+	int err = k_work_reschedule(&update, K_NO_WAIT);
 	if (err < 0) {
 		state.error = err;
 		return err;
@@ -121,9 +239,9 @@ static int blank(void)
 int hub_matrix_wait(void)
 {
 	struct k_work_sync sync;
-	/* A disconnect can submit a final blank while an earlier frame runs. */
+	/* Only submitted writes count as pending, not future animation deadlines.
+	 * A disconnect can submit a final blank while an earlier frame runs. */
 	for (;;) {
-		k_work_flush(&update, &sync);
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool pending = state.pending;
 		int err = state.error;
@@ -131,12 +249,16 @@ int hub_matrix_wait(void)
 		if (!pending) {
 			return err;
 		}
+		k_work_flush_delayable(&update, &sync);
 	}
 }
 
 int hub_matrix_release(enum bp_matrix_owner owner)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (owner == BP_MATRIX_APPLICATION) {
+		application_rotation = 0;
+	}
 	bool owned = state.owner == owner && owner != BP_MATRIX_FREE;
 	int err = owned ? blank() : 0;
 	k_spin_unlock(&lock, key);
@@ -145,7 +267,7 @@ int hub_matrix_release(enum bp_matrix_owner owner)
 	}
 	struct k_work_sync sync;
 	for (;;) {
-		k_work_flush(&update, &sync);
+		k_work_flush_delayable(&update, &sync);
 		key = k_spin_lock(&lock);
 		owned = state.owner == owner;
 		bool pending = owned && state.pending;

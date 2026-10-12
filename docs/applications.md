@@ -155,7 +155,7 @@ Output uses the shared [bounded queue](#python-input-and-output), with flow cont
 for subscribed Pybricks output and counted overflow for detached logging.
 Upload admission checks the format envelope; Python parsing and full
 bytecode loading happen in the protected application after start. Interactive
-REPL has ARM/CLI checks as described below. The initial
+REPL has ARM/CLI and Inventor F4 USB/BLE checks as described below. The initial
 [Pybricks bindings](compatibility.md#implemented-library-subset) reuse the common
 device services. Writable Python storage and the remaining bindings are in the
 [implementation plan](python.md).
@@ -330,7 +330,11 @@ admission, native-code cleanup on soft reset and the raw protocol. Real CLI/PTY
 checks cover detach, monitoring, TTY restoration and forced exit with a full input
 queue. Session-notification checks use synthetic detach on QEMU's plain UART.
 Plain Shell entry, return and reconnection also have ARM checks through the shared
-host dispatcher. Physical REPL USB/BLE acceptance remains pending.
+host dispatcher. On the Inventor F4, both USB/BLE paths pass friendly/raw REPL,
+editing, history/completion and soft reset. SMP additionally checks interruption
+and display cleanup on reset; plain Shell checks entry/return, retained globals
+and discarded partial input across a physical reconnection. Combined output
+backpressure and CLI/monitor acceptance on hardware remain open.
 
 ## Application formats
 

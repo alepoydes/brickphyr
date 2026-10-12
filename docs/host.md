@@ -216,8 +216,8 @@ to the running application and survives the sender closing its connection.
 `app interrupt` requests a catchable Python `KeyboardInterrupt`; `app stop`
 forcibly terminates the application, including native code that never checks
 Python events. The hub Shell provides `app input "some text"` and `app interrupt`
-through the same handlers. These commands supply script input. Pybricks bindings
-are still pending.
+through the same handlers. These commands supply script input. See the current
+[Pybricks library coverage](compatibility.md#implemented-library-subset).
 
 Programs can read their bundled resources with `open("data/file", "rb")`.
 Paths stay within that application's retained file map, including after an update
@@ -237,8 +237,10 @@ empty prompt resets Python, Ctrl-X stops REPL and returns to Shell, and Ctrl-]
 detaches without stopping Python. Repeating the command reattaches to its existing
 state. Entry while another application runs fails without stopping that program.
 The hub must run a Python build with SMP command 12; older builds reject it.
-These CLI workflows have ARM QEMU/PTY coverage; physical REPL acceptance remains
-pending. See [REPL behavior and limits](applications.md#interactive-python).
+These CLI workflows have ARM QEMU/PTY coverage. The shared SMP REPL operations
+also pass editing, history/completion, interruption, soft reset, display cleanup
+and raw-protocol checks over USB/BLE on the Inventor F4. See
+[REPL behavior and limits](applications.md#interactive-python).
 
 From an ordinary terminal opened with `uv run brickphyrdev terminal` (BLE) or
 `uv run brickphyrdev terminal --usb`, enter:
@@ -250,8 +252,9 @@ python
 This uses the same VM with a plain input/output stream; Ctrl-X returns to Shell.
 For a connection sharing SMP operations such as monitoring, select `--repl`
 when opening the terminal instead. The hub rejects plain REPL entry once SMP
-is active on that connection. Plain Shell entry and reconnection have ARM QEMU
-coverage; their physical USB/BLE acceptance is pending too.
+is active on that connection. Plain Shell entry, editing, soft reset, raw REPL,
+return and reconnection also pass on the Inventor F4 over USB/BLE. Reconnection
+preserves variables and cancels an unfinished line.
 
 ## Host CLI
 
@@ -503,10 +506,13 @@ The actual pybricksdev serial client passes upload, imports, input/output, stop,
 repeat and reconnect checks against ARM-emulated firmware. A separate protected
 ARM fixture covers the production BLE GATT adapter, ownership and interpreter
 with a synthetic controller, including notification backpressure and disconnect.
-Neither check establishes physical USB/BLE execution or unchanged Pybricks Code
-execution. Pybricks library bindings remain unfinished. Persistent slots additionally
+On the Inventor F4, both actual pybricksdev clients additionally upload, execute
+and repeat the [hub example](../examples/python/hub.py) through a persistent slot.
+The named applications remain unchanged and the test slot is removable through
+native management. This does not establish unchanged Pybricks Code execution or
+complete library compatibility. Persistent slots additionally
 have ARM checks for selection, transfer failure, storage exhaustion and coexistence
-with named programs. Physical slot persistence and operation remain unverified.
+with named programs. Physical slot retention across power loss remains unverified.
 Subscribed output applies backpressure through the common
 [application queue](applications.md#python-input-and-output). Python waits
 interruptibly when it fills; USB continues receiving a STOP command behind a

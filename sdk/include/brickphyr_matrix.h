@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define BP_MATRIX_PIXELS 25
+#define BP_MATRIX_MAX_FRAMES 255
 
 enum bp_matrix_owner { BP_MATRIX_FREE, BP_MATRIX_APPLICATION, BP_MATRIX_TERMINAL };
 
@@ -20,4 +21,5 @@ struct bp_matrix_state {
 	uint8_t owner;
 	uint8_t pending;
 	uint8_t valid;
+	uint8_t animating;
 };

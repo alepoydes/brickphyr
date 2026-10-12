@@ -47,11 +47,24 @@ __syscall int bp_light_animate(uint32_t light, const struct bp_light_frame *fram
 /* Queue 1..25 brightness values at row-major offset first. Copies before return;
  * no allocation or wait. 0 means accepted, not yet applied; EBUSY means a frame
  * is pending or the terminal owns the matrix. Ownership lasts until app exit.
+ * Static writes stop animation; a partial write then starts on a blank matrix.
+ * Coordinates use the application's selected orientation (upright by default).
  * Unsupported builds return ENOTSUP. Errors are negative errno throughout.
  */
 __syscall int bp_matrix_write(uint32_t first, const uint8_t *values, size_t count);
 /* Bounded snapshot including the last completed write, timestamp and I/O error. */
 __syscall int bp_matrix_get(struct bp_matrix_state *state);
+/* Repeat 1..255 row-major frames of 25 brightness bytes at 1..INT32_MAX ms.
+ * Copies into firmware-owned memory without waiting. Invalid input, busy or
+ * allocation failure preserves the previous display. Delayed updates skip
+ * expired frames; an I/O error stops animation. Cleanup frees the copy.
+ */
+__syscall int bp_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms);
+/* Select 0..3 clockwise quarter-turns for subsequent application writes and
+ * animation frames. Does not redraw, allocate or acquire the display. Reset to
+ * zero on application cleanup; terminal coordinates remain physical.
+ */
+__syscall int bp_matrix_orientation(uint32_t rotation);
 
 /* Latest uncalibrated IMU sample. Copies even when sample.error is nonzero;
  * does not acquire data or change sensor configuration. ENOTSUP if excluded. */

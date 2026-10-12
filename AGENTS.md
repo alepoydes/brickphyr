@@ -73,7 +73,11 @@ to resume work without access to a previous conversation or a personal rules fil
   Native applications must not gain raw flash-controller access as an API shortcut.
 - Connection to a hub is not permission to flash it or energize motors. Use the
   current explicit authorization; do not import permission from an old experiment.
-  Once authorized, do not repeatedly ask for unchanged work in that scope.
+  The operator grants standing permission to install development firmware images
+  on the project's hub. Do not request per-image approval within that development
+  scope. This does not authorize motor operation or erasure of user data; the
+  recovery constraints above still apply.
+  Continue authorized work without repeatedly requesting the same permission.
 - Confirm the previous application has stopped before replacement. Normal host
   disconnection must not stop an autonomous application. Diagnostics have their
   own explicit stop/cleanup contract and one host connection owner.

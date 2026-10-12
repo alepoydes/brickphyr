@@ -225,8 +225,9 @@ paths remain available. This does not establish support for older native ABIs.
 Client tests cover compiler selection, precompiled imports and rejected headers;
 Brickphyr checks execution with the actual serial client on protected ARM
 emulation. Both repositories' uv locks resolve the added compiler package.
-Publish the dependency change before moving the shared manifest pin. The client
-and firmware changes have no physical USB/BLE execution acceptance yet.
+Publish the dependency change before moving the shared manifest pin. Both actual
+clients now upload and repeat the hub example over USB/BLE on the Inventor F4;
+physical native-module negotiation and broader client acceptance remain open.
 
 ## Settings storage prerequisites
 
@@ -388,7 +389,7 @@ checks cover this integration.
 ## CMSDK UART test prerequisite
 
 The ARM QEMU fixture for the shared host dispatcher additionally requires the
-local, uncommitted CMSDK APB UART correction. `uart_irq_tx_complete()` must report
+local CMSDK APB UART correction. `uart_irq_tx_complete()` must report
 the transmitter's idle state independently of whether TX interrupts are enabled.
 Otherwise a caller that disables an idle TX interrupt waits indefinitely for a
 completion that already happened. The F4 uses a different UART implementation.

@@ -234,14 +234,33 @@ invalidate the driver's buffer. Each attempted frame adds one 97-byte transfer
 to the existing button animation traffic. There is no periodic display transfer
 when the image is unchanged.
 
+`bp_matrix_animate(frames, count, interval_ms)` repeats 1–255 frames independently
+of application execution. It copies 25 bytes per frame into service-owned heap
+memory: up to 6375 bytes, or 12750 bytes during replacement, plus allocator
+overhead. Validation and nonwaiting allocation precede replacement. Allocation,
+copy and publication share one bounded critical section so forced application
+stop cannot leak an unpublished buffer. No allocation occurs while playing.
+A delayed system work item selects the frame from absolute elapsed time, skipping
+expired frames rather than replaying them. Intervals are 1–2147483647 ms; driver
+and system-queue latency can delay a frame. Each update uses one controller write.
+An I/O failure stops advancement and releases the sequence; ownership remains
+until explicit release. Static writes stop animation; a partial write then starts
+from a blank frame. Invalid replacement leaves the current sequence intact.
+
+`bp_matrix_orientation(rotation)` selects 0–3 clockwise quarter-turns for future
+application writes and animation frames. It does not redraw the current image
+or acquire the display. Application cleanup resets the orientation. Terminal
+coordinates and observation arrays always use the physical upright layout.
+
 `bp_matrix_get()` distinguishes requested values from the last successful write,
-with its monotonic completion time, pending flag, owner, latest error and failure
+with its monotonic completion time, pending/animation flags, owner, latest error and failure
 count. Successful writes establish controller output, not measured light.
 An I/O error marks the output uncertain until another write succeeds. Rejected
 SPI frames are not retained for transmission by an unrelated RGB update.
 
 Native simulation checks cover wiring endpoints, brightness, shared-channel
-preservation, ownership, input validation, in-flight disconnect and SPI failure.
+preservation, ownership, input validation, in-flight disconnect and SPI failure,
+copied sequences, orientation changes, delayed frames and exhausted allocation.
 ARM QEMU additionally exercises user-memory validation and application stop/fault
 cleanup through the actual native syscalls and loader. On the Inventor F4,
 Shell writes and the separately uploaded native matrix example complete without

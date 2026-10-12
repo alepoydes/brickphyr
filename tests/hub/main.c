@@ -272,6 +272,8 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 	zassert_equal(duty(38), 0);
 
 	/* Rejected writes cannot become visible via an unrelated later RGB write. */
+	zassert_ok(hub_matrix_get(&value));
+	uint32_t errors = value.errors;
 	spi_error = -EIO;
 	frame[0] = 100;
 	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 0, frame, 1));
@@ -279,7 +281,7 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 	zassert_ok(hub_matrix_get(&value));
 	zassert_false(value.valid);
 	zassert_equal(value.error, -EIO);
-	zassert_equal(value.errors, 1);
+	zassert_equal(value.errors, errors + 1);
 	zassert_equal(hub_matrix_release(BP_MATRIX_APPLICATION), -EIO);
 	zassert_ok(hub_matrix_get(&value));
 	zassert_equal(value.owner, BP_MATRIX_APPLICATION, "Failed cleanup must retain ownership");
@@ -315,6 +317,102 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 	zassert_ok(shell_execute_cmd(shell, "matrix clear"));
 	zassert_ok(hub_matrix_get(&value));
 	zassert_equal(value.owner, BP_MATRIX_FREE);
+}
+
+ZTEST(hub, test_matrix_animation)
+{
+	uint8_t images[2][BP_MATRIX_PIXELS] = {{100}, {[4] = 50}};
+	struct bp_matrix_state value;
+	zassert_ok(hub_matrix_animate(images[0], 2, 50));
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(duty(38), 65535);
+	memset(images, 101, sizeof(images));
+	zassert_equal(hub_matrix_animate(images[0], 2, 50), -EINVAL);
+	zassert_equal(hub_matrix_animate(images[0], SIZE_MAX, 50), -EINVAL);
+	zassert_equal(hub_matrix_animate(images[0], 2, 0), -EINVAL);
+	zassert_equal(hub_matrix_animate(images[0], 2, UINT32_MAX), -EINVAL);
+	zassert_equal(hub_matrix_orientation(4), -EINVAL);
+
+	unsigned int before = writes;
+	zassert_ok(hub_matrix_orientation(1));
+	zassert_equal(writes, before, "Orientation must not redraw the current frame");
+	zassert_equal(hub_matrix_write(BP_MATRIX_TERMINAL, 0, images[0], 1), -EINVAL);
+	uint8_t level = 25;
+	zassert_equal(hub_matrix_write(BP_MATRIX_TERMINAL, 0, &level, 1), -EBUSY);
+	hub_matrix_session_closed();
+	hold_transfer = true;
+	zassert_ok(k_sem_take(&transfer_started, K_MSEC(100)));
+	k_sem_give(&transfer_continue);
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(duty(9), 16383, "Next copied frame must use the new orientation");
+	zassert_equal(duty(38), 0);
+	zassert_ok(hub_matrix_get(&value));
+	zassert_true(value.animating && value.valid && !value.pending);
+
+	struct allocation { struct allocation *next; } *allocations = NULL, *item;
+	while ((item = k_malloc(sizeof(*item)))) {
+		item->next = allocations;
+		allocations = item;
+	}
+	memset(images, 0, sizeof(images));
+	zassert_equal(hub_matrix_animate(images[0], 2, 50), -ENOMEM);
+	while (allocations) {
+		item = allocations;
+		allocations = item->next;
+		k_free(item);
+	}
+	zassert_ok(hub_matrix_get(&value));
+	zassert_true(value.animating);
+	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 12, &level, 1));
+	zassert_ok(hub_matrix_wait());
+	zassert_ok(hub_matrix_get(&value));
+	zassert_false(value.animating);
+	uint8_t expected[BP_MATRIX_PIXELS] = {[12] = 25};
+	zassert_mem_equal(value.applied, expected, sizeof(expected));
+	before = writes;
+	k_msleep(110);
+	zassert_equal(writes, before, "Static replacement must cancel future frames");
+
+	/* Delaying the driver across several periods must not replay stale frames. */
+	images[0][0] = 100;
+	images[1][0] = 50;
+	zassert_ok(hub_matrix_animate(images[0], 2, 10));
+	zassert_ok(hub_matrix_wait());
+	hold_transfer = true;
+	zassert_ok(k_sem_take(&transfer_started, K_MSEC(50)));
+	k_msleep(35);
+	before = writes;
+	k_sem_give(&transfer_continue);
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(writes, before + 1);
+	spi_error = -EIO;
+	k_msleep(15);
+	zassert_ok(hub_matrix_get(&value));
+	zassert_false(value.animating || value.valid || value.pending);
+	zassert_equal(value.error, -EIO);
+	spi_error = 0;
+	before = writes;
+	k_msleep(20);
+	zassert_equal(writes, before, "An I/O failure must stop periodic writes");
+
+	static uint8_t maximum[BP_MATRIX_MAX_FRAMES][BP_MATRIX_PIXELS];
+	maximum[0][0] = 100;
+	zassert_ok(hub_matrix_animate(maximum[0], BP_MATRIX_MAX_FRAMES, INT32_MAX));
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(duty(33), 65535);
+	/* The 8 KiB fixture heap fits one 6375-byte sequence, not two. */
+	zassert_equal(hub_matrix_animate(maximum[0], BP_MATRIX_MAX_FRAMES, 10), -ENOMEM);
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
+	zassert_ok(hub_matrix_get(&value));
+	zassert_false(value.animating || value.pending);
+	zassert_equal(value.owner, BP_MATRIX_FREE);
+	/* A fresh application is upright, even if only orientation was set. */
+	zassert_ok(hub_matrix_orientation(3));
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
+	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 0, &level, 1));
+	zassert_ok(hub_matrix_wait());
+	zassert_equal(duty(38), 4095);
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
 }
 
 static void check_application_animation(void)

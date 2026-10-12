@@ -468,6 +468,32 @@ static inline int z_vrfy_bp_matrix_write(uint32_t first, const uint8_t *values, 
 }
 #include <zephyr/syscalls/bp_matrix_write_mrsh.c>
 
+int z_impl_bp_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms)
+{
+	return hub_matrix_animate(frames, count, interval_ms);
+}
+
+static inline int z_vrfy_bp_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms)
+{
+	if (!count || count > BP_MATRIX_MAX_FRAMES) {
+		return -EINVAL;
+	}
+	K_OOPS(K_SYSCALL_MEMORY_READ(frames, count * BP_MATRIX_PIXELS));
+	return z_impl_bp_matrix_animate(frames, count, interval_ms);
+}
+#include <zephyr/syscalls/bp_matrix_animate_mrsh.c>
+
+int z_impl_bp_matrix_orientation(uint32_t rotation)
+{
+	return hub_matrix_orientation(rotation);
+}
+
+static inline int z_vrfy_bp_matrix_orientation(uint32_t rotation)
+{
+	return z_impl_bp_matrix_orientation(rotation);
+}
+#include <zephyr/syscalls/bp_matrix_orientation_mrsh.c>
+
 int z_impl_bp_matrix_get(struct bp_matrix_state *value)
 {
 	return hub_matrix_get(value);

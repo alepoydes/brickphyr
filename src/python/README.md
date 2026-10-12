@@ -83,7 +83,9 @@ which joins/releases the application before rebuilding VM state; executable
 allocations cannot survive merely because the host keeps its connection open.
 Core REPL and the common CLI terminal have ARM/PTY checks. Plain Shell entry and
 reconnection use the same VM through the shared dispatcher, checked on ARM QEMU
-with simulated session boundaries. Physical REPL acceptance remains pending.
+with simulated session boundaries. SMP REPL editing, history/completion, interrupt,
+soft reset and raw protocol also pass over USB/BLE on the Inventor F4, as do plain
+Shell entry/return, soft reset and reconnection with preserved globals.
 
 The optional Pybricks library compiles its selected parameters, matrix, stopwatch,
 awaitable/task and tools sources directly from the pinned dependency checkout.
@@ -110,3 +112,17 @@ the shared light service. It owns their timing and lifetime independently of
 Python, with the same cancellation/cleanup path as native applications.
 Matrix orientation belongs to the hub display and is shared by hub objects,
 resetting with a fresh constructor or interpreter as in the reference.
+The matrix service owns coordinate rotation and copied icon animations as well.
+`display.animate()` accepts the reference's 2–255 icons and a positive signed
+32-bit millisecond interval. Static display operations stop it. Brightness and
+duration validation completes before replacing existing output.
+
+`display.text()` retains its Python string and renders one reference-font
+character at a time through that same frame service. It accepts printable ASCII
+and nonnegative signed-32-bit on/off durations, including zero. The final
+character is followed by a blank; empty text leaves the display unchanged.
+Ordinary calls wait interruptibly against the VM's clock. Inside `run_task`, the
+maintained Pybricks awaitable drives the same rendering state machine. Replacing
+the display exhausts its previous text awaitable; cancelling that obsolete
+awaitable cannot blank the replacement. Cancellation of an active text operation
+blanks it. Application termination and REPL reset use the common service cleanup.

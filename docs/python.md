@@ -5,7 +5,7 @@ user-mode checks. The shared supervisor now runs temporary and installed Python
 programs with source/bytecode/native imports through SMP, Shell and `brickphyrdev`,
 with ARM QEMU and Inventor F4 USB/BLE coverage.
 See [runtime support and limits](applications.md#experimental-python-profile).
-REPL and the reference standard modules have software checks; physical REPL
+REPL has ARM/PTY and Inventor F4 USB/BLE checks; the remaining interactive
 acceptance and Pybricks hardware bindings remain open. Parameters, geometry and
 non-device tools have [executable coverage](compatibility.md#implemented-library-subset).
 The Pybricks execution
@@ -29,9 +29,9 @@ record their [runtime](applications.md#experimental-python-profile),
 | --- | --- | --- |
 | 0 | Task and hardware watchdogs; USB recovery checks on F4 | Physical shutdown/button restart and battery-only recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
-| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI checks, physical script I/O checks | Physical USB/BLE interactive acceptance |
-| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; actual serial client and synthetic BLE adapter checks | Execution through physical USB/BLE clients and unchanged Pybricks Code |
-| 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, static display and battery snapshots; shared native services | Remaining hub/device bindings, missing shared-service behavior and required reference examples |
+| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction checks | Combined interactive flow-control acceptance |
+| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks and an F4 hub example through both actual clients | Unchanged Pybricks Code, power-cycle slot retention and combined client acceptance |
+| 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation and battery snapshots; shared native services | Remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
 Continue from this implementation in the following order:

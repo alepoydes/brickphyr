@@ -12,7 +12,17 @@ from test_python_io import until
 from test_python_modules import execute
 
 from brickphyrdev import console
-from brickphyrdev.application import Format, Input, Repl, Start, Status, Stop, checked, upload
+from brickphyrdev.application import (
+    Format,
+    Input,
+    Interrupt,
+    Repl,
+    Start,
+    Status,
+    Stop,
+    checked,
+    upload,
+)
 from brickphyrdev.telemetry import snapshot
 
 BUILD = Path(__file__).resolve().parents[1] / "build/python-smp-tests"
@@ -201,6 +211,7 @@ input()
         source = source.replace(
             b"hub.bluetooth_light.on(Color.BLUE)", b"hub.bluetooth_light.blink(Color.BLUE, [10])"
         )
+        source = source.replace(b"hub.display.on()", b"hub.display.animate([[[100]*5]*5]*2, 10)")
     if ending == "exception":
         source += b"raise ValueError('device cleanup')\n"
     elif ending == "stop":
@@ -402,7 +413,8 @@ def test_repl_reset_releases_hub_devices():
                     b"from pybricks.hubs import PrimeHub; from pybricks.parameters import Color, Side",
                     b"hub = PrimeHub(); hub.light.animate([Color.RED], 10); "
                     b"hub.bluetooth_light.blink(Color.BLUE, [10])",
-                    b"hub.display.orientation(Side.RIGHT); hub.display.pixel(0, 0)",
+                    b"hub.display.orientation(Side.RIGHT); "
+                    b"hub.display.animate([[[100,0,0,0,0]]+[[0]*5]*4]*2, 10)",
                 ):
                     await checked(client, Input(data=command + b"\r"))
                     assert b"Traceback" not in await until(client, b">>> ")
@@ -424,6 +436,192 @@ def test_repl_reset_releases_hub_devices():
                 assert (await snapshot(client, "matrix")).values["applied"] == bytes(
                     [100] + [0] * 24
                 )
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
+
+
+def test_matrix_animation_copy_orientation_and_busy_python():
+    source = b"""
+import gc
+from pybricks.hubs import PrimeHub
+from pybricks.parameters import Side
+hub = PrimeHub()
+icon = [[100,0,0,0,0]] + [[0]*5]*4
+hub.display.animate([icon, icon], 50)
+icon[0][0] = 0
+del icon
+gc.collect()
+for operation, error in (
+    (lambda: hub.display.animate([], 10), ValueError),
+    (lambda: hub.display.animate([[[0]*5]*5], 10), ValueError),
+    (lambda: hub.display.animate([[[0]*5]*5]*256, 10), ValueError),
+    (lambda: hub.display.animate([[[0]*5]*5]*2, 0), ValueError),
+    (lambda: hub.display.animate([[[0]*5]*5]*2, float('inf')), OverflowError),
+    (lambda: hub.display.animate([[[0]*5]*5, [[0]*4]*5], 10), ValueError),
+    (lambda: hub.display.text('x' + chr(0)), ValueError),
+    (lambda: hub.display.text('x', on=-1), ValueError),
+    (lambda: hub.display.text('x', off=float('nan')), ValueError),
+):
+    try:
+        operation()
+    except error:
+        pass
+    else:
+        assert False
+print('ready')
+input()
+hub.display.orientation(Side.RIGHT)
+print('ready')
+input()
+hub.display.pixel(2, 2, 50)
+print('ready')
+input()
+hub.display.animate([[[25]*5]*5, [[75]*5]*5], 50)
+print('ready')
+while True: pass
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (
+            port,
+            client,
+        ):
+            try:
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                assert (await snapshot(client, "matrix")).values["applied"] == bytes(
+                    [100] + [0] * 24
+                )
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                async with asyncio.timeout(1):
+                    while (await snapshot(client, "matrix")).values["applied"][4] != 100:
+                        await asyncio.sleep(0.01)
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                assert (await snapshot(client, "matrix")).values["applied"] == bytes(
+                    [0] * 12 + [50] + [0] * 12
+                )
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                seen = set()
+                async with asyncio.timeout(2):
+                    while len(seen) < 2:
+                        seen.add((await snapshot(client, "matrix")).values["applied"])
+                        await asyncio.sleep(0.017)
+                assert seen == {bytes([25] * 25), bytes([75] * 25)}
+            finally:
+                await checked(client, Stop())
+            assert (await snapshot(client, "matrix")).values["owner"] == 0
+
+    with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
+
+
+def test_display_text_wait_and_cancellation():
+    assert (
+        execute(b"""
+import gc
+from pybricks.hubs import PrimeHub
+from pybricks.tools import wait, run_task, multitask, StopWatch
+hub = PrimeHub()
+clock = StopWatch()
+hub.display.text('AB', on=15, off=5)
+assert clock.time() >= 40
+hub.display.text('', on=0, off=0)
+hub.display.text('AB', on=0, off=0)
+ticks = 0
+async def other():
+    global ticks
+    for i in range(8):
+        gc.collect()
+        ticks += 1
+        await wait(5)
+async def show():
+    await hub.display.text(''.join(['A', 'B']), on=25, off=5)
+async def main():
+    await multitask(show(), other())
+    assert ticks == 8
+    await hub.display.text('', on=0, off=0)
+    # A newer operation exhausts the old awaitable, whose close must not
+    # cancel the replacement. Explicit close of the new operation is idempotent.
+    old = hub.display.text('A', on=1000)
+    next(old)
+    await wait(5)
+    new = hub.display.text('B', on=1000)
+    old.close()
+    next(new)
+    await wait(5)
+    new.close()
+    new.close()
+    # Complete-multitask cancellation also blanks its unfinished display.
+    await multitask(hub.display.text('C', on=1000), wait(10), race=True)
+run_task(main())
+print('text passed')
+""")
+        == b"text passed\n"
+    )
+
+
+def test_display_text_frames_and_static_replacement():
+    source = b"""
+from pybricks.hubs import PrimeHub
+from pybricks.tools import wait, run_task, multitask
+hub = PrimeHub()
+async def replacement():
+    await wait(40)
+    print('ready')
+    input()
+    hub.display.pixel(4, 4, 50)
+async def main():
+    await multitask(hub.display.text('A', on=10000), replacement())
+run_task(main())
+print('ready')
+input()
+async def cancelled():
+    await multitask(hub.display.text('B', on=10000), wait(40), race=True)
+run_task(cancelled())
+print('ready')
+input()
+try:
+    hub.display.text('A', on=10000)
+except KeyboardInterrupt:
+    print('ready')
+    input()
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (
+            port,
+            client,
+        ):
+            try:
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                shown = (await snapshot(client, "matrix")).values["applied"]
+                assert shown[1:3] == bytes([100, 100]) and shown[24] == 0
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                assert (await snapshot(client, "matrix")).values["applied"] == shown[:24] + bytes(
+                    [50]
+                )
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                assert (await snapshot(client, "matrix")).values["applied"] == bytes(25)
+                await checked(client, Input(data=b"\n"))
+                async with asyncio.timeout(1):
+                    while (await snapshot(client, "matrix")).values["applied"] == bytes(25):
+                        await asyncio.sleep(0.01)
+                await checked(client, Interrupt())
+                await ready(client)
+                assert (await snapshot(client, "matrix")).values["applied"] == bytes(25)
             finally:
                 await checked(client, Stop())
 

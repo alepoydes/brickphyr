@@ -228,15 +228,17 @@ int main(void)
 	CHECK(led_frame[73] == 0 && led_frame[74] == 0); /* smile's top-row pixel */
 	CHECK(led_frame[29] == 255 && led_frame[30] == 255); /* charger remains disabled */
 	CHECK(available() == capacity);
-	CHECK(native_fixture_run("matrix_fault") == 0);
-	k_msleep(20);
-	application_get_status(&status);
-	printk("matrix fault: state %d result %d fault %u cleanup %d\n", status.state,
-	       status.result, status.fault, status.cleanup_error);
-	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
-	CHECK(hub_matrix_get(&display) == 0 && display.owner == BP_MATRIX_FREE);
-	CHECK(led_frame[77] == 0 && led_frame[78] == 0);
-	CHECK(available() == capacity);
+	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
+		CHECK(native_fixture_run("matrix_fault") == 0);
+		k_msleep(20);
+		application_get_status(&status);
+		printk("matrix fault: state %d result %d fault %u cleanup %d\n", status.state,
+		       status.result, status.fault, status.cleanup_error);
+		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+		CHECK(hub_matrix_get(&display) == 0 && display.owner == BP_MATRIX_FREE);
+		CHECK(led_frame[77] == 0 && led_frame[78] == 0);
+		CHECK(available() == capacity);
+	}
 	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
 		CHECK(native_fixture_run("light_fault") == 0);
 		k_msleep(20);
