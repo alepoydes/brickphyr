@@ -115,12 +115,17 @@ there is no PBIO cooperative device scheduler. No second parser or driver is
 linked. Explicit reset records the resulting connection generation; a later
 hotplug cannot silently rebind an old object.
 
-`pupsensors.c` adapts the ForceSensor, TiltSensor and InfraredSensor bindings from
-the same revision. The common native sensor service retains calibration and
-conversion; Python maps units and results and supplies the infrared object's
-counter offset. Generation-bound selection rejects stale objects before changing
-device modes. These classes have protected ARM coverage with synthetic UART peers;
-their physical acceptance remains pending.
+`pupsensors.c` adapts the ForceSensor, TiltSensor, InfraredSensor, ColorSensor,
+UltrasonicSensor and ColorDistanceSensor bindings from `pybricks/pupdevices` at
+the same revision, plus palette parsing from `util_pb/pb_color_map.c` and
+LightArray from `common/pb_type_lightarray.c`. The external ColorLight wrapper
+compiles unchanged. The common native sensor service retains calibration,
+conversion, palettes and light commands; Python maps units and results and
+supplies the infrared object's counter offset. PBIO's color matcher and distance
+helpers compile unchanged, without PBIO port instances. Generation-bound
+selection rejects stale objects before changing device modes. These classes have
+protected ARM coverage with synthetic UART peers; their physical acceptance
+remains pending.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks

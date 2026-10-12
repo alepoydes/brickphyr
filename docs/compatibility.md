@@ -132,6 +132,7 @@ subpackages and application modules.
 | Hub system | `name`, `info`, `reset_reason`, `set_stop_button`, `storage` and supervised `shutdown`; shared boot cause, launch identity, management connection and persistent user data |
 | `PUPDevice`, `LUMPDevice` | `info`, blocking/awaitable `read` and `write`, asynchronous UART `reset`; shared raw modes, signed/float wire values, passive touch input and connection generation checks |
 | `ForceSensor`, `TiltSensor`, `InfraredSensor` | Blocking/awaitable native measurements with reference units, force calibration, tilt axis order and infrared count offset; generation-bound selection and cleanup |
+| `ColorSensor`, `UltrasonicSensor`, `ColorDistanceSensor` | Native measurements, HSV/color matching, shared copied palettes and blocking/awaitable sensor lights; infrared transmission remains pending |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -153,9 +154,10 @@ Protected ARM write checks cover signed and float32 formats, payload copying,
 forced stop and port reuse. These checks do not establish physical output or
 third-party device compatibility. Reset checks cover transient electrical absence,
 renegotiation, replacement after completion and release on stop. Synthetic
-Force/Tilt/Infrared peers
-exercise cold construction, native conversions and Python results; physical
-acceptance of these classes remains pending. See
+Force/Tilt/Infrared and Color/Ultrasonic/ColorDistance peers exercise cold
+construction, native conversions and Python results. Color checks include
+custom/shared palettes and captured UART light commands. Physical acceptance of
+these classes remains pending. See
 [raw device usage and ownership](ports.md#arbitrary-uart-modes).
 On the Inventor F4, `PUPDevice.info()`, reset and synchronous/async CALIB reads
 from an idle ID-75 motor pass through USB/BLE application upload and execution,

@@ -176,25 +176,50 @@ HSV uses degrees and percent. `distance_mm=2000` means no ultrasonic return belo
 2 m. Infrared `distance_pct` is a relative estimate, not a length. The WeDo
 conversion is preserved from Pybricks and can exceed nominal percentage limits;
 applications must not interpret it as calibrated ranging. The signed counter
-has no application-specific zero offset. Color names, sensor-light commands,
-infrared transmission and other device APIs are not implemented.
+has no application-specific zero offset. Infrared transmission and other device
+APIs beyond the subset below remain pending.
 
-The Python `pybricks.pupdevices` module provides `ForceSensor`, `TiltSensor` and
-`InfraredSensor`, constructed with `Port.A` through `Port.F`. Their blocking or
-awaitable reads use these same native measurements:
+The Python `pybricks.pupdevices` sensor classes are constructed with `Port.A`
+through `Port.F`. Their blocking or awaitable reads use these same native
+measurements:
 
 | Class | Methods and units |
 | --- | --- |
 | `ForceSensor` | `force()` in newtons, `distance()` in millimetres, `touched()` and `pressed(force=3)` booleans |
 | `TiltSensor` | `tilt()` returns two angles in degrees, in Pybricks order |
 | `InfraredSensor` | `distance()` is relative percent, `reflection()` is percent, `count()` is relative to construction |
+| `ColorSensor` | `reflection()` and `ambient()` in percent; `hsv(surface=True)`, `color(surface=True)`, `detectable_colors()` and three-channel `lights.on/off` |
+| `UltrasonicSensor` | `distance()` in millimetres, `presence()` boolean and four-channel `lights.on/off` |
+| `ColorDistanceSensor` | Relative-percent `distance()`, percent `reflection()` and `ambient()`, `hsv()`, `color()`, `detectable_colors()` and `light.on/off` |
+
+Color sensors share a copied palette per port. The default is red, yellow, green,
+blue, white and `Color.NONE`; each new Python color-sensor object restores it.
+`detectable_colors(colors)` replaces it with up to eight `Color` values; an empty
+palette makes `color()` return `None`. `detectable_colors()` returns a tuple.
+Native callers use `bp_sensor_palette_get/set(port, generation, ...)` with packed
+HSV values defined in the SDK; setting `NULL` restores defaults. Replacement
+validates the whole palette before claiming the port or changing its colors.
+It survives release and hotplug until replaced or firmware restarts. The
+unchanged PBIO matcher chooses the nearest entry; `bp_sensor_get()` returns it
+with `BP_SENSOR_HAS_MATCHED_COLOR`. Telemetry exposes the matched hue, saturation
+and signed value alongside the measured HSV. Reads do not claim the port.
+
+SPIKE `lights.on(brightness=100)` accepts one percentage or a tuple/list with
+one per light, clipped to 0–100 as in Pybricks. `off()` sets all to zero.
+BOOST `light.on(color)` chooses red, green, blue or off using the reference hue,
+saturation and brightness rules; `light.off()` switches it off. These calls
+block or can be awaited inside `run_task`. Native `bp_sensor_light_write()`
+accepts validated percentages or packed HSV and queues the same UART write.
+Its token uses the [ordinary write completion](#arbitrary-uart-modes) contract.
+The next measurement selects its required mode; cleanup restores the automatic
+measurement rather than promising independent persistent light settings.
 
 Selection uses `bp_sensor_select(port, generation, measurement)` so a stale
 object cannot change the mode of a replacement device. The existing native
 `bp_sensor_configure` selects on the current connection without that generation
 constraint. Protected ARM checks use synthetic UART devices; these Python sensor
-classes still require physical acceptance. Other sensor classes and motor
-bindings remain pending.
+classes still require physical acceptance. Accessories, infrared transmission
+and motor bindings remain pending.
 
 Encoders report `angle_mdeg` in thousandths of a degree, in the device's direction
 without gear ratios or an application zero offset. BOOST uses its signed POS
@@ -248,8 +273,8 @@ Modes, calibration and numerical conversions in `src/ports/sensor.c` are a
 selected MIT-licensed port of
 [`port_lump/sensors.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/src/port_lump/sensors.c)
 and the corresponding `pybricks/pupdevices` bindings at that revision. The pinned
-PBIO RGB/HSV converter is compiled unchanged. Brickphyr adds explicit units,
-format validation, rejected malformed calibration and RGB saturation before
+PBIO RGB/HSV converter and color matcher are compiled unchanged. Brickphyr adds
+explicit units, format validation, rejected malformed calibration and RGB saturation before
 narrowing, preventing unusually bright BOOST input from wrapping. Acquisition,
 ownership and scheduling use the existing Zephyr port service.
 Encoder adaptation validates the known ID, negotiated format and absolute-angle

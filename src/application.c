@@ -678,6 +678,50 @@ static inline int z_vrfy_bp_sensor_select(uint32_t port, uint32_t generation, ui
 }
 #include <zephyr/syscalls/bp_sensor_select_mrsh.c>
 
+int z_impl_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette)
+{
+	return hub_sensor_palette_get(port, generation, palette);
+}
+static inline int z_vrfy_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(palette, sizeof(*palette)));
+	return z_impl_bp_sensor_palette_get(port, generation, palette);
+}
+#include <zephyr/syscalls/bp_sensor_palette_get_mrsh.c>
+
+int z_impl_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette)
+{
+	return hub_sensor_palette_set(BP_PORT_APPLICATION, port, generation, palette);
+}
+static inline int z_vrfy_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette)
+{
+	struct bp_sensor_palette copy;
+	if (palette) {
+		K_OOPS(K_SYSCALL_MEMORY_READ(palette, sizeof(*palette)));
+		memcpy(&copy, palette, sizeof(copy));
+	}
+	return z_impl_bp_sensor_palette_set(port, generation, palette ? &copy : NULL);
+}
+#include <zephyr/syscalls/bp_sensor_palette_set_mrsh.c>
+
+int z_impl_bp_sensor_light_write(uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request)
+{
+	return hub_sensor_light_write(BP_PORT_APPLICATION, port, generation, light, request);
+}
+static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(light, sizeof(*light)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_sensor_light copy;
+	memcpy(&copy, light, sizeof(copy));
+	return z_impl_bp_sensor_light_write(port, generation, &copy, request);
+}
+#include <zephyr/syscalls/bp_sensor_light_write_mrsh.c>
+
 int z_impl_bp_sensor_release(uint32_t port)
 {
 	return hub_port_release(BP_PORT_APPLICATION, port);

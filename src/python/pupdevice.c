@@ -180,17 +180,22 @@ static mp_obj_t pup_read(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(pup_read_obj, 1, pup_read);
 
+bool python_port_write_done(uint32_t port, uint32_t generation, uint32_t request)
+{
+	struct bp_port_state value;
+	python_device_check(bp_port_get(port, &value));
+	if (value.generation != generation) python_device_check(-ENODEV);
+	if (value.error != -EAGAIN) python_device_check(value.error);
+	if (value.write.request != request) python_device_check(-ECANCELED);
+	if (value.write.completed != request) return false;
+	python_device_check(value.write.error);
+	return true;
+}
+
 static pbio_error_t write_ready(pbio_os_state_t *state, mp_obj_t self_in)
 {
 	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
-	struct bp_port_state value;
-	python_device_check(bp_port_get(self->port, &value));
-	if (value.generation != self->generation) python_device_check(-ENODEV);
-	if (value.error != -EAGAIN) python_device_check(value.error);
-	if (value.write.request != self->write_request) python_device_check(-ECANCELED);
-	if (value.write.completed != self->write_request) return PBIO_ERROR_AGAIN;
-	python_device_check(value.write.error);
-	return PBIO_SUCCESS;
+	return python_port_write_done(self->port, self->generation, self->write_request) ? PBIO_SUCCESS : PBIO_ERROR_AGAIN;
 }
 
 static mp_obj_t pup_write(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)

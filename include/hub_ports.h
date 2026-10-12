@@ -17,6 +17,11 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value);
 int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement);
 int hub_sensor_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t measurement);
+int hub_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette);
+int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_sensor_palette *palette);
+int hub_sensor_light_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request);
 int hub_port_release(enum bp_port_owner owner, uint32_t port);
 void hub_ports_session_closed(enum bp_port_owner owner);
 int hub_ports_release(enum bp_port_owner owner);
@@ -46,6 +51,12 @@ static inline int hub_sensor_configure(enum bp_port_owner owner, uint32_t port,
 	uint32_t measurement) { return -ENOTSUP; }
 static inline int hub_sensor_select(enum bp_port_owner owner, uint32_t port,
 	uint32_t generation, uint32_t measurement) { return -ENOTSUP; }
+static inline int hub_sensor_palette_get(uint32_t port, uint32_t generation,
+	struct bp_sensor_palette *palette) { return -ENOTSUP; }
+static inline int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port,
+	uint32_t generation, const struct bp_sensor_palette *palette) { return -ENOTSUP; }
+static inline int hub_sensor_light_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_port_release(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }
 static inline void hub_ports_session_closed(enum bp_port_owner owner) { }
 static inline int hub_ports_release(enum bp_port_owner owner) { return 0; }

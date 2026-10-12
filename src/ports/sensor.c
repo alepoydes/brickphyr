@@ -9,8 +9,73 @@
 #include <errno.h>
 #include <lego/device.h>
 #include <pbio/color.h>
+#include <pbio/color_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
+
+BUILD_ASSERT(BP_SENSOR_PALETTE_SIZE == PBIO_COLOR_MAP_NUM_COLORS);
+
+static bool color_valid(pbio_color_t color)
+{
+	return pbio_color_get_h(color) < 360 && pbio_color_get_s(color) <= 100 &&
+		pbio_color_get_v(color) >= -100 && pbio_color_get_v(color) <= 100;
+}
+
+int port_sensor_palette_check(const struct bp_sensor_palette *palette)
+{
+	if (palette->count > BP_SENSOR_PALETTE_SIZE) return -EINVAL;
+	for (uint32_t i = 0; i < palette->count; i++) {
+		if (!color_valid(palette->colors[i])) return -EINVAL;
+	}
+	return 0;
+}
+
+void port_sensor_palette_default(struct bp_sensor_palette *palette)
+{
+	pbio_color_map_t map;
+	pbio_color_map_set_default(&map);
+	*palette = (struct bp_sensor_palette){.count = map.num_colors};
+	for (uint32_t i = 0; i < map.num_colors; i++) palette->colors[i] = map.colors[i];
+}
+
+void port_sensor_match(const struct bp_sensor_palette *palette, struct bp_sensor_sample *sample)
+{
+	if (sample->error || !(sample->fields & BP_SENSOR_HAS_HSV) || !palette->count) return;
+	pbio_color_t colors[BP_SENSOR_PALETTE_SIZE];
+	for (uint32_t i = 0; i < palette->count; i++) colors[i] = palette->colors[i];
+	pbio_color_map_t map;
+	/* At most eight entries; matching runs outside the port lock, on demand. */
+	pbio_color_map_set(&map, colors, palette->count);
+	sample->matched_color = pbio_color_map_find(&map,
+		PBIO_COLOR_ENCODE(sample->hue_deg, sample->saturation_pct, sample->value_pct));
+	sample->fields |= BP_SENSOR_HAS_MATCHED_COLOR;
+}
+
+int port_sensor_light_data(uint16_t id, const struct bp_sensor_light *light,
+	uint8_t *mode, uint8_t data[4], uint32_t *size)
+{
+	if (light->format == BP_SENSOR_LIGHT_BRIGHTNESS &&
+	    (id == LEGO_DEVICE_TYPE_ID_SPIKE_COLOR_SENSOR || id == LEGO_DEVICE_TYPE_ID_SPIKE_ULTRASONIC_SENSOR)) {
+		bool color = id == LEGO_DEVICE_TYPE_ID_SPIKE_COLOR_SENSOR;
+		*mode = color ? LEGO_DEVICE_MODE_PUP_COLOR_SENSOR__LIGHT : LEGO_DEVICE_MODE_PUP_ULTRASONIC_SENSOR__LIGHT;
+		*size = color ? 3 : 4;
+		for (uint32_t i = 0; i < *size; i++) {
+			if (light->brightness[i] > 100) return -EINVAL;
+			data[i] = light->brightness[i];
+		}
+		return 0;
+	}
+	if (light->format != BP_SENSOR_LIGHT_HSV || id != LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR) return -ENOTSUP;
+	if (!color_valid(light->color)) return -EINVAL;
+	/* Reference ColorDistanceSensor.light: only red/green/blue/off are supported. */
+	uint16_t hue = pbio_color_get_h(light->color);
+	data[0] = pbio_color_get_s(light->color) < 50 || pbio_color_get_v(light->color) < 50 ? 0 :
+		hue >= PBIO_COLOR_HUE_YELLOW && hue < PBIO_COLOR_HUE_CYAN ? 5 :
+		hue >= PBIO_COLOR_HUE_CYAN && hue < PBIO_COLOR_HUE_MAGENTA ? 3 : 9;
+	*size = 1;
+	*mode = LEGO_DEVICE_MODE_PUP_COLOR_DISTANCE_SENSOR__COL_O;
+	return 0;
+}
 
 /* First entry for each device is its automatic measurement. Wire formats
  * are checked before SELECT; a recognized ID alone does not validate data. */

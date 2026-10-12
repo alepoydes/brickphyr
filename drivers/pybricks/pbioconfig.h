@@ -6,3 +6,5 @@
 #define PBIO_CONFIG_IMU (1)
 #define PBIO_CONFIG_CONTROL_LOOP_TIME_MS (5)
 #define PBIO_CONFIG_LOGGER (0)
+/* Brickphyr owns port state; reuse only PBIO's color matching computation. */
+#define PBIO_CONFIG_PORT_DCM_NUM_DEV (0)

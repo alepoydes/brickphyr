@@ -6,6 +6,7 @@
 #include "hub_ports.h"
 #include "port_uart.h"
 #include "ports/output.h"
+#include "ports/sensor.h"
 #include "hub_battery.h"
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 #include "motor/control.h"
@@ -49,6 +50,7 @@ DT_FOREACH_CHILD_STATUS_OKAY(PORTS, CHECK_INDEX)
 static struct port {
 	struct bp_port_state value;
 	struct bp_sensor_sample sensor;
+	struct bp_sensor_palette palette;
 	struct bp_motor_state motor;
 	struct port_uart_write write;
 	uint16_t reset_type;
@@ -715,6 +717,7 @@ static int initialize(void)
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 		ports[i].value.error = -EAGAIN;
 		ports[i].sensor.error = -EAGAIN;
+		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) port_sensor_palette_default(&ports[i].palette);
 		if (!pins[i][P5].port) {
 			continue;
 		}
@@ -844,6 +847,23 @@ int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	return raw_request(owner, port, generation, mode, data, size, request);
 }
 
+int hub_sensor_light_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (!light || !request) return -EINVAL;
+	struct bp_port_state state;
+	int err = hub_port_get(port, &state);
+	if (err) return err;
+	if (state.generation != generation) return -ESTALE;
+	uint8_t mode, data[4];
+	uint32_t size;
+	err = port_sensor_light_data(state.type_id, light, &mode, data, &size);
+	if (err) return err;
+	/* The shared writer rechecks generation and ownership before any I/O. */
+	return hub_port_write(owner, port, generation, mode, data, size, request);
+}
+
 int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t *request)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
@@ -900,13 +920,58 @@ int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*value = ports[port].sensor;
+	struct bp_sensor_palette palette = ports[port].palette;
 	int64_t updated = ports[port].value.sample_ms;
 	k_spin_unlock(&lock, key);
 	if (!value->error && k_uptime_get() - updated > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) {
 		value->error = -ETIMEDOUT;
 		value->fields = 0;
 	}
+	port_sensor_match(&palette, value);
 	return 0;
+}
+
+/* Caller holds lock. Palettes only apply to the two supported color sensors. */
+static int palette_device(const struct port *p, uint32_t generation)
+{
+	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
+		p->value.phase != BP_PORT_READY ? -ENODEV :
+		p->value.type_id != LEGO_DEVICE_TYPE_ID_SPIKE_COLOR_SENSOR &&
+		p->value.type_id != LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR ? -ENOTSUP : 0;
+}
+
+int hub_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || !palette) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = palette_device(&ports[port], generation);
+	if (!err) *palette = ports[port].palette;
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_sensor_palette *palette)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	struct bp_sensor_palette next;
+	if (palette) {
+		next = *palette;
+		int err = port_sensor_palette_check(&next);
+		if (err) return err;
+	} else port_sensor_palette_default(&next);
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = palette_device(p, generation);
+	if (!err && (p->motor.releasing || (p->owner && p->owner != owner))) err = -EBUSY;
+	if (!err) {
+		p->palette = next;
+		p->owner = p->sensor.owner = owner;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
 }
 
 static int sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measurement,

@@ -134,6 +134,15 @@ __syscall int bp_sensor_configure(uint32_t port, uint32_t measurement);
 /* Bind selection to an inspected connection; stale generations fail before
  * ownership or mode changes. Device-class bindings use this form. */
 __syscall int bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement);
+/* Per-port color palette. get() is observational; set() claims the current
+ * generation and copies a validated replacement, or resets defaults for NULL.
+ * The palette survives release/hotplug; Python color constructors reset it. */
+__syscall int bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette);
+__syscall int bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette);
+/* Queues a supported sensor's lights using the ordinary port write result.
+ * Unsupported device/format and invalid values fail before selecting a mode. */
+__syscall int bp_sensor_light_write(uint32_t port, uint32_t generation,
+	const struct bp_sensor_light *light, uint32_t *request);
 /* Release the port claim: coast its motor and restore automatic measurement.
  * Accepted asynchronously; ownership remains until coast succeeds and pending
  * UART output is cancelled or finishes transmission and settling.

@@ -67,11 +67,12 @@ print('infrared passed')
         captured = bytearray()
         async with console.connection(captured.extend, port=device, management=True) as (port, client):
             try:
-                for kind, source, expected in (
-                    (b"force", force, b"force passed"),
-                    (b"tilt", tilt, b"tilt passed"),
+                for kind, type_id, source, expected in (
+                    (b"force", 63, force, b"force passed"),
+                    (b"tilt", 34, tilt, b"tilt passed"),
                 ):
                     await shell(port, captured, b"pup_peer " + kind)
+                    await port_matches(client, phase=7, type_id=type_id)
                     # Constructor is the first sensor read; no host warm-up.
                     await upload(client, port, source, Format.PYTHON)
                     await checked(client, Start())
@@ -84,6 +85,7 @@ print('infrared passed')
                     await port_matches(client, phase=1)
 
                 await shell(port, captured, b"pup_peer infrared")
+                await port_matches(client, phase=7, type_id=35)
                 await upload(client, port, infrared, Format.PYTHON)
                 await checked(client, Start())
                 await ready(client)

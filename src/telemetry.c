@@ -273,6 +273,11 @@ static void capture(enum source source, struct observation *out)
 				field(out, "saturation_pct", value.saturation_pct);
 				field(out, "value_pct", value.value_pct);
 			}
+			if (value.fields & BP_SENSOR_HAS_MATCHED_COLOR) {
+				field(out, "matched_hue_deg", value.matched_color >> 16);
+				field(out, "matched_saturation_pct", (value.matched_color >> 8) & 0xff);
+				field(out, "matched_value_pct", (int8_t)value.matched_color);
+			}
 			if (value.fields & BP_SENSOR_HAS_FORCE) {
 				field(out, "force_mn", value.force_mn);
 				field(out, "travel_um", value.travel_um);

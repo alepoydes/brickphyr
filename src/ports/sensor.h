@@ -18,3 +18,8 @@ int port_sensor_request(struct port_sensor *s, const struct lump *l, uint32_t me
 void port_sensor_sent(struct port_sensor *s, int64_t now);
 void port_sensor_receive(struct port_sensor *s, const struct lump *l, int64_t now);
 uint32_t port_sensor_write_delay(uint16_t id, uint8_t mode);
+int port_sensor_palette_check(const struct bp_sensor_palette *palette);
+void port_sensor_palette_default(struct bp_sensor_palette *palette);
+void port_sensor_match(const struct bp_sensor_palette *palette, struct bp_sensor_sample *sample);
+int port_sensor_light_data(uint16_t id, const struct bp_sensor_light *light,
+	uint8_t *mode, uint8_t data[4], uint32_t *size);

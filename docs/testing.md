@@ -137,6 +137,10 @@ time to keep host scheduling pauses out of UART deadlines.
 `tests/test_python_sensors.py` adds Force/Tilt/Infrared cold constructors, units,
 awaitable results, count offsets and stale-object rejection through the same
 native service; it does not establish physical sensor accuracy.
+`tests/test_python_color_sensors.py` covers Color/Ultrasonic/ColorDistance
+measurements, shared/copied palettes and synchronous/awaitable light output.
+It compares captured UART packets with fixed expected bytes, including padding
+and checksums. Run this case for those bindings; it uses the same ARM fixture.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

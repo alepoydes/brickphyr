@@ -642,7 +642,8 @@ static void sensor_measurements(void)
 	zassert_equal(v.saturation_pct, 100);
 	zassert_equal(v.value_pct, 100);
 	zassert_equal(v.reflection_permille, 333);
-	zassert_equal(v.fields, BP_SENSOR_HAS_HSV | BP_SENSOR_HAS_REFLECTION);
+	zassert_equal(v.fields, BP_SENSOR_HAS_HSV | BP_SENSOR_HAS_REFLECTION | BP_SENSOR_HAS_MATCHED_COLOR);
+	zassert_equal(v.matched_color, 0x00006464); /* Default palette: red (0, 100, 100). */
 	zassert_equal(pup_test_sensor_supply(0), 0);
 	uint32_t sequence = v.sequence;
 	int64_t sampled = v.sample_ms;
