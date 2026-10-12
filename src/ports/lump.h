@@ -29,3 +29,5 @@ void lump_reset(struct lump *lump);
 int lump_receive(struct lump *lump, uint8_t byte);
 /* Padded/checksummed command, or -EINVAL. out has at least 34 bytes. */
 int lump_command(uint8_t *out, uint8_t command, const uint8_t *data, size_t length);
+/* EXT_MODE followed by padded/checksummed DATA; out has at least 37 bytes. */
+int lump_data(uint8_t *out, uint8_t mode, const uint8_t *data, size_t length);

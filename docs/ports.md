@@ -15,7 +15,7 @@ uv run brickphyrdev monitor --ble Brickphyr --source port.A --log ports.jsonl
 ```
 
 Current support distinguishes empty ports, passive device IDs and UART devices.
-`CONFIG_BRICKPHYR_PORT_UART` adds LUMP negotiation and raw binary input, using
+`CONFIG_BRICKPHYR_PORT_UART` adds LUMP negotiation and raw binary I/O, using
 Zephyr UART drivers. Both options default on for F4. ID 14 is the electrical
 UART signature; successful negotiation provides the device's actual ID.
 Known sensors and motor encoders also provide converted measurements and explicit
@@ -98,6 +98,18 @@ format and are not scaled. Normalized sensor observations report `-ENOTSUP`
 while raw selection owns the mode. Release restores automatic measurement;
 `selected_mode=UINT8_MAX` means there is no explicit raw selection.
 
+`bp_port_write(port, generation, mode, data, size, &token)` selects an advertised
+writable mode and queues its output DATA. The mode must have a nonzero output
+mapping; `size` must equal its FORMAT value count times the wire type width
+(1–32 logical bytes). The service copies the payload before returning and allows
+one pending write per port. Rejected modes, sizes, stale generations and owner
+conflicts have no write side effects. Match `token` against
+`bp_port_get().write.request` and `.completed` with the same connection generation;
+`write.error` is `-EAGAIN` while pending. Completion follows UART transmission
+and the device-specific post-write delay, not an acknowledgement from the device.
+Release cancels unsent DATA; once transmission starts, it retains ownership
+until the bytes and settling interval finish.
+
 The Python binding provides `pybricks.iodevices.PUPDevice` (`LUMPDevice` alias):
 
 ```python
@@ -111,12 +123,14 @@ print(device.read(0))      # Select an advertised mode appropriate to that devic
 
 `info()` returns the device ID and advertised mode names, value counts and data
 types. `read(mode)` returns a tuple of signed integers or float32 values; it is
-awaitable inside `run_task`. Passive touch switches return a boolean and have
-no UART modes. Objects retain their original connection generation: create a
-new object after unplugging/replacing a device. Program cleanup releases the
-port; disconnecting the host alone does not. `write` and `reset` are not yet
-implemented, and this generic interface does not imply device-specific Python
-sensor or motor support.
+awaitable inside `run_task`. `write(mode, data)` accepts a tuple or list with
+exactly the advertised value count, converts signed int8/int16/int32 or float32
+values, and validates them before queuing; it blocks or can be awaited inside
+`run_task`. Passive touch switches return a boolean and have no UART modes.
+Objects retain their original connection generation: create a new object after
+unplugging/replacing a device. Program cleanup releases the port; disconnecting
+the host alone does not. `reset` and device-specific Python sensor/motor APIs
+remain pending.
 
 ## Sensor measurements
 
@@ -433,8 +447,9 @@ interface, not a lossless
 recording of every UART packet. Neither an idle poll nor a keepalive makes an
 old measurement fresh.
 
-`capabilities` retains the NAME flag byte defined by LUMP. SPEED, ACK, NACK and
-validated measurement SELECT commands are transmitted; WRITE is not exposed.
+`capabilities` retains the NAME flag byte defined by LUMP. SPEED, ACK, NACK,
+validated SELECT and writable-mode EXT_MODE/DATA are transmitted. The separate
+LUMP `CMD_WRITE` command is not exposed.
 Unknown devices retain raw observations without automatic mode selection or
 additional power. Their identity alone does not imply a working device API.
 
@@ -479,7 +494,7 @@ other releases. Applications receive snapshots, not GPIO handles.
 
 There are at most 500 service rounds/s before scheduler and GPIO execution cost,
 with at most six finite state transitions in a round. Each UART has a static
-512-byte RX ring and a 34-byte TX buffer; parsing consumes at most 128 bytes per
+512-byte RX ring and a 37-byte TX buffer; parsing consumes at most 128 bytes per
 port per round. At 460800 baud, 8N1, the RX ring covers about 11.1 ms of continuous
 traffic (44.4 ms at 115200). These bounds limit work and make overflow explicit;
 they do not establish that all six ports sustain their maximum rate together.
@@ -494,7 +509,9 @@ both handshake rates, partial/corrupt messages, finite negotiation, keepalive,
 hotplug, framing errors, RX overflow, SMP raw data and shutdown. Synthetic sensor
 peers additionally check conversion, settling, SELECT timeout, ownership, malformed
 calibration, power polarity and cleanup failure through the production service,
-Shell and SMP. Encoder cases check both wrap directions, signed counter rollover,
+Shell and SMP. Writable-mode checks cover extended DATA framing and padding,
+copied payloads, completion and release before/during transmission.
+Encoder cases check both wrap directions, signed counter rollover,
 malformed values, hotplug reset and inactive motor terminals. These are not
 physical sensor measurements. Fixture provenance is in
 [the test README](../tests/lump/README.md). F4 compilation does not verify

@@ -72,4 +72,11 @@ struct bp_port_state {
 	 * Settling and fresh-sample checks belong to the shared port worker. */
 	int32_t mode_error;
 	uint8_t selected_mode;
+	/* A write completes only after UART transmission and device settling.
+	 * Match request and generation; a later write replaces the result.
+	 * Request != completed means pending; error is then -EAGAIN. */
+	struct {
+		uint32_t request, completed;
+		int32_t error;
+	} write;
 };

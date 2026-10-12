@@ -44,7 +44,7 @@ static struct link {
 	struct lump lump;
 	struct port_sensor sensor;
 	struct ring_buf rx;
-	uint8_t rx_buffer[RX_CAPACITY], tx[34];
+	uint8_t rx_buffer[RX_CAPACITY], tx[37];
 	size_t tx_size, tx_pos;
 	int error;
 	bool active, tx_busy;
@@ -52,6 +52,10 @@ static struct link {
 	uint32_t baud;
 	uint32_t measurement;
 	bool selecting;
+	uint32_t write_request, write_completed;
+	int write_error;
+	int64_t write_ready_ms;
+	enum { WRITE_WAIT, WRITE_TX, WRITE_SETTLE, WRITE_DONE } writing;
 	enum phase phase;
 } links[BP_PORT_COUNT];
 /* The parser owns the sole metadata copy. Publish only after negotiation;
@@ -291,7 +295,8 @@ static int receive(uint32_t port, int64_t now)
 }
 
 int port_uart_poll(uint32_t port, struct bp_port_state *out,
-	struct bp_sensor_sample *sensor, uint32_t measurement)
+	struct bp_sensor_sample *sensor, uint32_t measurement,
+	const struct port_uart_write *write, bool cancel)
 {
 	struct link *l = &links[port];
 	int64_t now = k_uptime_get();
@@ -330,6 +335,23 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 		k_spin_unlock(&metadata_lock, snapshot_key);
 	}
 	if (l->phase == DATA && !err) {
+		if (write && write->request != l->write_request) {
+			l->write_request = write->request;
+			l->writing = WRITE_WAIT;
+			l->write_error = -EAGAIN;
+		}
+		if (write && l->writing == WRITE_TX && !tx_busy) {
+			/* Reference sensor delays, counted from the final stop bit.
+			 * Completion means transmitted/settled, not device acknowledgement. */
+			l->write_ready_ms = tx_done + port_sensor_write_delay(l->lump.id, write->mode);
+			l->writing = WRITE_SETTLE;
+		}
+		if (write && ((cancel && l->writing == WRITE_WAIT) ||
+		    (l->writing == WRITE_SETTLE && now >= l->write_ready_ms))) {
+			l->write_completed = write->request;
+			l->write_error = cancel ? -ECANCELED : 0;
+			l->writing = WRITE_DONE;
+		}
 		if (l->selecting && !tx_busy) {
 			l->selecting = false;
 			port_sensor_sent(&l->sensor, tx_done);
@@ -374,6 +396,13 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 			int size = lump_command(command, LUMP_CMD_SELECT, &l->sensor.mode, 1);
 			err = transmit(port, command, size);
 			l->selecting = !err;
+		} else if (write && l->writing == WRITE_WAIT && !l->tx_busy &&
+		    !l->sensor.value.error && l->sensor.mode == write->mode &&
+		    l->lump.mode == write->mode && l->measurement == (PORT_RAW_MODE | write->mode)) {
+			uint8_t command[37];
+			int size = lump_data(command, write->mode, write->data, write->size);
+			err = size < 0 ? size : transmit(port, command, size);
+			if (!err) l->writing = WRITE_TX;
 		}
 	}
 	if (err) {
@@ -396,6 +425,9 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	out->mode = l->lump.mode;
 	out->data_type = l->lump.modes[l->lump.mode].data_type;
 	out->num_values = l->lump.modes[l->lump.mode].num_values;
+	out->write.request = l->write_request;
+	out->write.completed = l->write_completed;
+	out->write.error = l->write_error;
 	memcpy(out->data, l->lump.data, out->length);
 	*sensor = l->sensor.value;
 	out->selected_mode = measurement & PORT_RAW_MODE ? measurement & 0xff : UINT8_MAX;

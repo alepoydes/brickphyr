@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Generic device reads through ARM user mode and the real UART/port services."""
+"""Generic device I/O through ARM user mode and the real UART/port services."""
 
 import asyncio
 
@@ -8,7 +8,7 @@ from test_python import completed, output
 from test_python_hub import BUILD, ready, shell
 
 from brickphyrdev import console
-from brickphyrdev.application import Format, Input, Start, checked, upload
+from brickphyrdev.application import Format, Input, Start, Stop, checked, upload
 from brickphyrdev.telemetry import snapshot
 
 
@@ -118,6 +118,77 @@ print('touch passed')
                 text = await output(client)
                 assert result.result == result.fault == result.cleanup == 0, text
                 assert text.strip() == b"touch passed"
+            except BaseException as error:
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
+
+
+def test_writes_formats_and_forced_stop_release():
+    source = b"""
+from pybricks.iodevices import PUPDevice
+from pybricks.parameters import Port
+from pybricks.tools import run_task
+d = PUPDevice(Port.A)
+for mode, values in enumerate(((-100, 110), (-300, 200),
+        (-2147483647, 2147483646), (2.5, -1.25))):
+    assert d.write(mode, values) is None
+    assert d.read(mode) == values
+for mode, values in ((0, (128, 0)), (1, (0, -32769)), (2, (0,)), (4, (0, 0))):
+    try:
+        d.write(mode, values)
+    except ValueError:
+        pass
+    else:
+        assert False
+async def copied_data():
+    values = [-30, 60]
+    pending = d.write(0, values)
+    values[0] = 90
+    assert await pending is None
+    assert await d.read(0) == (-30, 60)
+run_task(copied_data())
+print('ready')
+input()
+async def blocked():
+    pending = d.write(1, (100, 200))
+    print('ready')
+    await pending
+    assert False, 'Peer ignored SELECT; write must not complete'
+run_task(blocked())
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                await shell(port, captured, b"pup_peer connect")
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                await shell(port, captured, b"pup_peer hold")
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                await checked(client, Stop())
+                result = await completed(client, state=3)
+                assert result.fault == result.cleanup == 0
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+                await shell(port, captured, b"pup_peer resume")
+                await upload(client, port, b"""
+from pybricks.iodevices import PUPDevice
+from pybricks.parameters import Port
+d = PUPDevice(Port.A)
+d.write(2, (123, -456))
+assert d.read(2) == (123, -456)
+print('replacement passed')
+""", Format.PYTHON)
+                await checked(client, Start())
+                result = await completed(client)
+                text = await output(client)
+                assert result.result == result.fault == result.cleanup == 0, text
+                assert text.strip() == b"replacement passed"
             except BaseException as error:
                 error.add_note(f"Console: {bytes(captured)!r}")
                 raise

@@ -70,8 +70,10 @@ have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Combined interactive
 flow-control acceptance remains open.
 
 Remaining hub, wired-device, motor, robotics and wireless bindings are required
-work. Generic `PUPDevice.info/read` has ARM and idle-encoder F4 USB/BLE checks;
-write/reset and device-specific Python classes remain pending. Repeated BLE application transfers still cause occasional IMU acquisition
+work. Generic `PUPDevice.info/read` has ARM and idle-encoder F4 USB/BLE checks.
+Writes have protected ARM and synthetic UART checks, including cleanup on stop;
+physical output, reset and device-specific Python classes remain pending.
+Repeated BLE application transfers still cause occasional IMU acquisition
 failures; isolate the cause before claiming combined-load reliability. Account
 separately for static reservations, stacks, Python heap and peak loading memory
 before expanding the F4 profile; no capacity figure is established here.

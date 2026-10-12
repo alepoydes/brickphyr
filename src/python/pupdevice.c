@@ -18,7 +18,7 @@
 typedef struct {
 	mp_obj_base_t base;
 	pb_type_async_t *iter;
-	uint32_t port, generation;
+	uint32_t port, generation, write_request;
 	uint16_t id;
 	uint8_t mode;
 	bool passive;
@@ -154,9 +154,72 @@ static mp_obj_t pup_read(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(pup_read_obj, 1, pup_read);
 
+static pbio_error_t write_ready(pbio_os_state_t *state, mp_obj_t self_in)
+{
+	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
+	struct bp_port_state value;
+	python_device_check(bp_port_get(self->port, &value));
+	if (value.generation != self->generation) python_device_check(-ENODEV);
+	if (value.error != -EAGAIN) python_device_check(value.error);
+	if (value.write.request != self->write_request) python_device_check(-ECANCELED);
+	if (value.write.completed != self->write_request) return PBIO_ERROR_AGAIN;
+	python_device_check(value.write.error);
+	return PBIO_SUCCESS;
+}
+
+static mp_obj_t pup_write(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, pup_obj_t, self,
+		PB_ARG_REQUIRED(mode), PB_ARG_REQUIRED(data));
+	if (self->iter && self->iter->parent_obj != MP_OBJ_NULL) python_device_check(-EBUSY);
+	if (self->passive) python_device_check(-ENOTSUP);
+	mp_int_t mode = mp_obj_get_int(mode_in);
+	if (mode < 0 || mode > LUMP_MAX_EXT_MODE) mp_raise_ValueError(MP_ERROR_TEXT("invalid mode"));
+	struct bp_port_mode info;
+	int err = bp_port_get_mode(self->port, self->generation, mode, &info);
+	if (err == -EINVAL) mp_raise_ValueError(MP_ERROR_TEXT("invalid mode"));
+	python_device_check(err == -ESTALE ? -ENODEV : err);
+	if (!info.output_mapping) mp_raise_ValueError(MP_ERROR_TEXT("mode not writable"));
+	size_t count;
+	mp_obj_t *values;
+	mp_obj_get_array(data_in, &count, &values);
+	if (count != info.num_values) mp_raise_ValueError(MP_ERROR_TEXT("wrong value count"));
+	uint8_t data[LUMP_MAX_MSG_SIZE];
+	uint32_t width = info.data_type == LUMP_DATA_TYPE_DATA8 ? 1 :
+		info.data_type == LUMP_DATA_TYPE_DATA16 ? 2 : 4;
+	for (size_t i = 0; i < count; i++) {
+		if (info.data_type == LUMP_DATA_TYPE_DATAF) {
+			float number = mp_obj_get_float_to_f(values[i]);
+			uint32_t bits;
+			memcpy(&bits, &number, sizeof(bits));
+			sys_put_le32(bits, data + 4 * i);
+			continue;
+		}
+		mp_int_t value = mp_obj_get_int(values[i]);
+		if ((width == 1 && (value < INT8_MIN || value > INT8_MAX)) ||
+		    (width == 2 && (value < INT16_MIN || value > INT16_MAX)) ||
+		    (width == 4 && (value < INT32_MIN || value > INT32_MAX))) {
+			mp_raise_ValueError(MP_ERROR_TEXT("value out of range"));
+		}
+		if (width == 1) data[i] = value;
+		else if (width == 2) sys_put_le16(value, data + 2 * i);
+		else sys_put_le32(value, data + 4 * i);
+	}
+	err = bp_port_write(self->port, self->generation, mode, data, count * width, &self->write_request);
+	python_device_check(err == -ESTALE ? -ENODEV : err);
+	pb_type_async_t config = {.parent_obj = MP_OBJ_FROM_PTR(self), .iter_once = write_ready};
+	if (pb_module_tools_run_loop_is_active()) {
+		return pb_type_async_wait_or_await(&config, &self->iter, false);
+	}
+	while (write_ready(&config.state, config.parent_obj) == PBIO_ERROR_AGAIN) mp_hal_delay_ms(2);
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(pup_write_obj, 1, pup_write);
+
 static const mp_rom_map_elem_t pup_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_info), MP_ROM_PTR(&pup_info_obj)},
 	{MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&pup_read_obj)},
+	{MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&pup_write_obj)},
 };
 static MP_DEFINE_CONST_DICT(pup_dict, pup_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(pup_type, MP_QSTR_PUPDevice, MP_TYPE_FLAG_NONE,

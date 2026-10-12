@@ -616,6 +616,24 @@ static inline int z_vrfy_bp_port_select(uint32_t port, uint32_t generation, uint
 }
 #include <zephyr/syscalls/bp_port_select_mrsh.c>
 
+int z_impl_bp_port_write(uint32_t port, uint32_t generation, uint32_t mode,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	return hub_port_write(BP_PORT_APPLICATION, port, generation, mode, data, size, request);
+}
+static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint32_t mode,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	if (!size || size > 32) return -EINVAL;
+	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	uint8_t copy[32];
+	memcpy(copy, data, size);
+	return z_impl_bp_port_write(port, generation, mode, copy, size, request);
+}
+#include <zephyr/syscalls/bp_port_write_mrsh.c>
+
 int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	return hub_sensor_get(port, value);

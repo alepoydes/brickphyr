@@ -30,13 +30,12 @@ static size_t padded(size_t size)
 	return length;
 }
 
-int lump_command(uint8_t *out, uint8_t command, const uint8_t *data, size_t length)
+static int message(uint8_t *out, uint8_t header, const uint8_t *data, size_t length)
 {
-	if (!out || !data || !length || length > LUMP_MAX_MSG_SIZE || command > LUMP_MSG_CMD_MASK) {
+	if (!out || !data || !length || length > LUMP_MAX_MSG_SIZE) {
 		return -EINVAL;
 	}
 	size_t size = padded(length);
-	uint8_t header = LUMP_MSG_TYPE_CMD | command;
 	for (size_t n = size; n > 1; n >>= 1) {
 		header += 1 << 3;
 	}
@@ -48,6 +47,22 @@ int lump_command(uint8_t *out, uint8_t command, const uint8_t *data, size_t leng
 	}
 	out[size + 1] = checksum;
 	return size + 2;
+}
+
+int lump_command(uint8_t *out, uint8_t command, const uint8_t *data, size_t length)
+{
+	if (command > LUMP_MSG_CMD_MASK) return -EINVAL;
+	return message(out, LUMP_MSG_TYPE_CMD | command, data, length);
+}
+
+int lump_data(uint8_t *out, uint8_t mode, const uint8_t *data, size_t length)
+{
+	if (!out || mode > LUMP_MAX_EXT_MODE) return -EINVAL;
+	int size = message(out + 3, LUMP_MSG_TYPE_DATA | (mode & LUMP_MSG_CMD_MASK), data, length);
+	if (size < 0) return size;
+	uint8_t extension = mode > LUMP_MAX_MODE ? 8 : 0;
+	lump_command(out, LUMP_CMD_EXT_MODE, &extension, 1);
+	return size + 3;
 }
 
 static int parse(struct lump *l)

@@ -493,6 +493,128 @@ static void wait_select(uint8_t mode, size_t from)
 	}
 }
 
+static bool tx_has(const uint8_t *bytes, size_t size, size_t from)
+{
+	for (size_t i = from; i + size <= tx_count; i++) {
+		if (!memcmp(tx + i, bytes, size)) return true;
+	}
+	return false;
+}
+
+static void writable_sensor(void)
+{
+	/* Private synthetic device: mode 8 accepts three logical DATA8 bytes.
+	 * Its fourth wire byte must be padding, not caller data. */
+	begin_sensor(201, 9);
+	const uint8_t name[] = {'W', 0};
+	for (uint8_t mode = 0; mode < 9; mode++) {
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
+		if (mode == 8) {
+			const uint8_t mapping[] = {0, 1};
+			packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
+		}
+		const uint8_t format[] = {mode == 8 ? 3 : 1, LUMP_DATA_TYPE_DATA8, 4, 0};
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
+	}
+	uint8_t ack = LUMP_SYS_ACK;
+	feed(&ack, 1);
+	struct bp_port_state v = wait_phase(BP_PORT_READY);
+	uint32_t token = 0xdeadbeef;
+	const uint8_t one = 1;
+	zassert_equal(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 0, &one, 1, &token), -ENOTSUP);
+	zassert_equal(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 9, &one, 1, &token), -EINVAL);
+	zassert_equal(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 8, &one, 1, &token), -EMSGSIZE);
+	zassert_equal(hub_port_write(BP_PORT_APPLICATION, 0, v.generation - 1, 8, &one, 1, &token), -ESTALE);
+	zassert_equal(token, 0xdeadbeef);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
+	zassert_equal(snapshot().selected_mode, UINT8_MAX);
+
+	size_t from = tx_count;
+	uint8_t values[] = {0x12, 0x34, 0x56};
+	zassert_ok(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 8, values, sizeof(values), &token));
+	zassert_not_equal(token, 0);
+	memset(values, 0, sizeof(values)); /* The request owns a copy. */
+	zassert_equal(snapshot().write.request, token);
+	zassert_not_equal(snapshot().write.completed, token);
+	zassert_equal(snapshot().write.error, -EAGAIN);
+	uint32_t rejected = 0xdeadbeef;
+	zassert_equal(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 8, values, sizeof(values),
+		&rejected), -EBUSY);
+	zassert_equal(hub_port_write(BP_PORT_TERMINAL, 0, v.generation, 8, values, sizeof(values),
+		&rejected), -EBUSY);
+	zassert_equal(rejected, 0xdeadbeef);
+	zassert_equal(snapshot().write.request, token);
+	wait_select(8, from);
+	k_msleep(5);
+	/* A wrong-mode sample must not authorize the pending output. */
+	const uint8_t wrong[] = {0xc0, 0, 0x3f};
+	feed(wrong, sizeof(wrong));
+	const uint8_t expected[] = {0x46, 8, 0xb1, 0xd0, 0x12, 0x34, 0x56, 0, 0x5f};
+	zassert_false(tx_has(expected, sizeof(expected), from));
+	const uint8_t selected[] = {0x46, 8, 0xb1, 0xd0, 0xaa, 0xbb, 0xcc, 0, 0xf2};
+	zassert_equal(uart_emul_put_rx_data(uart, selected, sizeof(selected)), sizeof(selected));
+	int64_t deadline = k_uptime_get() + 200;
+	while (!tx_has(expected, sizeof(expected), from)) {
+		zassert_true(k_uptime_get() < deadline, "Missing extended DATA output");
+		k_msleep(1);
+	}
+	zassert_not_equal(snapshot().write.completed, token, "Write completed before settling");
+	deadline = k_uptime_get() + 200;
+	while (snapshot().write.completed != token) {
+		zassert_true(k_uptime_get() < deadline, "Write did not complete");
+		k_msleep(1);
+	}
+	zassert_ok(snapshot().write.error);
+
+	/* Change to another mode, then cancel a write before any matching DATA
+	 * can arrive. Release must leave its explicit result and send no DATA. */
+	from = tx_count;
+	zassert_ok(hub_port_select(BP_PORT_APPLICATION, 0, v.generation, 0));
+	wait_select(0, from);
+	k_msleep(5);
+	const uint8_t mode_zero[] = {0x46, 0, 0xb9, 0xc0, 0, 0x3f};
+	zassert_equal(uart_emul_put_rx_data(uart, mode_zero, sizeof(mode_zero)), sizeof(mode_zero));
+	deadline = k_uptime_get() + 200;
+	while (snapshot().mode != 0 || snapshot().mode_error) {
+		zassert_true(k_uptime_get() < deadline, "Mode 0 did not become ready");
+		k_msleep(1);
+	}
+	from = tx_count;
+	zassert_ok(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 8, values, sizeof(values), &token));
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	v = snapshot();
+	zassert_equal(v.write.completed, token);
+	zassert_equal(v.write.error, -ECANCELED);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
+	const uint8_t cancelled[] = {0x46, 8, 0xb1, 0xd0, 0, 0, 0, 0, 0x2f};
+	zassert_false(tx_has(cancelled, sizeof(cancelled), from), "Cancelled DATA reached UART");
+
+	/* Reclaim while the peer is still connected. A release after DATA enters
+	 * UART must wait for that transmission and its settling result. SELECT
+	 * may already have been sent before the preceding DATA was cancelled. */
+	values[0] = 1;
+	values[1] = 2;
+	values[2] = 3;
+	zassert_ok(hub_port_write(BP_PORT_APPLICATION, 0, v.generation, 8, values, sizeof(values), &token));
+	wait_select(8, from);
+	k_msleep(5);
+	zassert_equal(uart_emul_put_rx_data(uart, selected, sizeof(selected)), sizeof(selected));
+	const uint8_t in_flight[] = {0x46, 8, 0xb1, 0xd0, 1, 2, 3, 0, 0x2f};
+	deadline = k_uptime_get() + 200;
+	while (!tx_has(in_flight, sizeof(in_flight), from)) {
+		zassert_true(k_uptime_get() < deadline, "Missing in-flight DATA output");
+		k_msleep(1);
+	}
+	zassert_not_equal(snapshot().write.completed, token);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	v = snapshot();
+	zassert_equal(v.write.completed, token);
+	zassert_equal(v.write.error, -ECANCELED);
+	zassert_equal(sensor().owner, BP_PORT_UNOWNED);
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+}
+
 static void words(uint8_t mode, const int16_t *values, size_t count)
 {
 	uint8_t bytes[32];
@@ -937,6 +1059,7 @@ ZTEST(lump, test_uart_hotplug)
 	sensor_measurements();
 	encoder_measurements();
 	inspect_device();
+	writable_sensor();
 	zassert_ok(hub_ports_shutdown());
 	zassert_equal(snapshot().phase, BP_PORT_OFF);
 	zassert_equal(snapshot().length, 0);

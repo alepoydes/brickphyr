@@ -11,6 +11,8 @@
 #include "motor/control.h"
 #endif
 #include <lego/device.h>
+#include <lego/lump.h>
+#include <string.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 
@@ -48,6 +50,7 @@ static struct port {
 	struct bp_port_state value;
 	struct bp_sensor_sample sensor;
 	struct bp_motor_state motor;
+	struct port_uart_write write;
 	uint32_t motor_duration, motor_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct motor_control controller; /* touched only by the port worker */
@@ -91,6 +94,20 @@ static void motor_activity(uint32_t port, bool active)
 
 uint32_t hub_motor_activity(void) { return atomic_get(&activity); }
 
+static bool write_pending(const struct port *p)
+{
+	return p->value.write.request != p->value.write.completed;
+}
+
+/* Caller holds lock. A failed or cancelled operation keeps its own result. */
+static void finish_write(struct port *p, int error)
+{
+	if (write_pending(p)) {
+		p->value.write.completed = p->value.write.request;
+		p->value.write.error = error;
+	}
+}
+
 /* Caller holds lock. One port claim covers measurement selection and drive. */
 static void drop_claim(struct port *p)
 {
@@ -106,6 +123,7 @@ static void drop_claim(struct port *p)
 static void invalidate_motor(uint32_t port, int reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	finish_write(&ports[port], reason);
 	struct bp_motor_state *m = &ports[port].motor;
 	m->request++;
 	m->pending = false;
@@ -209,6 +227,10 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct bp_port_state v = uart ? *uart :
 		(struct bp_port_state){.selected_mode = UINT8_MAX, .mode_error = -ENOTSUP};
+	if (uart && write_pending(p) && uart->write.completed == p->value.write.request) {
+		finish_write(p, uart->write.error);
+	}
+	v.write = p->value.write;
 	if (uart && p->command != command) {
 		v.selected_mode = p->measurement & PORT_RAW_MODE ? p->measurement & 0xff : UINT8_MAX;
 		v.mode_error = p->measurement & PORT_RAW_MODE ? -EAGAIN : -ENOTSUP;
@@ -262,8 +284,10 @@ static int advance(uint32_t port)
 		struct bp_sensor_sample sensor;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		uint32_t measurement = p->measurement, command = p->command;
+		const struct port_uart_write *write = write_pending(p) ? &p->write : NULL;
+		bool cancel = p->motor.releasing;
 		k_spin_unlock(&lock, key);
-		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement));
+		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement, write, cancel));
 		TRY_IO(sensor_supply(port, uart.supply));
 		publish(port, 0, 0, &uart, &sensor, command);
 		return 0;
@@ -512,6 +536,10 @@ static int64_t apply_motor(uint32_t port)
 	}
 #endif
 	if (!command_pending && !m->control.active) {
+		if (m->releasing && m->valid && m->mode == BP_MOTOR_COAST && !write_pending(p)) {
+			m->releasing = false;
+			drop_claim(p);
+		}
 		int64_t deadline = m->deadline_ms;
 		k_spin_unlock(&lock, key);
 		return deadline;
@@ -589,7 +617,7 @@ static int64_t apply_motor(uint32_t port)
 		p->supply = 0;
 	}
 	motor_activity(port, !m->valid || m->control.active || (m->mode != BP_MOTOR_COAST && m->duty));
-	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST) {
+	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST && !write_pending(p)) {
 		m->releasing = false;
 		drop_claim(p);
 	}
@@ -705,7 +733,8 @@ int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	return err;
 }
 
-int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode)
+static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
+	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
@@ -719,22 +748,54 @@ int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation
 		p->value.error && p->value.error != -EAGAIN ? p->value.error :
 		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
 		mode >= p->value.num_modes ? -EINVAL :
-		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing ||
+		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing || write_pending(p) ||
 		!p->motor.valid || p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
+	if (!err && data) {
+		struct bp_port_mode info;
+		err = port_uart_get_mode(port, mode, &info);
+		if (!err && !info.output_mapping) err = -ENOTSUP;
+		if (!err) {
+			uint32_t width = info.data_type == LUMP_DATA_TYPE_DATA8 ? 1 :
+				info.data_type == LUMP_DATA_TYPE_DATA16 ? 2 : 4;
+			if (size != info.num_values * width) err = -EMSGSIZE;
+		}
+	}
+	uint32_t token = 0;
 	if (!err) {
 		p->owner = p->sensor.owner = owner;
-		uint32_t request = PORT_RAW_MODE | mode;
-		if (p->measurement != request) {
-			p->measurement = request;
+		uint32_t selection = PORT_RAW_MODE | mode;
+		if (p->measurement != selection) {
+			p->measurement = selection;
 			p->command++;
 			p->value.selected_mode = mode;
 			p->value.mode_error = -EAGAIN;
 			p->sensor.error = -ENOTSUP;
 			p->sensor.fields = 0;
 		}
+		if (data) {
+			token = p->value.write.request + 1;
+			if (!token) token++;
+			p->write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
+			memcpy(p->write.data, data, size);
+			p->value.write.request = token;
+			p->value.write.error = -EAGAIN;
+		}
 	}
 	k_spin_unlock(&lock, key);
+	if (!err && request) *request = token;
 	return err;
+}
+
+int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode)
+{
+	return raw_request(owner, port, generation, mode, NULL, 0, NULL);
+}
+
+int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
+	const uint8_t *data, uint32_t size, uint32_t *request)
+{
+	if (!data || !request || !size || size > sizeof(ports[0].write.data)) return -EINVAL;
+	return raw_request(owner, port, generation, mode, data, size, request);
 }
 
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
@@ -771,7 +832,7 @@ int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measu
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
-		p->motor.releasing ? -EBUSY :
+		p->motor.releasing || write_pending(p) ? -EBUSY :
 		p->value.phase != BP_PORT_READY ? -EAGAIN :
 		!(p->sensor.available & BIT(measurement)) ? -ENOTSUP :
 		p->owner && p->owner != owner ? -EBUSY : 0;
@@ -800,7 +861,8 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port)
 	struct port *p = &ports[port];
 	int err = p->owner && p->owner != owner ? -EBUSY : 0;
 	if (!err && p->owner) {
-		if (p->motor.pending || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid || p->motor.releasing) {
+		if (p->motor.pending || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
+		    p->motor.releasing || write_pending(p)) {
 			p->motor.releasing = true;
 			err = atomic_get(&stopping) ? -ESHUTDOWN : request_motor(p, BP_MOTOR_COAST, 0, 0);
 			if (err) {
@@ -835,16 +897,20 @@ int hub_ports_release(enum bp_port_owner owner)
 	}
 	struct k_work_sync sync;
 	for (;;) {
-		bool pending = false;
+		bool pending = false, uart_pending = false;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 			if (ports[i].owner != owner) continue;
 			pending |= ports[i].motor.pending;
+			uart_pending |= write_pending(&ports[i]);
 			if (!ports[i].motor.pending && !result) result = ports[i].motor.cleanup_error;
 		}
 		k_spin_unlock(&lock, key);
-		if (!pending) return result;
+		if (!pending && !uart_pending) return result;
 		k_work_flush_delayable(&work, &sync);
+		/* Flushing can apply coast immediately, but cannot advance UART or
+		 * settling deadlines. Yield until the next normal port round. */
+		if (uart_pending) k_sleep(K_MSEC(SETTLE_MS));
 	}
 }
 
@@ -870,7 +936,7 @@ int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint3
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
-	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending ||
+	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending || write_pending(p) ||
 		(p->owner && p->owner != owner) ? -EBUSY : motor_device_error(p);
 	if (!err) err = request_motor(p, BP_MOTOR_DUTY, duty, duration_ms);
 	if (!err) {
@@ -897,7 +963,7 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
-	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending ||
+	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending || write_pending(p) ||
 		(p->owner && p->owner != owner) ? -EBUSY : motor_device_error(p);
 	if (!err) err = control_input_error(p);
 	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, command);
