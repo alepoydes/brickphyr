@@ -2,6 +2,7 @@
 #include "app_store.h"
 #include "application.h"
 #include "storage_mount.h"
+#include "app_data.h"
 
 #include <string.h>
 #include <zephyr/fs/fs.h>
@@ -83,6 +84,7 @@ static int initialize(void)
 	if (status) {
 		LOG_ERR("Application storage unavailable: %d; existing data preserved", status);
 	}
+	app_data_load(status);
 	return status;
 }
 SYS_INIT(initialize, APPLICATION, 81);
@@ -96,6 +98,7 @@ int app_store_format(void)
 	if (!err) {
 		status = fs_mount(&mount);
 		err = status;
+		if (!err) app_data_load(0);
 	}
 	k_mutex_unlock(&store_lock);
 	return err;

@@ -9,6 +9,9 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 #include "application.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+#include "app_data.h"
+#endif
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
@@ -83,6 +86,10 @@ static void shutdown(void)
 	if (err) {
 		LOG_ERR("Sound off failed: %d", err);
 	}
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	int saved = app_data_save();
+	if (saved) LOG_ERR("User data save at shutdown failed: %d", saved);
+#endif
 	err = hub_light_off();
 
 	if (err) {

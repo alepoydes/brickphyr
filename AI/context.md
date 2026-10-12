@@ -113,8 +113,11 @@ acceptance remain open. Speaker melodies, interruption and REPL cleanup pass ove
 USB/BLE on the Inventor F4, including upload through both actual Pybricks clients;
 acoustic quality remains unverified. System information, REPL identity/reset and
 autonomous USB-to-BLE handover pass on the Inventor F4; both Pybricks clients run
-the system example. Stop-button and Python shutdown checks are synthetic; user-data
-storage remains unimplemented. The remaining hub, device, motor and robotics bindings
+the system example. Stop-button and Python shutdown checks are synthetic. Shared
+512-byte user-data storage has protected API and LittleFS failure/reload checks;
+USB/BLE explicit save and reboot persistence pass on the Inventor F4. Automatic
+shutdown saving remains physically unverified; storage reset remains open.
+The remaining hub, device, motor and robotics bindings
 are required work, not optional follow-ups.
 
 The Pybricks execution adapter has protected ARM checks through the actual serial

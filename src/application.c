@@ -2,6 +2,7 @@
 #include "application.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
+#include "app_data.h"
 #include <zephyr/llext/fs_loader.h>
 #endif
 #include "native_image.h"
@@ -760,6 +761,38 @@ void z_impl_bp_shutdown(void)
 }
 static inline void z_vrfy_bp_shutdown(void) { z_impl_bp_shutdown(); }
 #include <zephyr/syscalls/bp_shutdown_mrsh.c>
+
+int z_impl_bp_user_data_read(uint32_t offset, void *data, size_t size)
+{
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	return app_data_read(offset, data, size);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_user_data_read(uint32_t offset, void *data, size_t size)
+{
+	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
+	if (size) K_OOPS(K_SYSCALL_MEMORY_WRITE(data, size));
+	return z_impl_bp_user_data_read(offset, data, size);
+}
+#include <zephyr/syscalls/bp_user_data_read_mrsh.c>
+
+int z_impl_bp_user_data_write(uint32_t offset, const void *data, size_t size)
+{
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	return app_data_write(offset, data, size);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_user_data_write(uint32_t offset, const void *data, size_t size)
+{
+	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
+	if (size) K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	return z_impl_bp_user_data_write(offset, data, size);
+}
+#include <zephyr/syscalls/bp_user_data_write_mrsh.c>
 
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_application_finished(int result)

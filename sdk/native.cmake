@@ -46,7 +46,7 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault system_fault motor)
+  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault system_fault data_fault motor)
     if(example MATCHES "_fault$" OR example STREQUAL "motor")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
@@ -73,7 +73,7 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
 endif()
 
 if(CONFIG_BRICKPHYR_APP_STORAGE)
-  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c ${BRICKPHYR_ROOT}/src/app_data.c)
 endif()
 
 if(CONFIG_BRICKPHYR_PYTHON)

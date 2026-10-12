@@ -164,7 +164,7 @@ Upload admission checks the format envelope; Python parsing and full
 bytecode loading happen in the protected application after start. Interactive
 REPL has ARM/CLI and Inventor F4 USB/BLE checks as described below. The initial
 [Pybricks bindings](compatibility.md#implemented-library-subset) reuse the common
-device services. Writable Python storage and the remaining bindings are in the
+device services. The remaining bindings and storage reset are in the
 [implementation plan](python.md).
 
 ARM QEMU checks syntax/runtime errors, memory and stack exhaustion, GC, truncated
@@ -247,6 +247,48 @@ mode, with seeking, iteration and context-manager close. Write modes fail with
 in this same program namespace, never in the firmware filesystem. `__file__` and
 `sys.argv[0]` identify the root entry.
 See [CLI and terminal commands](host.md#python-applications).
+
+### Persistent user data
+
+`hub.system.storage(offset, read=count)` and `storage(offset, write=buffer)`
+access 512 shared bytes, initially zero. Reads and writes are bounded copies in
+RAM through the native SDK's `bp_user_data_read()`/`bp_user_data_write()`. They
+survive application exit and Python soft reset; they do not grant filesystem or
+flash-controller access. Named programs and Pybricks slots share these bytes.
+
+```python
+from pybricks.hubs import PrimeHub
+
+hub = PrimeHub()
+hub.system.storage(0, write=b"hello")
+print(hub.system.storage(0, read=5))
+```
+
+Dirty user data is saved at orderly hub shutdown, after applications and device
+outputs stop. To save without switching off, return to the hub Shell and run:
+
+```text
+storage save data
+```
+
+The common LittleFS store holds the committed 512-byte `.userdata` file. A save
+writes and closes a separate staging file before atomic replacement. A failed
+save preserves the committed file and leaves RAM changes pending; changes made
+during a save require another save. These internal files are excluded from
+application listing and host file transfer. A missing data file starts with zero
+bytes; an unreadable or wrong-sized file reports an error and is preserved.
+
+An unexpected power loss, watchdog reset, `reboot` or firmware replacement can
+lose unsaved RAM changes. `config save` and user-data saving are independent:
+neither persists the other's pending changes. Reads outside the 512-byte user
+region are rejected; adjacent private Pybricks settings/program memory is not
+exposed. General writable Python files remain outside this interface.
+
+On the Inventor F4, native USB/BLE checks cover read/write, explicit save, retained
+data after reboot and loss of unsaved changes. Automatic saving during physical
+shutdown remains unverified. The F4 native profile reserves a 4 KiB main stack
+for shutdown's filesystem call path; the 512-byte snapshot is temporary stack
+storage and the shared RAM data occupies 512 bytes independently of the VM.
 
 ### Python input and output
 

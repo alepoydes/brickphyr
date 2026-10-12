@@ -180,6 +180,13 @@ int main(void)
 	k_msleep(20);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
+		CHECK(native_fixture_run("data_fault") == 0);
+		k_msleep(20);
+		application_get_status(&status);
+		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+	}
+	test_buttons = 5;
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
 	CHECK(available() == capacity);

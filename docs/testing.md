@@ -107,6 +107,18 @@ Host transport tests distinguish a disconnected USB/BLE link from its still-held
 power reservation during accepted work. Watchdog tests check that repeated boot
 cause reads retain the captured flags after hardware flags have been cleared.
 
+`test_python_storage.py` checks copied user buffers, bounds and invalid arguments,
+fresh VM access and forced stop during writes through the protected SDK. The
+native fixture checks invalid read/write pointers. `tests/app_data` runs the
+production user-data store over LittleFS with a simulated flash device. It covers
+save failure/retry, a RAM write during commit, fresh-process reload, ignored
+partial staging, and refusal to overwrite corrupt data or format foreign contents.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/app_data -d build/app-data-tests
+uv run --locked pytest -q tests/test_app_data.py tests/test_python_storage.py
+```
+
 `test_python_files.py` exercises source/bytecode/native imports, relative packages,
 GC and recovery from a truncated native import. It also covers malformed maps,
 namespace escape, duplicate paths, atomic replacement, removal during repeated

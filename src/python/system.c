@@ -9,6 +9,8 @@
 #include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/parameters/pb_type_button.h>
+#include <pybricks/util_mp/pb_kwarg_helper.h>
+#include "py/objstr.h"
 
 static mp_obj_t system_name(void)
 {
@@ -87,6 +89,41 @@ static mp_obj_t system_shutdown(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(system_shutdown_obj, system_shutdown);
 
+static mp_obj_t system_storage(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_FUNCTION(n_args, args, kw_args,
+		PB_ARG_REQUIRED(offset), PB_ARG_DEFAULT_NONE(read), PB_ARG_DEFAULT_NONE(write));
+	mp_int_t offset = mp_obj_get_int(offset_in);
+	if (offset < 0 || offset > BP_USER_DATA_SIZE) {
+		mp_raise_ValueError(MP_ERROR_TEXT("storage offset out of range"));
+	}
+	if (read_in != mp_const_none && write_in == mp_const_none) {
+		mp_int_t size = mp_obj_get_int(read_in);
+		if (size < 0 || size > BP_USER_DATA_SIZE - offset) {
+			mp_raise_ValueError(MP_ERROR_TEXT("storage read out of range"));
+		}
+		vstr_t bytes;
+		vstr_init_len(&bytes, size);
+		int err = bp_user_data_read(offset, bytes.buf, size);
+		if (err) {
+			vstr_clear(&bytes);
+			python_device_check(err);
+		}
+		return mp_obj_new_bytes_from_vstr(&bytes);
+	}
+	if (write_in != mp_const_none && read_in == mp_const_none) {
+		mp_buffer_info_t buffer;
+		mp_get_buffer_raise(write_in, &buffer, MP_BUFFER_READ);
+		if (buffer.len > BP_USER_DATA_SIZE - offset) {
+			mp_raise_ValueError(MP_ERROR_TEXT("storage write out of range"));
+		}
+		python_device_check(bp_user_data_write(offset, buffer.buf, buffer.len));
+		return mp_const_none;
+	}
+	mp_raise_TypeError(MP_ERROR_TEXT("set either read or write"));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(system_storage_obj, 0, system_storage);
+
 static const mp_rom_map_elem_t system_globals[] = {
 	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_system) },
 	{ MP_ROM_QSTR(MP_QSTR_name), MP_ROM_PTR(&system_name_obj) },
@@ -94,6 +131,7 @@ static const mp_rom_map_elem_t system_globals[] = {
 	{ MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&system_reset_reason_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_set_stop_button), MP_ROM_PTR(&system_set_stop_button_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_shutdown), MP_ROM_PTR(&system_shutdown_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_storage), MP_ROM_PTR(&system_storage_obj) },
 };
 static MP_DEFINE_CONST_DICT(system_dict, system_globals);
 const mp_obj_module_t python_system = {{&mp_type_module}, (mp_obj_dict_t *)&system_dict};

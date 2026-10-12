@@ -42,6 +42,9 @@ static const unsigned char battery_fault[] = {
 static const unsigned char system_fault[] = {
 #include <native_system_fault.inc>
 };
+static const unsigned char data_fault[] = {
+#include <native_data_fault.inc>
+};
 static const unsigned char motor[] = {
 #include <native_motor.inc>
 };
@@ -84,6 +87,7 @@ int native_fixture_run(const char *name)
 		{"sound", sound, sizeof(sound)}, {"sound_fault", sound_fault, sizeof(sound_fault)},
 		{"battery_fault", battery_fault, sizeof(battery_fault)},
 		{"system_fault", system_fault, sizeof(system_fault)},
+		{"data_fault", data_fault, sizeof(data_fault)},
 		{"motor", motor, sizeof(motor)},
 		{"truncated", hello, sizeof(hello) - 1},
 	};

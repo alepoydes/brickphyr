@@ -39,6 +39,10 @@ __syscall int bp_system_get(struct bp_system_info *info);
 __syscall int bp_set_stop_buttons(uint32_t buttons);
 /* Request the ordinary shutdown/cleanup path; this call does not return. */
 __syscall void bp_shutdown(void);
+/* Shared user bytes, copied in RAM. Persist at orderly shutdown or with the
+ * firmware's explicit storage-save operation; no flash I/O in this caller. */
+__syscall int bp_user_data_read(uint32_t offset, void *data, size_t size);
+__syscall int bp_user_data_write(uint32_t offset, const void *data, size_t size);
 
 /* Queue logical RGB (0..255 per channel), copied before return. Claims one
  * button light until application exit. No allocation, I/O or wait; a pending

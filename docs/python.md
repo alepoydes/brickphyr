@@ -31,7 +31,7 @@ record their [runtime](applications.md#experimental-python-profile),
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
 | 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction checks | Combined interactive flow-control acceptance |
 | 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks and an F4 hub example through both actual clients | Unchanged Pybricks Code, power-cycle slot retention and combined client acceptance |
-| 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown and battery snapshots; shared native services | User-data storage, remaining hub/device bindings, missing shared-service behavior and required reference examples |
+| 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage and battery snapshots; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
 Continue from this implementation in the following order:

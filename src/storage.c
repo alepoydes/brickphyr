@@ -12,6 +12,7 @@
 #include "storage_mount.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
+#include "app_data.h"
 #endif
 #include "hub_power.h"
 #include "configuration.h"
@@ -57,6 +58,15 @@ SYS_INIT(storage_init, APPLICATION, 80);
 
 static int cmd_storage(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 3 && !strcmp(argv[1], "save") && !strcmp(argv[2], "data")) {
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+		int err = app_data_save();
+#else
+		int err = -ENOTSUP;
+#endif
+		shell_print(shell, "Save user data: %d", err);
+		return err;
+	}
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 	if (argc == 3 && !strcmp(argv[1], "format") && !strcmp(argv[2], "apps")) {
 		int err = app_store_format();
@@ -132,5 +142,5 @@ out:
 	return err;
 }
 
-SHELL_CMD_ARG_REGISTER(storage, NULL, "storage info|read [settings|apps]; format apps: initialize unrecognized storage.",
+SHELL_CMD_ARG_REGISTER(storage, NULL, "storage info|read [settings|apps]; save data; format apps: initialize unrecognized storage.",
 		      cmd_storage, 2, 1);

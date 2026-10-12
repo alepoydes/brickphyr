@@ -132,11 +132,14 @@ loop; a failed HCI operation cannot prevent the power latch from being released.
 A held button may keep power on until released. An active host session
 inhibits automatic inactivity shutdown, but does not veto an explicit power-off.
 Neither power-off nor reboot implicitly saves settings.
+The separate [application user-data region](applications.md#persistent-user-data)
+follows Pybricks' save-on-shutdown behavior. `storage save data` saves those bytes
+explicitly; it does not save settings.
 
 `reboot` restarts Brickphyr. `reboot dfu` enters the existing second-stage loader
 for installation through Pybricks. These are privileged diagnostic commands;
 application shutdown quiesces application-owned devices before the same final
-power operation. Motor control is not implemented yet.
+power operation.
 
 The physical effects of USB power, charging, and wake-up need separate tests;
 USB disconnection alone is not proof that battery power was cut. Charging remains

@@ -4,6 +4,7 @@
 
 /* Name capacity includes the terminator and accommodates a Bluetooth name. */
 #define BP_SYSTEM_NAME_SIZE 249
+#define BP_USER_DATA_SIZE 512
 struct bp_system_info {
 	char name[BP_SYSTEM_NAME_SIZE];
 	int32_t reset_error;

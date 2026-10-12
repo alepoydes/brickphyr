@@ -145,4 +145,7 @@ selection and delivers a preallocated, GC-rooted `SystemExit` through the VM's
 existing event poll. Menu button events remain with the hub UI; forced stop and
 long-press shutdown remain independent. The shutdown syscall requests the normal
 power policy and waits for supervisor cleanup without running user finalizers.
-User-data storage remains required integration work.
+`system.storage()` copies the common 512-byte user-data region through protected
+SDK calls. Flash access belongs to firmware shutdown or explicit Shell save;
+aborting the VM cannot strand a filesystem lock. This region is distinct from
+runtime settings and read-only bundled resources. `reset_storage()` remains open.

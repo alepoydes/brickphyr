@@ -128,7 +128,7 @@ subpackages and application modules.
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
-| Hub system | `name`, `info`, `reset_reason`, `set_stop_button` and supervised `shutdown`; shared boot cause, launch identity and current management connection |
+| Hub system | `name`, `info`, `reset_reason`, `set_stop_button`, `storage` and supervised `shutdown`; shared boot cause, launch identity, management connection and persistent user data |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -172,7 +172,7 @@ correct slot and connection fields. Stop-button combinations and Python-requeste
 shutdown have protected ARM checks; their physical acceptance remains pending.
 
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-IMU, charger, system `storage`/`reset_storage`, `hub_menu` and messaging remain
+IMU, charger, system `reset_storage`, `hub_menu` and messaging remain
 unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.
