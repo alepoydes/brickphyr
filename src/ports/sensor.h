@@ -23,3 +23,4 @@ void port_sensor_palette_default(struct bp_sensor_palette *palette);
 void port_sensor_match(const struct bp_sensor_palette *palette, struct bp_sensor_sample *sample);
 int port_sensor_light_data(uint16_t id, const struct bp_sensor_light *light,
 	uint8_t *mode, uint8_t data[4], uint32_t *size);
+int port_matrix_data(const uint32_t *colors, uint8_t data[9]);

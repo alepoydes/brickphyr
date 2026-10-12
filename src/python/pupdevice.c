@@ -62,7 +62,7 @@ uint32_t python_port_connect(mp_obj_t port_in, uint16_t type, struct bp_port_sta
 	}
 	/* Negotiated metadata is usable even before the first DATA frame. */
 	if (value->error != -EAGAIN) python_device_check(value->error);
-	if (type && (value->phase != BP_PORT_READY || value->type_id != type)) python_device_check(-ENODEV);
+	if (type && value->type_id != type) python_device_check(-ENODEV);
 	return port;
 }
 

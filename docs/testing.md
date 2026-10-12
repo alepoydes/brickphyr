@@ -141,6 +141,10 @@ native service; it does not establish physical sensor accuracy.
 measurements, shared/copied palettes and synchronous/awaitable light output.
 It compares captured UART packets with fixed expected bytes, including padding
 and checksums. Run this case for those bindings; it uses the same ARM fixture.
+`tests/test_python_accessories.py` uses one boot for passive Light PWM, stale
+connection rejection and forced-stop coast, followed by ColorLightMatrix UART
+frames, rejected short input and port release. It observes the PWM driver and
+transmitted bytes separately from the firmware status snapshots.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

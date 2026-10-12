@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <lego/lump.h>
 #include <string.h>
+#include <zephyr/drivers/pwm/pwm_fake.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
@@ -38,11 +39,12 @@ static const uint8_t color_distance_formats[][2] = {
 	{1, 0}, {1, 0}, {1, 2}, {1, 0}, {1, 0}, {1, 0}, {3, 1}, {1, 1},
 	{4, 0}, {2, 1}, {8, 1},
 };
+static const uint8_t matrix_formats[][2] = {{1, 0}, {1, 0}, {9, 0}, {1, 0}};
 static const uint8_t color_rgb[] = {0, 4, 0, 0, 0, 0, 0, 0}; /* 1024, 0, 0, 0. */
 static const uint8_t color_shsv[] = {120, 0, 0xe8, 3, 0xe8, 3, 0, 0};
 static const uint8_t ultrasonic_distance[] = {0x41, 1}; /* 321 mm. */
 static const uint8_t color_distance_rgb[] = {0x90, 1, 0, 0, 0, 0}; /* 400, 0, 0. */
-static enum { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE } peer_kind;
+static enum { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE, MATRIX } peer_kind;
 static uint8_t infrared_count[4];
 static uint8_t written[4][8];
 static bool has_written[4], extension_valid;
@@ -62,7 +64,8 @@ static uint8_t mode_count(void)
 	return peer_kind == FORCE ? 7 : peer_kind == TILT ? 1 : peer_kind == INFRARED ? 3 :
 		peer_kind == COLOR ? ARRAY_SIZE(color_formats) :
 		peer_kind == ULTRASONIC ? ARRAY_SIZE(ultrasonic_formats) :
-		peer_kind == COLOR_DISTANCE ? ARRAY_SIZE(color_distance_formats) : 4;
+		peer_kind == COLOR_DISTANCE ? ARRAY_SIZE(color_distance_formats) :
+		peer_kind == MATRIX ? ARRAY_SIZE(matrix_formats) : 4;
 }
 
 static const uint8_t *mode_format(uint8_t mode)
@@ -71,7 +74,8 @@ static const uint8_t *mode_format(uint8_t mode)
 		peer_kind == INFRARED ? infrared_formats[mode] :
 		peer_kind == COLOR ? color_formats[mode] :
 		peer_kind == ULTRASONIC ? ultrasonic_formats[mode] :
-		peer_kind == COLOR_DISTANCE ? color_distance_formats[mode] : NULL;
+		peer_kind == COLOR_DISTANCE ? color_distance_formats[mode] :
+		peer_kind == MATRIX ? matrix_formats[mode] : NULL;
 }
 
 static int output_size(uint8_t mode)
@@ -79,7 +83,13 @@ static int output_size(uint8_t mode)
 	return peer_kind == GENERIC && mode < 4 ? sample_lengths[mode] :
 		peer_kind == COLOR && mode == 3 ? 3 :
 		peer_kind == ULTRASONIC && mode == 5 ? 4 :
-		peer_kind == COLOR_DISTANCE && mode == 5 ? 1 : 0;
+		peer_kind == COLOR_DISTANCE && mode == 5 ? 1 :
+		peer_kind == MATRIX && mode == 2 ? 9 : 0;
+}
+
+static bool writable_mode(uint8_t mode)
+{
+	return output_size(mode) || peer_kind == MATRIX;
 }
 
 static void send_byte(uint8_t byte)
@@ -141,7 +151,8 @@ static void send_sample(void)
 	} else if (peer_kind == INFRARED && selected == 2) {
 		data = infrared_cal;
 		length = sizeof(infrared_cal);
-	} else if (peer_kind == COLOR || peer_kind == ULTRASONIC || peer_kind == COLOR_DISTANCE) {
+	} else if (peer_kind == COLOR || peer_kind == ULTRASONIC ||
+		   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX) {
 		const uint8_t *format = mode_format(selected);
 		length = format[0] * (format[1] >= 2 ? 4 : 1U << format[1]);
 		if (peer_kind == COLOR && selected == 5) data = color_rgb;
@@ -173,7 +184,8 @@ static void peer_work(struct k_work *item)
 		}
 		const uint8_t id = peer_kind == FORCE ? 63 : peer_kind == TILT ? 34 :
 			peer_kind == INFRARED ? 35 : peer_kind == COLOR ? 61 :
-			peer_kind == ULTRASONIC ? 62 : peer_kind == COLOR_DISTANCE ? 37 : 201;
+			peer_kind == ULTRASONIC ? 62 : peer_kind == COLOR_DISTANCE ? 37 :
+			peer_kind == MATRIX ? 64 : 201;
 		uint8_t count = mode_count();
 		const uint8_t modes[] = {MIN(count - 1, 7), 0, count - 1, 0};
 		const uint8_t speed[] = {0, 0xc2, 1, 0}; /* 115200 baud. */
@@ -190,14 +202,15 @@ static void peer_work(struct k_work *item)
 			uint8_t values = peer_kind == GENERIC ? 2 : peer_kind == TILT ? 2 : known[0];
 			uint8_t type = peer_kind == GENERIC ? mode : peer_kind == TILT ? 0 : known[1];
 			const uint8_t format[] = {values, type, 6, 0};
-			const uint8_t mapping[] = {output_size(mode) ? 0 : 0x10,
-				output_size(mode) ? 1 : 0};
+			const uint8_t mapping[] = {writable_mode(mode) ? 0 : 0x10,
+				writable_mode(mode) ? 1 : 0};
 			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
 			if (peer_kind == GENERIC) {
 				const uint8_t generic_mapping[] = {0x10, 0x10};
 				send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING,
 					generic_mapping, sizeof(generic_mapping));
-			} else if (peer_kind == COLOR || peer_kind == ULTRASONIC || peer_kind == COLOR_DISTANCE) {
+			} else if (peer_kind == COLOR || peer_kind == ULTRASONIC ||
+				   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX) {
 				send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
 			}
 			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
@@ -309,6 +322,12 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		else shell_print(shell, "none");
 		return 0;
 	}
+	if (!strcmp(argv[1], "pwm")) {
+		shell_print(shell, "pwm channel=%u period=%u pulse=%u",
+			fake_pwm_set_cycles_fake.arg1_val, fake_pwm_set_cycles_fake.arg2_val,
+			fake_pwm_set_cycles_fake.arg3_val);
+		return 0;
+	}
 	if (!strcmp(argv[1], "hold") || !strcmp(argv[1], "resume")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
 		hold_mode = !strcmp(argv[1], "hold");
@@ -327,10 +346,11 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	if (strcmp(argv[1], "connect") && strcmp(argv[1], "force") &&
 	    strcmp(argv[1], "tilt") && strcmp(argv[1], "infrared") &&
 	    strcmp(argv[1], "color") && strcmp(argv[1], "ultrasonic") &&
-	    strcmp(argv[1], "color_distance") &&
+	    strcmp(argv[1], "color_distance") && strcmp(argv[1], "matrix") &&
+	    strcmp(argv[1], "light") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, unplug, touch, press, hold, resume, hold_reset, resume_reset or output");
+		shell_error(shell, "Expected a peer kind, unplug, touch, press, hold, resume, hold_reset, resume_reset, output or pwm");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -349,7 +369,8 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	peer_kind = !strcmp(argv[1], "force") ? FORCE : !strcmp(argv[1], "tilt") ? TILT :
 		!strcmp(argv[1], "infrared") ? INFRARED : !strcmp(argv[1], "color") ? COLOR :
 		!strcmp(argv[1], "ultrasonic") ? ULTRASONIC :
-		!strcmp(argv[1], "color_distance") ? COLOR_DISTANCE : GENERIC;
+		!strcmp(argv[1], "color_distance") ? COLOR_DISTANCE :
+		!strcmp(argv[1], "matrix") ? MATRIX : GENERIC;
 	memset(infrared_count, 0, sizeof(infrared_count));
 	infrared_count[0] = 41;
 	phase = WAIT_SPEED;
@@ -358,7 +379,8 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	memset(has_written, 0, sizeof(has_written));
 	extension_valid = false;
 	has_output = false;
-	pup_test_circuits[0].kind = !strcmp(argv[1], "connect") || peer_kind != GENERIC ? UART_DEVICE :
+	pup_test_circuits[0].kind = !strcmp(argv[1], "light") ? LIGHT :
+		!strcmp(argv[1], "connect") || peer_kind != GENERIC ? UART_DEVICE :
 		!strcmp(argv[1], "unplug") ? UNPLUGGED : TOUCH_SWITCH;
 	pup_test_circuits[0].pressed = !strcmp(argv[1], "press");
 	connected = pup_test_circuits[0].kind == UART_DEVICE;
@@ -366,5 +388,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|force|tilt|infrared|color|ultrasonic|color_distance|unplug|touch|press|hold|resume|hold_reset|resume_reset|output.",
+	"Synthetic port A: connect|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm.",
 	pup_peer, 2, 0);

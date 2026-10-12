@@ -472,15 +472,17 @@ static int advance(uint32_t port)
 }
 #undef TRY_IO
 
-/* Caller holds lock. Recognition alone never authorizes an unknown motor. */
-static int motor_device_error(const struct port *p)
+/* Caller holds lock. A light command cannot energize a motor or vice versa. */
+static int output_device_error(const struct port *p, bool light)
 {
 	if (p->value.error) return p->value.error;
 	if (k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) return -ETIMEDOUT;
 	if (p->value.phase == BP_PORT_EMPTY) return -ENODEV;
 	if (p->value.phase == BP_PORT_PASSIVE &&
-	    (p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_MMOTOR ||
+	    (light ? p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT :
+	     p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_MMOTOR ||
 	     p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_TRAIN)) return 0;
+	if (light) return -ENOTSUP;
 	if (p->value.phase == BP_PORT_NEGOTIATING || p->value.phase == BP_PORT_UART) return -EAGAIN;
 	if (p->value.phase != BP_PORT_READY || !(p->sensor.available & BIT(BP_SENSOR_ANGLE))) return -ENOTSUP;
 	return p->sensor.error ? p->sensor.error :
@@ -558,7 +560,7 @@ static int64_t apply_motor(uint32_t port)
 	struct port *p = &ports[port];
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct bp_motor_state *m = &p->motor;
-	int device_error = motor_device_error(p);
+	int device_error = output_device_error(p, p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
 	bool running = m->mode != BP_MOTOR_COAST && m->valid;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	if (!device_error && (m->control.active || (m->pending && m->requested_mode >= BP_MOTOR_SPEED))) {
@@ -864,6 +866,21 @@ int hub_sensor_light_write(enum bp_port_owner owner, uint32_t port, uint32_t gen
 	return hub_port_write(owner, port, generation, mode, data, size, request);
 }
 
+int hub_port_matrix_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const uint32_t *colors, uint32_t *request)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	struct bp_port_state state;
+	int err = hub_port_get(port, &state);
+	if (err) return err;
+	if (state.generation != generation) return -ESTALE;
+	if (state.type_id != LEGO_DEVICE_TYPE_ID_TECHNIC_COLOR_LIGHT_MATRIX) return -ENOTSUP;
+	uint8_t data[9];
+	err = port_matrix_data(colors, data);
+	return err ? err : hub_port_write(owner, port, generation,
+		LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O, data, sizeof(data), request);
+}
+
 int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t *request)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
@@ -1091,7 +1108,8 @@ int hub_motor_get(uint32_t port, struct bp_motor_state *value)
 	*value = ports[port].motor;
 	value->owner = ports[port].owner;
 	value->generation = ports[port].value.generation;
-	if (!value->error) value->error = atomic_get(&stopping) ? -ESHUTDOWN : motor_device_error(&ports[port]);
+	if (!value->error) value->error = atomic_get(&stopping) ? -ESHUTDOWN :
+		output_device_error(&ports[port], ports[port].value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
 	k_spin_unlock(&lock, key);
 	return 0;
 }
@@ -1105,11 +1123,33 @@ int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint3
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending || write_pending(p) ||
-		(p->owner && p->owner != owner) ? -EBUSY : motor_device_error(p);
+		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_DUTY, duty, duration_ms);
 	if (!err) {
 		p->owner = p->sensor.owner = owner;
 		p->motor.error = p->motor.cleanup_error = 0;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_port_light_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	uint32_t brightness, uint32_t *request)
+{
+	if (port >= BP_PORT_COUNT || brightness > 1000 || !request ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	int err = port_output_check(port);
+	if (err) return err;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	err = atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
+		p->motor.releasing || (brightness && p->motor.pending) || write_pending(p) ||
+		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, true);
+	if (!err) err = request_motor(p, brightness ? BP_MOTOR_DUTY : BP_MOTOR_COAST, brightness, 0);
+	if (!err) {
+		p->owner = p->sensor.owner = owner;
+		p->motor.error = p->motor.cleanup_error = 0;
+		*request = p->motor.request;
 	}
 	k_spin_unlock(&lock, key);
 	return err;
@@ -1132,7 +1172,7 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending || write_pending(p) ||
-		(p->owner && p->owner != owner) ? -EBUSY : motor_device_error(p);
+		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, false);
 	if (!err) err = control_input_error(p);
 	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, command);
 	if (!err) err = request_motor(p, command->mode, 0, 0);
@@ -1156,7 +1196,7 @@ int hub_motor_coast(enum bp_port_owner owner, uint32_t port)
 	err = atomic_get(&stopping) ? -ESHUTDOWN :
 		p->owner && p->owner != owner ? -EBUSY :
 		p->owner && (p->motor.pending || p->motor.mode != BP_MOTOR_COAST ||
-			!p->motor.valid || p->motor.releasing) ? 0 : motor_device_error(p);
+			!p->motor.valid || p->motor.releasing) ? 0 : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
 		p->owner = p->sensor.owner = owner;

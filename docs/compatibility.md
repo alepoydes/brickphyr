@@ -133,6 +133,7 @@ subpackages and application modules.
 | `PUPDevice`, `LUMPDevice` | `info`, blocking/awaitable `read` and `write`, asynchronous UART `reset`; shared raw modes, signed/float wire values, passive touch input and connection generation checks |
 | `ForceSensor`, `TiltSensor`, `InfraredSensor` | Blocking/awaitable native measurements with reference units, force calibration, tilt axis order and infrared count offset; generation-bound selection and cleanup |
 | `ColorSensor`, `UltrasonicSensor`, `ColorDistanceSensor` | Native measurements, HSV/color matching, shared copied palettes and blocking/awaitable sensor lights; infrared transmission remains pending |
+| `Light`, `ColorLightMatrix` | Passive light brightness/off and UART 3×3 colors/off, native output encoding, connection-bound commands and port cleanup |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -159,6 +160,10 @@ construction, native conversions and Python results. Color checks include
 custom/shared palettes and captured UART light commands. Physical acceptance of
 these classes remains pending. See
 [raw device usage and ownership](ports.md#arbitrary-uart-modes).
+Accessory checks exercise real port PWM/UART services with synthetic peers:
+brightness, matrix palette/brightness encoding, short-iterable rejection without
+output, stale Light rejection and forced-stop coast. These are not physical
+brightness or perceived-color measurements; see [external lights](ports.md#external-lights).
 On the Inventor F4, `PUPDevice.info()`, reset and synchronous/async CALIB reads
 from an idle ID-75 motor pass through USB/BLE application upload and execution,
 with port release afterwards. No motor drive is part of this check; physical sensor,

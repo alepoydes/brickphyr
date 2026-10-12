@@ -77,6 +77,38 @@ int port_sensor_light_data(uint16_t id, const struct bp_sensor_light *light,
 	return 0;
 }
 
+/* Selected from pybricks/util_pb/pb_conversions.c at a7b1b04ae:
+ * nearest LEGO hue, with boundaries halfway between supported colors. */
+static uint8_t matrix_hue(uint16_t hue)
+{
+	if (hue < (PBIO_COLOR_HUE_RED + PBIO_COLOR_HUE_ORANGE) / 2) return 9;
+	if (hue < (PBIO_COLOR_HUE_ORANGE + PBIO_COLOR_HUE_YELLOW) / 2) return 8;
+	if (hue < (PBIO_COLOR_HUE_YELLOW + PBIO_COLOR_HUE_GREEN) / 2) return 7;
+	if (hue < (PBIO_COLOR_HUE_GREEN + PBIO_COLOR_HUE_SPRING_GREEN) / 2) return 6;
+	if (hue < (PBIO_COLOR_HUE_SPRING_GREEN + PBIO_COLOR_HUE_CYAN) / 2) return 5;
+	if (hue < (PBIO_COLOR_HUE_CYAN + PBIO_COLOR_HUE_BLUE) / 2) return 4;
+	if (hue < (PBIO_COLOR_HUE_BLUE + PBIO_COLOR_HUE_VIOLET) / 2) return 3;
+	if (hue < (PBIO_COLOR_HUE_VIOLET + PBIO_COLOR_HUE_MAGENTA) / 2) return 2;
+	if (hue < (PBIO_COLOR_HUE_MAGENTA + PBIO_COLOR_HUE_MODULO) / 2) return 1;
+	return 9;
+}
+
+/* ColorLightMatrix._get_color_id from the same revision. The matrix firmware
+ * renders its lowest gray step as faint red; preserve the reference's blank. */
+int port_matrix_data(const uint32_t *colors, uint8_t data[9])
+{
+	for (size_t i = 0; i < 9; i++) {
+		if (!colors) { data[i] = 0; continue; }
+		pbio_color_t color = colors[i];
+		if (!color_valid(color)) return -EINVAL;
+		uint8_t brightness = pbio_color_get_v_clamped(color) / 10;
+		bool gray = pbio_color_get_s(color) < 30;
+		if (gray && brightness == 1) brightness = 0;
+		data[i] = (brightness << 4) | (gray ? 10 : matrix_hue(pbio_color_get_h(color)));
+	}
+	return 0;
+}
+
 /* First entry for each device is its automatic measurement. Wire formats
  * are checked before SELECT; a recognized ID alone does not validate data. */
 static const struct measurement {

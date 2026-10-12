@@ -282,6 +282,45 @@ capability. It extends the BOOST counter without signed overflow, rejects invali
 absolute values, and uses shortest-angle increments instead of PBIO's quadrant
 crossing test. These are measurement semantics, not a motor controller.
 
+## External lights
+
+`pybricks.pupdevices.Light(Port.A)` supports the passive Powered Up 88005 light
+(ID 8). Construction switches it off. `on(brightness=100)` takes a percentage
+clipped to 0–100; `off()` and zero brightness coast the output. Calls return
+`None` after driver completion. The existing PWM port service owns the output;
+application completion, forced stop and hotplug use its ordinary coast cleanup.
+An old object cannot switch on a replacement device after reconnection.
+
+Native `bp_port_light_write(port, generation, brightness, &request)` accepts
+0–1000 permille, with zero for off. It validates the exact passive device and
+connection before queuing. Match the returned request, completion and generation
+in `bp_motor_get()`; `observe motor.A` also reports this shared output state.
+This light entry cannot drive a motor, and ordinary motor commands continue to
+reject lights. The same port ownership rules apply to both.
+
+`ColorLightMatrix(Port.B)` supports the UART Technic 3×3 matrix (ID 64).
+`on(colors)` takes one `Color` for all cells, or the first nine colors from an
+iterable in the device's cell order. A shorter iterable or invalid color fails
+before output. `off()` sends a blank frame. Both methods block or can be awaited
+inside `run_task`. The reference conversion rounds hues to the device palette
+and quantizes brightness to ten levels, including its lowest-gray correction.
+
+Native `bp_port_matrix_write(port, generation, colors, &request)` copies nine
+packed HSV colors; `NULL` sends a blank. It uses the same UART writer and
+completion token as generic mode writes. Releasing the port drains/cancels writes
+and relinquishes ownership; it does not send a blank frame automatically. Call
+`off()` when the image should disappear. Normal host disconnection leaves an
+autonomous application's outputs unchanged.
+
+The conversion is a selected MIT-licensed port of
+`pybricks/util_pb/pb_conversions.c` and
+`pybricks/pupdevices/pb_type_pupdevices_colorlightmatrix.c` at the revision linked
+above. Python argument handling comes from the same revision's Light and
+ColorLightMatrix classes. No second PWM driver or UART implementation is linked.
+Protected ARM checks cover PWM levels, stale-object rejection, forced-stop coast,
+matrix output packets and port release using synthetic devices. Physical light
+and matrix output remain unverified.
+
 ## Direct motor drive
 
 `CONFIG_BRICKPHYR_MOTORS` provides duty, brake and coast for passive medium/train

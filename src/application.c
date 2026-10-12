@@ -722,6 +722,35 @@ static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generatio
 }
 #include <zephyr/syscalls/bp_sensor_light_write_mrsh.c>
 
+int z_impl_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
+{
+	return hub_port_light_write(BP_PORT_APPLICATION, port, generation, brightness, request);
+}
+static inline int z_vrfy_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_port_light_write(port, generation, brightness, request);
+}
+#include <zephyr/syscalls/bp_port_light_write_mrsh.c>
+
+int z_impl_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
+{
+	return hub_port_matrix_write(BP_PORT_APPLICATION, port, generation, colors, request);
+}
+static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	uint32_t copy[9];
+	if (colors) {
+		K_OOPS(K_SYSCALL_MEMORY_READ(colors, sizeof(copy)));
+		memcpy(copy, colors, sizeof(copy));
+	}
+	return z_impl_bp_port_matrix_write(port, generation, colors ? copy : NULL, request);
+}
+#include <zephyr/syscalls/bp_port_matrix_write_mrsh.c>
+
 int z_impl_bp_sensor_release(uint32_t port)
 {
 	return hub_port_release(BP_PORT_APPLICATION, port);

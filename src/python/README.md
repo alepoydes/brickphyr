@@ -127,6 +127,13 @@ selection rejects stale objects before changing device modes. These classes have
 protected ARM coverage with synthetic UART peers; their physical acceptance
 remains pending.
 
+`pupaccessories.c` adapts `pybricks/pupdevices/pb_type_pupdevices_light.c` and
+`pb_type_pupdevices_colorlightmatrix.c` from that same revision. Light uses the
+shared port PWM queue; the matrix uses the shared UART writer. Both bind commands
+to the detected connection generation. Matrix HSV-to-wire conversion belongs to
+the native service, so it is also available without Python. The normal port
+cleanup owns release; Python has no driver handles or output buffers in flight.
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
 v4.1.0b6 (`a7b1b04ae`). They retain the upstream
