@@ -2227,13 +2227,17 @@ static int complete_upload(void)
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	int err;
 	if (upload_format == APPLICATION_PYBRICKS) {
-		void *image;
 		size_t size;
-		err = python_pybricks_package(upload, upload_bytes, &image, &size);
+		err = python_pybricks_package(upload, upload_bytes, upload_capacity, &size);
 		if (err) {
 			return err;
 		}
-		k_free(upload);
+		/* This only shrinks: Zephyr releases the suffix in place, without
+		 * copying the image under the heap spinlock or retaining growth slack. */
+		void *image = k_realloc(upload, size);
+		if (!image) {
+			return -ENOMEM;
+		}
 		upload = image;
 		upload_capacity = upload_size = upload_bytes = size;
 		upload_format = APPLICATION_FILES;
@@ -2273,7 +2277,12 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 {
 	bool open_size = IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) && format == APPLICATION_PYBRICKS && !total;
 	size_t bound = total;
+	size_t padding = 0;
 #ifdef CONFIG_BRICKPHYR_PYTHON
+	padding = format == APPLICATION_PYBRICKS ? PYTHON_PYBRICKS_HEADROOM : 0;
+	if (padding && total > PYTHON_PYBRICKS_LIMIT) {
+		return -EFBIG;
+	}
 	if (open_size) {
 		bound = PYTHON_PYBRICKS_LIMIT;
 	}
@@ -2298,8 +2307,10 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 		goto out;
 	}
 	if (!offset) {
-		/* Allocate before replacing a previous complete image. */
-		size_t capacity = open_size ? length : bound;
+		/* Reserve normalization space while receiving, before replacing the
+		 * previous image. No second complete image is needed at completion. */
+		size_t capacity = open_size && length <= bound / 2 ? length : bound;
+		capacity += padding;
 		void *data_buffer = k_malloc(capacity);
 		if (!data_buffer) {
 			err = -ENOMEM;
@@ -2324,15 +2335,21 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 			goto out;
 		}
 	} else {
-		if (offset + length > upload_capacity) {
+		if (offset + length + padding > upload_capacity) {
 			/* Unknown-length Pybricks transfers grow geometrically instead of
 			 * reserving the maximum image for every small program. Copy outside
 			 * the heap lock: k_realloc may copy with interrupts masked. */
-			size_t capacity = MIN(bound, MAX(offset + length, upload_capacity * 2));
+			size_t capacity = MAX(offset + length, (upload_capacity - padding) * 2);
+			/* Packet-sized growth must not stop just below the limit and then
+			 * need two almost-full buffers for the final few bytes. */
+			if (capacity > bound / 2) {
+				capacity = bound;
+			}
+			capacity += padding;
 			void *buffer = k_malloc(capacity);
-			if (!buffer && capacity > offset + length) {
+			if (!buffer && capacity > offset + length + padding) {
 				/* Optional growth headroom must not reject a fragment that fits. */
-				capacity = offset + length;
+				capacity = offset + length + padding;
 				buffer = k_malloc(capacity);
 			}
 			if (!buffer) {

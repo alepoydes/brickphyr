@@ -2,7 +2,6 @@
 #include "python_runtime.h"
 #include <errno.h>
 #include <string.h>
-#include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zcbor_encode.h>
 
@@ -32,11 +31,10 @@ static bool next(const uint8_t **cursor, const uint8_t *end, struct module *modu
 	return true;
 }
 
-int python_pybricks_package(const void *data, size_t length, void **image, size_t *size)
+int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *size)
 {
-	*image = NULL;
 	*size = 0;
-	if (!data || !length || length > PYTHON_PYBRICKS_LIMIT) {
+	if (!data || !length || length > capacity || length > PYTHON_PYBRICKS_LIMIT) {
 		return -ENOEXEC;
 	}
 	const uint8_t *start = data, *end = start + length, *cursor = start;
@@ -48,35 +46,47 @@ int python_pybricks_package(const void *data, size_t length, void **image, size_
 			return -ENOEXEC;
 		}
 	}
-	/* Each file gains at most 13 bytes (package suffix and CBOR headers).
-	 * Reserve the explicit entry path and map headers as well. */
-	size_t capacity = MIN(APPLICATION_IMAGE_LIMIT,
-		length + 13 * count + PYTHON_PATH_LIMIT + 8);
-	void *buffer = k_malloc(capacity);
-	if (!buffer) {
-		return -ENOMEM;
-	}
-	ZCBOR_STATE_E(state, 2, buffer, capacity, 1);
-	bool ok = zcbor_map_start_encode(state, count + 1);
+	/* Determine package parents before encoding can overwrite their names. */
+	bool packages[PYTHON_FILE_LIMIT] = {0};
 	cursor = start;
-	while (ok && cursor < end && next(&cursor, end, &module)) {
+	for (size_t i = 0; i < count; i++) {
+		next(&cursor, end, &module);
 		/* A module with children supplies that package's __init__.py. Missing
 		 * parents are ordinary namespace packages in MicroPython's importer. */
-		bool package = false;
 		const uint8_t *scan = start;
 		struct module other;
 		while (scan < end && next(&scan, end, &other)) {
 			if (other.name_size > module.name_size && other.name[module.name_size] == '.' &&
 			    !memcmp(other.name, module.name, module.name_size)) {
-				package = true;
+				packages[i] = true;
 				break;
 			}
 		}
+		if (packages[i] && module.name_size + sizeof("/__init__.mpy") - 1 > PYTHON_PATH_LIMIT) {
+			return -ENOEXEC;
+		}
+	}
+	/* Every record grows by at most 13 bytes, plus the entry path/map headers.
+	 * Shift input above that total bound so encoding any prefix cannot overwrite
+	 * unread records. zcbor's string encoder supports overlapping payloads. The
+	 * two bounded moves run outside the allocator/interrupt lock. */
+	size_t padding = 13 * count + PYTHON_PATH_LIMIT + 8;
+	if (capacity < length || padding > capacity - length) {
+		return -EFBIG;
+	}
+	start = (uint8_t *)data + padding;
+	end = start + length;
+	memmove((uint8_t *)data + padding, data, length);
+	ZCBOR_STATE_E(state, 2, data, length + padding, 1);
+	bool ok = zcbor_map_start_encode(state, count + 1);
+	cursor = start;
+	for (size_t i = 0; ok && i < count; i++) {
+		next(&cursor, end, &module);
 		char path[PYTHON_PATH_LIMIT + sizeof("/__init__.mpy")];
 		for (size_t i = 0; i < module.name_size; i++) {
 			path[i] = module.name[i] == '.' ? '/' : module.name[i];
 		}
-		strcpy(path + module.name_size, package ? "/__init__.mpy" : ".mpy");
+		strcpy(path + module.name_size, packages[i] ? "/__init__.mpy" : ".mpy");
 		/* Pybricks executes the first record, regardless of its module name.
 		 * Preserve that name so ordinary imports keep their own identity. */
 		if (module.name == start + sizeof(uint32_t)) {
@@ -87,12 +97,9 @@ int python_pybricks_package(const void *data, size_t length, void **image, size_
 			zcbor_bstr_encode_ptr(state, module.data, module.size);
 	}
 	ok = ok && zcbor_map_end_encode(state, count + 1);
-	size_t used = state->payload - (uint8_t *)buffer;
 	if (!ok) {
-		k_free(buffer);
 		return -EFBIG;
 	}
-	*image = buffer;
-	*size = used;
+	*size = state->payload - (uint8_t *)data;
 	return 0;
 }

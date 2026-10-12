@@ -332,6 +332,11 @@ pybricksdev serial client/compiler. It checks multi-module uploads, a `main`
 module separate from the entry, stdin/stdout, running status, busy-loop stop,
 repeat/reconnect and recovery after invalid module records. Transport framing
 and malformed-file checks use the production handlers, not a second parser.
+The near-limit package case holds 8 KiB of the synthetic heap while uploading
+31,728 bytes, with a package child before its parent and modules after a large
+unimported payload. It checks overlap, repeat uploads and preservation of the
+installed program after a malformed final record. This isolates transfer memory
+from the separate GC cost of importing the large payload.
 The long-output case checks a complete 4 KiB line through the client's ordinary
 run/output path, exceeding the application's bounded queue.
 The native case checks capability-based ABI selection, client-compiled native/Viper

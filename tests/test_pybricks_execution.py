@@ -206,6 +206,59 @@ def test_pybricks_upload_under_heap_pressure(tmp_path):
         asyncio.run(exercise(port))
 
 
+def test_pybricks_large_package_normalizes_in_place(tmp_path):
+    async def exercise(port):
+        async def module(name, source):
+            path = tmp_path / f"{name}.py"
+            path.write_text(source)
+            data = await compile_file(str(tmp_path), path.name, 6)
+            return struct.pack("<I", len(data)) + name.encode() + b"\0" + data
+
+        entry = await module(
+            "entry",
+            "from pkg.child import value\nimport pkg, tail\n"
+            "print(value + pkg.base + tail.value)\n",
+        )
+        child = await module("pkg.child", "value = 21\n")
+        parent = await module("pkg", "base = 11\n")
+        tail = await module("tail", "value = 10\n")
+
+        # Synthetic near-limit payload, kept unimported to isolate upload memory
+        # from the separate GC cost of loading a large constant. Real compiled
+        # records after it must survive overlap, and a child precedes its parent.
+        filler = await module("payload", "value = b'" + "x" * 30000 + "'\n")
+        target = 31728  # Advertised Pybricks record limit of the F4 profile.
+        padding = 30000 + target - sum(map(len, (entry, child, filler, parent, tail)))
+        filler = await module("payload", "value = b'" + "x" * padding + "'\n")
+        package = entry + child + filler + parent + tail
+        assert len(package) == target
+        hub = PybricksHubSerial(port)
+        try:
+            await hub.connect()
+            await hub.download_user_program(package)
+            await asyncio.wait_for(hub.run(print_output=False), 4)
+            assert hub.output == [b"42"]
+            # A late malformed record must release staging without replacing
+            # the previously published slot; repeating still runs its imports.
+            with pytest.raises(RuntimeError, match="Write failed"):
+                await hub.download_user_program(package[:-1])
+            await asyncio.wait_for(hub.run(print_output=False), 4)
+            assert hub.output == [b"42"]
+            # The 64 KiB synthetic store cannot atomically replace two large
+            # images. Publish a small one first, then verify another full upload
+            # succeeds after both normal completion and rejected staging.
+            for image in (entry + child + parent + tail, package):
+                await hub.download_user_program(image)
+                await asyncio.wait_for(hub.run(print_output=False), 4)
+                assert hub.output == [b"42"]
+        finally:
+            await hub.disconnect()
+
+    # Enough for geometric receive growth, but never two 31 KiB image buffers.
+    with pybricks_port(heap_hold=8192) as port:
+        asyncio.run(exercise(port))
+
+
 def test_pybricks_package_admission(tmp_path):
     source = tmp_path / "program.py"
     source.write_text("print('package recovered')\n")

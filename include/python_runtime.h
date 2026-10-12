@@ -9,14 +9,15 @@
 #define PYTHON_FILE_LIMIT 64
 #define PYTHON_PATH_LIMIT 128
 /* Maximum expansion of the reference module records into the common file map. */
-#define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - 16 * (PYTHON_FILE_LIMIT + 1))
+#define PYTHON_PYBRICKS_HEADROOM (16 * (PYTHON_FILE_LIMIT + 1))
+#define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - PYTHON_PYBRICKS_HEADROOM)
 
 /* Admission checks do not compile, allocate or execute application input. */
 int python_image_check(const void *program, size_t length, enum application_format format);
-/* Normalize the reference client's module records to the common file map.
- * The caller owns the returned kernel allocation and admits it with the same
- * python_image_check as other FILES uploads after this encoder has returned. */
-int python_pybricks_package(const void *data, size_t length, void **image, size_t *size);
+/* Normalize module records in place, with PYTHON_PYBRICKS_HEADROOM spare bytes.
+ * The caller discards failed conversions and admits successful output with the
+ * same python_image_check as other FILES uploads. No second image is allocated. */
+int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *size);
 /* A host request sets a signal only; the VM handles it at its own safe points. */
 void python_input_reset(bool soft_reset, bool repl);
 void python_interrupt(void);

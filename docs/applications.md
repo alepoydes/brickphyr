@@ -167,16 +167,23 @@ are not a measure of free system heap or Python GC capacity.
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports
 current free/allocated system-heap bytes and the allocation high-water mark since
-boot. This heap holds uploads, package conversion buffers and executable native
+boot. This heap holds uploads, receive-buffer growth and executable native
 code; its free bytes are not the Python GC budget. In REPL, `gc.mem_free()` and
 `gc.mem_alloc()` report the separate GC heap. Use `app status` after a program
 ends to inspect its stack high-water and native-code usage. A live application's
 `unused` stack field is not a current stack measurement.
 
-Measure cold upload, start and cleanup separately. Pybricks normalization briefly
-retains both incoming module records and the common file map. A completed upload
-or a linker report alone cannot establish this peak. Heap counters also do not
-report the largest contiguous allocation or prove absence of fragmentation.
+Measure cold upload, start and cleanup separately. Pybricks reception reserves
+1,040 extra bytes for normalization into the common file map within the same
+buffer. Conversion allocates no second image; it shifts the input once, then
+encodes overlapping byte strings with zcbor outside the allocator/interrupt lock.
+The completed buffer is shrunk in place so reception headroom is not retained
+alongside the running application's native-code allocation.
+Unknown-length reception still briefly holds old and new buffers while growing.
+Growth above half the transfer limit requests the full limit, avoiding two nearly
+full buffers for the last fragment; if that allocation fails, an exact-size
+request may still admit the fragment. Heap counters do not report the largest
+contiguous allocation or prove absence of fragmentation.
 ARM/QEMU checks exercise a synthetic 32 KiB bundle with a native import through
 RAM and stored starts and verify system-heap reclamation. Its fixture has the
 same heap/arena sizes, but does not establish F4 USB/BLE driver overhead or the
