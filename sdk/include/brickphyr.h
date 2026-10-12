@@ -37,6 +37,12 @@ __syscall uint32_t bp_buttons(void);
  */
 __syscall int bp_light_write(uint32_t light, const uint8_t *rgb);
 __syscall int bp_light_get(uint32_t light, struct bp_light_state *state);
+/* Repeat 1..BP_LIGHT_MAX_FRAMES, copied into firmware-owned memory. Allocates
+ * without waiting; validation/allocation failure preserves the previous light.
+ * Static writes cancel animation. Menus override visibility, not its clock;
+ * delayed updates skip expired frames. An I/O failure stops advancement.
+ */
+__syscall int bp_light_animate(uint32_t light, const struct bp_light_frame *frames, size_t count);
 
 /* Queue 1..25 brightness values at row-major offset first. Copies before return;
  * no allocation or wait. 0 means accepted, not yet applied; EBUSY means a frame

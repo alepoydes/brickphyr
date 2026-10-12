@@ -172,17 +172,40 @@ cleanup. It performs no allocation, driver I/O or wait; another write while one 
 pending returns `EBUSY`. The existing hub loop applies the color on its next
 scheduled frame, using the same gamma and board gains as Shell RGB commands.
 
+`bp_light_animate()` repeats a copied sequence of 1–256 RGB frames, each with a
+duration of 1–2147483647 ms. It allocates at most 2 KiB per light from the existing
+system heap; replacing either of two maximum sequences temporarily requires a
+third allocation, for 6 KiB plus allocator overhead. Submission does not wait
+for memory or perform device I/O. Invalid input, a pending write or allocation
+failure preserves the preceding operation. Static writes cancel animation.
+
+The existing hub loop services animation deadlines alongside readiness lighting.
+It advances against monotonic time and skips expired frames after a delay;
+there is at most one shared SPI latch per loop iteration. Short intervals can
+increase traffic above the readiness animation's 50 Hz. A 97-byte frame requires
+32.4 microseconds of wire time at the F4's configured 24 MHz, before GPIO,
+locking, driver and scheduling overhead. This is a transfer-size calculation,
+not a measured timing guarantee. Admission validates at most 256 cells before
+the service lock; the critical section contains a nonwaiting allocation, a copy
+of at most 2 KiB and replacement/free. Updates scan at most 256 cells per light,
+without allocation, logging or a catch-up loop over missed cycles.
+
 Snapshots distinguish requested RGB, pending work, ownership, visible override,
 last write validity/time and I/O errors. A successful controller write does not
 establish physical light output. System connection menus temporarily hide both
 application colors, preserving their claims; shutdown rejects further writes and
 extinguishes the LEDs. Manual Shell writes to a claimed light report `EBUSY`.
+Animation snapshots additionally report its active state and frame index/count.
+Menus hide output without pausing the sequence. A failed SPI write stops its
+advancement; explicit replacement is required to start it again.
 
 Return, fault, stop and Python soft reset restore system indication only for the
 lights the application claimed. A failed restoration retains ownership and
 reports the cleanup error. A host disconnection leaves the application colors
-alone. Simulator SPI checks cover these priorities, failures and independent
-light ownership; ARM checks exercise the same service from protected Python.
+alone. Cleanup also frees copied sequences. Simulator SPI checks cover these
+priorities, failures, allocator exhaustion, delayed frames and independent light
+ownership; ARM checks exercise the same service from protected Python, including
+a busy loop without cooperative yielding and invalid animation-buffer pointers.
 Physical acceptance of application lighting remains pending.
 
 ## Hub matrix

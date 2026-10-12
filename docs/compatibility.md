@@ -124,7 +124,7 @@ subpackages and application modules.
 | `run_task`, `multitask` | Results, concurrent waits, racing, exception propagation, cancellation despite cleanup errors and forced-stop recovery |
 | Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
 | `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery voltage/current snapshots |
-| Hub lighting | `light.on(Color)` and `light.off()` through the common button-light service |
+| Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | Static `on`, `off`, `pixel`, `icon`, `char`, `number` and `orientation`; shared display orientation and reference fonts |
 
 Checks execute through the protected ARM application path. Unchanged reference
@@ -136,18 +136,23 @@ button/ADC inputs and a TLC5955 SPI peer with the production driver. They cover
 rendering, ownership conflicts, rejected input, I/O errors and cleanup on return,
 exception, forced stop and REPL reset. This does not verify perceived colors,
 display orientation or measurement accuracy on a physical hub. The
-[hub example](../examples/python/hub.py) exercises the static display and lighting.
+[hub example](../examples/python/hub.py) exercises the static display and background lighting.
 It also compiles and runs repeatedly through the actual pybricksdev serial client
 against the ARM fixture. This is client integration with synthetic I/O, not a
 physical USB/BLE or browser result.
 
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-display text and animation, light blinking/animation, speaker, IMU, charger,
+display text and animation, speaker, IMU, charger,
 system/storage, `hub_menu` and messaging remain unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.
-`hub.bluetooth_light` is a Brickphyr extension with the same `on`/`off` interface;
+`hub.bluetooth_light` is a Brickphyr extension with the same color-light interface;
 system connection-menu indication takes priority over an application color.
+Light sequences have 1–256 entries; frame durations must be positive and fit a
+signed 32-bit millisecond value. Empty sequences and invalid intervals fail before
+replacing a running pattern. Blink durations alternate on/off, starting on; an
+odd-length sequence starts on again when it repeats. `on` and `off` stop animation.
+See the [shared service's memory and timing limits](hardware.md#application-button-lighting).
 Portable fixes for builtin imports, cancellation and numeric validation remain local dependency
 changes listed in [upstream integration](upstream.md#python-library-prerequisites).
 

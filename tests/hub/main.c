@@ -317,6 +317,108 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 	zassert_equal(value.owner, BP_MATRIX_FREE);
 }
 
+static void check_application_animation(void)
+{
+	const uint16_t dark[3] = {0};
+	zassert_ok(hub_light_pwm(true, dark));
+	zassert_ok(hub_light_pwm(false, dark));
+	struct bp_light_frame frames[] = {
+		{30, {255, 0, 0}}, {50, {0, 255, 0}}, {70, {0, 0, 255}},
+	};
+	struct bp_light_state value;
+	zassert_ok(hub_light_animate(BP_LIGHT_CENTER, frames, ARRAY_SIZE(frames)));
+	/* Subsequent caller mutation and a rejected submission cannot change it. */
+	memset(frames, 0, sizeof(frames));
+	zassert_equal(hub_light_update(280000, HOST_BLE_OFF), 280030);
+	zassert_equal(duty(5), UINT16_MAX);
+	zassert_equal(duty(4), 0);
+	zassert_equal(duty(3), 0);
+	unsigned int before = writes;
+	zassert_equal(hub_light_update(280029, HOST_BLE_OFF), 280030);
+	zassert_equal(writes, before);
+	zassert_equal(hub_light_update(280030, HOST_BLE_OFF), 280080);
+	zassert_equal(duty(5), 0);
+	zassert_equal(duty(4), 12079);
+	zassert_equal(hub_light_animate(BP_LIGHT_CENTER, frames, ARRAY_SIZE(frames)), -EINVAL);
+	zassert_equal(hub_light_update(280080, HOST_BLE_OFF), 280150);
+	zassert_equal(duty(4), 0);
+	zassert_equal(duty(3), 16448);
+	before = writes;
+	zassert_equal(hub_light_update(289080, HOST_BLE_OFF), 289150);
+	zassert_equal(writes, before + 1, "A delayed update must latch only the current frame");
+	zassert_equal(duty(3), 16448);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &value));
+	zassert_true(value.animating && value.owned && value.valid && !value.pending);
+	zassert_equal(value.frame, 2);
+	zassert_equal(value.frames, 3);
+
+	/* Exhaust the shared allocator, including any small residual fragment. */
+	struct allocation { struct allocation *next; } *allocations = NULL, *item;
+	while ((item = k_malloc(sizeof(*item)))) {
+		item->next = allocations;
+		allocations = item;
+	}
+	const struct bp_light_frame replacement[] = {{1, {255, 0, 0}}};
+	zassert_equal(hub_light_animate(BP_LIGHT_CENTER, replacement, 1), -ENOMEM);
+	while (allocations) {
+		item = allocations;
+		allocations = allocations->next;
+		k_free(item);
+	}
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &value));
+	zassert_true(value.animating && value.frames == 3);
+
+	/* Short intervals use their own deadline, not the readiness animation's 20 ms. */
+	zassert_ok(hub_light_animate(BP_LIGHT_CENTER, replacement, 1));
+	zassert_equal(hub_light_update(289081, HOST_BLE_OFF), 289082);
+	spi_error = -EIO;
+	hub_light_update(289082, HOST_BLE_OFF);
+	spi_error = 0;
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &value));
+	zassert_false(value.animating || value.pending || value.valid);
+	zassert_equal(value.error, -EIO);
+	before = writes;
+	zassert_equal(hub_light_update(289100, HOST_BLE_OFF), INT64_MAX);
+	zassert_equal(writes, before, "A failed animation must stop, without silent retries");
+
+	static struct bp_light_frame maximum[BP_LIGHT_MAX_FRAMES];
+	for (size_t i = 0; i < ARRAY_SIZE(maximum); i++) {
+		maximum[i] = (struct bp_light_frame){.duration_ms = INT32_MAX, .rgb = {0, 255, 0}};
+	}
+	/* Both lights and replacement fit; total cycle length exceeds 32-bit uptime. */
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		zassert_ok(hub_light_animate(i, maximum, ARRAY_SIZE(maximum)));
+	}
+	hub_light_update(289101, HOST_BLE_OFF);
+	zassert_ok(hub_light_animate(BP_LIGHT_CENTER, maximum, ARRAY_SIZE(maximum)));
+	hub_light_update(289102, HOST_BLE_OFF);
+	zassert_equal(duty(4), 12079);
+	zassert_equal(duty(19), 12079);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_MENU, 289103));
+	zassert_equal(duty(20), UINT16_MAX);
+	zassert_ok(hub_light_get(BP_LIGHT_BLUETOOTH, &value));
+	zassert_true(value.animating && !value.visible);
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 289104));
+	zassert_equal(duty(20), 0);
+	zassert_equal(duty(19), 12079);
+	const uint8_t red[3] = {255, 0, 0};
+	zassert_ok(hub_light_write(BP_LIGHT_CENTER, red));
+	hub_light_update(289105, HOST_BLE_OFF);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &value));
+	zassert_false(value.animating);
+	zassert_equal(duty(5), UINT16_MAX);
+	zassert_equal(duty(4), 0);
+	/* The Bluetooth clock remains valid beyond a 32-bit millisecond wrap. */
+	hub_light_update(289101 + 2LL * INT32_MAX + 7, HOST_BLE_OFF);
+	zassert_ok(hub_light_get(BP_LIGHT_BLUETOOTH, &value));
+	zassert_equal(value.frame, 2);
+	zassert_ok(hub_light_release());
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		zassert_ok(hub_light_get(i, &value));
+		zassert_false(value.owned || value.animating || value.frames);
+	}
+}
+
 ZTEST(hub, test_readiness_light_and_manual_override)
 {
 	zassert_equal(hub_light_update(0, HOST_BLE_OFF), 20);
@@ -490,6 +592,7 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 	for (int i = 0; i < 3; i++) {
 		zassert_equal(duty(20 - i), raw[i]);
 	}
+	check_application_animation();
 	zassert_ok(hub_light_manual(true, red));
 	zassert_ok(hub_light_off());
 	before = writes;

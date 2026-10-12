@@ -237,7 +237,7 @@ int main(void)
 	CHECK(hub_matrix_get(&display) == 0 && display.owner == BP_MATRIX_FREE);
 	CHECK(led_frame[77] == 0 && led_frame[78] == 0);
 	CHECK(available() == capacity);
-	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
+	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
 		CHECK(native_fixture_run("light_fault") == 0);
 		k_msleep(20);
 		application_get_status(&status);

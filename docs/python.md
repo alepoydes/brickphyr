@@ -31,7 +31,7 @@ record their [runtime](applications.md#experimental-python-profile),
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
 | 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI checks, physical script I/O checks | Physical USB/BLE interactive acceptance |
 | 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; actual serial client and synthetic BLE adapter checks | Execution through physical USB/BLE clients and unchanged Pybricks Code |
-| 7–9 | Tools and initial hub bindings: buttons, lighting, static display and battery snapshots; shared native services | Remaining hub/device bindings, missing shared-service behavior and required reference examples |
+| 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, static display and battery snapshots; shared native services | Remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
 Continue from this implementation in the following order:

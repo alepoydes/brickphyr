@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <errno.h>
 #include <brickphyr_light.h>
 #include "host_transport.h"
@@ -21,10 +22,13 @@ int hub_light_off(void);
 
 #ifdef CONFIG_BRICKPHYR_LIGHT
 int hub_light_write(uint32_t light, const uint8_t rgb[3]);
+int hub_light_animate(uint32_t light, const struct bp_light_frame *frames, size_t count);
 int hub_light_get(uint32_t light, struct bp_light_state *state);
 int hub_light_release(void);
 #else
 static inline int hub_light_write(uint32_t light, const uint8_t rgb[3]) { return -ENOTSUP; }
+static inline int hub_light_animate(uint32_t light, const struct bp_light_frame *frames,
+	size_t count) { return -ENOTSUP; }
 static inline int hub_light_get(uint32_t light, struct bp_light_state *state) { return -ENOTSUP; }
 static inline int hub_light_release(void) { return 0; }
 #endif

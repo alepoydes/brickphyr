@@ -421,6 +421,23 @@ static inline int z_vrfy_bp_light_write(uint32_t light, const uint8_t *rgb)
 }
 #include <zephyr/syscalls/bp_light_write_mrsh.c>
 
+int z_impl_bp_light_animate(uint32_t light, const struct bp_light_frame *frames, size_t count)
+{
+	return hub_light_animate(light, frames, count);
+}
+
+static inline int z_vrfy_bp_light_animate(uint32_t light, const struct bp_light_frame *frames,
+	size_t count)
+{
+	if (!count || count > BP_LIGHT_MAX_FRAMES) {
+		return -EINVAL;
+	}
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(frames, __alignof__(*frames))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(frames, count * sizeof(*frames)));
+	return z_impl_bp_light_animate(light, frames, count);
+}
+#include <zephyr/syscalls/bp_light_animate_mrsh.c>
+
 int z_impl_bp_light_get(uint32_t light, struct bp_light_state *state)
 {
 	return hub_light_get(light, state);

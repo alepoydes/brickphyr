@@ -40,14 +40,18 @@ static struct flare {
 static unsigned int next_slot;
 
 static struct k_spinlock application_lock;
-static struct {
+static struct application_light {
 	struct bp_light_state state;
 	uint16_t pwm[3];
 	uint32_t revision;
 	bool releasing;
+	struct bp_light_frame *frames;
+	uint64_t period;
+	int64_t started, deadline;
 } application_lights[BP_LIGHT_COUNT];
 static bool disabled;
 
+BUILD_ASSERT(sizeof(struct bp_light_frame) * BP_LIGHT_MAX_FRAMES == 2048);
 BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)) ==
 	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 1);
 BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)) ==
@@ -67,6 +71,54 @@ static void color_to_pwm(uint16_t rgb[3], uint16_t peak)
 
 		rgb[i] = (balanced * peak + 32767) / UINT16_MAX;
 	}
+}
+
+/* application_lock is held. All buffers belong to the service, not its caller. */
+static void stop_animation(struct application_light *light)
+{
+	k_free(light->frames);
+	light->frames = NULL;
+	light->state.animating = false;
+	light->state.frames = light->state.frame = 0;
+}
+
+static void request_color(struct application_light *light, const uint8_t rgb[3])
+{
+	memcpy(light->state.rgb, rgb, sizeof(light->state.rgb));
+	for (size_t i = 0; i < 3; i++) {
+		light->pwm[i] = rgb[i] * 257U;
+	}
+	color_to_pwm(light->pwm, UINT16_MAX);
+	light->state.owned = true;
+	light->state.pending = true;
+	light->revision++;
+}
+
+/* At most 256 cells per light, one output latch per update, no replay burst. */
+static int64_t advance_animations(int64_t now)
+{
+	int64_t deadline = INT64_MAX;
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		struct application_light *light = &application_lights[i];
+		if (!light->state.animating) {
+			continue;
+		}
+		if (light->started < 0) {
+			light->started = now;
+			light->deadline = now + light->frames[0].duration_ms;
+		} else if (now >= light->deadline) {
+			uint64_t phase = (uint64_t)(now - light->started) % light->period;
+			size_t frame = 0;
+			while (phase >= light->frames[frame].duration_ms) {
+				phase -= light->frames[frame++].duration_ms;
+			}
+			light->state.frame = frame;
+			request_color(light, light->frames[frame].rgb);
+			light->deadline = now + light->frames[frame].duration_ms - phase;
+		}
+		deadline = MIN(deadline, light->deadline);
+	}
+	return deadline;
 }
 
 static int write_colors(void)
@@ -101,6 +153,7 @@ static int write_colors(void)
 		state->pending = false;
 		if (err) {
 			state->errors += state->errors != UINT32_MAX;
+			state->animating = false;
 		} else {
 			state->applied_ms = k_uptime_get();
 			state->visible = visible[i];
@@ -254,6 +307,7 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 {
 	k_mutex_lock(&lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	int64_t application_deadline = advance_animations(now);
 	bool pending = application_lights[0].state.pending || application_lights[1].state.pending;
 	k_spin_unlock(&application_lock, key);
 	bool changed = mode != OFF && bluetooth != bluetooth_state;
@@ -271,8 +325,9 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 	bool animate_bt = !bluetooth_manual && menu_state == HUB_LIGHT_NORMAL &&
 		(bluetooth_state == HOST_BLE_WAITING || bluetooth_state == HOST_BLE_PYBRICKS ||
 		 bluetooth_state == HOST_BLE_NATIVE);
-	bool animate = mode != OFF && (mode == ANIMATED || animate_bt || pending);
-	if (changed || (animate && now >= next_frame)) {
+	bool animate = mode != OFF && (mode == ANIMATED || animate_bt);
+	bool readiness_frame = changed || (animate && now >= next_frame);
+	if (readiness_frame) {
 		if (started < 0) {
 			started = now;
 			next_flare = now + 1500;
@@ -288,18 +343,21 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 		if (!bluetooth_manual) {
 			bluetooth_color(now, fluctuation);
 		}
+		/* Readiness runs at 50 Hz independently of application frame intervals. */
+		next_frame = started + (elapsed / 20 + 1) * 20;
+	}
+	if (readiness_frame || pending) {
 		int err = device_is_ready(leds) ? write_colors() : -ENODEV;
 
 		if (err) {
 			mode = MANUAL;
 			bluetooth_manual = true;
 			animate = false;
+			application_deadline = INT64_MAX;
 			LOG_ERR("Readiness light stopped: %d", err);
 		}
-		/* 50 frames/s: one 97-byte latch per frame, no catch-up burst after a delay. */
-		next_frame = started + (elapsed / 20 + 1) * 20;
 	}
-	int64_t deadline = animate ? next_frame : INT64_MAX;
+	int64_t deadline = MIN(animate ? next_frame : INT64_MAX, application_deadline);
 
 	k_mutex_unlock(&lock);
 	return deadline;
@@ -341,6 +399,9 @@ int hub_light_off(void)
 	k_mutex_lock(&lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
 	disabled = true;
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		stop_animation(&application_lights[i]);
+	}
 	k_spin_unlock(&application_lock, key);
 	mode = OFF;
 	int err = -ENODEV;
@@ -362,17 +423,52 @@ int hub_light_write(uint32_t light, const uint8_t rgb[3])
 	if (!device_is_ready(leds)) {
 		return -ENODEV;
 	}
-	uint16_t pwm[] = {rgb[0] * 257U, rgb[1] * 257U, rgb[2] * 257U};
-	color_to_pwm(pwm, UINT16_MAX);
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
 	struct bp_light_state *state = &application_lights[light].state;
 	int err = disabled ? -ESHUTDOWN : state->pending || application_lights[light].releasing ? -EBUSY : 0;
 	if (!err) {
-		memcpy(state->rgb, rgb, sizeof(state->rgb));
-		memcpy(application_lights[light].pwm, pwm, sizeof(pwm));
-		state->owned = true;
-		state->pending = true;
-		application_lights[light].revision++;
+		stop_animation(&application_lights[light]);
+		request_color(&application_lights[light], rgb);
+	}
+	k_spin_unlock(&application_lock, key);
+	return err;
+}
+
+int hub_light_animate(uint32_t light, const struct bp_light_frame *frames, size_t count)
+{
+	if (light >= BP_LIGHT_COUNT || !frames || !count || count > BP_LIGHT_MAX_FRAMES) {
+		return -EINVAL;
+	}
+	uint64_t period = 0;
+	for (size_t i = 0; i < count; i++) {
+		if (!frames[i].duration_ms || frames[i].duration_ms > INT32_MAX) {
+			return -EINVAL;
+		}
+		period += frames[i].duration_ms;
+	}
+	if (!device_is_ready(leds)) {
+		return -ENODEV;
+	}
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	struct application_light *value = &application_lights[light];
+	int err = disabled ? -ESHUTDOWN : value->state.pending || value->releasing ? -EBUSY : 0;
+	if (!err) {
+		/* k_malloc never waits. Allocation, bounded copy and publication share
+		 * the lock: aborting an application cannot leak an unpublished buffer.
+		 * Validate user ranges/alignment before this critical section. */
+		struct bp_light_frame *copy = k_malloc(count * sizeof(*frames));
+		if (!copy) {
+			err = -ENOMEM;
+		} else {
+			memcpy(copy, frames, count * sizeof(*frames));
+			stop_animation(value);
+			value->frames = copy;
+			value->period = period;
+			value->started = -1;
+			value->state.frames = count;
+			value->state.animating = true;
+			request_color(value, copy[0].rgb);
+		}
 	}
 	k_spin_unlock(&application_lock, key);
 	return err;
@@ -400,6 +496,7 @@ int hub_light_release(void)
 	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
 		owned[i] = application_lights[i].state.owned;
 		if (owned[i]) {
+			stop_animation(&application_lights[i]);
 			application_lights[i].releasing = true;
 			application_lights[i].revision++;
 		}

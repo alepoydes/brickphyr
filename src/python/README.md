@@ -105,5 +105,8 @@ The adaptation replaces PBIO device access with the protected C SDK and common
 ownership/cleanup, without linking another driver scheduler. Static display calls
 wait interruptibly for the shared service's completion. Color calls do likewise;
 system menus can temporarily hide their output without revoking ownership.
+Blink/color sequences are validated and converted to RGB once, then copied into
+the shared light service. It owns their timing and lifetime independently of
+Python, with the same cancellation/cleanup path as native applications.
 Matrix orientation belongs to the hub display and is shared by hub objects,
 resetting with a fresh constructor or interpreter as in the reference.

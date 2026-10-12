@@ -184,7 +184,8 @@ input()
 
 
 @pytest.mark.parametrize("ending", ["return", "exception", "stop"])
-def test_lighting_and_display_cleanup(ending):
+@pytest.mark.parametrize("animated", [False, True])
+def test_lighting_and_display_cleanup(ending, animated):
     source = b"""
 from pybricks.hubs import PrimeHub
 from pybricks.parameters import Color
@@ -195,6 +196,11 @@ hub.display.on()
 print('ready')
 input()
 """
+    if animated:
+        source = source.replace(b"hub.light.on(Color.RED)", b"hub.light.animate([Color.RED], 10)")
+        source = source.replace(
+            b"hub.bluetooth_light.on(Color.BLUE)", b"hub.bluetooth_light.blink(Color.BLUE, [10])"
+        )
     if ending == "exception":
         source += b"raise ValueError('device cleanup')\n"
     elif ending == "stop":
@@ -243,6 +249,83 @@ hub.display.number(-42)
                 assert (await completed(client)).result == 0
             finally:
                 await checked(client, Stop())
+
+    with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
+
+
+def test_light_animations_validate_copy_and_run_without_python_yields():
+    source = b"""
+import gc
+from pybricks.hubs import PrimeHub
+from pybricks.parameters import Color
+hub = PrimeHub()
+colors = [Color.RED]
+hub.light.animate(colors=colors, interval=10000)
+colors[0] = Color.GREEN
+durations = [10000]
+hub.bluetooth_light.blink(color=Color.BLUE, durations=durations)
+durations[0] = 0
+del colors, durations
+gc.collect()
+for operation, error in (
+    (lambda: hub.light.animate([], 10), ValueError),
+    (lambda: hub.light.animate([Color.BLUE], 0), ValueError),
+    (lambda: hub.light.animate([Color.BLUE], -1), ValueError),
+    (lambda: hub.light.animate([Color.BLUE], float('nan')), ValueError),
+    (lambda: hub.light.animate([Color.BLUE], float('inf')), OverflowError),
+    (lambda: hub.light.animate([Color.BLUE, 7], 10), TypeError),
+    (lambda: hub.light.blink(Color.BLUE, [10, 0]), ValueError),
+    (lambda: hub.light.blink(Color.BLUE, [10, -1]), ValueError),
+    (lambda: hub.light.blink(Color.BLUE, []), ValueError),
+    (lambda: hub.light.animate([Color.BLUE] * 257, 10), ValueError),
+):
+    try:
+        operation()
+    except error:
+        pass
+    else:
+        assert False
+gc.collect()
+print('ready')
+input()
+hub.light.animate([Color.RED, Color.BLUE], 60)
+hub.bluetooth_light.blink(Color.GREEN, [100, 100, 100])
+print('ready')
+while True: pass
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (
+            port,
+            client,
+        ):
+            try:
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                wire = await frame(port, captured)
+                assert wire[5] > 60000 and wire[4] == wire[3] == 0
+                assert wire[18] > 15000 and wire[19] == wire[20] == 0
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                colors, blinking = set(), set()
+                async with asyncio.timeout(3):
+                    while len(colors) != 2 or len(blinking) != 2:
+                        wire = await frame(port, captured)
+                        assert wire[4] == wire[18] == wire[20] == 0
+                        colors.add((bool(wire[5]), bool(wire[3])))
+                        blinking.add(bool(wire[19]))
+                        await asyncio.sleep(0.017)
+                assert colors == {(True, False), (False, True)}
+                assert blinking == {False, True}
+                assert (await checked(client, Status())).state == 1
+            finally:
+                await checked(client, Stop())
+            wire = await frame(port, captured)
+            assert wire[5] == wire[18] == wire[19] == wire[20] == 0
+            assert wire[3] > 0
 
     with native_console(BUILD) as device:
         asyncio.run(exercise(device))
@@ -317,7 +400,8 @@ def test_repl_reset_releases_hub_devices():
                 await until(client, b">>> ")
                 for command in (
                     b"from pybricks.hubs import PrimeHub; from pybricks.parameters import Color, Side",
-                    b"hub = PrimeHub(); hub.light.on(Color.RED); hub.bluetooth_light.on(Color.BLUE)",
+                    b"hub = PrimeHub(); hub.light.animate([Color.RED], 10); "
+                    b"hub.bluetooth_light.blink(Color.BLUE, [10])",
                     b"hub.display.orientation(Side.RIGHT); hub.display.pixel(0, 0)",
                 ):
                     await checked(client, Input(data=command + b"\r"))

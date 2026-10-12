@@ -82,11 +82,14 @@ checks, not physical fault injection.
 protected engine. Synthetic button/ADC inputs and an observed SPI peer check
 button sets, battery units, static drawing, rotation, color channels, ownership,
 I/O failures and cleanup on return, exception, forced stop and REPL reset.
+Light sequences are copied before caller mutation/GC, invalid replacements
+preserve the preceding pattern, and both lights animate during a non-yielding
+Python loop. Static and animated cleanup use the same production resource owner.
 These checks do not establish physical display or light appearance. NaN and
 malformed images must fail without altering the display.
-The native ARM fixture also supplies an invalid RGB pointer and a misaligned
-light snapshot buffer through the SDK. Both must end only the application,
-restore its claimed light and leave the next application usable.
+The native ARM fixture also supplies invalid RGB/animation pointers and misaligned
+animation/snapshot buffers through the SDK. Each must end only the application,
+restore its claimed light, recover its allocation and leave the next application usable.
 
 `test_python_files.py` exercises source/bytecode/native imports, relative packages,
 GC and recovery from a truncated native import. It also covers malformed maps,

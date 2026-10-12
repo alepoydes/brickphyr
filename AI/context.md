@@ -102,8 +102,8 @@ and application power holds are covered; see [applications](../docs/applications
 
 Friendly/raw REPL, Shell/CLI integration, interactive output backpressure and
 reference standard modules have ARM/PTY checks. Parameters, geometry, timing and
-multitasking reuse Pybricks code. Initial hub bindings provide buttons, button
-lighting, static display/orientation and battery snapshots through the protected
+multitasking reuse Pybricks code. Initial hub bindings provide buttons, static and
+animated button lighting, static display/orientation and battery snapshots through the protected
 SDK and common services. Synthetic SPI/ADC checks cover validation, ownership,
 driver errors and cleanup, including REPL reset. These newer interactive and
 hub-library paths still need physical acceptance; the remaining hub, device,
