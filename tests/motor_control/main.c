@@ -293,4 +293,43 @@ ZTEST(motor_control, test_settings_during_motion)
 	zassert_true(out.active);
 }
 
+ZTEST(motor_control, test_model_settings_and_feedback_guard)
+{
+	struct motor_control motor;
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	struct bp_motor_model_settings values;
+	motor_model_settings_get(&motor.observer.settings, &values);
+	values.gain_low = values.gain_high = 0;
+	pbio_observer_settings_t settings;
+	zassert_ok(motor_model_settings_set(48, &settings, &values));
+	motor.observer.settings = settings;
+	zassert_ok(motor_control_predict(&motor, 50, 1000, true, 0));
+	zassert_equal(motor.observer.speed, 0);
+
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	values.gain_low = 100;
+	values.gain_high = 400;
+	zassert_ok(motor_model_settings_set(48, &settings, &values));
+	motor.observer.settings = settings;
+	zassert_ok(motor_control_predict(&motor, 50, 1000, true, 0));
+	zassert_true(motor.observer.speed > 0);
+
+	pbio_observer_settings_t previous = settings;
+	values.friction_cutoff = 0;
+	zassert_equal(motor_model_settings_set(48, &settings, &values), -EINVAL);
+	zassert_mem_equal(&settings, &previous, sizeof(settings));
+	values.friction_cutoff = INT32_MAX;
+	zassert_equal(motor_model_settings_set(48, &settings, &values), -EINVAL);
+	zassert_mem_equal(&settings, &previous, sizeof(settings));
+
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	values.friction_cutoff = 500;
+	values.gain_low = values.gain_threshold = 0;
+	values.gain_high = INT32_MAX;
+	zassert_ok(motor_model_settings_set(48, &settings, &values));
+	motor.observer.settings = settings;
+	zassert_equal(motor_control_predict(&motor, 50, 2, true, 0), -ERANGE);
+	zassert_equal(motor.observer.speed, 0);
+}
+
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

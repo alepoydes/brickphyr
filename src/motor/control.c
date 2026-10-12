@@ -426,6 +426,33 @@ void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_t
     memcpy(value->points, points, sizeof(points));
 }
 
+void motor_model_settings_get(const pbio_observer_settings_t *s, struct bp_motor_model_settings *value)
+{
+    *value = (struct bp_motor_model_settings){.stall_speed = s->stall_speed_limit,
+        .stall_ticks = s->stall_time, .negligible_voltage = s->feedback_voltage_negligible,
+        .stall_ratio = s->feedback_voltage_stall_ratio, .gain_low = s->feedback_gain_low,
+        .gain_high = s->feedback_gain_high, .gain_threshold = s->feedback_gain_threshold,
+        .friction_cutoff = s->coulomb_friction_speed_cutoff};
+}
+
+int motor_model_settings_set(uint16_t id, pbio_observer_settings_t *settings, const struct bp_motor_model_settings *s)
+{
+    const struct defaults *d = find_defaults(id);
+    if (!d) return -ENOTSUP;
+    /* The reference binding assigns raw integers without validation. Preserve
+     * useful tuning but exclude a zero divisor and overflow in the friction
+     * interpolation. Feedback products are checked against each actual frame. */
+    if (s->stall_speed < 0 || s->negligible_voltage < 0 || s->stall_ratio < 0 || s->stall_ratio > 100 ||
+        s->gain_low < 0 || s->gain_high < 0 || s->gain_threshold < 0 || s->friction_cutoff <= 0 ||
+        s->friction_cutoff > INT32_MAX / d->model->torque_friction) return -EINVAL;
+    *settings = (pbio_observer_settings_t){.stall_speed_limit = s->stall_speed,
+        .stall_time = s->stall_ticks, .feedback_voltage_negligible = s->negligible_voltage,
+        .feedback_voltage_stall_ratio = s->stall_ratio, .feedback_gain_low = s->gain_low,
+        .feedback_gain_high = s->gain_high, .feedback_gain_threshold = s->gain_threshold,
+        .coulomb_friction_speed_cutoff = s->friction_cutoff};
+    return 0;
+}
+
 static int state_get(struct motor_control *motor, int64_t measured, pbio_control_state_t *state)
 {
     int err = angle_from_mdeg(measured, &state->position);
@@ -433,9 +460,11 @@ static int state_get(struct motor_control *motor, int64_t measured, pbio_control
     pbio_observer_get_estimated_state(&motor->observer, &state->speed,
         &state->position_estimate, &state->speed_estimate);
     /* A corrupt angle jump must not overflow observer feedback arithmetic. */
-    int64_t error = measured - angle_mdeg(&state->position_estimate);
-    int32_t bound = INT32_MAX / motor->observer.settings.feedback_gain_high;
-    return error < -bound || error > bound ? -ERANGE : 0;
+    int64_t error = llabs(measured - angle_mdeg(&state->position_estimate));
+    const pbio_observer_settings_t *s = &motor->observer.settings;
+    if (error >= INT32_MAX) return -ERANGE;
+    int64_t low = error < s->feedback_gain_threshold ? error : s->feedback_gain_threshold;
+    return low * s->feedback_gain_low + (error - low) * s->feedback_gain_high > INT32_MAX ? -ERANGE : 0;
 }
 
 static int result(pbio_error_t err)
@@ -599,6 +628,7 @@ int motor_control_step(struct motor_control *motor, uint32_t ticks, int64_t angl
     *out = (struct motor_reference){.angle_mdeg = angle_mdeg(&ref.position),
         .speed_mdeg_s = ref.speed, .acceleration_mdeg_s2 = ref.acceleration,
         .estimated_speed = state.speed_estimate,
+        .feedback_torque = feedback, .feedforward_torque = feedforward,
         .voltage_mv = pbio_int_math_clamp(voltage, motor->max_voltage),
         .coast = actuation == PBIO_DCMOTOR_ACTUATION_COAST,
         .active = pbio_control_is_active(&motor->control), .done = done,
@@ -625,7 +655,9 @@ int motor_control_observe(struct motor_control *motor, uint32_t ticks,
     pbio_control_state_t state;
     int err = state_get(motor, measured, &state);
     if (err) return err;
-    struct motor_observation value = {.estimated_speed = state.speed_estimate};
+    struct motor_observation value = {.estimated_angle = angle_mdeg(&state.position_estimate),
+        .estimated_speed = state.speed_estimate, .estimated_current = motor->observer.current,
+        .model_stalled = motor->observer.stalled};
     if (!coast) {
         uint32_t duration;
         if (pbio_control_is_active(&motor->control)) {
@@ -642,5 +674,28 @@ int motor_control_observe(struct motor_control *motor, uint32_t ticks,
         }
     }
     *out = value;
+    return 0;
+}
+
+/* The 10 servo log values from PBIO servo.c, before predicting the next state.
+ * Buffer ownership, elapsed time, downsampling and output units belong to the
+ * port service. No copy of controller/PID equations is needed here. */
+int motor_control_log_sample(struct motor_control *motor, uint32_t ticks, int64_t angle,
+    bool coast, int32_t voltage, const struct motor_reference *reference, struct motor_log_sample *value)
+{
+    pbio_control_state_t state;
+    int err = state_get(motor, angle, &state);
+    if (err) return err;
+    uint32_t duration;
+    bool stalled = pbio_control_is_active(&motor->control) ?
+        motor->control.status & PBIO_CONTROL_STATUS_STALLED :
+        pbio_observer_is_stalled(&motor->observer, ticks, &duration);
+    *value = (struct motor_log_sample){.angle_mdeg = angle,
+        .estimated_angle = angle_mdeg(&state.position_estimate), .speed = state.speed,
+        .estimated_speed = state.speed_estimate,
+        .flags = (coast ? PBIO_DCMOTOR_ACTUATION_COAST : PBIO_DCMOTOR_ACTUATION_VOLTAGE) | ((int32_t)stalled << 2),
+        .voltage = voltage, .feedback_torque = reference->feedback_torque,
+        .feedforward_torque = reference->feedforward_torque,
+        .feedback_voltage = pbio_observer_get_feedback_voltage(&motor->observer, &state.position)};
     return 0;
 }

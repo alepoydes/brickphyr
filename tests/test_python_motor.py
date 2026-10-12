@@ -2,11 +2,13 @@
 """Protected Motor bindings over synthetic UART feedback and real motor services."""
 
 import asyncio
+import re
 
 from test_native import native_console
 from test_python import completed, output
 from test_python_accessories import motor_matches
 from test_python_hub import BUILD, ready, shell
+from test_python_io import until
 from test_python_pupdevice import port_matches
 
 from brickphyrdev import console
@@ -183,6 +185,92 @@ assert False, 'host Stop must release the active motor'
                 result = await completed(client, state=3)
                 assert result.cleanup == 0, result
                 await motor_matches(client, owner=0, mode=0, duty_permille=0)
+            except BaseException as error:
+                error.add_note(f"Python output: {await output(client)!r}")
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    with native_console(BUILD, virtual_clock=True) as device:
+        asyncio.run(exercise(device))
+
+
+def test_motor_model_and_log_lifetime():
+    source = b"""
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port, Direction
+from pybricks.tools import wait
+
+m = Motor(Port.A, Direction.COUNTERCLOCKWISE, [12, 24])
+alias = Motor(Port.A, Direction.COUNTERCLOCKWISE, [12, 24], reset_angle=False)
+model = m.model
+assert model is m.model and m.log is m.log
+settings = list(model.settings())
+settings[4] += 1
+assert model.settings(settings) is None
+assert alias.model.settings() == tuple(settings)
+m.reset_angle(15)
+assert model.settings() == tuple(settings)
+angle, speed, current, stalled = model.state()
+# Observer state uses directed shaft units, without the 2:1 output gearing.
+assert abs(angle - 30) < 0.1 and speed == current == 0 and not stalled
+
+m.dc(20)
+assert m.log.start(40, down_sample=2) is None
+wait(60)
+m.stop()
+assert m.log.stop() is None
+m.log.save('motor.csv')
+m.log.start(20)
+wait(25)
+m.close()
+# Closing the motor stops collection but retains already initialized rows.
+m.log.save('closed.csv')
+
+m = Motor(Port.A)
+# This buffer exceeds half the kernel heap: a leaked copy prevents the next
+# application from starting its equally sized log after forced cleanup.
+m.log.start(4000)
+print('ready'); input()
+"""
+    second = b"""
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port
+m = Motor(Port.A)
+m.log.start(4000)
+print('log memory reclaimed')
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                await shell(port, captured, b"pup_peer encoded_motor")
+                await port_matches(client, phase=6)
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                text = await until(client, b"ready\r\n")
+                logs = re.findall(rb"PB_OF:([^\r\n]+)\r\n(.*?)PB_EOF\r\n", text, re.S)
+                assert [name for name, _ in logs] == [b"motor.csv", b"closed.csv"], text
+                for name, data in logs:
+                    rows = [[int(v) for v in row.split(b", ")] for row in data.splitlines()]
+                    assert len(rows) == 4 and all(len(row) == 11 for row in rows), rows
+                    assert all(row[2] == 15 and row[3] == 0 for row in rows), rows
+                    period = 10 if name == b"motor.csv" else 5
+                    assert all(b[0] - a[0] == period and b[1] - a[1] == period * 10
+                               for a, b in zip(rows, rows[1:])), rows
+                    if name == b"motor.csv":
+                        assert all(row[4] & 3 == 2 and row[5] > 0 for row in rows), rows
+                        assert all(row[8] == row[9] == 0 for row in rows), rows
+                    else:
+                        assert all(row[4] & 3 == 0 and row[5] == 0 for row in rows), rows
+                await checked(client, Stop())
+                await completed(client, state=3)
+                await motor_matches(client, owner=0, mode=0, duty_permille=0)
+                await upload(client, port, second, Format.PYTHON)
+                await checked(client, Start())
+                state = await completed(client)
+                assert state.result == state.fault == state.dropped == 0, state
+                assert await output(client) == b"log memory reclaimed\r\n"
             except BaseException as error:
                 error.add_note(f"Python output: {await output(client)!r}")
                 error.add_note(f"Console: {bytes(captured)!r}")

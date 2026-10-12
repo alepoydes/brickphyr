@@ -6,6 +6,7 @@
 #include "py/mphal.h"
 #include <brickphyr.h>
 #include <errno.h>
+#include <string.h>
 #include <zephyr/sys/util.h>
 #include <pbio/dcmotor.h>
 #include <pybricks/tools.h>
@@ -21,7 +22,7 @@ typedef struct {
 	bool closed;
 	uint32_t motion_request;
 	pb_type_async_t *iter;
-	mp_obj_t control;
+	mp_obj_t control, model, log;
 } motor_obj_t;
 
 static void check(int err)
@@ -364,9 +365,9 @@ MP_DEFINE_CONST_OBJ_TYPE(python_dc_motor_type, MP_QSTR_DCMotor, MP_TYPE_FLAG_NON
 typedef struct {
 	mp_obj_base_t base;
 	motor_obj_t *motor;
-} control_obj_t;
+} motor_child_t;
 
-static struct bp_servo_settings control_settings(control_obj_t *self)
+static struct bp_servo_settings control_settings(motor_child_t *self)
 {
 	motor_obj_t *m = self->motor;
 	if (m->closed) check(-ENODEV);
@@ -375,7 +376,7 @@ static struct bp_servo_settings control_settings(control_obj_t *self)
 	return value;
 }
 
-static mp_obj_t control_set(control_obj_t *self, uint32_t group, struct bp_servo_settings *value)
+static mp_obj_t control_set(motor_child_t *self, uint32_t group, struct bp_servo_settings *value)
 {
 	motor_obj_t *m = self->motor;
 	uint32_t revision;
@@ -390,7 +391,7 @@ static mp_obj_t control_set(control_obj_t *self, uint32_t group, struct bp_servo
 
 static mp_obj_t control_limits(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
-	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
 		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(acceleration), PB_ARG_DEFAULT_NONE(torque));
 	struct bp_servo_settings s = control_settings(self);
 	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
@@ -419,7 +420,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(control_limits_obj, 1, control_limits);
 
 static mp_obj_t control_pid(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
-	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
 		PB_ARG_DEFAULT_NONE(kp), PB_ARG_DEFAULT_NONE(ki), PB_ARG_DEFAULT_NONE(kd),
 		PB_ARG_DEFAULT_NONE(integral_deadzone), PB_ARG_DEFAULT_NONE(integral_rate));
 	struct bp_servo_settings s = control_settings(self);
@@ -439,7 +440,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(control_pid_obj, 1, control_pid);
 
 static mp_obj_t control_target_tolerances(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
-	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
 		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(position));
 	struct bp_servo_settings s = control_settings(self);
 	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
@@ -454,7 +455,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(control_target_tolerances_obj, 1, control_targ
 
 static mp_obj_t control_stall_tolerances(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
-	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, control_obj_t, self,
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
 		PB_ARG_DEFAULT_NONE(speed), PB_ARG_DEFAULT_NONE(time));
 	struct bp_servo_settings s = control_settings(self);
 	if (PB_PARSE_ARGS_METHOD_ALL_NONE()) {
@@ -469,7 +470,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(control_stall_tolerances_obj, 1, control_stall
 
 static struct bp_servo_trajectory control_snapshot(mp_obj_t object)
 {
-	motor_obj_t *m = ((control_obj_t *)MP_OBJ_TO_PTR(object))->motor;
+	motor_obj_t *m = ((motor_child_t *)MP_OBJ_TO_PTR(object))->motor;
 	if (m->closed) check(-ENODEV);
 	struct bp_servo_trajectory value;
 	check(bp_servo_trajectory_get(m->port, m->generation, &value));
@@ -513,20 +514,125 @@ static MP_DEFINE_CONST_DICT(control_dict, control_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(control_type, MP_QSTR_Control, MP_TYPE_FLAG_NONE,
 	attr, control_attr, locals_dict, &control_dict);
 
+/* pb_type_motor_model.c's raw observer settings and shaft-state view. */
+static mp_obj_t model_settings(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self, PB_ARG_DEFAULT_NONE(values));
+	struct bp_servo_settings s = control_settings(self);
+	struct bp_motor_model_settings *m = &s.model;
+	if (values_in == mp_const_none) {
+		mp_obj_t values[] = {mp_obj_new_int(m->stall_speed), mp_obj_new_int_from_uint(m->stall_ticks),
+			mp_obj_new_int(m->negligible_voltage), mp_obj_new_int(m->stall_ratio),
+			mp_obj_new_int(m->gain_low), mp_obj_new_int(m->gain_high),
+			mp_obj_new_int(m->gain_threshold), mp_obj_new_int(m->friction_cutoff)};
+		return mp_obj_new_tuple(ARRAY_SIZE(values), values);
+	}
+	size_t count;
+	mp_obj_t *values;
+	mp_obj_get_array(values_in, &count, &values);
+	if (count != 8) check(-EINVAL);
+	*m = (struct bp_motor_model_settings){.stall_speed = mp_obj_get_int(values[0]),
+		.stall_ticks = pb_obj_get_positive_int(values[1]), .negligible_voltage = mp_obj_get_int(values[2]),
+		.stall_ratio = mp_obj_get_int(values[3]), .gain_low = mp_obj_get_int(values[4]),
+		.gain_high = mp_obj_get_int(values[5]), .gain_threshold = mp_obj_get_int(values[6]),
+		.friction_cutoff = mp_obj_get_int(values[7])};
+	return control_set(self, BP_SERVO_MODEL, &s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(model_settings_obj, 1, model_settings);
+
+static mp_obj_t model_state(mp_obj_t object)
+{
+	motor_obj_t *m = ((motor_child_t *)MP_OBJ_TO_PTR(object))->motor;
+	if (m->closed) check(-ENODEV);
+	struct bp_motor_model_state s;
+	check(bp_servo_model_get(m->port, m->generation, &s));
+	mp_obj_t state[] = {mp_obj_new_float((mp_float_t)s.angle_mdeg / 1000),
+		mp_obj_new_float((mp_float_t)s.speed_mdeg_s / 1000),
+		mp_obj_new_float((mp_float_t)s.current_tenth_ma / 10), mp_obj_new_bool(s.stalled)};
+	return mp_obj_new_tuple(ARRAY_SIZE(state), state);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(model_state_obj, model_state);
+static const mp_rom_map_elem_t model_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR_settings), MP_ROM_PTR(&model_settings_obj)},
+	{MP_ROM_QSTR(MP_QSTR_state), MP_ROM_PTR(&model_state_obj)},
+};
+static MP_DEFINE_CONST_DICT(model_dict, model_methods);
+static MP_DEFINE_CONST_OBJ_TYPE(model_type, MP_QSTR_MotorModel, MP_TYPE_FLAG_NONE, locals_dict, &model_dict);
+
+/* pb_type_logger.c's Python interface/CSV framing. Collection stays in the
+ * native port worker; no background write ever targets the Python heap. */
+static mp_obj_t motor_log_start(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
+		PB_ARG_REQUIRED(duration), PB_ARG_DEFAULT_INT(down_sample, 1));
+	motor_obj_t *m = self->motor;
+	if (m->closed) check(-ENODEV);
+	check(bp_motor_log_start(m->port, m->generation, pb_obj_get_positive_int(duration_in),
+		MAX(pb_obj_get_int(down_sample_in), 1)));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(motor_log_start_obj, 1, motor_log_start);
+
+static mp_obj_t motor_log_stop(mp_obj_t object)
+{
+	motor_obj_t *m = ((motor_child_t *)MP_OBJ_TO_PTR(object))->motor;
+	struct bp_motor_log_status status;
+	check(bp_motor_log_status(m->port, m->generation, true, &status));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(motor_log_stop_obj, motor_log_stop);
+
+static mp_obj_t motor_log_save(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self, PB_ARG_DEFAULT_NONE(path));
+	const char *path = path_in == mp_const_none ? "log.txt" : mp_obj_str_get_str(path_in);
+	if (strchr(path, '\n') || strchr(path, '\r')) check(-EINVAL);
+	motor_obj_t *m = self->motor;
+	struct bp_motor_log_status status;
+	check(bp_motor_log_status(m->port, m->generation, true, &status));
+	mp_printf(&mp_plat_print, "PB_OF:%s\n", path);
+	int err = 0;
+	for (uint32_t row = 0; row < status.rows; row++) {
+		struct bp_motor_log_row data;
+		err = bp_motor_log_read(m->port, m->generation, status.revision, row, &data);
+		if (err) break;
+		for (size_t col = 0; col < BP_MOTOR_LOG_COLUMNS; col++) {
+			mp_printf(&mp_plat_print, col + 1 < BP_MOTOR_LOG_COLUMNS ? "%d, " : "%d\n", data.values[col]);
+		}
+		mp_handle_pending(MP_HANDLE_PENDING_CALLBACKS_AND_EXCEPTIONS);
+	}
+	mp_print_str(&mp_plat_print, "PB_EOF\n");
+	check(err ? err : status.error);
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(motor_log_save_obj, 1, motor_log_save);
+static const mp_rom_map_elem_t motor_log_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR_start), MP_ROM_PTR(&motor_log_start_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&motor_log_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_save), MP_ROM_PTR(&motor_log_save_obj)},
+};
+static MP_DEFINE_CONST_DICT(motor_log_dict, motor_log_methods);
+static MP_DEFINE_CONST_OBJ_TYPE(motor_log_type, MP_QSTR_Logger, MP_TYPE_FLAG_NONE, locals_dict, &motor_log_dict);
+
 static void motor_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
 {
 	motor_obj_t *self = MP_OBJ_TO_PTR(object);
 	if (dest[0] != MP_OBJ_NULL) return;
-	if (name != MP_QSTR_control) {
+	mp_obj_t *slot;
+	const mp_obj_type_t *type;
+	if (name == MP_QSTR_control) { slot = &self->control; type = &control_type; }
+	else if (name == MP_QSTR_model) { slot = &self->model; type = &model_type; }
+	else if (name == MP_QSTR_log) { slot = &self->log; type = &motor_log_type; }
+	else {
 		dest[1] = MP_OBJ_SENTINEL;
 		return;
 	}
-	if (self->control == MP_OBJ_NULL) {
-		control_obj_t *control = mp_obj_malloc(control_obj_t, &control_type);
-		control->motor = self;
-		self->control = MP_OBJ_FROM_PTR(control);
+	if (*slot == MP_OBJ_NULL) {
+		motor_child_t *child = mp_obj_malloc(motor_child_t, type);
+		child->motor = self;
+		*slot = MP_OBJ_FROM_PTR(child);
 	}
-	dest[0] = self->control;
+	dest[0] = *slot;
 }
 
 static const mp_rom_map_elem_t motor_methods[] = {

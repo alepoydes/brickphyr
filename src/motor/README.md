@@ -52,3 +52,9 @@ frames without restarting control or erasing its command-local torque limit.
 `pb_type_control.c` at the same pinned revision supplies the diagnostic trajectory
 layout. The port boundary applies direction; the numerical controller and its
 private settings remain in physical shaft units.
+
+Observer tuning adapts `pybricks/common/pb_type_motor_model.c` at the same revision,
+with validation before changing the next frame's settings. `motor_control_log_sample`
+adapts the pre-prediction servo row in `servo.c`, reusing computed controller
+torques and observer feedback. The port service adapts `logger.c` downsampling
+and bounded row publication into firmware-owned memory, independently of Python GC.

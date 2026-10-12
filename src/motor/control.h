@@ -20,12 +20,20 @@ struct motor_reference {
 	int64_t angle_mdeg;
 	int32_t speed_mdeg_s, acceleration_mdeg_s2, estimated_speed;
 	int32_t voltage_mv;
+	int32_t feedback_torque, feedforward_torque;
 	bool coast, active, done, stalled;
 };
 
 struct motor_observation {
+	int64_t estimated_angle;
 	int32_t estimated_speed, load_mnm;
-	bool stalled;
+	int32_t estimated_current;
+	bool stalled, model_stalled;
+};
+
+struct motor_log_sample {
+	int64_t angle_mdeg, estimated_angle;
+	int32_t speed, estimated_speed, flags, voltage, feedback_torque, feedforward_torque, feedback_voltage;
 };
 
 int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_mdeg);
@@ -37,6 +45,10 @@ int motor_control_settings_set(pbio_control_settings_t *settings, uint32_t group
 	const struct bp_servo_settings *value);
 void motor_control_settings_apply(struct motor_control *motor, const pbio_control_settings_t *settings);
 void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_trajectory *value);
+void motor_model_settings_get(const pbio_observer_settings_t *settings, struct bp_motor_model_settings *value);
+int motor_model_settings_set(uint16_t id, pbio_observer_settings_t *settings, const struct bp_motor_model_settings *value);
+int motor_control_log_sample(struct motor_control *motor, uint32_t ticks, int64_t angle,
+	bool coast, int32_t voltage, const struct motor_reference *reference, struct motor_log_sample *value);
 int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_command *command);
 int32_t motor_control_speed_limit(uint16_t id);
 int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t angle_mdeg,

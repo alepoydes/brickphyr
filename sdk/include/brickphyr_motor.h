@@ -47,7 +47,14 @@ struct bp_servo_setup {
 /* Shared servo settings in output degrees, degrees/s, degrees/s², mNm and ms.
  * PID gains retain PBIO's shaft units. Revision identifies an atomic update;
  * applied catches up at the next control frame. */
-enum bp_servo_setting { BP_SERVO_LIMITS, BP_SERVO_PID, BP_SERVO_TARGET_TOLERANCES, BP_SERVO_STALL_TOLERANCES };
+enum bp_servo_setting { BP_SERVO_LIMITS, BP_SERVO_PID, BP_SERVO_TARGET_TOLERANCES, BP_SERVO_STALL_TOLERANCES, BP_SERVO_MODEL };
+/* Observer settings retain the Pybricks model's raw shaft units: mdeg/s,
+ * 100 us ticks, mV, percent, mV/deg, mV/deg, mdeg and mdeg/s. */
+struct bp_motor_model_settings {
+	int32_t stall_speed;
+	uint32_t stall_ticks;
+	int32_t negligible_voltage, stall_ratio, gain_low, gain_high, gain_threshold, friction_cutoff;
+};
 struct bp_servo_settings {
 	uint32_t revision, applied;
 	int32_t scale;
@@ -55,7 +62,22 @@ struct bp_servo_settings {
 	int32_t kp, ki, kd, integral_deadzone, integral_rate;
 	int32_t target_speed, target_position, stall_speed;
 	uint32_t stall_time;
+	struct bp_motor_model_settings model;
 };
+
+struct bp_motor_model_state {
+	int64_t angle_mdeg; /* configured shaft origin/direction, without gearing */
+	int32_t speed_mdeg_s, current_tenth_ma;
+	uint8_t stalled;
+};
+
+#define BP_MOTOR_LOG_COLUMNS 11
+struct bp_motor_log_status {
+	uint32_t revision, rows, capacity;
+	int32_t error;
+	uint8_t active;
+};
+struct bp_motor_log_row { int32_t values[BP_MOTOR_LOG_COLUMNS]; };
 
 /* Pybricks trajectory diagnostics: relative shaft angles in degrees, speeds in
  * degrees/s, accelerations in degrees/s² and phase times in ms. Signs follow

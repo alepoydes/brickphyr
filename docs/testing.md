@@ -153,7 +153,9 @@ motor behavior is a separate acceptance item.
 controller enabled and a synthetic encoded UART motor. It checks shared
 direction/gearing/origin, measurements, reset, timed/relative/stall motion,
 blocking/awaitable completion, alias cancellation, shared control settings,
-trajectory units/direction, settings reset and supervised stop. The peer
+trajectory units/direction, settings reset and supervised stop. A separate case
+checks model aliases and shaft coordinates, CSV downsampling/output units,
+retention after close and kernel log-buffer reclamation after forced stop. The peer
 can set a shaft angle or advance it each UART frame; it does not simulate a plant
 responding to PWM. Run the focused case with:
 
@@ -558,7 +560,8 @@ Explicit servo commands cover zero duration, long-origin instant tracking,
 profile-preserving observer reset, stall-to-hold/passive stop and smart relative
 endpoints through that plant.
 Passive-observer checks cover numerical speed, signed load, stall and coast
-without active regulation; the same suite also runs on `native_sim`.
+without active regulation, zero/nonzero model feedback gains and rejection of
+unsafe friction/feedback arithmetic; the same suite also runs on `native_sim`.
 `tests/regulated_motors` runs the production UART/ADC/controller/PWM path with
 synthetic peers: command ownership, stall, Shell/SMP observations, completion,
 missing encoder input, battery failure, lost frames before/during I/O and release

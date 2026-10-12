@@ -594,6 +594,42 @@ with the configured positive direction but without gearing. Legacy
 `control.done/load/stalled` expose controller status; `Motor.load/stalled` also
 cover passive observation. Controller logging is not exposed.
 
+`motor.model.settings()` returns the observer's eight raw settings: stall speed
+(shaft mdeg/s), stall time (100 µs ticks), negligible feedback voltage (mV), stall
+voltage ratio (%), low/high feedback gains (mV/degree), gain threshold (mdeg),
+and friction cutoff (mdeg/s). Pass a complete eight-value sequence to change them
+atomically at the next frame. Invalid arithmetic ranges are rejected. The same
+sharing and reset rules apply as for control settings. `model.state()` returns
+estimated shaft angle (degrees), shaft speed (degrees/s), current (mA) and stall
+state. Angle, speed and current follow configured direction; angle follows its
+origin, without output gearing.
+
+`motor.log.start(duration, down_sample=1)` allocates a bounded RAM log for
+`duration // 5 // max(down_sample, 1)` rows. Each row takes 44 bytes. Collection
+runs in the native 5 ms worker and stops when full; `stop()` freezes it early.
+`save(path=None)` stops collection and exports CSV through application stdout,
+using Pybricks' `PB_OF` / `PB_EOF` framing and default name `log.txt`. Pybricks Code
+can receive that file; a plain terminal displays the stream. It does not write
+hub flash. Columns are:
+
+| Index | Value |
+| --- | --- |
+| 0 | Elapsed log time, ms |
+| 1 | Monotonic control time, 100 µs ticks |
+| 2, 6 | Measured and estimated output angle, degrees |
+| 3, 7 | Measured and estimated output speed, degrees/s |
+| 4 | Actuation in bits 0–1 (coast 0, voltage 2); stalled in bit 2 |
+| 5 | Applied voltage, mV |
+| 8, 9 | Feedback and feedforward torque, µNm |
+| 10 | Observer feedback voltage, mV |
+
+The worker captures values before predicting the next state. Signed values use
+the configured direction. Logs belong to the port; aliases share them. Closing
+or disconnecting the motor stops collection and retains captured rows. A later
+`start` replaces the log, while application cleanup frees it regardless of
+Python finalizers. Allocation failure preserves the previous log. An acquisition
+error stops collection and is reported after exporting its retained rows.
+
 Native applications use `bp_servo_setup`, `bp_servo_get`, `bp_servo_reset` and
 `bp_servo_move` for this same coordinate/configuration view. Setup, reset and move
 return request tokens; wait for driver completion through `bp_motor_get`.
@@ -602,16 +638,19 @@ and diagnostics. A setting update uses the revision from `get`, returns a new
 revision, and reports completion through `applied`; it does not replace the motor
 request. Reads and commands validate the physical connection generation. The
 existing raw motor APIs continue to use physical shaft units without applying
-this transform.
+this transform. `bp_servo_model_get` and `bp_motor_log_start/status/read` expose
+the same model snapshot and bounded row access without retaining user buffers.
 
 Protected ARM checks cover coordinate sharing, absolute/explicit reset, externally
 moved encoder feedback, motion, voltage limiting, blocking/awaitable completion,
 replacement and supervised cleanup with synthetic UART/PWM. Numerical simulation
 additionally checks long-origin tracking, smart relative motion and stall-to-hold.
 Settings updates, gearing, active-trajectory preservation and diagnostics also
-have numerical and protected ARM checks. These are not physical motion or tuning
-measurements. Motor model tuning/logging and coordinated robotics remain
-unimplemented; complete Motor compatibility has not been established.
+have numerical and protected ARM checks. Model tuning, CSV units/downsampling,
+retained logs and forced-stop memory cleanup have synthetic checks too. These
+are not physical motion or tuning measurements. `Motor.control.log` and
+coordinated robotics remain unimplemented; complete Motor compatibility has not
+been established.
 
 ## Speed and position control
 
