@@ -7,6 +7,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(lump)
 target_sources(app PRIVATE main.c ../ports/wiring.c
   ${BRICKPHYR_ROOT}/src/ports/lump.c ${BRICKPHYR_ROOT}/src/ports/uart.c
+  ${BRICKPHYR_ROOT}/src/ports/settings.c
   ${BRICKPHYR_ROOT}/src/ports/sensor.c
   ${BRICKPHYR_ROOT}/src/hub_ports.c ${BRICKPHYR_ROOT}/src/ports/output.c ${BRICKPHYR_ROOT}/src/telemetry.c
   ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c)

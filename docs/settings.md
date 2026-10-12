@@ -82,6 +82,26 @@ Reboot restores saved values, or defaults for missing keys. Without a working
 storage backend, saving fails explicitly. An open terminal or Pybricks USB session
 inhibits automatic shutdown even with a short timeout; explicit shutdown still works.
 
+## Custom UART power
+
+With `CONFIG_BRICKPHYR_PORT_UART`, `uart/power_allowed` controls admission of new
+UART leases that request battery voltage on P1/P2. It is an unsigned 32-bit
+little-endian boolean: 0 refuses, 1 allows, default 0. Python's first-use `Y`
+acknowledgement and the native SDK setter change this same value in RAM.
+
+```text
+config get uart/power_allowed
+config set uart/power_allowed 1
+config save
+```
+
+Only explicit save persists permission. Setting it to 0 prevents subsequent
+powered leases; it does not disconnect or remove power from an existing lease.
+That lease retains its selected power through clear/baud changes and releases it
+on application cleanup. The setting records acknowledgement of custom wiring;
+it is not protection against an application already allowed to command motors.
+See [UART behavior and evidence](ports.md#custom-serial-devices).
+
 ## IMU calibration
 
 These settings are available with `CONFIG_BRICKPHYR_IMU`. Each value is signed

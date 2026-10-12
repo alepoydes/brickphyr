@@ -109,17 +109,36 @@ without acknowledging reception by the external device. Physical baud accuracy
 and custom-device wiring remain unverified. Ordinary UART cannot identify an
 unplugged/replaced peer; connection generations identify the application's lease.
 
-Only `power_pin=0` is currently implemented. Values 1/2 report `ENOTSUP` before
-claiming the port or changing outputs; custom-supply permission and persistence
-remain pending. This does not complete the full reference UART surface.
+`power_pin=0` leaves P1/P2 unpowered. Values 1/2 apply battery voltage with the
+selected pin positive and the other low. As in Pybricks, the first powered
+constructor asks for `Y` before claiming the port or enabling power; any other
+answer refuses with `ENOTSUP`. This acknowledges custom wiring; it does not
+identify the connected device or establish its voltage tolerance. Permission
+uses the shared [`uart/power_allowed` setting](settings.md#custom-uart-power).
+It remains in RAM across application exits; only `config save` persists it.
+
+Clearing buffers and changing baud retain power continuously. UART/driver errors,
+application return, forced stop and shutdown attempt to coast both power pins.
+A failed constructor releases its claim even when the program catches its
+exception. Driver failures remain explicit; cleanup failure retains the claim
+and reports that electrical state is uncertain.
 
 Native applications use `bp_uart_open/configure/clear/waiting/read/write` with
 bounded copied buffers and `bp_port_get()` for asynchronous configuration/write
-completion. No application pointer survives a syscall. Return, forced stop and
+completion. `bp_uart_open_power` adds the power-pin selection and returns `EACCES`
+before side effects if permission is missing. `bp_uart_allow_power(0|1)` applies
+that permission in RAM through the same validator as Shell/Settings. No
+application pointer survives a syscall. Return, forced stop and
 REPL reset use the common port release, stopping UART IRQ access and coasting
 outputs before restoring LEGO detection. Cleanup errors retain the claim and are
 reported by the supervisor; ordinary host disconnection leaves the application
 and its port running.
+
+Protected ARM checks cover both power polarities, refusal/acknowledgement,
+continuous power across UART reconfiguration, failed-constructor release and
+supervised cleanup using synthetic GPIO/UART. Permission save/reload uses the
+actual LittleFS/Settings stack in the native simulator. Physical UART signals,
+custom wiring and power continuity remain unverified.
 
 ## Arbitrary UART modes
 
@@ -1037,8 +1056,10 @@ additional power. Their identity alone does not imply a working device API.
 The service owns ID1/ID2, buffered TX/RX, buffer enables, pins 1/2 and the shared device
 logic supply (PA14 on F4). It initializes all ports with inputs and disabled
 buffers and coasts the H-bridges before enabling that supply. A startup reset
-failure keeps the shared supply off. Only a recognized sensor with a validated
-measurement format can request additional DC power using its NAME flags. Pin 1
+failure keeps the shared supply off. Automatic sensor acquisition enables
+additional DC power only for a recognized sensor with a validated measurement
+format and matching NAME flags. An explicitly configured custom UART lease can
+also request P1/P2 power after acknowledgement as described above. Pin 1
 or pin 2 becomes positive while the other stays low; motor flags or contradictory
 power flags reject this operation. Encoder selection ignores supply flags and
 does not drive, brake or hold a motor. Motor commands require a separate explicit
@@ -1061,7 +1082,7 @@ STM32 before pinmux handoff. That timer update can also restart the shared count
 different ports do not have an atomic or synchronized command contract. Actual
 waveforms and electrical transitions still need instrumented tests.
 
-`supply` reports sensor DC supply: 0 none, 1 pin 1 positive, 2 pin 2 positive.
+`supply` reports sensor/custom-UART DC supply: 0 none, 1 pin 1 positive, 2 pin 2 positive.
 Motor output has its separate state above. Neither is voltage feedback; after a GPIO/cleanup error, the actual
 output is unknown. UART loss coasts the port when detected, within the protocol
 timeout rather than instantaneously at physical removal. Failed cleanup is

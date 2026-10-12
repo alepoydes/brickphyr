@@ -21,7 +21,7 @@ int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t 
 int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value);
 int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value);
 bool hub_drivebase_uses_gyro(void);
-int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation);
+int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation);
 int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud);
 int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size);
 int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
@@ -99,7 +99,7 @@ static inline int hub_drivebase_axis_set(enum bp_port_owner owner, uint32_t hand
 static inline int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample) { return -ENOTSUP; }
 static inline int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value) { return -ENOTSUP; }
 static inline int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value) { return -ENOTSUP; }
-static inline int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation) { return -ENOTSUP; }
+static inline int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation) { return -ENOTSUP; }
 static inline int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud) { return -ENOTSUP; }
 static inline int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size) { return -ENOTSUP; }
 static inline int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,

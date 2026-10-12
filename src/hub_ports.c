@@ -8,6 +8,7 @@
  * See docs/ports.md for provenance, settling and identification limits. */
 #include "hub_ports.h"
 #include "port_uart.h"
+#include "uart_settings.h"
 #include "ports/output.h"
 #include "ports/sensor.h"
 #include "hub_battery.h"
@@ -101,7 +102,7 @@ static struct port {
 #endif
 	uint32_t measurement, command;
 	enum bp_port_owner owner;
-	uint8_t supply;
+	uint8_t supply, serial_power;
 	int64_t next_ms;
 	enum step step;
 	enum group group;
@@ -424,7 +425,7 @@ static int sensor_supply(uint32_t port, uint8_t value)
 
 /* Try all releases even after one fails. Disable the buffer before releasing
  * TX/RX; a failed detection must not leave a test output driven indefinitely. */
-static int release_pins(uint32_t port)
+static int release_uart_pins(uint32_t port)
 {
 	int result = gpio_is_ready_dt(&pins[port][BUFFER]) ?
 		set_pin(port, BUFFER, GPIO_OUTPUT_INACTIVE) : -ENODEV;
@@ -435,11 +436,14 @@ static int release_pins(uint32_t port)
 			result = err;
 		}
 	}
-	int err = coast(port);
-	if (!result) {
-		result = err;
-	}
 	return result;
+}
+
+static int release_pins(uint32_t port)
+{
+	int err = release_uart_pins(port);
+	int cleanup = coast(port);
+	return err ? err : cleanup;
 }
 
 static void publish(uint32_t port, int error, int cleanup, const struct bp_port_state *uart,
@@ -1414,6 +1418,8 @@ static void serial_advance(uint32_t port)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int action = p->serial;
 	uint32_t baud = p->serial_baud;
+	uint8_t power_pin = p->serial_power;
+	bool powered = p->value.baudrate && p->supply == power_pin && !p->value.cleanup_error;
 	int err = 0, cleanup = 0;
 	uint32_t completed = 0;
 	if (action == SERIAL_ACTIVE) {
@@ -1429,9 +1435,12 @@ static void serial_advance(uint32_t port)
 	k_spin_unlock(&lock, key);
 	if (action == SERIAL_CONFIGURE || action == SERIAL_CLOSE) {
 		port_uart_stop(port);
-		err = release_pins(port);
+		/* Changing baud or clearing buffers must not power-cycle the peer.
+		 * A new lease first releases any previous LEGO sensor supply. */
+		err = action == SERIAL_CONFIGURE && powered ? release_uart_pins(port) : release_pins(port);
 		if (!err && action == SERIAL_CONFIGURE) err = port_uart_serial_start(port, baud);
 		if (!err && action == SERIAL_CONFIGURE) err = set_pin(port, BUFFER, GPIO_OUTPUT_ACTIVE);
+		if (!err && action == SERIAL_CONFIGURE) err = sensor_supply(port, power_pin);
 	}
 	if (err) {
 		port_uart_stop(port);
@@ -1441,6 +1450,7 @@ static void serial_advance(uint32_t port)
 	key = k_spin_lock(&lock);
 	p->value.sample_ms = k_uptime_get();
 	p->value.sequence++;
+	p->value.supply = p->supply;
 	if (err) {
 		if (!p->value.error || p->value.error == -EAGAIN) p->value.error = err;
 		p->value.cleanup_error = p->motor.cleanup_error = cleanup;
@@ -1450,6 +1460,7 @@ static void serial_advance(uint32_t port)
 	} else if (action == SERIAL_CLOSE) {
 		finish_write(p, -ECANCELED);
 		p->serial = SERIAL_OFF;
+		p->serial_power = 0;
 		p->value.phase = BP_PORT_DETECTING;
 		p->value.generation++;
 		p->value.changed_ms = p->value.sample_ms;
@@ -1462,6 +1473,7 @@ static void serial_advance(uint32_t port)
 		p->serial = SERIAL_ACTIVE;
 		p->value.error = p->value.cleanup_error = 0;
 		p->value.baudrate = baud;
+		motor_activity(port, power_pin != 0);
 	}
 	k_spin_unlock(&lock, key);
 }
@@ -1852,10 +1864,10 @@ int hub_sensor_select(enum bp_port_owner owner, uint32_t port, uint32_t generati
 	return sensor_configure(owner, port, measurement, &generation);
 }
 
-int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation)
+int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
-	if (port >= BP_PORT_COUNT || !baud || !generation ||
+	if (port >= BP_PORT_COUNT || !baud || !generation || power_pin > 2 ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
 	if (!port_uart_available(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -1864,11 +1876,15 @@ int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32
 		(p->owner && p->owner != owner) || p->serial || p->pf_used || reset_pending(p) ||
 		p->motor.pending || p->motor.releasing || write_pending(p) || !p->motor.valid ||
 		p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+	if (!err && power_pin && !hub_uart_power_allowed()) err = -EACCES;
+#endif
 	if (!err) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
 			p->serial = SERIAL_CONFIGURE;
 			p->serial_baud = baud;
+			p->serial_power = power_pin;
 			p->owner = owner;
 			uint32_t next = p->value.generation + 1;
 			p->value = (struct bp_port_state){.generation = next, .phase = BP_PORT_SERIAL,

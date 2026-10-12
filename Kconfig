@@ -84,6 +84,8 @@ config BRICKPHYR_PORT_UART
 	select UART_INTERRUPT_DRIVEN
 	select UART_USE_RUNTIME_CONFIGURE
 	select RING_BUFFER
+	select SETTINGS
+	select SETTINGS_RUNTIME
 	select PINCTRL_NON_STATIC if PINCTRL
 	help
 	  Negotiate LUMP devices and acquire raw and converted sensor samples.

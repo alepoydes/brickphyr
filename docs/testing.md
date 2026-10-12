@@ -175,6 +175,10 @@ concurrent read/write, copied bytearray/GC lifetime, pattern overlap, timeout,
 overflow recovery and return/forced-stop release. A one-shot coast failure checks
 that cleanup errors survive a successful supervisor retry; subsequent LEGO negotiation
 checks that ordinary port use is restored. This is synthetic UART evidence.
+The powered-UART case checks first-use refusal/acknowledgement, both supply
+polarities, unchanged GPIO transition counts across clear/baud changes, failed
+constructor release and cleanup. The storage fixture checks this permission's
+explicit save/reload and rejection of invalid stored values through LittleFS.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

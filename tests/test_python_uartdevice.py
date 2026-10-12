@@ -3,15 +3,121 @@
 
 import asyncio
 import errno
+import re
 
 from smpclient import success
 from test_native import native_console
 from test_python import completed, output
 from test_python_hub import BUILD, ready, shell
+from test_python_io import until
 
 from brickphyrdev import console
-from brickphyrdev.application import Format, Start, Status, Stop, checked, upload
+from brickphyrdev.application import Format, Input, Start, Status, Stop, checked, upload
 from brickphyrdev.telemetry import snapshot
+
+
+def test_uart_power_consent_continuity_and_failed_open():
+    source = b"""
+from pybricks.iodevices import UARTDevice
+from pybricks.parameters import Port
+import errno
+try:
+    UARTDevice(Port.A, power_pin=1)
+except OSError as e:
+    assert e.args[0] == errno.ENOTSUP
+else:
+    assert False, 'power was enabled despite refusal'
+print('ready'); input()
+d = UARTDevice(Port.A, power_pin=1)
+print('ready'); input()
+d.set_baudrate(9600)
+d.clear()
+d.write(b'powered')
+assert d.read_all() == b'powered'
+print('ready'); input()
+"""
+    failed_open = b"""
+from pybricks.iodevices import UARTDevice
+from pybricks.parameters import Port
+import errno
+try:
+    UARTDevice(Port.A, power_pin=2)
+except OSError as e:
+    assert e.args[0] == errno.EIO
+else:
+    assert False, 'injected supply failure was ignored'
+print('ready'); input()
+# The failed constructor released its lease while Python stayed alive.
+# Prior acknowledgement survives application exit in RAM, without another prompt.
+d = UARTDevice(Port.A, power_pin=2)
+d.write(b'recovered')
+assert d.read_all() == b'recovered'
+print('ready'); input()
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            async def power():
+                text = await shell(port, captured, b"pup_peer power")
+                match = re.search(rb"supply=(\d+) changes=(\d+)", text)
+                assert match, text
+                return tuple(map(int, match.groups()))
+
+            try:
+                await shell(port, captured, b"pup_peer serial")
+                initial = await power()
+                assert initial[0] == 0
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await until(client, b"Press N to cancel.\r\n")
+                assert await power() == initial
+                await checked(client, Input(data=b"N"))
+                assert b"Cancelled. Power not enabled." in await until(client, b"ready\r\n")
+                assert await power() == initial
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+
+                await checked(client, Input(data=b"\n"))
+                await until(client, b"Press N to cancel.\r\n")
+                await checked(client, Input(data=b"Y"))
+                assert b"allowed in RAM" in await until(client, b"ready\r\n")
+                powered = await power()
+                assert powered[0] == 1 and powered[1] == initial[1] + 1, powered
+                assert (await snapshot(client, "port.A")).values["supply"] == 1
+
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                assert await power() == powered, 'baud/clear pulsed device power'
+                await checked(client, Input(data=b"\n"))
+                result = await completed(client)
+                assert result.result == result.fault == result.cleanup == 0, result
+                assert (await power())[0] == 0
+
+                await shell(port, captured, b"pup_peer serial_power_error")
+                await upload(client, port, failed_open, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                assert (await power())[0] == 0
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                powered = await power()
+                assert powered[0] == 2, powered
+                # Revoking future permission does not silently stop a live device.
+                await shell(port, captured, b"config set uart/power_allowed 0")
+                assert await power() == powered
+                await checked(client, Stop())
+                result = await completed(client, state=3)
+                assert result.cleanup == 0, result
+                assert (await power())[0] == 0
+                assert (await snapshot(client, "sensor.A")).values["owner"] == 0
+            except BaseException as error:
+                error.add_note(f"Python output: {await output(client)!r}")
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    with native_console(BUILD) as device:
+        asyncio.run(exercise(device))
 
 
 def test_serial_duplex_errors_and_application_release():

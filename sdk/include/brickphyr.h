@@ -117,6 +117,14 @@ __syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
  * matching the returned generation. Release restores electrical detection.
  * Raw mode cannot detect unplugging; generation identifies this lease. */
 __syscall int bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation);
+/* Same lease with battery supply on P1/P2: 0 none, 1 P1 positive, 2 P2
+ * positive. Nonzero power requires uart/power_allowed, otherwise EACCES before
+ * claiming or driving. Clear/baud changes retain supply; release/errors coast. */
+__syscall int bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation);
+/* Set permission for new powered UART leases (0/1) in RAM. This is operator
+ * acknowledgement, not isolation from an application authorized to drive ports.
+ * Existing leases are unaffected. Only config save persists the setting. */
+__syscall int bp_uart_allow_power(uint32_t allowed);
 /* Queue a new positive baud, or clear RX/TX at the current baud. Both cancel
  * outstanding I/O, retain the lease and complete through bp_port_get().error. */
 __syscall int bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "storage.h"
 #include "hub_power.h"
+#include "uart_settings.h"
 
 #include <zephyr/fs/fs.h>
 #include <zephyr/settings/settings.h>
@@ -17,6 +18,29 @@ ZTEST(storage, test_persistence_or_foreign_partition)
 	}
 	uint8_t desired[4];
 	uint8_t effective[4];
+	zassert_equal(settings_runtime_get("uart/power_allowed", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), 0);
+	sys_put_le32(2, desired);
+	zassert_equal(settings_runtime_set("uart/power_allowed", desired, sizeof(desired)), -EINVAL);
+	zassert_equal(settings_runtime_set("uart/power_allowed", desired, 3), -EINVAL);
+	zassert_equal(settings_runtime_get("uart/power_allowed", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), 0);
+	sys_put_le32(1, desired);
+	zassert_ok(settings_runtime_set("uart/power_allowed", desired, sizeof(desired)));
+	zassert_ok(settings_save());
+	sys_put_le32(0, desired);
+	zassert_ok(settings_runtime_set("uart/power_allowed", desired, sizeof(desired)));
+	zassert_equal(settings_load_one("uart/power_allowed", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), 1, "RAM mutation implicitly saved");
+	zassert_ok(config_load(uart_config, ARRAY_SIZE(uart_config)));
+	zassert_equal(settings_runtime_get("uart/power_allowed", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), 1);
+	sys_put_le32(2, desired);
+	zassert_ok(settings_save_one("uart/power_allowed", desired, sizeof(desired)));
+	zassert_equal(config_load(uart_config, ARRAY_SIZE(uart_config)), -EINVAL);
+	zassert_equal(settings_runtime_get("uart/power_allowed", effective, sizeof(effective)), 4);
+	zassert_equal(sys_get_le32(effective), 1);
+	zassert_ok(settings_save());
 	sys_put_le32(123, desired);
 	zassert_ok(settings_runtime_set("power/battery_idle_s", desired, sizeof(desired)));
 	zassert_ok(settings_save());

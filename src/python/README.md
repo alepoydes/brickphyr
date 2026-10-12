@@ -120,7 +120,8 @@ revision. The existing port worker owns direct UART configuration, copied TX,
 RX and cleanup instead of PBIO's UART process. Python owns its rooted immutable
 buffers and exact-length/pattern waits; prefix matching handles overlapping
 patterns without consuming trailing bytes. The existing Pybricks awaitable serves
-both directions. Custom P1/P2 supply is not implemented; see
+both directions. P1/P2 supply and the reference acknowledgement prompt use the
+same protected UART lease and explicitly saved configuration; see
 [UART semantics and limitations](../../docs/ports.md#custom-serial-devices).
 
 `pupsensors.c` adapts the ForceSensor, TiltSensor, InfraredSensor, ColorSensor,

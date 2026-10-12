@@ -30,6 +30,11 @@ static int configure(const struct device *dev, gpio_pin_t pin, gpio_flags_t flag
 	if (cfg->index < 6) {
 		struct pup_test_circuit *c = &pup_test_circuits[cfg->index];
 		c->writes++;
+		if (c->supply_error && pin >= 5 && (flags & GPIO_OUTPUT_INIT_HIGH)) {
+			int err = c->supply_error;
+			c->supply_error = 0;
+			return err;
+		}
 		if (c->coast_error && pin == 5 && (flags & GPIO_OUTPUT_INIT_LOW)) {
 			int err = c->coast_error;
 			c->coast_error = 0;
@@ -42,11 +47,15 @@ static int configure(const struct device *dev, gpio_pin_t pin, gpio_flags_t flag
 	if ((pin == 1 || pin == 2) && (flags & GPIO_OUTPUT)) {
 		data->changed_ms = k_uptime_get();
 	}
+	uint32_t previous = data->outputs;
 	data->flags[pin] = flags;
 	if (flags & GPIO_OUTPUT_INIT_HIGH) {
 		data->outputs |= BIT(pin);
 	} else if (flags & GPIO_OUTPUT_INIT_LOW) {
 		data->outputs &= ~BIT(pin);
+	}
+	if (cfg->index < 6 && ((previous ^ data->outputs) & (BIT(5) | BIT(6)))) {
+		pup_test_circuits[cfg->index].supply_changes++;
 	}
 	return 0;
 }

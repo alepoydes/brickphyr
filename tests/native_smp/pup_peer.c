@@ -394,6 +394,15 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		return err;
 	}
 	if (argc != 2) return -EINVAL;
+	if (!strcmp(argv[1], "power")) {
+		shell_print(shell, "supply=%u changes=%u", pup_test_sensor_supply(peer->port),
+			pup_test_circuits[peer->port].supply_changes);
+		return 0;
+	}
+	if (!strcmp(argv[1], "serial_power_error")) {
+		pup_test_circuits[peer->port].supply_error = -EIO;
+		return 0;
+	}
 	if (!strcmp(argv[1], "serial_close_error")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
 		pup_test_circuits[peer->port].coast_error = -EIO;
@@ -508,5 +517,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A (default) or B: [B] connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	"Synthetic port A (default) or B: [B] connect|generic|serial|serial_rx <hex>|serial_close_error|serial_power_error|power|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
 	pup_peer, 2, 2);

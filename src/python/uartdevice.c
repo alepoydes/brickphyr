@@ -49,6 +49,28 @@ static uint32_t positive(mp_obj_t value)
 	return n;
 }
 
+/* A failed constructor must release its lease even if Python catches the
+ * exception and continues running. Preserve the original failure. */
+static void failed_open(uart_obj_t *self, void *error)
+{
+	nlr_buf_t cleanup;
+	if (nlr_push(&cleanup) == 0) {
+		struct bp_port_state value;
+		check(bp_port_get(self->port, &value));
+		if (value.generation == self->generation) {
+			check(bp_port_release(self->port));
+			for (;;) {
+				check(bp_port_get(self->port, &value));
+				if (value.generation != self->generation) break;
+				check(value.cleanup_error);
+				mp_hal_delay_ms(2);
+			}
+		}
+		nlr_pop();
+	}
+	nlr_jump(error);
+}
+
 static mp_obj_t uart_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port),
@@ -60,14 +82,31 @@ static mp_obj_t uart_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, 
 	uint32_t timeout = timeout_in == mp_const_none ? 0 : positive(timeout_in);
 	mp_int_t power = mp_obj_get_int(power_pin_in);
 	if (power < 0 || power > 2) mp_raise_ValueError(MP_ERROR_TEXT("invalid power pin"));
-	/* Custom supply permission/persistence is not yet part of this profile.
-	 * Refuse before claiming a port or touching its outputs. */
-	if (power) check(-ENOTSUP);
 	uart_obj_t *self = mp_obj_malloc(uart_obj_t, type);
 	*self = (uart_obj_t){.base = {.type = type}, .port = port, .timeout = timeout};
-	check(bp_uart_open(port, baud, &self->generation));
-	configured(self);
-	return MP_OBJ_FROM_PTR(self);
+	int err = bp_uart_open_power(port, baud, power, &self->generation);
+	if (err == -EACCES) {
+		/* Retain Pybricks' first-use acknowledgement. Permission is a shared
+		 * runtime setting; only explicit config save writes it to flash. */
+		mp_printf(&mp_plat_print, "Custom electronics may damage your LEGO hub. Proceed at your own risk.\nPress Y to proceed. Press N to cancel.\n");
+		int chr = mp_hal_stdin_rx_chr();
+		if (chr != 'y' && chr != 'Y') {
+			mp_printf(&mp_plat_print, "Cancelled. Power not enabled.\n");
+			check(-ENOTSUP);
+		}
+		check(bp_uart_allow_power(true));
+		mp_printf(&mp_plat_print, "Port power allowed in RAM. Use config save to persist.\n");
+		err = bp_uart_open_power(port, baud, power, &self->generation);
+	}
+	check(err);
+	nlr_buf_t nlr;
+	if (nlr_push(&nlr) == 0) {
+		configured(self);
+		nlr_pop();
+		return MP_OBJ_FROM_PTR(self);
+	}
+	failed_open(self, nlr.ret_val);
+	return mp_const_none;
 }
 
 static mp_obj_t wait(uart_obj_t *self, bool reading, pb_type_async_iterate_once_t iter_once,

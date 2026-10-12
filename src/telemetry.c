@@ -612,7 +612,7 @@ static int cmd_port(const struct shell *shell, size_t argc, char **argv)
 		shell_print(shell, "Updated_ms=%" PRId64 " changed_ms=%" PRId64 " failures=%u cleanup=%d",
 			v.sample_ms, v.changed_ms, v.failures, v.cleanup_error);
 		if (v.phase == BP_PORT_SERIAL) {
-			shell_print(shell, "Custom UART: baud=%u; no LEGO identity or mode metadata", v.baudrate);
+			shell_print(shell, "Custom UART: baud=%u supply=%u; no LEGO identity or mode metadata", v.baudrate, v.supply);
 			return 0;
 		}
 		if (v.phase != BP_PORT_READY) {

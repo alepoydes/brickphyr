@@ -19,6 +19,7 @@
 #include "hub_battery.h"
 #include "hub_charger.h"
 #include "hub_ports.h"
+#include "uart_settings.h"
 #include "hub_power.h"
 #include "hub_reset.h"
 
@@ -651,7 +652,7 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 
 int z_impl_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
-	return hub_uart_open(BP_PORT_APPLICATION, port, baud, generation);
+	return hub_uart_open(BP_PORT_APPLICATION, port, baud, 0, generation);
 }
 static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
@@ -660,6 +661,29 @@ static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *ge
 	return z_impl_bp_uart_open(port, baud, generation);
 }
 #include <zephyr/syscalls/bp_uart_open_mrsh.c>
+
+int z_impl_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
+{
+	return hub_uart_open(BP_PORT_APPLICATION, port, baud, power_pin, generation);
+}
+static inline int z_vrfy_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(generation, __alignof__(*generation))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(generation, sizeof(*generation)));
+	return z_impl_bp_uart_open_power(port, baud, power_pin, generation);
+}
+#include <zephyr/syscalls/bp_uart_open_power_mrsh.c>
+
+int z_impl_bp_uart_allow_power(uint32_t allowed)
+{
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+	return hub_uart_allow_power(allowed);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_uart_allow_power(uint32_t allowed) { return z_impl_bp_uart_allow_power(allowed); }
+#include <zephyr/syscalls/bp_uart_allow_power_mrsh.c>
 
 int z_impl_bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud)
 {

@@ -16,6 +16,9 @@
 #endif
 #include "hub_power.h"
 #include "configuration.h"
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+#include "uart_settings.h"
+#endif
 
 LOG_MODULE_REGISTER(storage);
 
@@ -43,6 +46,11 @@ static int storage_init(void)
 	if (!status) {
 		status = hub_power_load();
 	}
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+	if (!status) {
+		status = config_load(uart_config, ARRAY_SIZE(uart_config));
+	}
+#endif
 #ifdef CONFIG_BRICKPHYR_IMU
 	if (!status) {
 		status = config_load(imu_config, ARRAY_SIZE(imu_config));

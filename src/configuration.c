@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "configuration.h"
 #include "storage.h"
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+#include "uart_settings.h"
+#endif
 
 #include <errno.h>
 #include <inttypes.h>
@@ -65,6 +68,9 @@ static const struct config_entry *find_entry(const char *name)
 {
 	const struct { const struct config_entry *entries; size_t count; } groups[] = {
 		{power_config, ARRAY_SIZE(power_config)},
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+		{uart_config, ARRAY_SIZE(uart_config)},
+#endif
 #ifdef CONFIG_BRICKPHYR_IMU
 		{imu_config, ARRAY_SIZE(imu_config)},
 #endif
