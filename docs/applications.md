@@ -334,8 +334,10 @@ pending read retained across USB-to-BLE handover.
 Continuous output has ARM serial-client, CLI/PTY and synthetic BLE-adapter checks
 for complete long output, stop/interruption during a blocked write and release
 on detach/profile change. REPL checks cover output after a Python reset and
-draining the final queued output after termination. Physical acceptance of this
-flow control remains open.
+draining the final queued output after termination. Native SMP additionally has
+Inventor F4 USB/BLE checks for lossless output larger than the queue, deliberately
+delayed reads and stop while output is blocked. Pybricks-client physical
+flow-control acceptance remains open.
 
 ### Interactive Python
 
@@ -382,8 +384,13 @@ Plain Shell entry, return and reconnection also have ARM checks through the shar
 host dispatcher. On the Inventor F4, both USB/BLE paths pass friendly/raw REPL,
 editing, history/completion and soft reset. SMP additionally checks interruption
 and display cleanup on reset; plain Shell checks entry/return, retained globals
-and discarded partial input across a physical reconnection. Combined output
-backpressure and CLI/monitor acceptance on hardware remain open.
+and discarded partial input across a physical reconnection. The USB CLI also
+passes combined monitoring, long output before/after reset, reattachment and
+forced exit with queued input. BLE REPL with application monitoring currently
+has low output throughput: frequent full status responses compete with Python
+output on the minimum-MTU link. BLE monitoring with short output, reattachment,
+interruption and forced exit is checked; combined long-output acceptance remains
+open.
 
 ## Application formats
 

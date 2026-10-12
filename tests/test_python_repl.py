@@ -211,7 +211,7 @@ def test_repl_terminal_cli(detach, tmp_path):
                 "--port",
                 port,
                 "--repl",
-                *(monitoring if detach else []),
+                *monitoring,
             ],
             stdin=tty,
             stdout=tty,
@@ -261,7 +261,8 @@ def test_repl_terminal_cli(detach, tmp_path):
                         os.write(keyboard, b"x" * 256)
                     except BlockingIOError:
                         break
-                time.sleep(0.05)
+                # Exit can flush input after the TTY became readable. Do not
+                # drain or delay the paste before exercising that boundary.
                 os.write(keyboard, b"\x18")
                 received(b"brickphyr> ")
                 os.write(keyboard, b"app status\r")

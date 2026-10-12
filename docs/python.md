@@ -27,9 +27,9 @@ record their [runtime](applications.md#experimental-python-profile),
 
 | Steps | Current foundation | Work still required |
 | --- | --- | --- |
-| 0 | Task and hardware watchdogs; USB recovery checks on F4 | Physical shutdown/button restart and battery-only recovery acceptance |
+| 0 | Task and hardware watchdogs; USB recovery and shutdown/button restart checks on F4 | Battery-only watchdog recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
-| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction and exit/reset checks | Combined interactive flow-control acceptance |
+| 5 | Common streams/resources, standard modules and REPL; ARM/CLI and F4 USB/BLE checks for interaction, exit/reset and native SMP backpressure; combined USB REPL/monitor checks | BLE REPL/monitor output throughput and combined acceptance |
 | 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, an F4 hub example through both actual clients and unchanged Pybricks Code execution | Profile negotiation, power-cycle slot retention and combined client acceptance |
 | 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage, battery and IMU observations/frame/heading/calibration controls; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
@@ -43,11 +43,13 @@ The [workspace summary](builds.md#setup-and-board-bring-up), short
 [incremental check commands](testing.md#selecting-checks) provide the development
 workflow for these blocks. Plain and managed REPL exit/reset have ARM/PTY and
 Inventor F4 USB/BLE checks. Ctrl-D rebuilds Python state and Ctrl-X returns to the
-same usable Shell through both frontends.
+same usable Shell through both frontends. Native SMP output backpressure has
+USB/BLE checks; combined USB REPL/monitor operation is also checked. Frequent full
+status responses currently limit combined BLE output throughput.
 
 | Delivery block | Remaining work | Usable result |
 | --- | --- | --- |
-| Interactive use | Complete combined interactive flow control; preserve the checked plain Shell and managed REPL exit/reset paths and visible hints | Slow input/output consumers and monitoring remain usable together with interruption, exit and reconnection |
+| Interactive use | Reduce competing status traffic in BLE REPL/monitor, then finish combined output acceptance; preserve the checked native SMP and USB CLI workflows | Slow input/output consumers and monitoring remain usable together with interruption, exit and reconnection |
 | Pybricks clients | Resolve the profile warning, complete slot power-cycle retention and combined input/output acceptance; extend browser checks to covered reference examples | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
 | Hub APIs and observations | Complete charger source detection (`connected()`) and storage reset; current/status use the shared service; accept physical menu selection; isolate and fix IMU acquisition gaps under BLE transfers | Reference hub examples share the existing hardware services, with valid observations or explicit errors and reliable cleanup |
 | Wired devices | Accept physical writes, the six sensor classes, Light/ColorLightMatrix and PFMotor; complete UART custom-supply permission/persistence and physical serial acceptance | Reference programs use device modes and measurements; generic access and the existing terminal inventory expose unknown compatible devices |

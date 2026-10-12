@@ -77,11 +77,12 @@ async def terminal(args):
     boundary = _OutputBoundary()
     last_screen = "Waiting for observations…"
     input_error = None
+    input_fd = None
     python = None
     use_repl = getattr(args, "repl", False)
 
     def discard_input():
-        loop.remove_reader(sys.stdin.fileno())
+        loop.remove_reader(input_fd)
         while not incoming.empty():
             incoming.get_nowait()
 
@@ -112,25 +113,28 @@ async def terminal(args):
     def read_input():
         nonlocal input_closed, input_error
         try:
-            data = os.read(sys.stdin.fileno(), 256)
+            data = os.read(input_fd, 256)
             if not data:
                 input_closed = True
-                loop.remove_reader(sys.stdin.fileno())
+                loop.remove_reader(input_fd)
             incoming.put_nowait(data)
             if incoming.full():
                 # Leave further input in the TTY until the sender has room.
-                loop.remove_reader(sys.stdin.fileno())
+                loop.remove_reader(input_fd)
+        except BlockingIOError:
+            # A signal can flush TTY input after the readiness notification.
+            pass
         except Exception as error:
             input_closed = True
             input_error = error
-            loop.remove_reader(sys.stdin.fileno())
+            loop.remove_reader(input_fd)
             exit_requested.set()
 
     async def input_loop(transport):
         nonlocal pending_view
         while data := await incoming.get():
             if not input_closed and incoming.qsize() == incoming.maxsize - 1:
-                loop.add_reader(sys.stdin.fileno(), read_input)
+                loop.add_reader(input_fd, read_input)
             # Ctrl+] is handled by the TTY, independently of this sender.
             # Editing, history and completion go unchanged to the active parser.
             send = python.write if python is not None else transport.write
@@ -166,6 +170,12 @@ async def terminal(args):
         if use_repl:
             loop.add_signal_handler(signal.SIGQUIT, leave_repl)
         try:
+            # Readiness may be stale after Ctrl+]/Ctrl+X flush the line discipline.
+            # Open independently: dup/set_blocking(stdin) would also change stdout
+            # when the two descriptors share an open file description.
+            input_fd = os.open(
+                os.ttyname(sys.stdin.fileno()), os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY
+            )
             tty.setraw(sys.stdin.fileno())
             mode = termios.tcgetattr(sys.stdin.fileno())
             # The line discipline recognizes escape even while stdin is paused.
@@ -201,7 +211,7 @@ async def terminal(args):
                     display(b"\r\n")
                     await transport.write(b"\x03")
                     if not input_closed:
-                        loop.add_reader(sys.stdin.fileno(), read_input)
+                        loop.add_reader(input_fd, read_input)
 
                 tasks = [
                     asyncio.create_task(input_loop(transport)),
@@ -230,7 +240,7 @@ async def terminal(args):
                                 monitor.watch(client, identity, sources, args.rate, log, update)
                             )
                         )
-                    loop.add_reader(sys.stdin.fileno(), read_input)
+                    loop.add_reader(input_fd, read_input)
                     while True:
                         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                         if input_error:
@@ -246,7 +256,7 @@ async def terminal(args):
                     if transport.closed.is_set():
                         raise transport.error or RuntimeError("Console disconnected")
                 finally:
-                    loop.remove_reader(sys.stdin.fileno())
+                    loop.remove_reader(input_fd)
                     failure = sys.exception()
                     for task in tasks:
                         task.cancel(str(failure) if failure else None)
@@ -254,12 +264,18 @@ async def terminal(args):
         finally:
             original = sys.exception()
             cleanup = None
+            if input_fd is not None:
+                try:
+                    loop.remove_reader(input_fd)
+                    os.close(input_fd)
+                except Exception as error:
+                    cleanup = error
             try:
                 if view:
                     sys.stdout.write("\x1b[?25h\x1b[?1049l")
                     sys.stdout.flush()
             except Exception as error:
-                cleanup = error
+                cleanup = cleanup or error
             try:
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, previous)
             except Exception as error:

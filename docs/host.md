@@ -311,7 +311,8 @@ The client restores local terminal settings on exit or connection failure.
 When transmission slows down, the client pauses reading local input while its
 bounded queue is full and resumes as space becomes available. Ctrl+] interrupts
 an outstanding send and discards unsent input instead of waiting for the queue
-to drain. This behavior is shared by USB and BLE.
+to drain. A control-key input flush also leaves telemetry and connection handling
+responsive. This behavior is shared by USB and BLE.
 
 The native interface contains standard SMP management and a separate raw terminal
 stream. Its GATT service is `f3641400-00b0-4240-ba50-05ca45bf8abc`; TX notifications

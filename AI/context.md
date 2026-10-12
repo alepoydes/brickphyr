@@ -71,8 +71,10 @@ surface and delivery order. Use the workspace summary and incremental checks
 linked there. The next blocks finish interactive REPL acceptance and complete
 Pybricks client execution. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
 Both plain Shell `python` and `brickphyrdev terminal --repl` show entry hints and
-have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Combined interactive
-flow-control acceptance remains open.
+have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Native SMP output
+backpressure has F4 USB/BLE checks, and combined REPL/monitor operation passes
+over USB. Competing full status responses limit BLE REPL/monitor output;
+its combined acceptance remains open.
 
 Remaining hub, wired-device, motor, robotics and wireless bindings are required
 work. Generic `PUPDevice.info/read/reset` has ARM and idle-encoder F4 USB/BLE checks.

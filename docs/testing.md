@@ -662,6 +662,9 @@ and TTY restoration. It does not emulate a second Shell or claim radio coverage.
 through `uv run`. It checks that input resumes without loss, control keys reach
 the peer unchanged, Ctrl+] cancels a blocked send, and local TTY settings are
 restored. These checks use no firmware or physical Bluetooth connection.
+The ARM `test_repl_terminal_cli` cases combine monitoring with Python output,
+reset and detach; forced exit follows a large paste without waiting for input
+to drain, then checks that the same Shell and restored local TTY remain usable.
 
 `tests/storage` runs the actual LittleFS/Settings stack over simulated flash.
 It checks explicit save versus RAM-only changes, reload, file compaction,

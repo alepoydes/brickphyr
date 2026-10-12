@@ -136,8 +136,10 @@ LittleFS/Settings. Physical calibration accuracy is not yet verified.
 ## Explicit power control
 
 On F4, `shutdown` and a two-second central-button hold request the same shutdown
-on the hub thread: turn off button lights, disconnect USB, stop Bluetooth and
-release the PA13 power latch. Radio shutdown runs independently of the button
+on the hub thread: stop applications and hardware outputs, turn off button lights,
+stop Bluetooth and release the PA13 power latch. With charger support, USB stays
+configured to retain its charging current budget; other profiles disconnect USB.
+Radio shutdown runs independently of the button
 loop; a failed HCI operation cannot prevent the power latch from being released.
 A held button may keep power on until released. An active host session
 inhibits automatic inactivity shutdown, but does not veto an explicit power-off.
@@ -151,9 +153,9 @@ for installation through Pybricks. These are privileged diagnostic commands;
 application shutdown quiesces application-owned devices before the same final
 power operation.
 
-The physical effects of USB power, charging, and wake-up need separate tests;
-USB disconnection alone is not proof that battery power was cut. Charging remains
-disabled while the charger driver is absent.
+USB disconnection alone is not proof that battery power was cut. The
+[USB-powered off state](#inactivity-shutdown) describes charging and button restart;
+[battery support](hardware.md#hub-battery) records charging limits.
 
 ## System watchdog
 
@@ -200,8 +202,9 @@ One Robot Inventor F4 has passed a one-shot interrupt-lock expiry and a stalled
 system-workqueue reset, with USB console recovery and inactive A/B motor outputs.
 DFU/reinstallation with watchdog armed is checked. Native simulation also covers
 hub-loop starvation and supervision throughout the USB-powered off state.
-Physical shutdown/button restart with watchdog enabled and battery-only recovery
-remain unverified. These checks do not establish recovery from damaged boot code
+Command shutdown and button restart with watchdog enabled are checked with USB
+attached, including the charging profile. Battery-only watchdog recovery remains
+unverified. These checks do not establish recovery from damaged boot code
 or interrupted firmware writes. See [watchdog checks](testing.md#watchdog).
 
 ## Inactivity shutdown
