@@ -33,6 +33,7 @@ UPSTREAM = ROOT.parent / "pybricks-micropython/tests/virtualhub"
         "multitasking/basic.py",
         "multitasking/cleanup_error.py",
         "tools/cobs.py",
+        "tools/matrix_print.py",
     ],
 )
 def test_reference_program(name):

@@ -98,6 +98,24 @@ replacement, lazy-iterator failures, Ctrl-C, forced stop and REPL reset. Injecte
 start/cleanup errors preserve the first failure and allow explicit retry. These
 checks do not measure acoustic output or physical note timing.
 
+The IMU Python fixture adds a synthetic I2C register peer and GPIO ready edges
+to the protected ARM application build. It runs the production acquisition,
+stationary detection, estimator, snapshots and Python bindings. Six orthogonal
+poses check axes, gravity units, side, tilt and orientation; constant synthetic
+gyro inputs check raw units and learned bias. I2C failures, missing edges, invalid
+axes, forced stop/reuse and a build without IMU support check error boundaries.
+This does not establish physical calibration accuracy or acquisition deadlines.
+This fixture uses paced instruction-count time so laptop scheduling pauses do
+not become synthetic sensor gaps. Its finest clock resolution is for functional
+execution, not a model of STM32 instruction timing. The stationary case allows
+six host seconds to observe its bounded three-second guest wait.
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked pytest -q tests/test_python_imu.py
+```
+
 `test_python_system.py` checks launch information, rejected button settings,
 combination presses, catchable `SystemExit`, disabling/restoring the stop button,
 and shutdown through supervisor cleanup. Buttons are synthetic and shutdown ends

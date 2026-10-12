@@ -208,6 +208,13 @@ hardware operations. Its `color/invalid_float.py` case checks the common helper
 without requiring devices. The original unchecked cast allowed NaN brightness
 through the ARM display binding; that regression is also checked in Brickphyr.
 
+Matrix formatting now uses MicroPython's float printer instead of clipping every
+element to ±999.999 or converting nonfinite/large values to integers. It streams
+rows without allocating a second matrix-sized buffer. `tools/matrix_print.py`
+checks gravity-scale values, transposition, scaling and nonfinite/large values
+through the same public representation. Transposed iteration now visits logical
+rows in order; previously it reversed the entire backing array, including vectors.
+
 These corrections independently improve Pybricks and remain in that repository.
 They are not yet published or included in the manifest pin. Brickphyr-specific
 clock, lifetime and device adaptations remain in Brickphyr.

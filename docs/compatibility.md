@@ -171,8 +171,27 @@ on the Inventor F4. Both actual Pybricks clients execute the example with the
 correct slot and connection fields. Stop-button combinations and Python-requested
 shutdown have protected ARM checks; their physical acceptance remains pending.
 
+`hub.imu` reads the common IMU service: `acceleration`, `angular_velocity`,
+`tilt`, `up`, `orientation`, `ready` and `stationary`. Acceleration is in mm/s²
+and angular velocity in degrees/s. Vector reads return a three-row `Matrix` or
+a scalar projection onto the supplied `Axis`/three-element `Matrix`. The
+`calibrated=False` option reads raw measurements; calibrated tilt and `up` use
+the fused gravity direction. Axes are currently +X front, +Y left and +Z top.
+Invalid or stale measurements raise `OSError`; readiness/stationary return false
+while measurements are invalid. A build without IMU support raises
+`OSError(ENOTSUP)` without preventing construction or other hub operations.
+See the [IMU example](../examples/python/imu.py).
+Protected ARM checks use actual acquisition and processing with synthetic I2C/GPIO:
+six poses, axis projections, bias compensation, invalid inputs, missing samples
+and restart after forced stop. On the Inventor F4, native USB/BLE scripts and REPL
+read observations; both actual Pybricks clients run the example in bounded checks.
+Pybricks BLE execution can also report a transient `EOVERFLOW` observation during
+the known acquisition gaps under radio load. Subsequent reads recover, but sustained
+error-free combined operation and physical calibration accuracy remain unverified.
+
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-IMU, charger, system `reset_storage`, `hub_menu` and messaging remain
+IMU heading/reset, integrated rotation and calibration settings, charger,
+system `reset_storage`, `hub_menu` and messaging remain
 unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.

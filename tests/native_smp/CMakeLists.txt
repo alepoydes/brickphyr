@@ -28,3 +28,7 @@ target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/storage_mount.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/telemetry.c)
 target_sources(app PRIVATE ../native/sound_output.c ${BRICKPHYR_ROOT}/src/hub_sound.c
   ${BRICKPHYR_ROOT}/src/sound/waveform.c)
+if(CONFIG_BRICKPHYR_IMU)
+  include(${BRICKPHYR_ROOT}/cmake/hub_imu.cmake)
+  target_sources(app PRIVATE imu.c)
+endif()

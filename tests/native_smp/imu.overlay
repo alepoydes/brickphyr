@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	imu_gpio: imu-gpio {
+		compatible = "zephyr,gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <1>;
+		rising-edge;
+	};
+	imu_i2c: i2c@10000100 {
+		compatible = "zephyr,i2c-emul-controller";
+		reg = <0x10000100 4>;
+		clock-frequency = <400000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		hub_imu: imu@6a {
+			compatible = "st,lsm6ds3tr-c";
+			reg = <0x6a>;
+			irq-gpios = <&imu_gpio 0 GPIO_ACTIVE_HIGH>;
+			axis-signs = <(-1) 1 (-1)>;
+		};
+	};
+};

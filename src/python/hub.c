@@ -10,7 +10,7 @@
 
 typedef struct {
 	mp_obj_base_t base;
-	mp_obj_t buttons, light, bluetooth_light, display, battery, speaker, system;
+	mp_obj_t buttons, light, bluetooth_light, display, battery, speaker, system, imu;
 } hub_obj_t;
 
 static mp_obj_t buttons_pressed(mp_obj_t parent)
@@ -66,6 +66,7 @@ static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 	self->battery = MP_OBJ_FROM_PTR(&battery);
 	self->speaker = python_speaker_new();
 	self->system = MP_OBJ_FROM_PTR(&python_system);
+	self->imu = MP_OBJ_FROM_PTR(&python_imu);
 	return MP_OBJ_FROM_PTR(self);
 }
 
@@ -77,6 +78,7 @@ static const pb_attr_dict_entry_t hub_attributes[] = {
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_battery, hub_obj_t, battery),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_speaker, hub_obj_t, speaker),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_system, hub_obj_t, system),
+	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_imu, hub_obj_t, imu),
 	PB_ATTR_DICT_SENTINEL
 };
 

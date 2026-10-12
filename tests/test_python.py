@@ -25,8 +25,8 @@ from brickphyrdev.application import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-async def completed(client, state=2):
-    async with asyncio.timeout(3):
+async def completed(client, state=2, *, timeout=3):
+    async with asyncio.timeout(timeout):
         while (status := await checked(client, Status())).state == 1:
             await asyncio.sleep(0.01)
     assert status.state == state and status.cleanup == 0, status

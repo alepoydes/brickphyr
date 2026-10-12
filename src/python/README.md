@@ -99,8 +99,8 @@ both firmware services and bindings. Current [library coverage](../../docs/compa
 and its [dependency corrections](../../docs/upstream.md#python-library-prerequisites)
 remain distinct from physical hardware acceptance.
 
-`hub.c`, `light.c`, `matrix.c`, `speaker.c` and `system.c` adapt the hub, battery,
-internal color-light, light-matrix, speaker and system bindings from Pybricks
+`hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
+battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
 v4.1.0b6 (`a7b1b04ae`). They retain the upstream
 MIT attribution. The keypad wrapper, fonts and color conversion compile directly
 from that checkout; the font's BBC notice is retained in the distribution notice.

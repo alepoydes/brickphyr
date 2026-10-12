@@ -90,10 +90,14 @@ def test_arm_firmware(suite, success):
 
 
 @contextmanager
-def native_console(build):
+def native_console(build, *, virtual_clock=False):
     # This peer interacts with host Python/PTY I/O. Keep its clock paced against
     # host time; an accelerated idle guest could expire a transfer before the
     # host process is scheduled. Autonomous guest checks use Zephyr's runner.
+    # Sampled devices need guest time independent of host scheduling stalls.
+    # Use the finest instruction clock, paced for host I/O. This is functional
+    # device simulation, not the physical CPU's instruction/cycle timing.
+    clock = ["-icount", "shift=0,align=off,sleep=on"] if virtual_clock else []
     process = subprocess.Popen(
         [
             qemu(build),
@@ -108,6 +112,7 @@ def native_console(build):
             "pty,id=terminal",
             "-serial",
             "chardev:terminal",
+            *clock,
             "-kernel",
             str(build / "zephyr/zephyr.elf"),
         ],
