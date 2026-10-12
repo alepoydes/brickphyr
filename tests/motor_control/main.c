@@ -157,4 +157,77 @@ ZTEST(motor_control, test_passive_observation)
 	zassert_false(observation.stalled);
 }
 
+ZTEST(motor_control, test_servo_motion_commands)
+{
+	struct motor_control motor;
+	const int64_t origin = 3000000000LL;
+	zassert_ok(motor_control_init_profile(&motor, 48, origin, 6));
+	zassert_equal(motor.control.settings.position_tolerance, 6000);
+	struct bp_motor_command command = {.mode = BP_MOTOR_SPEED, .action = BP_MOTOR_TIMED,
+		.speed_mdeg_s = 100000, .finish = BP_MOTOR_FINISH_HOLD};
+	zassert_ok(motor_control_check(48, origin, &command));
+	zassert_ok(motor_control_command(&motor, 0, origin, &command, 9000));
+	struct motor_reference out;
+	zassert_ok(motor_control_step(&motor, 0, origin, &out));
+	zassert_true(out.done && out.active, "Zero time became an infinite run");
+	zassert_ok(motor_control_step(&motor, 50, origin, &out));
+	zassert_equal(out.angle_mdeg, origin);
+
+	/* Tracking replaces the reference immediately, without narrowing the long
+	 * origin. Reset clears speed history while retaining the selected profile. */
+	command = (struct bp_motor_command){.mode = BP_MOTOR_POSITION, .action = BP_MOTOR_TRACK,
+		.target_mdeg = origin - 30000, .finish = BP_MOTOR_FINISH_HOLD};
+	zassert_ok(motor_control_command(&motor, 100, origin, &command, 9000));
+	zassert_ok(motor_control_step(&motor, 100, origin, &out));
+	zassert_equal(out.angle_mdeg, origin - 30000);
+	zassert_true(out.voltage_mv < 0);
+	zassert_ok(motor_control_reset_angle(&motor, origin));
+	zassert_equal(motor.control.settings.position_tolerance, 6000);
+	int32_t speed;
+	zassert_ok(pbio_differentiator_get_speed(&motor.observer.differentiator, 100, &speed));
+	zassert_equal(speed, 0);
+
+	/* A fixed synthetic shaft completes a stall objective, including HOLD at
+	 * positions which cannot be represented as int32 millidegrees. */
+	command = (struct bp_motor_command){.mode = BP_MOTOR_SPEED, .action = BP_MOTOR_UNTIL_STALLED,
+		.speed_mdeg_s = 500000, .finish = BP_MOTOR_FINISH_HOLD, .duty_limit = 500};
+	zassert_ok(motor_control_command(&motor, 150, origin, &command, 9000));
+	for (uint32_t ticks = 150; ticks < 30000; ticks += 50) {
+		zassert_ok(motor_control_step(&motor, ticks, origin, &out));
+		zassert_ok(motor_control_predict(&motor, ticks, origin, out.coast, out.voltage_mv));
+		if (out.done) break;
+	}
+	zassert_true(out.done && out.active);
+	zassert_ok(motor_control_step(&motor, 30000, origin, &out));
+	zassert_equal(out.angle_mdeg, origin);
+	zassert_ok(motor_control_reset_angle(&motor, origin));
+	command.finish = BP_MOTOR_FINISH_COAST_SMART;
+	zassert_ok(motor_control_command(&motor, 0, origin, &command, 9000));
+	for (uint32_t time = 0; time < 30000; time += 50) {
+		zassert_ok(motor_control_step(&motor, time, origin, &out));
+		zassert_ok(motor_control_predict(&motor, time, origin, out.coast, out.voltage_mv));
+		if (out.done) break;
+	}
+	zassert_true(out.done && !out.active && out.coast, "Smart stall completion kept driving");
+
+	/* Two relative commands reuse PBIO's smart endpoint. A deliberately simple
+	 * plant exercises actual feedback/completion instead of a copied planner. */
+	double angle = origin, velocity = 0;
+	zassert_ok(motor_control_init(&motor, 48, origin));
+	command = (struct bp_motor_command){.mode = BP_MOTOR_POSITION, .action = BP_MOTOR_RELATIVE,
+		.target_mdeg = -120000, .speed_mdeg_s = 240000, .finish = BP_MOTOR_FINISH_COAST_SMART};
+	uint32_t ticks = 0;
+	for (int move = 1; move <= 2; move++) {
+		zassert_ok(motor_control_command(&motor, ticks, angle, &command, 9000));
+		uint32_t end = ticks + 30000;
+		do {
+			advance(&motor, ticks, &angle, &velocity, &out);
+			ticks += 50;
+		} while (!out.done && ticks < end);
+		zassert_true(out.done);
+		zassert_equal(out.angle_mdeg, origin - move * 120000);
+		zassert_true(llabs((int64_t)angle - out.angle_mdeg) <= 11000);
+	}
+}
+
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

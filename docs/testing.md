@@ -149,6 +149,17 @@ transmitted bytes separately from the firmware status snapshots.
 brake/coast, close, stale objects after hotplug and forced-stop coast in one ARM
 boot. It observes passive-motor PWM and uses synthetic battery inputs; physical
 motor behavior is a separate acceptance item.
+`tests/test_python_motor.py` uses the same protected fixture with its native
+controller enabled and a synthetic encoded UART motor. It checks shared
+direction/gearing/origin, measurements, reset, timed/relative/stall motion,
+blocking/awaitable completion, alias cancellation and supervised stop. The peer
+can set a shaft angle or advance it each UART frame; it does not simulate a plant
+responding to PWM. Run the focused case with:
+
+```sh
+uv run --locked pytest -q tests/test_python_motor.py
+```
+
 `tests/test_python_pfmotor.py` covers IR command encoding, 250 ms spacing,
 sensor-mode reuse, eight-output coast on stop and cleanup failure/reconnection.
 Its long asynchronous command sequence uses QEMU's normal paced clock; the
@@ -542,6 +553,9 @@ learning during drive.
 `tests/motor_control` runs the PBIO computation on ARM with a deliberately simple
 independent synthetic plant. It checks motion in both directions, long encoder
 origins, position hold, timed completion, time wrapping and rejected requests.
+Explicit servo commands cover zero duration, long-origin instant tracking,
+profile-preserving observer reset, stall-to-hold/passive stop and smart relative
+endpoints through that plant.
 Passive-observer checks cover numerical speed, signed load, stall and coast
 without active regulation; the same suite also runs on `native_sim`.
 `tests/regulated_motors` runs the production UART/ADC/controller/PWM path with

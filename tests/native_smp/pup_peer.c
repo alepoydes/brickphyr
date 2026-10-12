@@ -41,11 +41,17 @@ static const uint8_t color_distance_formats[][2] = {
 	{4, 0}, {2, 1}, {8, 1},
 };
 static const uint8_t matrix_formats[][2] = {{1, 0}, {1, 0}, {9, 0}, {1, 0}};
+/* Technic L motor (ID 46): POWER, SPEED, POS, APOS, CALIB, STATS. */
+static const uint8_t motor_formats[][2] = {
+	{1, 0}, {1, 0}, {1, 2}, {1, 1}, {2, 1}, {14, 0},
+};
 static const uint8_t color_rgb[] = {0, 4, 0, 0, 0, 0, 0, 0}; /* 1024, 0, 0, 0. */
 static const uint8_t color_shsv[] = {120, 0, 0xe8, 3, 0xe8, 3, 0, 0};
 static const uint8_t ultrasonic_distance[] = {0x41, 1}; /* 321 mm. */
 static const uint8_t color_distance_rgb[] = {0x90, 1, 0, 0, 0, 0}; /* 400, 0, 0. */
-static enum { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE, MATRIX } peer_kind;
+static enum { GENERIC, FORCE, TILT, INFRARED, COLOR, ULTRASONIC, COLOR_DISTANCE, MATRIX,
+	ENCODED_MOTOR } peer_kind;
+static int16_t shaft_angle, shaft_step;
 static uint8_t infrared_count[4];
 static uint8_t written[4][8];
 static bool has_written[4], extension_valid;
@@ -70,7 +76,8 @@ static uint8_t mode_count(void)
 		peer_kind == COLOR ? ARRAY_SIZE(color_formats) :
 		peer_kind == ULTRASONIC ? ARRAY_SIZE(ultrasonic_formats) :
 		peer_kind == COLOR_DISTANCE ? ARRAY_SIZE(color_distance_formats) :
-		peer_kind == MATRIX ? ARRAY_SIZE(matrix_formats) : 4;
+		peer_kind == MATRIX ? ARRAY_SIZE(matrix_formats) :
+		peer_kind == ENCODED_MOTOR ? ARRAY_SIZE(motor_formats) : 4;
 }
 
 static const uint8_t *mode_format(uint8_t mode)
@@ -80,7 +87,8 @@ static const uint8_t *mode_format(uint8_t mode)
 		peer_kind == COLOR ? color_formats[mode] :
 		peer_kind == ULTRASONIC ? ultrasonic_formats[mode] :
 		peer_kind == COLOR_DISTANCE ? color_distance_formats[mode] :
-		peer_kind == MATRIX ? matrix_formats[mode] : NULL;
+		peer_kind == MATRIX ? matrix_formats[mode] :
+		peer_kind == ENCODED_MOTOR ? motor_formats[mode] : NULL;
 }
 
 static int output_size(uint8_t mode)
@@ -158,7 +166,8 @@ static void send_sample(void)
 		data = infrared_cal;
 		length = sizeof(infrared_cal);
 	} else if (peer_kind == COLOR || peer_kind == ULTRASONIC ||
-		   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX) {
+		   peer_kind == COLOR_DISTANCE || peer_kind == MATRIX ||
+		   peer_kind == ENCODED_MOTOR) {
 		const uint8_t *format = mode_format(selected);
 		length = format[0] * (format[1] >= 2 ? 4 : 1U << format[1]);
 		if (peer_kind == COLOR && selected == 5) data = color_rgb;
@@ -168,6 +177,14 @@ static void send_sample(void)
 		else if (peer_kind == COLOR_DISTANCE && selected == 1) data = color_distance_proximity;
 		else if (peer_kind == COLOR_DISTANCE && selected == 4) data = color_distance_ambient;
 		else if (peer_kind == COLOR_DISTANCE && selected == 6) data = color_distance_rgb;
+		else if (peer_kind == ENCODED_MOTOR && selected == 4) {
+			static uint8_t calib[4];
+			shaft_angle = (shaft_angle + shaft_step + 3600) % 3600;
+			calib[0] = calib[1] = 0; /* First CALIB word is ignored by PBIO. */
+			calib[2] = shaft_angle;
+			calib[3] = shaft_angle >> 8;
+			data = calib;
+		}
 	}
 	send_packet(LUMP_MSG_TYPE_DATA, selected, -1, data, length);
 }
@@ -191,7 +208,7 @@ static void peer_work(struct k_work *item)
 		const uint8_t id = peer_kind == FORCE ? 63 : peer_kind == TILT ? 34 :
 			peer_kind == INFRARED ? 35 : peer_kind == COLOR ? 61 :
 			peer_kind == ULTRASONIC ? 62 : peer_kind == COLOR_DISTANCE ? 37 :
-			peer_kind == MATRIX ? 64 : 201;
+			peer_kind == MATRIX ? 64 : peer_kind == ENCODED_MOTOR ? 46 : 201;
 		uint8_t count = mode_count();
 		const uint8_t modes[] = {MIN(count - 1, 7), 0, count - 1, 0};
 		const uint8_t speed[] = {0, 0xc2, 1, 0}; /* 115200 baud. */
@@ -204,13 +221,18 @@ static void peer_work(struct k_work *item)
 		for (uint8_t end = MIN(metadata_mode + 2, count); metadata_mode < end; metadata_mode++) {
 			uint8_t mode = metadata_mode;
 			const uint8_t name[] = {'R', 'A', 'W', mode < 10 ? (uint8_t)('0' + mode) : 'X'};
+			const uint8_t calib_name[] = {'C', 'A', 'L', 'I', 'B', 0,
+				LUMP_MODE_FLAGS0_MOTOR_ABS_POS | LUMP_MODE_FLAGS0_MOTOR, 0x40,
+				0, 0, 5, 4};
 			const uint8_t *known = mode_format(mode);
 			uint8_t values = peer_kind == GENERIC ? 2 : peer_kind == TILT ? 2 : known[0];
 			uint8_t type = peer_kind == GENERIC ? mode : peer_kind == TILT ? 0 : known[1];
 			const uint8_t format[] = {values, type, 6, 0};
 			const uint8_t mapping[] = {writable_mode(mode) ? 0 : 0x10,
 				writable_mode(mode) ? 1 : 0};
-			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
+			send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME,
+				peer_kind == ENCODED_MOTOR && mode == 4 ? calib_name : name,
+				peer_kind == ENCODED_MOTOR && mode == 4 ? sizeof(calib_name) : sizeof(name));
 			if (peer_kind == GENERIC) {
 				const uint8_t generic_mapping[] = {0x10, 0x10};
 				send_packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING,
@@ -339,6 +361,21 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		k_mutex_unlock(&peer_lock);
 		return err;
 	}
+	if (!strcmp(argv[1], "motor_angle") || !strcmp(argv[1], "motor_step")) {
+		if (argc != 3) return -EINVAL;
+		int err = 0;
+		long value = shell_strtol(argv[2], 10, &err);
+		bool angle = !strcmp(argv[1], "motor_angle");
+		if (err || (angle ? value < 0 || value >= 3600 : value < -100 || value > 100)) return -EINVAL;
+		k_mutex_lock(&peer_lock, K_FOREVER);
+		err = connected && peer_kind == ENCODED_MOTOR ? 0 : -ENODEV;
+		if (!err) {
+			if (angle) shaft_angle = value;
+			else shaft_step = value;
+		}
+		k_mutex_unlock(&peer_lock);
+		return err;
+	}
 	if (argc != 2) return -EINVAL;
 	if (!strcmp(argv[1], "serial_close_error")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
@@ -403,9 +440,10 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	    strcmp(argv[1], "color") && strcmp(argv[1], "ultrasonic") &&
 	    strcmp(argv[1], "color_distance") && strcmp(argv[1], "matrix") &&
 	    strcmp(argv[1], "light") && strcmp(argv[1], "motor") &&
+	    strcmp(argv[1], "encoded_motor") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, motor, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
+		shell_error(shell, "Expected a peer kind, encoded_motor, motor_angle, motor_step, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -426,7 +464,9 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 		!strcmp(argv[1], "infrared") ? INFRARED : !strcmp(argv[1], "color") ? COLOR :
 		!strcmp(argv[1], "ultrasonic") ? ULTRASONIC :
 		!strcmp(argv[1], "color_distance") ? COLOR_DISTANCE :
-		!strcmp(argv[1], "matrix") ? MATRIX : GENERIC;
+		!strcmp(argv[1], "matrix") ? MATRIX :
+		!strcmp(argv[1], "encoded_motor") ? ENCODED_MOTOR : GENERIC;
+	shaft_angle = shaft_step = 0;
 	memset(infrared_count, 0, sizeof(infrared_count));
 	infrared_count[0] = 41;
 	phase = WAIT_SPEED;
@@ -450,5 +490,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
 	pup_peer, 2, 1);

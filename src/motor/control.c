@@ -225,9 +225,16 @@ int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_comman
 {
     const struct defaults *d = find_defaults(id);
     if (!d) return -ENOTSUP;
-    if (command->finish > BP_MOTOR_FINISH_CONTINUE ||
+    if (command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
         command->speed_mdeg_s < -d->rated_max_speed * 1000 ||
         command->speed_mdeg_s > d->rated_max_speed * 1000) return -EINVAL;
+    if (command->action > BP_MOTOR_UNTIL_STALLED ||
+        (command->action == BP_MOTOR_UNTIL_STALLED &&
+         (command->duty_limit < -1 || command->duty_limit > 1000 ||
+          command->finish == BP_MOTOR_FINISH_CONTINUE))) return -EINVAL;
+    if (command->action != BP_MOTOR_TRAJECTORY &&
+        (command->mode != ((command->action == BP_MOTOR_TIMED || command->action == BP_MOTOR_UNTIL_STALLED) ?
+         BP_MOTOR_SPEED : BP_MOTOR_POSITION))) return -EINVAL;
     pbio_angle_t checked;
     int err = angle_from_mdeg(angle, &checked);
     if (err) return err;
@@ -237,8 +244,12 @@ int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_comman
     if (command->mode != BP_MOTOR_POSITION || command->duration_ms || command->speed_mdeg_s < 0) return -EINVAL;
     err = angle_from_mdeg(command->target_mdeg, &checked);
     if (err) return err;
-    int64_t distance = command->target_mdeg - angle;
+    if (command->action == BP_MOTOR_HOLD) return 0;
+    int64_t distance = command->action == BP_MOTOR_RELATIVE ? command->target_mdeg : command->target_mdeg - angle;
+    /* Even a constant TRACK target needs bounded int32 feedback differences.
+     * This limits displacement, not the long absolute shaft origin. */
     if (distance <= -INT32_MAX / 2 || distance >= INT32_MAX / 2) return -ERANGE;
+    if (command->action == BP_MOTOR_TRACK) return 0;
     /* Reject infeasible distance/speed combinations before queuing a command.
      * The worker plans again from its live reference when applying it. */
     pbio_trajectory_command_t trajectory_command = {
@@ -249,16 +260,21 @@ int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_comman
         .deceleration = ACCELERATION_MDEG_S2,
         .continue_running = command->finish == BP_MOTOR_FINISH_CONTINUE,
     };
+    if (command->action == BP_MOTOR_RELATIVE) {
+        err = angle_from_mdeg(angle + distance, &trajectory_command.position_end);
+        if (err) return err;
+    }
     angle_from_mdeg(angle, &trajectory_command.position_start);
     pbio_trajectory_t trajectory;
     return pbio_trajectory_new_angle_command(&trajectory, &trajectory_command) == PBIO_SUCCESS ? 0 : -ERANGE;
 }
 
 #define DEG_TO_MDEG(deg) ((deg) * 1000)
-int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_mdeg)
+int motor_control_init_profile(struct motor_control *motor, uint16_t id, int64_t angle_mdeg, int32_t profile)
 {
     const struct defaults *d = find_defaults(id);
     if (!d) return -ENOTSUP;
+    if (profile < 0 || profile > INT32_MAX / 1000) return -EINVAL;
     pbio_angle_t angle;
     int err = angle_from_mdeg(angle_mdeg, &angle);
     if (err) return err;
@@ -266,7 +282,7 @@ int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_m
     motor->observer.model = d->model;
     int32_t max_voltage = motor_max_voltage(id);
     motor->max_voltage = max_voltage;
-    int32_t precision_profile = d->precision_profile;
+    int32_t precision_profile = profile ? profile : d->precision_profile;
     int32_t nominal_torque = pbio_observer_voltage_to_torque(d->model, pbio_int_math_min(max_voltage, 7500));
     motor->control.settings = (pbio_control_settings_t) {
         // The native boundary uses millidegrees, without a gear-ratio transform.
@@ -320,6 +336,22 @@ int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_m
 }
 #undef DEG_TO_MDEG
 
+int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle)
+{
+    return motor_control_init_profile(motor, id, angle, 0);
+}
+
+int motor_control_reset_angle(struct motor_control *motor, int64_t measured)
+{
+    pbio_angle_t angle;
+    int err = angle_from_mdeg(measured, &angle);
+    if (err) return err;
+    pbio_control_reset(&motor->control);
+    pbio_observer_reset(&motor->observer, &angle);
+    motor->timed_hold = false;
+    return 0;
+}
+
 static int state_get(struct motor_control *motor, int64_t measured, pbio_control_state_t *state)
 {
     int err = angle_from_mdeg(measured, &state->position);
@@ -337,10 +369,10 @@ static int result(pbio_error_t err)
     return err == PBIO_SUCCESS ? 0 : err == PBIO_ERROR_INVALID_ARG ? -ERANGE : -EDOM;
 }
 
-int motor_control_run(struct motor_control *motor, uint32_t ticks, int64_t angle,
-    int32_t speed, uint32_t duration, pbio_control_on_completion_t finish)
+static int run_duration(struct motor_control *motor, uint32_t ticks, int64_t angle,
+    int32_t speed, uint32_t duration, pbio_control_on_completion_t finish, bool forever)
 {
-    if (finish > PBIO_CONTROL_ON_COMPLETION_CONTINUE || finish < 0 ||
+    if (finish > PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART || finish < 0 ||
         speed < -motor->control.settings.speed_max || speed > motor->control.settings.speed_max ||
         duration >= PBIO_TRAJECTORY_DURATION_FOREVER_MS) return -EINVAL;
     pbio_control_state_t state;
@@ -349,18 +381,90 @@ int motor_control_run(struct motor_control *motor, uint32_t ticks, int64_t angle
     /* PBIO's timed HOLD narrows the absolute position through int32 application
      * units. Complete with brake, then start a zero-relative position command
      * below, preserving the long millidegree angle. */
-    bool hold = duration && finish == PBIO_CONTROL_ON_COMPLETION_HOLD;
+    bool hold = !forever && finish == PBIO_CONTROL_ON_COMPLETION_HOLD;
     err = result(pbio_control_start_timed_control(&motor->control, ticks, &state,
-        duration ? duration : PBIO_TRAJECTORY_DURATION_FOREVER_MS, speed,
-        !duration ? PBIO_CONTROL_ON_COMPLETION_CONTINUE : hold ? PBIO_CONTROL_ON_COMPLETION_BRAKE : finish));
+        forever ? PBIO_TRAJECTORY_DURATION_FOREVER_MS : duration, speed,
+        forever ? PBIO_CONTROL_ON_COMPLETION_CONTINUE : hold ? PBIO_CONTROL_ON_COMPLETION_BRAKE : finish));
     if (!err) motor->timed_hold = hold;
+    return err;
+}
+
+int motor_control_run(struct motor_control *motor, uint32_t ticks, int64_t angle,
+    int32_t speed, uint32_t duration, pbio_control_on_completion_t finish)
+{
+    return run_duration(motor, ticks, angle, speed, duration, finish, !duration);
+}
+
+int32_t motor_control_speed_limit(uint16_t id)
+{
+    const struct defaults *d = find_defaults(id);
+    return d ? d->rated_max_speed * 1000 : 0;
+}
+
+/* The public PBIO hold entry takes int32 application units. Our controller uses
+ * physical millidegrees with a long accumulated position. Preserve its state
+ * transition and replace only the constant trajectory through the public API. */
+static int track(struct motor_control *motor, uint32_t ticks, int64_t target)
+{
+    pbio_trajectory_command_t command = {0};
+    int err = angle_from_mdeg(target, &command.position_start);
+    if (err) return err;
+    command.position_end = command.position_start;
+    err = result(pbio_control_start_position_control_hold(&motor->control, ticks, 0));
+    if (err) return err;
+    command.time_start = pbio_control_get_ref_time(&motor->control, ticks);
+    pbio_trajectory_make_constant(&motor->control.trajectory, &command);
+    motor->timed_hold = false;
+    return 0;
+}
+
+int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t angle,
+    const struct bp_motor_command *command, int32_t battery_mv)
+{
+    int32_t speed = command->speed_mdeg_s;
+    pbio_control_on_completion_t finish = command->finish;
+    if (command->action == BP_MOTOR_TRAJECTORY) {
+        return command->mode == BP_MOTOR_SPEED ?
+            motor_control_run(motor, ticks, angle, speed, command->duration_ms, finish) :
+            motor_control_target(motor, ticks, angle, command->target_mdeg, speed, finish);
+    }
+    if (command->action == BP_MOTOR_TIMED) {
+        return run_duration(motor, ticks, angle, speed, command->duration_ms, finish, false);
+    }
+    if (command->action == BP_MOTOR_UNTIL_STALLED) {
+        /* Smart endpoints belong to finite angle moves. Waiting for the end
+         * of a forever trajectory after stall would keep driving the stop. */
+        if (finish == PBIO_CONTROL_ON_COMPLETION_COAST_SMART) finish = PBIO_CONTROL_ON_COMPLETION_COAST;
+        if (finish == PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART) finish = PBIO_CONTROL_ON_COMPLETION_BRAKE;
+        int err = motor_control_run(motor, ticks, angle, speed, 0, PBIO_CONTROL_ON_COMPLETION_CONTINUE);
+        if (err) return err;
+        motor->timed_hold = finish == PBIO_CONTROL_ON_COMPLETION_HOLD;
+        motor->control.on_completion = motor->timed_hold ? PBIO_CONTROL_ON_COMPLETION_BRAKE : finish;
+        motor->control.type |= PBIO_CONTROL_TYPE_FLAG_OBJECTIVE_IS_STALL;
+        if (command->duty_limit >= 0) motor->control.settings.actuation_max_temporary =
+            pbio_observer_voltage_to_torque(motor->observer.model, battery_mv * command->duty_limit / 1000);
+        return 0;
+    }
+    pbio_control_state_t state;
+    int err = state_get(motor, angle, &state);
+    if (err) return err;
+    if (command->action == BP_MOTOR_HOLD) {
+        pbio_trajectory_reference_t ref = {.position = state.position};
+        if (pbio_control_is_active(&motor->control)) pbio_control_get_reference(&motor->control, ticks, &state, &ref);
+        return track(motor, ticks, angle_mdeg(&ref.position));
+    }
+    if (command->action == BP_MOTOR_TRACK) return track(motor, ticks, command->target_mdeg);
+    if (command->action != BP_MOTOR_RELATIVE) return -EINVAL;
+    err = result(pbio_control_start_position_control_relative(&motor->control, ticks,
+        &state, command->target_mdeg, speed, finish, true));
+    if (!err) motor->timed_hold = false;
     return err;
 }
 
 int motor_control_target(struct motor_control *motor, uint32_t ticks, int64_t angle,
     int64_t target, int32_t speed, pbio_control_on_completion_t finish)
 {
-    if (finish > PBIO_CONTROL_ON_COMPLETION_CONTINUE || finish < 0 || speed < 0 ||
+    if (finish > PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART || finish < 0 || speed < 0 ||
         speed > motor->control.settings.speed_max) return -EINVAL;
     pbio_control_state_t state;
     int err = state_get(motor, angle, &state);

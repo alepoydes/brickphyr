@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Protected Motor bindings over synthetic UART feedback and real motor services."""
+
+import asyncio
+
+from test_native import native_console
+from test_python import completed, output
+from test_python_accessories import motor_matches
+from test_python_hub import BUILD, ready, shell
+from test_python_pupdevice import port_matches
+
+from brickphyrdev import console
+from brickphyrdev.application import Format, Input, Start, Stop, checked, upload
+from brickphyrdev.telemetry import snapshot
+
+
+def test_motor_coordinates_motion_and_cancellation():
+    source = b"""
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port, Direction, Stop
+from pybricks.tools import wait, run_task, multitask
+
+m = Motor(Port.A, Direction.COUNTERCLOCKWISE, [[12, 36], [20, 40]], profile=6)
+assert m.angle() == 0 and m.speed() == 0 and m.done()
+assert m.load() == 0 and not m.stalled()
+print('ready'); input()
+wait(25)
+assert m.angle() == -15, m.angle()
+
+alias = Motor(Port.A, Direction.COUNTERCLOCKWISE, [10, 60], reset_angle=False)
+assert alias.angle() == -15
+assert alias.reset_angle(12) is None
+assert m.angle() == 12, m.angle()
+print('ready'); input()
+wait(25)
+assert m.angle() == 9, m.angle()
+assert m.reset_angle() is None
+assert alias.angle() == -18, alias.angle()
+print('ready'); input()
+wait(120)
+assert -100 <= m.speed() <= -60, m.speed()
+assert m.load() == 0
+print('ready'); input()
+wait(25)
+
+m.reset_angle(0)
+assert m.run_target(0, 1000) is None and m.done()
+assert m.angle() == 0
+assert m.run_angle(0, -360) is None and m.done()
+assert m.run_time(60, 0) is None and m.done()
+assert m.run_time(60, -1, then=Stop.COAST) is None
+assert m.run_time(60, 40, then=Stop.BRAKE) is None and m.done()
+assert m.hold() is None
+assert m.track_target(1) is None
+print('ready'); input()
+
+assert m.stop() is None
+assert m.run_target(-60, -12, wait=False) is None
+print('ready'); input()
+assert m.stop() is None
+assert m.run_angle(-60, -12, then=Stop.COAST_SMART, wait=False) is None
+print('ready'); input()
+m.stop()
+assert m.run_until_stalled(200, duty_limit=50) == m.angle()
+assert m.done()
+
+async def timed():
+    assert await m.run_time(50, 25, then=Stop.BRAKE) is None
+    assert m.done()
+    pending = m.run_time(80, 500, then=Stop.BRAKE)
+    # A second object replaces that motion. Closing the old awaitable must
+    # leave the newer command running, even though both share one port.
+    alias.run_time(-60, 500, wait=False)
+    pending.close()
+    assert not alias.done()
+    alias.stop()
+
+async def slow():
+    await m.run_time(100, 500)
+
+async def replace():
+    await wait(10)
+    m.run_time(-60, 500, wait=False)
+
+run_task(timed())
+run_task(multitask(slow(), replace()))
+assert not m.done()
+assert m.reset_angle(25) is None
+assert m.angle() == 25
+# The interrupted timed motion uses hold on reset. User data and origin remain shared.
+assert alias.angle() == 25
+m.settings(1000)
+m.run(-200)
+print('ready'); input()
+assert False, 'host Stop must release the active motor'
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(
+            captured.extend, port=device, management=True
+        ) as (port, client):
+            try:
+                # Wait only for electrical attachment/metadata. No observer or
+                # trajectory is started before the Python constructor.
+                await shell(port, captured, b"pup_peer encoded_motor")
+                await port_matches(client, phase=6)
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                await ready(client)
+                await motor_matches(client, owner=1, mode=0, duty_permille=0)
+                for command in (
+                    b"pup_peer motor_angle 900",
+                    b"pup_peer motor_angle 1080",
+                    b"pup_peer motor_step 100",
+                    b"pup_peer motor_step 0",
+                ):
+                    await shell(port, captured, command)
+                    await checked(client, Input(data=b"\n"))
+                    await ready(client)
+
+                value = await snapshot(client, "control.A")
+                assert value.error == 0 and value.values["active"], value
+                # Last reference was an immediate one-degree output target,
+                # corresponding to six degrees in the negative shaft direction.
+                measured = await snapshot(client, "sensor.A")
+                assert measured.error == 0, measured
+                assert value.values["reference_mdeg"] == measured.values["angle_mdeg"] - 6000, value
+                assert value.values["reference_mdps"] == 0, value
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                value = await snapshot(client, "control.A")
+                assert value.error == 0 and value.values["active"], value
+                assert value.values["reference_mdps"] > 0, value
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                value = await snapshot(client, "control.A")
+                assert value.error == 0 and value.values["active"], value
+                assert value.values["reference_mdps"] < 0, value
+                await checked(client, Input(data=b"\n"))
+                await ready(client)
+                value = await motor_matches(client, owner=1, mode=2)
+                assert 0 < value.values["duty_permille"] < 160, value
+                await checked(client, Stop())
+                result = await completed(client, state=3)
+                assert result.cleanup == 0, result
+                await motor_matches(client, owner=0, mode=0, duty_permille=0)
+            except BaseException as error:
+                error.add_note(f"Python output: {await output(client)!r}")
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    with native_console(BUILD, virtual_clock=True) as device:
+        asyncio.run(exercise(device))

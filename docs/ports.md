@@ -510,7 +510,77 @@ a closed object or an object from a disconnected device raise `ENODEV`. A stale
 close cannot release a replacement device. Release errors preserve ownership for
 retry and supervised cleanup. Protected ARM checks cover passive-motor PWM,
 voltage limiting, hotplug and cleanup with synthetic I/O. Physical Python motor
-acceptance and the regulated Python `Motor` binding remain pending.
+acceptance remains pending.
+
+## Python encoded motors
+
+`pybricks.pupdevices.Motor` uses the same native port owner, observer and PBIO
+controller. Construction accepts `port`, `positive_direction`, `gears`,
+`reset_angle` and `profile`. Gear trains may be a list such as `[12, 36]` or
+compounded lists such as `[[12, 36], [20, 40]]`; teeth counts must be positive
+integers. The resulting scale is shaft millidegrees per output degree.
+Construction coasts, initializes the model and sets the model voltage limit.
+The optional positive precision profile adjusts position tolerance and gains
+using the reference motor defaults; zero selects the default.
+
+```python
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port, Stop
+
+motor = Motor(Port.A, gears=[12, 36])
+motor.run_angle(120, 90, then=Stop.HOLD)
+print(motor.angle(), motor.speed(), motor.load())
+motor.stop()
+motor.close()
+```
+
+This example actuates port A. `angle()` rounds to output degrees; `speed(window=100)`
+returns output degrees per second using the shared numerical derivative window.
+`load()` is signed estimated shaft torque in mNm, not multiplied by the gear
+ratio. `stalled()` uses the active controller or the passive observer as appropriate.
+No Python control loop or second set of motor drivers runs.
+
+`reset_angle(angle)` sets the shared output coordinate. Omitting the argument
+uses the absolute shaft index, adjusted for direction and gearing; a motor without
+an absolute index rejects that operation. Constructor `reset_angle=True` instead
+uses zero when no index exists. `reset_angle=False` preserves the existing origin
+on the same physical connection. Reset clears speed/model history, retains the
+control settings, and stops active motion with its completion behavior. Direct
+DC output is retained. Old model frames cannot be read with a newly reset origin.
+
+`run`, `hold` and `track_target` replace the current motion and return after command
+application. `run_time`, `run_angle` and `run_target` block for completion, or return
+an awaitable inside `run_task`; `wait=False` starts without waiting for completion.
+`run_until_stalled` has the same blocking/awaitable behavior and returns the final
+angle. It accepts an optional percentage duty limit for that motion. Coast, brake,
+hold, continue (`Stop.NONE`) and smart coast/brake reuse the reference controller;
+continue is invalid for a stall objective. Smart stops apply their ordinary
+coast/brake behavior for timed and stall moves, which have no relative endpoint
+to preserve. Zero speed completes angle/target moves
+in place. Nonpositive `run_time` duration completes immediately. Finite durations
+must be below 300000 ms, the PBIO forever sentinel. `done()` describes the control
+objective: an indefinitely running `run()` is considered done, as in Pybricks.
+
+Direction, gearing, origin and voltage limits belong to the shared port, so aliases
+see the same configuration. A new motion supersedes an earlier wait. Closing an
+old awaitable cannot stop a newer motion, including one started through an alias.
+Explicit `Motor.close()` releases the port for all aliases. `dc`, `brake`, `stop`
+and `settings` reuse the DC implementation; during regulation, voltage-limit
+changes take effect on the next controller frame. Application stop/fault cleanup
+uses the existing common release path.
+
+Native applications use `bp_servo_setup`, `bp_servo_get`, `bp_servo_reset` and
+`bp_servo_move` for this same coordinate/configuration view. Setup, reset and move
+return request tokens; wait for driver completion through `bp_motor_get`.
+Reads and commands validate the physical connection generation. The existing raw
+motor APIs continue to use physical shaft units without applying this transform.
+
+Protected ARM checks cover coordinate sharing, absolute/explicit reset, externally
+moved encoder feedback, motion, voltage limiting, blocking/awaitable completion,
+replacement and supervised cleanup with synthetic UART/PWM. Numerical simulation
+additionally checks long-origin tracking, smart relative motion and stall-to-hold.
+These are not physical motion or tuning measurements. `Motor.control` settings
+and coordinated robotics remain unfinished; this is not complete Motor compatibility.
 
 ## Speed and position control
 
@@ -623,7 +693,7 @@ Native simulation covers cold observer start, externally moved encoder samples,
 idle PWM inactivity, direct-drive stall, release and feedback loss, alongside
 regulated-command lifetime and driver failures. These checks do not establish
 physical sensor accuracy or multi-motor scheduling margins. The Python `Motor`
-binding still needs its direction/gearing, operations and settings integration.
+binding uses this service; its control-settings interface remains unfinished.
 
 The [computation adapter](../src/motor/README.md) records source provenance and
 numerical boundaries. PBIO computation is reused without its device scheduler;

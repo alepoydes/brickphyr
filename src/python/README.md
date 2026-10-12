@@ -148,6 +148,14 @@ encodes and queues IR commands, then sends coast to remembered outputs during
 application cleanup. Transmission and receiver acknowledgement are different;
 see [the port contract](../../docs/ports.md#power-functions-infrared-motors).
 
+`motor.c` adapts `pybricks/common/pb_type_motor.c` at the same revision. DCMotor
+and Motor share DC methods. Gear-list parsing stays at the language boundary;
+direction, ratio, zero origin, profile, observations and motion live in the native
+port/controller service. The existing Pybricks async implementation handles
+awaitables, with request tokens protecting newer motions from older cancellation.
+See [encoded motors](../../docs/ports.md#python-encoded-motors) for the implemented
+methods and unfinished control settings.
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
 v4.1.0b6 (`a7b1b04ae`). They retain the upstream

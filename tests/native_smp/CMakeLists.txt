@@ -8,6 +8,9 @@ list(APPEND SYSCALL_INCLUDE_DIRS ${BRICKPHYR_ROOT}/sdk/include ${BRICKPHYR_ROOT}
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(native_smp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/pbio.cmake)
+if(CONFIG_BRICKPHYR_MOTOR_CONTROL)
+  include(${BRICKPHYR_ROOT}/cmake/motor_control.cmake)
+endif()
 if(NOT CONFIG_SHELL_BACKEND_SERIAL)
   target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/host_transport.c
     ${BRICKPHYR_ROOT}/src/host_protocol.c

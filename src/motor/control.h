@@ -29,7 +29,12 @@ struct motor_observation {
 };
 
 int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_mdeg);
+int motor_control_init_profile(struct motor_control *motor, uint16_t id, int64_t angle_mdeg, int32_t profile);
+int motor_control_reset_angle(struct motor_control *motor, int64_t angle_mdeg);
 int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_command *command);
+int32_t motor_control_speed_limit(uint16_t id);
+int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t angle_mdeg,
+	const struct bp_motor_command *command, int32_t battery_mv);
 int motor_control_run(struct motor_control *motor, uint32_t time_ticks, int64_t angle_mdeg,
 	int32_t speed_mdeg_s, uint32_t duration_ms, pbio_control_on_completion_t finish);
 int motor_control_target(struct motor_control *motor, uint32_t time_ticks, int64_t angle_mdeg,

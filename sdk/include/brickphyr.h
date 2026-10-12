@@ -216,6 +216,23 @@ __syscall int bp_motor_observation_get(uint32_t port, uint32_t generation, uint3
  * trajectory completion. Coast or release cancels regulation. */
 __syscall int bp_motor_control(uint32_t port, const struct bp_motor_command *command);
 
+/* Configure the shared servo view, coast and initialize the observer. Commands
+ * return a motor request token; bp_motor_get reports driver completion. */
+__syscall int bp_servo_setup(uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request);
+__syscall int bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_servo_state *value);
+/* Explicit angle is in output degrees. Absolute reset ignores angle and needs
+ * a shaft index. Active control stops with its completion mode; direct DC drive
+ * is retained. The observer's history resets, not its control settings. */
+__syscall int bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle,
+	uint32_t absolute, uint32_t *request);
+/* Generation-bound motion in configured output coordinates. Application speed
+ * is capped at the model limit. Zero speed in ANGLE/TARGET completes in place;
+ * TIME with zero duration completes rather than starting an infinite run. */
+__syscall int bp_servo_move(uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request);
+
 /* Acquire the free speaker and queue a square tone: 20..24000 Hz, 0..100 volume.
  * Frequency zero produces silence. An idle reservation can start another tone.
  * Zero duration continues until stopped; otherwise duration is milliseconds.

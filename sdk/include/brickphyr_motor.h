@@ -5,13 +5,17 @@
 
 enum bp_motor_mode { BP_MOTOR_COAST, BP_MOTOR_DUTY, BP_MOTOR_SPEED, BP_MOTOR_POSITION };
 enum bp_motor_finish { BP_MOTOR_FINISH_COAST, BP_MOTOR_FINISH_BRAKE,
-	BP_MOTOR_FINISH_HOLD, BP_MOTOR_FINISH_CONTINUE };
+	BP_MOTOR_FINISH_HOLD, BP_MOTOR_FINISH_CONTINUE,
+	BP_MOTOR_FINISH_COAST_SMART, BP_MOTOR_FINISH_BRAKE_SMART };
+enum bp_motor_action { BP_MOTOR_TRAJECTORY, BP_MOTOR_TIMED, BP_MOTOR_RELATIVE,
+	BP_MOTOR_TRACK, BP_MOTOR_HOLD, BP_MOTOR_UNTIL_STALLED };
 
 struct bp_motor_command {
-	int64_t target_mdeg; /* POSITION: absolute encoder angle; SPEED: zero */
+	int64_t target_mdeg; /* POSITION: physical angle, or displacement for RELATIVE; SPEED: zero */
 	int32_t speed_mdeg_s; /* SPEED: signed; POSITION: positive, zero uses model limit */
-	uint32_t duration_ms; /* SPEED: 1..299999, zero runs until replaced; POSITION: zero */
-	uint8_t mode, finish;
+	uint32_t duration_ms; /* SPEED: 1..299999; zero is forever except TIMED; POSITION: zero */
+	uint8_t mode, finish, action;
+	int16_t duty_limit; /* UNTIL_STALLED only: -1 uses control limit, else 0..1000 */
 };
 
 struct bp_motor_control_state {
@@ -31,6 +35,31 @@ struct bp_motor_observation {
 	int32_t error;
 	uint8_t stalled;
 };
+
+/* Shared coordinates at the output of an external gear train. The ratio is
+ * shaft millidegrees per output degree (1000 without gears), always positive.
+ * Reset at setup uses the absolute shaft index when available, otherwise zero. */
+struct bp_servo_setup {
+	int32_t direction, gear_ratio, precision_profile;
+	uint32_t reset_angle;
+};
+
+struct bp_servo_state {
+	int64_t sample_ms;
+	int32_t angle, speed, load; /* output degrees, degrees/s, shaft mNm */
+	uint32_t request, completed;
+	uint8_t pending, active, done, stalled;
+};
+
+enum bp_servo_action { BP_SERVO_RUN, BP_SERVO_TIME, BP_SERVO_ANGLE,
+	BP_SERVO_TARGET, BP_SERVO_TRACK, BP_SERVO_HOLD, BP_SERVO_UNTIL_STALLED };
+struct bp_servo_command {
+	int32_t speed, angle; /* output degrees/s and degrees */
+	uint32_t duration_ms;
+	int16_t duty_limit; /* UNTIL_STALLED: -1 or 0..1000 permille */
+	uint8_t action, finish;
+};
+
 struct bp_motor_state {
 	/* Acceptance and completion times, monotonic ms. Completion is a driver
 	 * result, not voltage/current feedback. Check valid and error. */
@@ -43,6 +72,8 @@ struct bp_motor_state {
 	 * is +1/-1; zero means no configured application motor. Limit is mV. */
 	int8_t direction;
 	int32_t max_voltage;
+	int64_t zero_mdeg; /* physical shaft origin; raw observations stay unchanged */
+	int32_t gear_ratio, precision_profile; /* zero ratio: no configured servo */
 	struct bp_motor_command command;
 	struct bp_motor_control_state control;
 };

@@ -23,13 +23,20 @@ No application buffer, hardware access, allocation or service lock belongs here.
 same revision. It reads the observer after prediction, without advancing it
 again. Controller status uses the public stall bit; the PBIO convenience getter
 also calculates duration from its global clock, which this adapter does not use.
+Motion dispatch also adapts `servo.c`: explicit timed/relative commands, instant
+tracking, hold and temporary stall torque limits use the same controller. Smart
+relative endpoints and completion decisions remain in the dependency. Custom
+precision profiles use the same initialization equations as its servo setup.
 
 Long encoder origins stay in rotation-plus-millidegree form. In particular, timed
 completion with HOLD starts a zero-relative position hold, avoiding PBIO's
-int32 application-unit conversion of the absolute origin. Unsupported models,
+int32 application-unit conversion of the absolute origin. Instant tracking uses
+the public hold transition and a public constant trajectory with a long position.
+Unsupported models,
 out-of-range requests and unsafe arithmetic ranges return errors. A finite timed
-move must be shorter than PBIO's 300000 ms forever sentinel; zero requests an
-indefinite run. The native boundary does not expose PBIO structures.
+move must be shorter than PBIO's 300000 ms forever sentinel. Zero requests an
+indefinite run in the original raw command; the explicit TIMED action completes
+immediately, matching the Python method. The native boundary does not expose PBIO structures.
 Trajectory rejection requires the [PBIO correction](../../docs/upstream.md#motor-trajectory-prerequisite).
 
 The existing port worker owns scheduling, acquisition validity, battery-to-duty

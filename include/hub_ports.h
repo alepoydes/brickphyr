@@ -47,6 +47,13 @@ int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t windo
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms);
 int hub_motor_coast(enum bp_port_owner owner, uint32_t port);
 int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_motor_command *command);
+int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request);
+int hub_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value);
+int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t angle, uint32_t absolute, uint32_t *request);
+int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request);
 /* Even means idle, odd active/unknown. Changes also expose short activity
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
@@ -106,5 +113,13 @@ static inline int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32
 static inline int hub_motor_coast(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }
 static inline int hub_motor_control(enum bp_port_owner owner, uint32_t port,
 	const struct bp_motor_command *command) { return -ENOTSUP; }
+static inline int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_servo_state *value) { return -ENOTSUP; }
+static inline int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t angle, uint32_t absolute, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request) { return -ENOTSUP; }
 static inline uint32_t hub_motor_activity(void) { return 0; }
 #endif

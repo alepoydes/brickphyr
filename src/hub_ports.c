@@ -19,6 +19,7 @@
 #include <lego/device.h>
 #include <lego/lump.h>
 #include <string.h>
+#include <stdlib.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 
@@ -67,7 +68,7 @@ static struct port {
 	uint16_t reset_type;
 	bool reset_start;
 	int64_t reset_deadline;
-	uint32_t motor_duration, motor_generation;
+	uint32_t motor_duration, motor_generation, zero_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct motor_control controller; /* touched only by the port worker */
 	int64_t control_due;
@@ -75,7 +76,8 @@ static struct port {
 	 * observer while the worker mutates it. Copied once per 5 ms frame. */
 	pbio_differentiator_t speed_history;
 	struct bp_motor_observation observation;
-	bool observer_reset;
+	uint32_t geometry_revision, observation_revision;
+	bool observer_reset, observer_rebase;
 #endif
 	uint32_t measurement, command;
 	enum bp_port_owner owner;
@@ -209,6 +211,8 @@ static void drop_claim(struct port *p)
 	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
 	p->motor.direction = 0;
 	p->motor.max_voltage = 0;
+	p->motor.gear_ratio = 0;
+	p->motor.precision_profile = 0;
 	p->motor.control.observing = false;
 	p->measurement = BP_SENSOR_DEFAULT;
 	p->value.selected_mode = UINT8_MAX;
@@ -608,12 +612,13 @@ static void start_observation(struct port *p)
 	if (p->motor.control.observing) return;
 	p->motor.control.observing = true;
 	p->observer_reset = true;
+	p->observer_rebase = false;
 	p->observation.error = -EAGAIN;
 }
 
 static int control_frame(struct port *p, int64_t angle,
 	const struct bp_motor_command *command, struct motor_reference *ref,
-	int32_t *duty, int32_t *voltage, uint32_t ticks)
+	int32_t *duty, int32_t *voltage, uint32_t ticks, int32_t max_voltage)
 {
 	struct bp_battery_sample battery;
 	int err = hub_battery_get(&battery);
@@ -626,16 +631,14 @@ static int control_frame(struct port *p, int64_t angle,
 		BUILD_ASSERT((int)BP_MOTOR_FINISH_BRAKE == (int)PBIO_CONTROL_ON_COMPLETION_BRAKE);
 		BUILD_ASSERT((int)BP_MOTOR_FINISH_HOLD == (int)PBIO_CONTROL_ON_COMPLETION_HOLD);
 		BUILD_ASSERT((int)BP_MOTOR_FINISH_CONTINUE == (int)PBIO_CONTROL_ON_COMPLETION_CONTINUE);
-		err = command->mode == BP_MOTOR_SPEED ?
-			motor_control_run(&p->controller, ticks, angle, command->speed_mdeg_s,
-				command->duration_ms, command->finish) :
-			motor_control_target(&p->controller, ticks, angle, command->target_mdeg,
-				command->speed_mdeg_s, command->finish);
+		BUILD_ASSERT((int)BP_MOTOR_FINISH_COAST_SMART == (int)PBIO_CONTROL_ON_COMPLETION_COAST_SMART);
+		BUILD_ASSERT((int)BP_MOTOR_FINISH_BRAKE_SMART == (int)PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART);
+		err = motor_control_command(&p->controller, ticks, angle, command, battery.voltage_mv);
 		if (err) return err;
 	}
 	err = motor_control_step(&p->controller, ticks, angle, ref);
 	if (err) return err;
-	*duty = CLAMP((int64_t)ref->voltage_mv * 1000 / battery.voltage_mv, -1000, 1000);
+	*duty = CLAMP((int64_t)CLAMP(ref->voltage_mv, -max_voltage, max_voltage) * 1000 / battery.voltage_mv, -1000, 1000);
 	*voltage = (int64_t)*duty * battery.voltage_mv / 1000;
 	return 0;
 }
@@ -662,7 +665,8 @@ static int64_t apply_motor(uint32_t port)
 	bool controlled = mode >= BP_MOTOR_SPEED;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	bool reset = observing && p->observer_reset;
-	int64_t next_frame = observing && !reset ? p->control_due : 0;
+	bool rebase = observing && p->observer_rebase;
+	int64_t next_frame = observing && !reset && !rebase ? p->control_due : 0;
 	bool frame = observing && (!next_frame || k_uptime_get() >= next_frame || device_error);
 	/* New trajectories join the existing sample cadence. Direct coast/brake
 	 * and duty take effect immediately, without advancing the model early. */
@@ -692,12 +696,15 @@ static int64_t apply_motor(uint32_t port)
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct bp_motor_command command = m->command;
 	uint16_t type = p->value.type_id;
+	int32_t profile = m->precision_profile;
+	int32_t max_voltage = m->direction ? m->max_voltage : motor_max_voltage(type);
 	uint32_t generation = p->value.generation;
+	uint32_t geometry_revision = p->geometry_revision;
 	int64_t angle = p->sensor.angle_mdeg;
 	if (frame && !err) err = device_error;
 	bool overrun = frame && next_frame && k_uptime_get() >= next_frame + CONTROL_MS;
 	if (overrun && !err) err = -ETIMEDOUT;
-	if (frame) p->observer_reset = false;
+	if (frame) p->observer_reset = p->observer_rebase = false;
 #endif
 	bool output = command_pending || controlled;
 	if (!err && output && (controlled || (mode == BP_MOTOR_DUTY && duty))) motor_activity(port, true);
@@ -711,7 +718,8 @@ static int64_t apply_motor(uint32_t port)
 	uint32_t ticks = k_ticks_to_us_floor64(k_uptime_ticks()) / 100;
 	if (!err && frame) {
 		next_frame = (next_frame ? next_frame : k_uptime_get()) + CONTROL_MS;
-		if (reset) err = motor_control_init(&p->controller, type, angle);
+		if (reset) err = motor_control_init_profile(&p->controller, type, angle, profile);
+		else if (rebase) err = motor_control_reset_angle(&p->controller, angle);
 	}
 	if (observing && command_pending && !controlled && !err) {
 		pbio_control_stop(&p->controller.control);
@@ -719,7 +727,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 	if (!err && controlled) {
 		err = control_frame(p, angle, command_pending ? &command : NULL,
-			&ref, &duty, &voltage, ticks);
+			&ref, &duty, &voltage, ticks, max_voltage);
 		passive = ref.coast;
 	}
 #endif
@@ -781,6 +789,7 @@ static int64_t apply_motor(uint32_t port)
 			.generation = generation, .frames = p->observation.frames + 1,
 			.stalled = observation.stalled};
 		p->speed_history = p->controller.observer.differentiator;
+		p->observation_revision = geometry_revision;
 	}
 #endif
 	if (err) {
@@ -1484,6 +1493,8 @@ int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	if (!err) {
 		p->owner = p->sensor.owner = owner;
 		p->motor.direction = direction;
+		p->motor.gear_ratio = 0;
+		p->motor.precision_profile = 0;
 		p->motor.max_voltage = motor_max_voltage(p->value.type_id);
 		p->motor.error = p->motor.cleanup_error = 0;
 		*request = p->motor.request;
@@ -1520,31 +1531,247 @@ int hub_motor_observe(enum bp_port_owner owner, uint32_t port, uint32_t generati
 #endif
 }
 
-int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
-	struct bp_motor_observation *value)
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+static bool speed_window_valid(uint32_t window_ms)
 {
-#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
-	return -ENOTSUP;
-#else
-	/* Validate before PBIO narrows the rounded sample count to uint8_t. */
+	/* PBIO narrows the rounded sample count to uint8_t. Check it first. */
 	uint64_t samples = ((uint64_t)window_ms + CONTROL_MS / 2) / CONTROL_MS;
-	if (!value || port >= BP_PORT_COUNT || !samples || samples >= PBIO_CONFIG_DIFFERENTIATOR_BUFFER_SIZE) return -EINVAL;
-	pbio_differentiator_t history;
-	k_spinlock_key_t key = k_spin_lock(&lock);
-	struct port *p = &ports[port];
+	return samples && samples < PBIO_CONFIG_DIFFERENTIATOR_BUFFER_SIZE;
+}
+
+/* Caller holds lock; the publication and history belong to one model frame. */
+static int observation_snapshot(struct port *p, uint32_t generation,
+	struct bp_motor_observation *value, pbio_differentiator_t *history)
+{
 	*value = p->observation;
 	value->error = p->value.generation != generation ? -ESTALE :
 		p->motor.error ? p->motor.error : !p->motor.control.observing ? -ENODEV : value->error;
 	if (!value->error) value->error = output_device_error(p, false);
 	if (!value->error) value->error = control_input_error(p);
 	if (!value->error && k_uptime_get() - value->sample_ms >= 2 * CONTROL_MS) value->error = -ETIMEDOUT;
-	if (!value->error) history = p->speed_history;
+	if (!value->error) *history = p->speed_history;
+	return value->error;
+}
+#endif
+
+int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (!value || port >= BP_PORT_COUNT || !speed_window_valid(window_ms)) return -EINVAL;
+	pbio_differentiator_t history;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	observation_snapshot(&ports[port], generation, value, &history);
 	k_spin_unlock(&lock, key);
-	if (!value->error) {
-		int err = pbio_differentiator_get_speed(&history, window_ms, &value->speed_mdeg_s);
-		if (err) return -EINVAL;
-	}
+	if (!value->error && pbio_differentiator_get_speed(&history, window_ms, &value->speed_mdeg_s)) return -EINVAL;
 	return 0;
+#endif
+}
+
+int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !setup || !request ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) ||
+	    (setup->direction != 1 && setup->direction != -1) || setup->gear_ratio < 1 ||
+	    setup->precision_profile < 0 || setup->precision_profile > INT32_MAX / 1000 ||
+	    setup->reset_angle > 1) return -EINVAL;
+	int err = port_output_check(port);
+	if (err) return err;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	err = motor_connection_error(p, owner, generation);
+	if (!err) err = p->motor.pending ? -EBUSY : output_device_error(p, false);
+	if (!err) err = control_input_error(p);
+	struct bp_motor_command probe = {.mode = BP_MOTOR_SPEED};
+	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, &probe);
+	int64_t zero = generation == p->zero_generation ? p->motor.zero_mdeg : 0;
+	if (!err && setup->reset_angle) {
+		int32_t absolute = p->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE ? p->sensor.absolute_mdeg : 0;
+		if (__builtin_sub_overflow(p->sensor.angle_mdeg, absolute, &zero)) err = -ERANGE;
+	}
+	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
+	if (!err) {
+		p->owner = p->sensor.owner = owner;
+		p->motor.direction = setup->direction;
+		p->motor.gear_ratio = setup->gear_ratio;
+		p->motor.precision_profile = setup->precision_profile;
+		p->motor.zero_mdeg = zero;
+		p->geometry_revision++;
+		p->zero_generation = generation;
+		p->motor.max_voltage = motor_max_voltage(p->value.type_id);
+		p->motor.error = p->motor.cleanup_error = 0;
+		start_observation(p);
+		/* A new constructor resets settings/model, even on an existing lease. */
+		p->observer_reset = true;
+		p->observation.error = -EAGAIN;
+		*request = p->motor.request;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+int hub_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !value || !speed_window_valid(window_ms)) return -EINVAL;
+	struct bp_motor_observation observation;
+	pbio_differentiator_t history;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = observation_snapshot(p, generation, &observation, &history);
+	/* An in-flight old frame may publish after reset/setup was accepted. Do
+	 * not combine its history with the new coordinates before their frame. */
+	if (!err && p->observation_revision != p->geometry_revision) err = -EAGAIN;
+	struct bp_motor_state motor = p->motor;
+	if (!err && (!motor.gear_ratio || !motor.direction || !p->owner)) err = -ENODEV;
+	k_spin_unlock(&lock, key);
+	if (err) return err;
+	int32_t speed;
+	if (pbio_differentiator_get_speed(&history, window_ms, &speed)) return -EINVAL;
+	int64_t angle;
+	if (__builtin_sub_overflow(observation.angle_mdeg, motor.zero_mdeg, &angle)) return -ERANGE;
+	/* Round angles to the nearest output degree, truncate differentiated speed.
+	 * Divide before rounding to keep the full accumulated shaft range. */
+	int64_t whole = angle / motor.gear_ratio, remainder = angle % motor.gear_ratio;
+	if (llabs(remainder) * 2 >= motor.gear_ratio) whole += remainder < 0 ? -1 : 1;
+	whole *= motor.direction;
+	if (whole < INT32_MIN || whole > INT32_MAX) return -ERANGE;
+	*value = (struct bp_servo_state){.sample_ms = observation.sample_ms, .angle = whole,
+		.speed = speed / motor.gear_ratio * motor.direction, .load = observation.load_mnm * motor.direction,
+		.request = motor.request, .completed = motor.completed, .pending = motor.pending,
+		.active = motor.control.active, .done = !motor.pending && (!motor.control.active || motor.control.done),
+		.stalled = observation.stalled};
+	return 0;
+#endif
+}
+
+int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t angle, uint32_t absolute, uint32_t *request)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !request || absolute > 1 ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	struct bp_motor_state *m = &p->motor;
+	int err = motor_connection_error(p, owner, generation);
+	if (!err) err = p->owner != owner || !m->gear_ratio || !m->control.observing ? -ENODEV :
+		m->pending ? -EBUSY : m->error ? m->error : output_device_error(p, false);
+	if (!err) err = control_input_error(p);
+	if (!err && absolute && !(p->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE)) err = -ENOTSUP;
+	int64_t zero = 0;
+	int64_t shaft = absolute ? p->sensor.absolute_mdeg : (int64_t)angle * m->gear_ratio * m->direction;
+	if (!err && __builtin_sub_overflow(p->sensor.angle_mdeg, shaft, &zero)) err = -ERANGE;
+	/* Resetting an active trajectory applies its completion action at the new
+	 * zero; a direct voltage/brake/coast command keeps its current output. */
+	uint8_t mode = m->mode;
+	int32_t duty = m->duty;
+	uint32_t duration = m->deadline_ms ? MAX(m->deadline_ms - k_uptime_get(), 1) : 0;
+	if (m->control.active) {
+		mode = m->command.finish == BP_MOTOR_FINISH_COAST || m->command.finish == BP_MOTOR_FINISH_COAST_SMART ? BP_MOTOR_COAST :
+			m->command.finish == BP_MOTOR_FINISH_BRAKE || m->command.finish == BP_MOTOR_FINISH_BRAKE_SMART ? BP_MOTOR_DUTY : BP_MOTOR_POSITION;
+		duty = 0;
+		duration = 0;
+	}
+	if (!err) err = request_motor(p, mode, duty, duration);
+	if (!err) {
+		if (mode == BP_MOTOR_POSITION) m->command = (struct bp_motor_command){
+			.mode = mode, .target_mdeg = p->sensor.angle_mdeg, .finish = BP_MOTOR_FINISH_HOLD};
+		m->zero_mdeg = zero;
+		p->geometry_revision++;
+		p->observer_rebase = true;
+		p->observation.error = -EAGAIN;
+		*request = m->request;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request)
+{
+#ifndef CONFIG_BRICKPHYR_MOTOR_CONTROL
+	return -ENOTSUP;
+#else
+	if (port >= BP_PORT_COUNT || !command || !request ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) ||
+	    command->action > BP_SERVO_UNTIL_STALLED || command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
+	    command->duration_ms >= PBIO_TRAJECTORY_DURATION_FOREVER_MS ||
+	    (command->action != BP_SERVO_TIME && command->duration_ms) ||
+	    (command->action == BP_SERVO_UNTIL_STALLED &&
+	     (command->finish == BP_MOTOR_FINISH_CONTINUE || command->duty_limit < -1 || command->duty_limit > 1000))) return -EINVAL;
+	struct bp_battery_sample battery;
+	int err = hub_battery_get(&battery);
+	if (!err) err = battery.error;
+	if (!err && (!battery.voltage_mv || battery.voltage_mv > 12000)) err = -ERANGE;
+	if (err) return err;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	struct bp_motor_state *m = &p->motor;
+	err = motor_connection_error(p, owner, generation);
+	if (!err) err = p->owner != owner || !m->gear_ratio || !m->control.observing ? -ENODEV :
+		m->pending ? -EBUSY : m->error ? m->error : output_device_error(p, false);
+	if (!err) err = control_input_error(p);
+	int32_t limit = motor_control_speed_limit(p->value.type_id);
+	int64_t speed = (int64_t)command->speed * m->gear_ratio * m->direction;
+	int64_t target = (int64_t)command->angle * m->gear_ratio * m->direction;
+	struct bp_motor_command raw = {.mode = BP_MOTOR_POSITION, .finish = command->finish,
+		.speed_mdeg_s = CLAMP(speed, -limit, limit), .duration_ms = command->duration_ms,
+		.duty_limit = command->duty_limit};
+	switch (command->action) {
+	case BP_SERVO_RUN:
+	case BP_SERVO_TIME:
+	case BP_SERVO_UNTIL_STALLED:
+		raw.mode = BP_MOTOR_SPEED;
+		raw.action = command->action == BP_SERVO_TIME ? BP_MOTOR_TIMED :
+			command->action == BP_SERVO_UNTIL_STALLED ? BP_MOTOR_UNTIL_STALLED : BP_MOTOR_TRAJECTORY;
+		if (command->action == BP_SERVO_RUN) raw.finish = BP_MOTOR_FINISH_CONTINUE;
+		break;
+	case BP_SERVO_ANGLE:
+		raw.action = BP_MOTOR_RELATIVE;
+		/* Resolve both signs once. PBIO sees positive speed and a signed
+		 * physical displacement, retaining its smart relative endpoint. */
+		raw.target_mdeg = !command->speed ? 0 : command->speed < 0 ? -target : target;
+		raw.speed_mdeg_s = abs(raw.speed_mdeg_s);
+		break;
+	case BP_SERVO_TARGET:
+		if (!command->speed) {
+			raw.action = BP_MOTOR_RELATIVE;
+			break;
+		}
+		raw.speed_mdeg_s = abs(raw.speed_mdeg_s);
+		if (__builtin_add_overflow(m->zero_mdeg, target, &raw.target_mdeg)) err = -ERANGE;
+		break;
+	case BP_SERVO_TRACK:
+		raw.action = BP_MOTOR_TRACK;
+		raw.finish = BP_MOTOR_FINISH_HOLD;
+		if (__builtin_add_overflow(m->zero_mdeg, target, &raw.target_mdeg)) err = -ERANGE;
+		break;
+	case BP_SERVO_HOLD:
+		raw.action = BP_MOTOR_HOLD;
+		raw.finish = BP_MOTOR_FINISH_HOLD;
+		break;
+	}
+	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, &raw);
+	if (!err) err = request_motor(p, raw.mode, 0, 0);
+	if (!err) {
+		m->command = raw;
+		*request = m->request;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
 #endif
 }
 

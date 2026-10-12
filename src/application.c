@@ -964,6 +964,64 @@ static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_c
 }
 #include <zephyr/syscalls/bp_motor_control_mrsh.c>
 
+int z_impl_bp_servo_setup(uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request)
+{
+	return hub_servo_setup(BP_PORT_APPLICATION, port, generation, setup, request);
+}
+static inline int z_vrfy_bp_servo_setup(uint32_t port, uint32_t generation,
+	const struct bp_servo_setup *setup, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(setup, sizeof(*setup)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_servo_setup copy;
+	memcpy(&copy, setup, sizeof(copy));
+	return z_impl_bp_servo_setup(port, generation, &copy, request);
+}
+#include <zephyr/syscalls/bp_servo_setup_mrsh.c>
+
+int z_impl_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value)
+{
+	return hub_servo_get(port, generation, window_ms, value);
+}
+static inline int z_vrfy_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_servo_get(port, generation, window_ms, value);
+}
+#include <zephyr/syscalls/bp_servo_get_mrsh.c>
+
+int z_impl_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
+{
+	return hub_servo_reset(BP_PORT_APPLICATION, port, generation, angle, absolute, request);
+}
+static inline int z_vrfy_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_servo_reset(port, generation, angle, absolute, request);
+}
+#include <zephyr/syscalls/bp_servo_reset_mrsh.c>
+
+int z_impl_bp_servo_move(uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request)
+{
+	return hub_servo_move(BP_PORT_APPLICATION, port, generation, command, request);
+}
+static inline int z_vrfy_bp_servo_move(uint32_t port, uint32_t generation,
+	const struct bp_servo_command *command, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_servo_command copy;
+	memcpy(&copy, command, sizeof(copy));
+	return z_impl_bp_servo_move(port, generation, &copy, request);
+}
+#include <zephyr/syscalls/bp_servo_move_mrsh.c>
+
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
 	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);
