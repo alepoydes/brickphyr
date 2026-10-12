@@ -14,6 +14,9 @@ def main():
         "target", nargs="?", help="BLE name or address (default Brickphyr); omit for USB"
     )
     terminal_parser.add_argument("--usb", action="store_true", help="Select and open the USB Shell")
+    terminal_parser.add_argument(
+        "--repl", action="store_true", help="Start or reattach Python REPL; Ctrl+X returns to Shell"
+    )
     terminal_usb = terminal_parser.add_mutually_exclusive_group()
     terminal_usb.add_argument("--port", help="Explicit serial port, including a simulator PTY")
     terminal_usb.add_argument("--serial", help="USB serial number when several hubs are connected")
@@ -47,7 +50,7 @@ def main():
     switching.add_argument("mode", choices=usb.MODES)
     usb_commands.add_parser("identify", help="Read identity through the Pybricks client")
 
-    app_parser = commands.add_parser("app", help="Manage native applications through SMP")
+    app_parser = commands.add_parser("app", help="Manage applications through SMP")
     target = app_parser.add_mutually_exclusive_group()
     target.add_argument(
         "--ble", metavar="TARGET", help="BLE name or address; default transport is USB"
@@ -60,9 +63,17 @@ def main():
         ("run", "Upload to RAM and start"),
         ("upload", "Upload to RAM without starting"),
     ):
-        app_commands.add_parser(command, help=help_text).add_argument("image")
+        transfer = app_commands.add_parser(command, help=help_text)
+        transfer.add_argument(
+            "image", help="Image file or Python directory containing main.py/main.mpy"
+        )
+        transfer.add_argument(
+            "--format",
+            choices=[format.name.lower() for format in application.Format],
+            help="Default: Python for .py, MPY for .mpy, files for a directory/.cbor, ELF otherwise",
+        )
     installation = app_commands.add_parser(
-        "install", help="Store a validated image without starting"
+        "install", help="Store a validated application without starting"
     )
     installation.add_argument("image")
     installation.add_argument("--name", help="Installed name; default is the image filename stem")
@@ -70,8 +81,11 @@ def main():
         "start", help="Start an installed name or the current RAM upload"
     ).add_argument("name", nargs="?")
     app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
-    for command in ("list", "status", "stop", "output", "discard"):
+    for command in ("list", "status", "stop", "output", "discard", "interrupt"):
         app_commands.add_parser(command)
+    app_input = app_commands.add_parser("input", help="Send a line to the running Python program")
+    app_input.add_argument("text")
+    app_input.add_argument("--no-newline", action="store_true", help="Send text without a line ending")
 
     args = parser.parse_args()
     try:

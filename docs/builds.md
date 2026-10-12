@@ -465,7 +465,27 @@ diagnostics
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
-these include the shared 128 KiB heap. The loader reports the image size,
+these include a shared 64 KiB execution arena and a 64 KiB system heap. The loader reports the image size,
 reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
 the receive buffer is then released. File loading reserves no ELF receive buffer
 and reports the same loader/loaded allocation for the same image.
+
+## Experimental Python profile
+
+Add Python to the same Bluetooth/native configuration:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/python-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+```
+
+The manifest-selected MicroPython submodule must be present. Its core and matching
+`mpy_cross` target use one source revision; see [integration](../src/python/README.md).
+Installation uses the [existing recovery procedure](recovery.md). This profile
+provides [temporary and installed Python programs](host.md#python-applications),
+including imports, through Brickphyr management. REPL and the Pybricks execution
+adapter have software checks; their physical acceptance remains in the [plan](python.md).
+The experimental [Pybricks library](compatibility.md#implemented-library-subset)
+is enabled by default. Set `CONFIG_BRICKPHYR_PYBRICKS=n` for Python without that
+library; native Python execution and REPL retain the same lifecycle and transports.

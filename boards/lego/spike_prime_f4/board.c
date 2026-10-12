@@ -5,7 +5,7 @@
 #include <cmsis_core.h>
 #include <zephyr/sys/reboot.h>
 #include "hub.h"
-#include "native.h"
+#include "application.h"
 #include "hub_sound.h"
 #include "hub_ports.h"
 #include <stm32_ll_bus.h>
@@ -49,7 +49,7 @@ int hub_reboot_dfu(void)
 	    reset >= MBOOT_ADDRESS + DT_REG_SIZE(DT_NODELABEL(mboot_partition))) {
 		return -ENOEXEC;
 	}
-	int err = native_shutdown();
+	int err = application_shutdown();
 	if (!err) {
 		err = hub_sound_shutdown();
 	}

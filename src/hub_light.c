@@ -39,6 +39,15 @@ static struct flare {
 } flares[3], surge;
 static unsigned int next_slot;
 
+static struct k_spinlock application_lock;
+static struct {
+	struct bp_light_state state;
+	uint16_t pwm[3];
+	uint32_t revision;
+	bool releasing;
+} application_lights[BP_LIGHT_COUNT];
+static bool disabled;
+
 BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)) ==
 	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 1);
 BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)) ==
@@ -62,8 +71,47 @@ static void color_to_pwm(uint16_t rgb[3], uint16_t peak)
 
 static int write_colors(void)
 {
-	return tlc5955_set_colors16(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)),
-		3, colors);
+	uint16_t frame[ARRAY_SIZE(colors)];
+	uint32_t revision[BP_LIGHT_COUNT];
+	bool visible[BP_LIGHT_COUNT];
+	memcpy(frame, colors, sizeof(frame));
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		revision[i] = application_lights[i].revision;
+		visible[i] = application_lights[i].state.owned && !application_lights[i].releasing &&
+			mode != OFF && menu_state == HUB_LIGHT_NORMAL;
+		if (visible[i]) {
+			memcpy(frame + (i == BP_LIGHT_CENTER ? 0 : 6), application_lights[i].pwm,
+			       sizeof(application_lights[i].pwm));
+			if (i == BP_LIGHT_CENTER) {
+				memcpy(frame + 3, application_lights[i].pwm, sizeof(application_lights[i].pwm));
+			}
+		}
+	}
+	k_spin_unlock(&application_lock, key);
+	int err = tlc5955_set_colors16(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)), 3, frame);
+	key = k_spin_lock(&application_lock);
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		struct bp_light_state *state = &application_lights[i].state;
+		if (revision[i] != application_lights[i].revision) {
+			continue;
+		}
+		state->error = err;
+		state->valid = !err;
+		state->pending = false;
+		if (err) {
+			state->errors += state->errors != UINT32_MAX;
+		} else {
+			state->applied_ms = k_uptime_get();
+			state->visible = visible[i];
+			if (application_lights[i].releasing) {
+				state->owned = false;
+				application_lights[i].releasing = false;
+			}
+		}
+	}
+	k_spin_unlock(&application_lock, key);
+	return err;
 }
 
 static int write_pwm(bool center, const uint16_t duty[3])
@@ -205,6 +253,9 @@ int hub_light_select(enum host_mode selected, enum hub_light_menu menu, int64_t 
 int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 {
 	k_mutex_lock(&lock, K_FOREVER);
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	bool pending = application_lights[0].state.pending || application_lights[1].state.pending;
+	k_spin_unlock(&application_lock, key);
 	bool changed = mode != OFF && bluetooth != bluetooth_state;
 	if (changed) {
 		uint32_t target = bluetooth == HOST_BLE_NATIVE ? 4095 : 0;
@@ -220,7 +271,7 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 	bool animate_bt = !bluetooth_manual && menu_state == HUB_LIGHT_NORMAL &&
 		(bluetooth_state == HOST_BLE_WAITING || bluetooth_state == HOST_BLE_PYBRICKS ||
 		 bluetooth_state == HOST_BLE_NATIVE);
-	bool animate = mode != OFF && (mode == ANIMATED || animate_bt);
+	bool animate = mode != OFF && (mode == ANIMATED || animate_bt || pending);
 	if (changed || (animate && now >= next_frame)) {
 		if (started < 0) {
 			started = now;
@@ -265,7 +316,13 @@ int hub_light_manual(bool center, const uint8_t rgb[3])
 int hub_light_pwm(bool center, const uint16_t duty[3])
 {
 	k_mutex_lock(&lock, K_FOREVER);
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	bool owned = application_lights[center ? BP_LIGHT_CENTER : BP_LIGHT_BLUETOOTH].state.owned;
+	k_spin_unlock(&application_lock, key);
 	int err = mode == OFF ? -ESHUTDOWN : !device_is_ready(leds) ? -ENODEV : 0;
+	if (!err && owned) {
+		err = -EBUSY;
+	}
 
 	if (!err) {
 		if (center) {
@@ -282,6 +339,9 @@ int hub_light_pwm(bool center, const uint16_t duty[3])
 int hub_light_off(void)
 {
 	k_mutex_lock(&lock, K_FOREVER);
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	disabled = true;
+	k_spin_unlock(&application_lock, key);
 	mode = OFF;
 	int err = -ENODEV;
 
@@ -292,3 +352,73 @@ int hub_light_off(void)
 	k_mutex_unlock(&lock);
 	return err;
 }
+
+#ifdef CONFIG_BRICKPHYR_LIGHT
+int hub_light_write(uint32_t light, const uint8_t rgb[3])
+{
+	if (light >= BP_LIGHT_COUNT || !rgb) {
+		return -EINVAL;
+	}
+	if (!device_is_ready(leds)) {
+		return -ENODEV;
+	}
+	uint16_t pwm[] = {rgb[0] * 257U, rgb[1] * 257U, rgb[2] * 257U};
+	color_to_pwm(pwm, UINT16_MAX);
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	struct bp_light_state *state = &application_lights[light].state;
+	int err = disabled ? -ESHUTDOWN : state->pending || application_lights[light].releasing ? -EBUSY : 0;
+	if (!err) {
+		memcpy(state->rgb, rgb, sizeof(state->rgb));
+		memcpy(application_lights[light].pwm, pwm, sizeof(pwm));
+		state->owned = true;
+		state->pending = true;
+		application_lights[light].revision++;
+	}
+	k_spin_unlock(&application_lock, key);
+	return err;
+}
+
+int hub_light_get(uint32_t light, struct bp_light_state *value)
+{
+	if (light >= BP_LIGHT_COUNT || !value) {
+		return -EINVAL;
+	}
+	if (!device_is_ready(leds)) {
+		return -ENODEV;
+	}
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	*value = application_lights[light].state;
+	k_spin_unlock(&application_lock, key);
+	return 0;
+}
+
+int hub_light_release(void)
+{
+	k_mutex_lock(&lock, K_FOREVER);
+	k_spinlock_key_t key = k_spin_lock(&application_lock);
+	bool owned[BP_LIGHT_COUNT];
+	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
+		owned[i] = application_lights[i].state.owned;
+		if (owned[i]) {
+			application_lights[i].releasing = true;
+			application_lights[i].revision++;
+		}
+	}
+	k_spin_unlock(&application_lock, key);
+	if (mode != OFF) {
+		int64_t now = k_uptime_get();
+		if (owned[BP_LIGHT_CENTER]) {
+			mode = ANIMATED;
+			reactor_color(palette_blend(&center_palette, now), 4095, 0, colors);
+			memcpy(colors + 3, colors, 3 * sizeof(*colors));
+		}
+		if (owned[BP_LIGHT_BLUETOOTH]) {
+			bluetooth_manual = false;
+			bluetooth_color(now, 0);
+		}
+	}
+	int err = owned[BP_LIGHT_CENTER] || owned[BP_LIGHT_BLUETOOTH] ? write_colors() : 0;
+	k_mutex_unlock(&lock);
+	return err;
+}
+#endif

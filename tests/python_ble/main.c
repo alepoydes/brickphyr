@@ -1,0 +1,810 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "application.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+#include "app_store.h"
+#endif
+#include "host_protocol.h"
+#include "host_transport.h"
+#include <pbio/protocol.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/drivers/serial/uart_emul.h>
+#include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/ztest.h>
+#include <zcbor_decode.h>
+
+/* Synthetic controller/GATT peer. The shared owner, BLE adapter, protocol,
+ * protected VM and application supervisor are the production implementations.
+ * An emulated UART bounds unread USB output; UART0 carries test results. */
+static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
+static uintptr_t peer_token;
+static struct bt_conn *const peer = (void *)&peer_token;
+static atomic_t refs, reject_notifications;
+static bool peer_connected;
+static unsigned int notifications_retried;
+static struct k_work_q rx_queue;
+static K_KERNEL_STACK_DEFINE(rx_stack, CONFIG_BT_RX_STACK_SIZE);
+static K_SEM_DEFINE(command_done, 0, 1);
+static uint8_t command_data[20];
+static size_t command_size;
+static ssize_t command_result;
+static const struct bt_gatt_attr *command_attribute;
+static struct k_thread supervisor;
+static K_THREAD_STACK_DEFINE(supervisor_stack, 4096);
+static atomic_t supervisor_stop;
+
+/* Same periodic lifecycle service as the hub loop; status reads must not be
+ * needed to reap a returned program before its stopped event can be sent. */
+static void poll_applications(void *a, void *b, void *c)
+{
+	while (!atomic_get(&supervisor_stop)) {
+		application_poll();
+		k_msleep(20);
+	}
+}
+
+struct event { uint16_t length; uint8_t data[20]; };
+K_MSGQ_DEFINE(events, sizeof(struct event), 32, 4);
+extern const struct bt_gatt_service_static pybricks_service;
+extern const struct bt_gatt_service_static brickphyr_terminal;
+
+int hub_bluetooth_power_off(void) { return 0; }
+uint32_t hub_buttons(void) { return 0; }
+int storage_status(void) { return -ENOTSUP; }
+int __wrap_bt_enable(bt_ready_cb_t cb) { return 0; }
+int __wrap_bt_disable(void) { return 0; }
+int __wrap_bt_le_adv_start(const struct bt_le_adv_param *p, const struct bt_data *a,
+	size_t n, const struct bt_data *s, size_t m) { return 0; }
+int __wrap_bt_le_adv_stop(void) { return 0; }
+struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	atomic_inc(&refs);
+	return conn;
+}
+void __wrap_bt_conn_unref(struct bt_conn *conn)
+{
+	zassert_equal(conn, peer);
+	zassert_true(atomic_dec(&refs) > 0);
+}
+int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
+{
+	zassert_unreachable("Unexpected adapter disconnect");
+	return -EIO;
+}
+int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
+{
+	zassert_equal(conn, peer);
+	memset(info, 0, sizeof(*info));
+	info->state = peer_connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
+	return 0;
+}
+bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
+	const struct bt_gatt_attr *attr, uint16_t ccc) { return true; }
+uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn) { return 23; }
+int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params *params)
+{
+	zassert_equal(conn, peer);
+	zassert_true(params->len <= 20);
+	if (atomic_get(&reject_notifications)) {
+		atomic_dec(&reject_notifications);
+		notifications_retried++;
+		return -ENOMEM;
+	}
+	struct event event = {.length = params->len};
+	memcpy(event.data, params->data, params->len);
+	int err = k_msgq_put(&events, &event, K_NO_WAIT) ? -ENOMEM : 0;
+	if (!err && params->func) {
+		params->func(conn, params->user_data);
+	}
+	return err;
+}
+
+static void receive_command(struct k_work *work)
+{
+	const struct bt_gatt_attr *attr = command_attribute;
+	command_result = attr->write(peer, attr, command_data, command_size, 0, 0);
+	k_sem_give(&command_done);
+}
+static K_WORK_DEFINE(command_work, receive_command);
+
+static ssize_t gatt_write(const struct bt_gatt_attr *attr, const void *data, size_t length)
+{
+	zassert_true(length <= sizeof(command_data));
+	command_attribute = attr;
+	memcpy(command_data, data, length);
+	command_size = length;
+	k_work_submit_to_queue(&rx_queue, &command_work);
+	zassert_ok(k_sem_take(&command_done, K_SECONDS(1)), "GATT command did not return");
+	return command_result;
+}
+
+static ssize_t command(const void *data, size_t length)
+{
+	return gatt_write(&pybricks_service.attrs[2], data, length);
+}
+
+static void connected(bool open)
+{
+	peer_connected = open;
+	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
+		if (open && cb->connected) { cb->connected(peer, 0); }
+		if (!open && cb->disconnected) { cb->disconnected(peer, 0); }
+	}
+	if (!open) { return; }
+	const struct bt_gatt_attr *ccc = &pybricks_service.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	cfg->cfg_changed(ccc, BT_GATT_CCC_NOTIFY);
+}
+
+static ssize_t transfer(const uint8_t *module, size_t length)
+{
+	uint8_t packet[20] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META};
+	zassert_equal(command(packet, 5), 5);
+	uint8_t header[13];
+	sys_put_le32(length, header);
+	memcpy(header + 4, "__main__", 9);
+	const uint8_t *parts[] = {header, module};
+	const size_t sizes[] = {sizeof(header), length};
+	size_t offset = 0;
+	for (size_t part = 0; part < ARRAY_SIZE(parts); part++) {
+		for (size_t position = 0; position < sizes[part];) {
+			size_t chunk = MIN(sizes[part] - position, sizeof(packet) - 5);
+			packet[0] = PBIO_PYBRICKS_COMMAND_WRITE_USER_RAM;
+			sys_put_le32(offset, packet + 1);
+			memcpy(packet + 5, parts[part] + position, chunk);
+			zassert_equal(command(packet, chunk + 5), chunk + 5);
+			position += chunk;
+			offset += chunk;
+		}
+	}
+	packet[0] = PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META;
+	sys_put_le32(offset, packet + 1);
+	return command(packet, 5);
+}
+
+static void download(const uint8_t *module, size_t length)
+{
+	zassert_equal(transfer(module, length), 5);
+}
+
+static char output[4608];
+static size_t output_size;
+static bool running;
+static void event(void)
+{
+	struct event event;
+	int err = k_msgq_get(&events, &event, K_SECONDS(1));
+	zassert_ok(err, "Missing event: running %d, output '%s'", running, output);
+	if (event.data[0] == PBIO_PYBRICKS_EVENT_STATUS_REPORT) {
+		uint32_t flags = sys_get_le32(event.data + 1);
+		zassert_true(flags & BIT(PBIO_PYBRICKS_STATUS_BLE_HOST_CONNECTED));
+		running = flags & BIT(PBIO_PYBRICKS_STATUS_USER_PROGRAM_RUNNING);
+	} else {
+		zassert_equal(event.data[0], PBIO_PYBRICKS_EVENT_WRITE_STDOUT);
+		zassert_true(output_size + event.length < sizeof(output));
+		memcpy(output + output_size, event.data + 1, event.length - 1);
+		output_size += event.length - 1;
+		output[output_size] = 0;
+	}
+}
+
+static void start(const char *ready)
+{
+	output_size = 0;
+	output[0] = 0;
+	const uint8_t start = PBIO_PYBRICKS_COMMAND_START_USER_PROGRAM;
+	zassert_equal(command(&start, 1), 1);
+	int64_t deadline = k_uptime_get() + 2000;
+	do {
+		event();
+		zassert_true(k_uptime_get() < deadline, "%s", output);
+	} while (!running || !strstr(output, ready));
+}
+
+static const uint8_t echo[] = {
+#include <echo.inc>
+};
+static const uint8_t spin[] = {
+#include <spin.inc>
+};
+static const uint8_t flood[] = {
+#include <flood.inc>
+};
+static const uint8_t native[] = {
+#include <native.inc>
+};
+
+static void *setup(void)
+{
+	k_thread_create(&supervisor, supervisor_stack, K_THREAD_STACK_SIZEOF(supervisor_stack),
+		poll_applications, NULL, NULL, NULL, 0, 0, K_NO_WAIT);
+	zassert_ok(host_transport_init(uart, 0));
+	k_work_queue_start(&rx_queue, rx_stack, CONFIG_BT_RX_STACK_SIZE,
+		K_PRIO_COOP(CONFIG_BT_RX_PRIO), NULL);
+	uint8_t state[8];
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		host_interface_status(state);
+		zassert_true(k_uptime_get() < deadline);
+	} while (!state[3] || host_ble_status() != HOST_BLE_WAITING);
+	return NULL;
+}
+
+ZTEST(python_ble, test_execution_reconnect_and_backpressure)
+{
+	notifications_retried = 0;
+	atomic_set(&reject_notifications, 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	zassert_false(running);
+	download(echo, sizeof(echo));
+	start("ready");
+	/* A normal disconnect leaves the pending Python input and VM alive. */
+	connected(false);
+	struct application_status status;
+	application_get_status(&status);
+	zassert_equal(status.state, APPLICATION_RUNNING);
+	connected(true);
+	event();
+	zassert_true(running);
+	atomic_set(&reject_notifications, 2);
+	const uint8_t input[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN, 'B', 'L', 'E', '\n'};
+	zassert_equal(command(input, sizeof(input)), sizeof(input));
+	int64_t deadline = k_uptime_get() + 2000;
+	do {
+		event();
+		zassert_true(k_uptime_get() < deadline);
+	} while (running);
+	zassert_not_null(strstr(output, "echo BLE\r\nfragment:"), "%s", output);
+	char *fragment = strstr(output, "fragment:") + strlen("fragment:");
+	zassert_equal(strspn(fragment, "x"), 96, "%s", output);
+	zassert_equal(notifications_retried, 2);
+	application_get_status(&status);
+	zassert_equal(status.state, APPLICATION_RETURNED);
+	zassert_equal(status.result, 0);
+
+	download(spin, sizeof(spin));
+	start("loop");
+	const uint8_t run = PBIO_PYBRICKS_COMMAND_START_USER_PROGRAM;
+	zassert_equal(command(&run, 1), BT_GATT_ERR(PBIO_PYBRICKS_ERROR_BUSY));
+	const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+	zassert_equal(command(&stop, 1), 1);
+	application_get_status(&status);
+	zassert_equal(status.state, APPLICATION_STOPPED);
+	zassert_equal(status.cleanup_error, 0);
+	/* Repeating a complete download uses the same retained RAM image. */
+	start("loop");
+	zassert_equal(command(&stop, 1), 1);
+	connected(false);
+	application_get_status(&status);
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+	zassert_false(status.upload_ready);
+#else
+	zassert_true(status.upload_ready);
+#endif
+	zassert_equal(atomic_get(&refs), 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	start("loop");
+	zassert_equal(command(&stop, 1), 1);
+	/* Only incomplete staging expires with its connection. The next peer
+	 * cannot finalize it and must be able to make a fresh valid download. */
+	const uint8_t begin[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META, 0, 0, 0, 0};
+	const uint8_t fragment_write[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_RAM, 0, 0, 0, 0, 1};
+	zassert_equal(command(begin, sizeof(begin)), sizeof(begin));
+	zassert_equal(command(fragment_write, sizeof(fragment_write)), sizeof(fragment_write));
+	connected(false);
+	application_get_status(&status);
+	zassert_equal(status.upload_bytes, 0);
+	zassert_false(status.upload_ready);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	const uint8_t finish[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META, 1, 0, 0, 0};
+	zassert_equal(command(finish, sizeof(finish)),
+		BT_GATT_ERR(PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED));
+	download(echo, sizeof(echo));
+	start("ready");
+	zassert_equal(command(&stop, 1), 1);
+	connected(false);
+	zassert_equal(atomic_get(&refs), 0);
+	size_t unused;
+	zassert_ok(k_thread_stack_space_get(&rx_queue.thread, &unused));
+	printk("Synthetic GATT command stack: %zu bytes unused\n", unused);
+}
+
+ZTEST(python_ble, test_native_execution)
+{
+	atomic_set(&reject_notifications, 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	download(native, sizeof(native));
+	for (unsigned int i = 0; i < 2; i++) {
+		start("native and viper 42 4950");
+		int64_t deadline = k_uptime_get() + 2000;
+		while (running) {
+			event();
+			zassert_true(k_uptime_get() < deadline);
+		}
+		struct application_status status;
+		application_get_status(&status);
+		zassert_equal(status.result, 0);
+		zassert_equal(status.cleanup_error, 0);
+	}
+	connected(false);
+}
+
+static void fill_output(void)
+{
+	atomic_set(&reject_notifications, 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	download(flood, sizeof(flood));
+	start("ready");
+	atomic_set(&reject_notifications, 1000);
+	const uint8_t input[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN, '\n'};
+	zassert_equal(command(input, sizeof(input)), sizeof(input));
+	struct application_status status;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+		zassert_equal(status.state, APPLICATION_RUNNING);
+	} while (status.output_bytes < 1024);
+	zassert_equal(status.output_dropped, 0);
+}
+
+ZTEST(python_ble, test_output_flow_control)
+{
+	fill_output();
+	atomic_set(&reject_notifications, 0);
+	int64_t deadline = k_uptime_get() + 6000;
+	do {
+		event();
+		zassert_true(k_uptime_get() < deadline);
+	} while (running);
+	const char *text = strstr(output, "0123456789");
+	zassert_not_null(text, "%s", output);
+	zassert_equal(strlen(text), 4093);
+	for (size_t i = 0; i < 409; i++) {
+		zassert_mem_equal(text + 10 * i, "0123456789", 10);
+	}
+	zassert_str_equal(text + 4090, "!\r\n");
+	struct application_status status;
+	application_get_status(&status);
+	zassert_equal(status.result, 0);
+	zassert_equal(status.output_dropped, 0);
+	connected(false);
+
+	fill_output();
+	const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+	zassert_equal(command(&stop, 1), 1);
+	application_get_status(&status);
+	zassert_equal(status.state, APPLICATION_STOPPED);
+	zassert_equal(status.cleanup_error, 0);
+	connected(false);
+	atomic_set(&reject_notifications, 0);
+
+	fill_output();
+	const uint8_t interrupt[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN, 3};
+	zassert_equal(command(interrupt, sizeof(interrupt)), sizeof(interrupt));
+	deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	/* Catchable interruption can finish without draining a blocked write. */
+	zassert_equal(status.state, APPLICATION_RETURNED);
+	zassert_equal(status.result, 0);
+	zassert_equal(status.output_dropped, 0);
+	connected(false);
+
+	fill_output();
+	connected(false);
+	atomic_set(&reject_notifications, 0);
+	deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	/* Normal detach releases the pending write; it never stops the program. */
+	zassert_equal(status.state, APPLICATION_RETURNED);
+	zassert_equal(status.result, 0);
+	zassert_true(status.output_dropped > 0);
+
+	fill_output();
+	const struct bt_gatt_attr *ccc = &brickphyr_terminal.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	zassert_equal(host_ble_status(), HOST_BLE_NATIVE);
+	deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	/* The same physical link can select native management: the old Pybricks
+	 * subscription must no longer hold up the autonomous application's log. */
+	zassert_equal(status.state, APPLICATION_RETURNED);
+	zassert_equal(status.result, 0);
+	zassert_true(status.output_dropped > 0);
+	connected(false);
+	atomic_set(&reject_notifications, 0);
+	uint8_t state[8];
+	do {
+		host_interface_status(state);
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	} while (state[2] || !state[3]);
+}
+
+static void smp_exchange(const void *request, size_t length)
+{
+	const struct bt_gatt_attr *attr = bt_gatt_find_by_uuid(NULL, 0, SMP_BT_CHR_UUID);
+	zassert_not_null(attr);
+	zassert_equal(gatt_write(attr, request, length), length);
+	uint8_t response[384];
+	size_t received = 0, expected = 8;
+	while (received < expected) {
+		struct event part;
+		zassert_ok(k_msgq_get(&events, &part, K_SECONDS(1)));
+		zassert_true(received + part.length <= sizeof(response));
+		memcpy(response + received, part.data, part.length);
+		received += part.length;
+		if (received >= 8) {
+			expected = 8 + sys_get_be16(response + 2);
+			zassert_true(expected <= sizeof(response));
+		}
+	}
+	const uint8_t *header = request;
+	zassert_equal(received, expected);
+	zassert_equal(response[0], header[0] + 1);
+	zassert_mem_equal(response + 4, header + 4, 4);
+	if (header[0] == 0x0a) {
+		ZCBOR_STATE_D(state, 2, response + 8, expected - 8, 1, 0);
+		zassert_true(zcbor_map_start_decode(state) && zcbor_map_end_decode(state));
+	}
+}
+
+ZTEST(python_ble, test_native_smp_output_attachment)
+{
+	atomic_set(&reject_notifications, 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	download(flood, sizeof(flood));
+	start("ready");
+	const struct bt_gatt_attr *ccc = &pybricks_service.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	cfg->cfg_changed(ccc, 0);
+	k_msgq_purge(&events);
+	/* Standard SMP v2 requests encoded by brickphyrdev's public message classes. */
+	const uint8_t attach[] = "\x0a\x00\x00\x0b\x00\x41\x00\x04"
+		"\xa1\x68" "attached" "\xf5";
+	const uint8_t input[] = "\x0a\x00\x00\x08\x00\x41\x01\x0a"
+		"\xa1\x64" "data" "\x41\x0a";
+	const uint8_t query[] = "\x08\x00\x00\x01\x00\x41\x02\x00\xa0";
+	const uint8_t interrupt[] = "\x0a\x00\x00\x01\x00\x41\x03\x0b\xa0";
+	smp_exchange(attach, sizeof(attach) - 1);
+	smp_exchange(input, sizeof(input) - 1);
+	struct application_status status;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_equal(status.state, APPLICATION_RUNNING);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.output_bytes < 1024);
+	for (unsigned int i = 0; i < 3; i++) {
+		smp_exchange(query, sizeof(query) - 1);
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_equal(status.state, APPLICATION_RUNNING);
+		zassert_equal(status.output_bytes, 1024);
+		zassert_equal(status.output_dropped, 0);
+	}
+	smp_exchange(interrupt, sizeof(interrupt) - 1);
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	zassert_equal(status.state, APPLICATION_RETURNED);
+	zassert_equal(status.result, 0);
+	connected(false);
+}
+
+static void terminal_send(const char *text)
+{
+	size_t length = strlen(text);
+	while (length) {
+		size_t count = MIN(length, sizeof(command_data));
+		zassert_equal(gatt_write(&brickphyr_terminal.attrs[5], text, count), count);
+		text += count;
+		length -= count;
+	}
+}
+
+static void terminal_until(const char *marker)
+{
+	output_size = 0;
+	output[0] = 0;
+	int64_t deadline = k_uptime_get() + 2000;
+	while (!strstr(output, marker)) {
+		struct event part;
+		zassert_ok(k_msgq_get(&events, &part, K_SECONDS(1)), "%s", output);
+		zassert_true(k_uptime_get() < deadline, "%s", output);
+		zassert_true(output_size + part.length < sizeof(output));
+		memcpy(output + output_size, part.data, part.length);
+		output_size += part.length;
+		output[output_size] = 0;
+	}
+}
+
+ZTEST(python_ble, test_native_terminal_output)
+{
+	atomic_set(&reject_notifications, 0);
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	const struct bt_gatt_attr *ccc = &brickphyr_terminal.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	terminal_until("brickphyr> ");
+	terminal_send("python\r");
+	terminal_until(">>> ");
+	for (unsigned int i = 0; i < 2; i++) {
+		atomic_set(&reject_notifications, 1000);
+		terminal_send(i ? "while True: print('x' * 128)\r\r" :
+			"print('0123456789' * 409 + '!')\r");
+		struct application_status status;
+		int64_t deadline = k_uptime_get() + 1000;
+		do {
+			k_msleep(1);
+			application_get_status(&status);
+			zassert_equal(status.state, APPLICATION_RUNNING);
+			zassert_true(k_uptime_get() < deadline);
+		} while (status.output_bytes < 1024);
+		zassert_equal(status.output_dropped, 0);
+		if (i) {
+			/* Explicit exit reaches the supervisor with stdout still blocked. */
+			terminal_send("\x18");
+			do {
+				k_msleep(1);
+				application_get_status(&status);
+				zassert_true(k_uptime_get() < deadline);
+			} while (status.state == APPLICATION_RUNNING);
+			zassert_equal(status.state, APPLICATION_STOPPED);
+			zassert_equal(status.cleanup_error, 0);
+		}
+		atomic_set(&reject_notifications, 0);
+		terminal_until(i ? "brickphyr> " : ">>> ");
+		if (!i) {
+			const char *text = strstr(output, "\r\n0123456789");
+			zassert_not_null(text, "%s", output);
+			text += 2;
+			for (size_t n = 0; n < 409; n++) {
+				zassert_mem_equal(text + 10 * n, "0123456789", 10);
+			}
+			zassert_str_equal(text + 4090, "!\r\n>>> ");
+		}
+	}
+	connected(false);
+	uint8_t state[8];
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		host_interface_status(state);
+		zassert_true(k_uptime_get() < deadline);
+	} while (state[2] || !state[3]);
+}
+
+static void usb_send(uint8_t type, const void *data, size_t length)
+{
+	uint8_t frame[HOST_PROTOCOL_FRAME_MAX];
+	size_t size = pbio_cobs_encode_prefixed(type, data, length, frame);
+	zassert_equal(uart_emul_put_rx_data(uart, frame, size), size);
+}
+
+ZTEST(python_ble, test_usb_stop_with_unread_output)
+{
+	/* Cross-transport start must use the completed upload or stored slot. */
+	connected(true);
+	download(flood, sizeof(flood));
+	connected(false);
+	zassert_ok(host_interface_select(HOST_PYBRICKS));
+	host_connection_changed(true);
+	const uint8_t subscribe = 1;
+	usb_send(PBIO_PYBRICKS_OUT_EP_MSG_SUBSCRIBE, &subscribe, 1);
+	const uint8_t start[] = {1, PBIO_PYBRICKS_COMMAND_START_USER_PROGRAM};
+	usb_send(PBIO_PYBRICKS_OUT_EP_MSG_COMMAND, start, sizeof(start));
+	const uint8_t input[] = {2, PBIO_PYBRICKS_COMMAND_WRITE_STDIN, '\n'};
+	usb_send(PBIO_PYBRICKS_OUT_EP_MSG_COMMAND, input, sizeof(input));
+	struct application_status status;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.output_bytes < 1024);
+	zassert_equal(status.state, APPLICATION_RUNNING);
+	zassert_equal(status.output_dropped, 0);
+	/* Do not read even the command replies: the first STOP must still reach
+	 * the supervisor behind an unsent stdout event and a full UART FIFO. */
+	const uint8_t stop[] = {3, PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM};
+	usb_send(PBIO_PYBRICKS_OUT_EP_MSG_COMMAND, stop, sizeof(stop));
+	deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	zassert_equal(status.state, APPLICATION_STOPPED);
+	zassert_equal(status.cleanup_error, 0);
+	host_connection_changed(false);
+	uart_emul_flush_tx_data(uart);
+	uint8_t state[8];
+	do {
+		host_interface_status(state);
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	} while (state[2] || !state[3]);
+}
+
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+static const uint8_t padded[] = {
+#include <padded.inc>
+};
+
+ZTEST(python_ble, test_slot_capacity_preserves_previous_image)
+{
+	/* A normal named program shares the store and survives client-slot work. */
+	const uint8_t named[] = "\xa1\x67main.py\x4a" "print(42)\n";
+	size_t next;
+	zassert_ok(application_upload(APPLICATION_FILES, 0, sizeof(named) - 1,
+		named, sizeof(named) - 1, &next));
+	zassert_ok(app_store_publish_upload("named"));
+	bool full = false;
+	unsigned int last = 0;
+	for (unsigned int slot = 1; slot <= 4; slot++) {
+		zassert_ok(host_protocol_select_slot(slot));
+		k_msgq_purge(&events);
+		connected(true);
+		event();
+		download(echo, sizeof(echo));
+		last = slot;
+		ssize_t result = transfer(padded, sizeof(padded));
+		if (result == 5) {
+			start("padded");
+			while (running) {
+				event();
+			}
+		} else {
+			zassert_equal(result, BT_GATT_ERR(PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED));
+			/* Exhaustion cannot remove the smaller program being replaced. */
+			start("ready");
+			const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+			zassert_equal(command(&stop, 1), 1);
+			full = true;
+		}
+		connected(false);
+		if (full) {
+			break;
+		}
+	}
+	zassert_true(full, "Synthetic store did not reach capacity");
+	for (unsigned int slot = 1; slot <= last; slot++) {
+		char name[5];
+		snprintk(name, sizeof(name), "@%u", slot);
+		zassert_ok(app_store_remove(name));
+	}
+	zassert_ok(app_store_run("named"));
+	struct application_status status;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	uint8_t text[16];
+	zassert_equal(application_output(text, sizeof(text)), 4);
+	zassert_mem_equal(text, "42\r\n", 4);
+	zassert_ok(app_store_remove("named"));
+	zassert_ok(host_protocol_select_slot(0));
+}
+
+ZTEST(python_ble, test_slots_preserve_installed_programs)
+{
+	zassert_ok(app_store_status());
+	zassert_ok(host_protocol_select_slot(1));
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	download(echo, sizeof(echo));
+	connected(false);
+	zassert_ok(host_protocol_select_slot(2));
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	download(spin, sizeof(spin));
+	start("loop");
+	zassert_equal(host_protocol_select_slot(1), -EBUSY);
+	const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+	zassert_equal(command(&stop, 1), 1);
+	const uint8_t begin[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META, 0, 0, 0, 0};
+	zassert_equal(command(begin, sizeof(begin)), sizeof(begin));
+	zassert_equal(host_protocol_select_slot(1), -EBUSY);
+	const uint8_t bad[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_RAM, 0, 0, 0, 0, 1};
+	zassert_equal(command(bad, sizeof(bad)), sizeof(bad));
+	connected(false);
+	/* Disconnect discards incomplete RAM staging, not the existing slot. */
+	application_poll();
+	struct application_status status;
+	application_get_status(&status);
+	zassert_false(status.upload_ready);
+	zassert_equal(status.upload_bytes, 0);
+	zassert_ok(host_protocol_select_slot(2));
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	start("loop");
+	zassert_equal(command(&stop, 1), 1);
+	/* A completed but malformed replacement also leaves the slot intact. */
+	zassert_equal(command(begin, sizeof(begin)), sizeof(begin));
+	zassert_equal(command(bad, sizeof(bad)), sizeof(bad));
+	const uint8_t finish[] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META, 1, 0, 0, 0};
+	zassert_equal(command(finish, sizeof(finish)),
+		BT_GATT_ERR(PBIO_PYBRICKS_ERROR_VALUE_NOT_ALLOWED));
+	start("loop");
+	zassert_equal(command(&stop, 1), 1);
+	connected(false);
+	zassert_ok(host_protocol_select_slot(1));
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	start("ready");
+	zassert_equal(command(&stop, 1), 1);
+	connected(false);
+	zassert_equal(app_store_publish("@1", 0), -EACCES);
+	struct app_file entry;
+	size_t available;
+	zassert_ok(app_store_next("@0", &entry, &available));
+	zassert_str_equal(entry.name, "@1");
+	zassert_ok(app_store_next("@1", &entry, &available));
+	zassert_str_equal(entry.name, "@2");
+	zassert_ok(app_store_remove("@2"));
+	zassert_equal(app_store_run("@2"), -ENOENT);
+	zassert_ok(host_protocol_select_slot(0));
+}
+#endif
+
+static void report_stack(const struct k_thread *thread, void *unused)
+{
+	const char *name = k_thread_name_get((k_tid_t)thread);
+	if (name && !strcmp(name, "pybricks_store")) {
+		size_t space;
+		zassert_ok(k_thread_stack_space_get(thread, &space));
+		printk("Pybricks store stack: %zu bytes unused\n", space);
+	}
+}
+
+static void teardown(void *unused)
+{
+	atomic_set(&supervisor_stop, 1);
+	zassert_ok(k_thread_join(&supervisor, K_SECONDS(1)));
+	k_thread_foreach(report_stack, NULL);
+}
+
+ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, teardown);

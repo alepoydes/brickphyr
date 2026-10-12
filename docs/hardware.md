@@ -163,6 +163,28 @@ Button restart with USB left attached is checked after both command shutdown and
 a long center hold. See [power behavior](settings.md#inactivity-shutdown) and
 [testing](testing.md#hub-input-and-lighting).
 
+### Application button lighting
+
+`CONFIG_BRICKPHYR_LIGHT` exposes the existing button-light service through
+`bp_light_write()` and `bp_light_get()`. A write copies three logical RGB bytes
+and claims the selected `BP_LIGHT_CENTER` or `BP_LIGHT_BLUETOOTH` until application
+cleanup. It performs no allocation, driver I/O or wait; another write while one is
+pending returns `EBUSY`. The existing hub loop applies the color on its next
+scheduled frame, using the same gamma and board gains as Shell RGB commands.
+
+Snapshots distinguish requested RGB, pending work, ownership, visible override,
+last write validity/time and I/O errors. A successful controller write does not
+establish physical light output. System connection menus temporarily hide both
+application colors, preserving their claims; shutdown rejects further writes and
+extinguishes the LEDs. Manual Shell writes to a claimed light report `EBUSY`.
+
+Return, fault, stop and Python soft reset restore system indication only for the
+lights the application claimed. A failed restoration retains ownership and
+reports the cleanup error. A host disconnection leaves the application colors
+alone. Simulator SPI checks cover these priorities, failures and independent
+light ownership; ARM checks exercise the same service from protected Python.
+Physical acceptance of application lighting remains pending.
+
 ## Hub matrix
 
 The F4 image implements a 5 by 5 monochrome display through the existing TLC5955

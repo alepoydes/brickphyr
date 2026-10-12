@@ -9,6 +9,7 @@ set(CONF_FILE ${BRICKPHYR_ROOT}/prj.conf
   ${CMAKE_CURRENT_SOURCE_DIR}/prj.conf)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(management_interop)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/pbio.cmake)
 target_sources(app PRIVATE main.c
   ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
@@ -17,7 +18,6 @@ target_sources(app PRIVATE main.c
   ${BRICKPHYR_ROOT}/src/hub_matrix.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c
   ${BRICKPHYR_ROOT}/src/storage.c ${BRICKPHYR_ROOT}/src/storage_mount.c
-  ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${BRICKPHYR_ROOT}/sdk/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)

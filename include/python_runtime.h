@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: Apache-2.0
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "application.h"
+
+#define PYTHON_FILE_LIMIT 64
+#define PYTHON_PATH_LIMIT 128
+/* Maximum expansion of the reference module records into the common file map. */
+#define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - 16 * (PYTHON_FILE_LIMIT + 1))
+
+/* Admission checks do not compile, allocate or execute application input. */
+int python_image_check(const void *program, size_t length, enum application_format format);
+/* Normalize the reference client's module records to the common file map.
+ * The caller owns the returned kernel allocation and admits it with the same
+ * python_image_check as other FILES uploads after this encoder has returned. */
+int python_pybricks_package(const void *data, size_t length, void **image, size_t *size);
+/* A host request sets a signal only; the VM handles it at its own safe points. */
+void python_input_reset(bool soft_reset, bool repl);
+void python_interrupt(void);
+int python_interrupt_char(void);
+bool python_repl_reading(void);
+
+/* REPL Ctrl-D asks the supervisor to release the old application and restart. */
+#define PYTHON_RESTART 1
+
+/* Called by the application thread, with all buffers in its memory domain.
+ * One VM at a time; the caller owns the heap and reclaims it after joining.
+ * stack_bottom is the lowest usable address of the downward-growing stack.
+ * A NULL program with length zero selects interactive REPL. */
+int python_execute(const void *program, size_t length, enum application_format format,
+	void *heap, size_t heap_size, uintptr_t stack_bottom);
+
+#ifdef CONFIG_USERSPACE
+#ifdef CONFIG_NEED_LIBC_MEM_PARTITION
+#include <zephyr/sys/libc-hooks.h>
+#define python_partition z_libc_partition
+#else
+extern struct k_mem_partition python_partition;
+#endif
+#endif

@@ -80,13 +80,15 @@ class _Decoder:
 class ConsoleTransport:
     """Public SMPTransport implementation; human input uses the same write lock."""
 
-    def __init__(self, output, *, ble=None, port=None, serial_number=None):
+    def __init__(self, output, *, ble=None, port=None, serial_number=None, management=True):
         self.ble, self.port, self.serial_number = ble, port, serial_number
+        self.output, self.management = output, management
         self.decoder = _Decoder(output, self._response)
         self.closed = asyncio.Event()
         self.error = None
         self.pending = None
         self.writes = asyncio.Lock()
+        self.requests = asyncio.Lock()
         self.serial = self.radio = self.hub = None
         self.loop = asyncio.get_running_loop()
 
@@ -120,7 +122,10 @@ class ConsoleTransport:
     def _feed(self, data):
         if not self.closed.is_set():
             try:
-                self.decoder.feed(data)
+                if self.management:
+                    self.decoder.feed(data)
+                else:
+                    self.output(data)
             except Exception as error:
                 self._fail(error)
 
@@ -221,6 +226,8 @@ class ConsoleTransport:
                             self.loop.remove_writer(fd)
 
     async def send(self, data):
+        if not self.management:
+            raise RuntimeError("This console was opened without SMP management")
         if self.closed.is_set():
             raise self.error or SMPTransportDisconnected("Console closed")
         if self.pending is not None:
@@ -240,23 +247,26 @@ class ConsoleTransport:
         return result
 
     async def send_and_receive(self, data):
-        try:
-            await self.send(data)
-            return await self.receive()
-        except BaseException as error:
-            # A timed-out/cancelled request can still receive a late reply.
-            # Close admission; this stream must not be reused for another request.
-            self._fail(
-                SMPTransportDisconnected("SMP exchange cancelled; reconnect the console")
-                if isinstance(error, asyncio.CancelledError)
-                else error
-            )
-            raise
+        # Input, output and telemetry share one SMP exchange. Cancellation while
+        # waiting for admission must not invalidate somebody else's request.
+        async with self.requests:
+            try:
+                await self.send(data)
+                return await self.receive()
+            except BaseException as error:
+                # A timed-out/cancelled request can still receive a late reply.
+                # Close admission; this stream must not be reused for another request.
+                self._fail(
+                    SMPTransportDisconnected("SMP exchange cancelled; reconnect the console")
+                    if isinstance(error, asyncio.CancelledError)
+                    else error
+                )
+                raise
 
 
 @contextlib.asynccontextmanager
 async def connection(output, *, management=False, **target):
-    transport = ConsoleTransport(output, **target)
+    transport = ConsoleTransport(output, management=management, **target)
     client = SMPClient(transport, "native-console", timeout_s=5)
     try:
         if management:

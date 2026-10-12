@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "native.h"
+#include "application.h"
 
 #include <errno.h>
 #include <string.h>
@@ -23,6 +23,9 @@ static const unsigned char matrix[] = {
 };
 static const unsigned char matrix_fault[] = {
 #include <native_matrix_fault.inc>
+};
+static const unsigned char light_fault[] = {
+#include <native_light_fault.inc>
 };
 static const unsigned char imu[] = {
 #include <native_imu.inc>
@@ -58,7 +61,7 @@ int native_fixture_run(const char *name)
 		for (size_t i = 0; i + sizeof(BRICKPHYR_ABI) <= sizeof(hello); i++) {
 			if (!memcmp(changed + i, BRICKPHYR_ABI, sizeof(BRICKPHYR_ABI))) {
 				changed[i] ^= 1;
-				err = native_run(changed, sizeof(hello));
+				err = application_run_native(changed, sizeof(hello));
 				break;
 			}
 		}
@@ -73,6 +76,7 @@ int native_fixture_run(const char *name)
 		{"hello", hello, sizeof(hello)}, {"counter", counter, sizeof(counter)},
 		{"spin", spin, sizeof(spin)}, {"fault", fault, sizeof(fault)},
 		{"matrix", matrix, sizeof(matrix)}, {"matrix_fault", matrix_fault, sizeof(matrix_fault)},
+		{"light_fault", light_fault, sizeof(light_fault)},
 		{"imu", imu, sizeof(imu)},
 		{"sound", sound, sizeof(sound)}, {"sound_fault", sound_fault, sizeof(sound_fault)},
 		{"battery_fault", battery_fault, sizeof(battery_fault)},
@@ -81,7 +85,7 @@ int native_fixture_run(const char *name)
 	};
 	for (size_t i = 0; i < ARRAY_SIZE(images); i++) {
 		if (!strcmp(name, images[i].name)) {
-			return native_run(images[i].data, images[i].length);
+			return application_run_native(images[i].data, images[i].length);
 		}
 	}
 	return -EINVAL;
@@ -94,5 +98,5 @@ static int cmd_fixture(const struct shell *shell, size_t argc, char **argv)
 	return err;
 }
 
-SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, imu, sound, sound_fault, battery_fault, motor, truncated, badabi.",
+SHELL_CMD_ARG_REGISTER(native_fixture, NULL, "Board test: hello, counter, spin, fault, matrix, matrix_fault, light_fault, imu, sound, sound_fault, battery_fault, motor, truncated, badabi.",
 		      cmd_fixture, 2, 0);

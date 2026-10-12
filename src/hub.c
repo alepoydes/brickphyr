@@ -8,7 +8,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
-#include "native.h"
+#include "application.h"
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
 #include "hub_light.h"
@@ -18,6 +18,9 @@
 #include "hub_battery.h"
 #include "hub_ports.h"
 #include "hub_menu.h"
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+#include "host_protocol.h"
+#endif
 #include "hub_power.h"
 #include "hub_watchdog.h"
 #include "input_resistor_ladder.h"
@@ -58,7 +61,7 @@ INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)), button_even
 
 static void shutdown(void)
 {
-	int stopped = native_shutdown();
+	int stopped = application_shutdown();
 	if (stopped) {
 		LOG_ERR("Application shutdown failed: %d", stopped);
 		return;
@@ -216,7 +219,7 @@ void hub_run(void)
 
 	for (;;) {
 		int64_t now = k_uptime_get();
-		native_poll();
+		application_poll();
 		bool activity = false;
 		bool down = atomic_test_bit(&buttons, 0);
 		atomic_val_t count = atomic_get(&presses[0]);
@@ -243,6 +246,17 @@ void hub_run(void)
 			activity |= pressed;
 			observed[i] = presses_now;
 			if (pressed) {
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+				bool compatible = current == HOST_PYBRICKS;
+#if defined(CONFIG_BT_HCI_SETUP)
+				compatible |= host_ble_status() == HOST_BLE_PYBRICKS;
+#endif
+				if (!menu.open && (i == 1 || i == 2) &&
+				    compatible) {
+					int slot = host_protocol_selected_slot() + (i == 1 ? -1 : 1);
+					(void)host_protocol_select_slot(slot);
+				}
+#endif
 				hub_menu_input(&menu, codes[i], true, current);
 			}
 			if (i == 0 && !down && (center_was_down || pressed) &&

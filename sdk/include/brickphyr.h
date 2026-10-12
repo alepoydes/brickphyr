@@ -7,6 +7,7 @@
 #include <zephyr/syscall.h>
 #include <brickphyr_abi.h>
 #include <brickphyr_matrix.h>
+#include <brickphyr_light.h>
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
@@ -28,6 +29,14 @@ __syscall int bp_sleep(uint32_t milliseconds);
 __syscall int bp_write(const void *data, size_t length);
 /* Bit 0 center, 1 left, 2 right, 3 Bluetooth. Read-only, no allocation. */
 __syscall uint32_t bp_buttons(void);
+
+/* Queue logical RGB (0..255 per channel), copied before return. Claims one
+ * button light until application exit. No allocation, I/O or wait; a pending
+ * request returns EBUSY. Connection menus and shutdown override the app color.
+ * Cleanup restores system indication. get() reports completion and visibility.
+ */
+__syscall int bp_light_write(uint32_t light, const uint8_t *rgb);
+__syscall int bp_light_get(uint32_t light, struct bp_light_state *state);
 
 /* Queue 1..25 brightness values at row-major offset first. Copies before return;
  * no allocation or wait. 0 means accepted, not yet applied; EBUSY means a frame

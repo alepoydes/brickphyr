@@ -2,8 +2,7 @@
 #pragma once
 
 #include <zephyr/llext/loader.h>
-
-#define NATIVE_IMAGE_LIMIT (32 * 1024)
+#include "application.h"
 
 /* Validate a bounded source without loading or executing it. The loader must
  * already be prepared. The returned size is the loader allocation budget. */

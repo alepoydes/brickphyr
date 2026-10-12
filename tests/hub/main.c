@@ -441,6 +441,56 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 		zassert_equal(duty(20 - i), raw[i]);
 	}
 	check_bluetooth_lighting();
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 270000));
+	const uint8_t red[] = {255, 0, 0};
+	const uint8_t blue[] = {0, 0, 255};
+	struct bp_light_state application;
+	before = writes;
+	zassert_ok(hub_light_write(BP_LIGHT_CENTER, red));
+	zassert_ok(hub_light_write(BP_LIGHT_BLUETOOTH, blue));
+	zassert_equal(writes, before, "Application submission must not perform SPI I/O");
+	zassert_equal(hub_light_write(BP_LIGHT_CENTER, blue), -EBUSY);
+	zassert_equal(hub_light_manual(true, blue), -EBUSY);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_true(application.owned && application.pending);
+	hub_light_update(270000, HOST_BLE_NATIVE);
+	zassert_equal(duty(5), UINT16_MAX);
+	zassert_equal(duty(4), 0);
+	zassert_equal(duty(3), 0);
+	zassert_equal(duty(18), 16448);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_true(application.owned && application.valid && application.visible && !application.pending);
+	zassert_mem_equal(application.rgb, red, sizeof(red));
+	zassert_ok(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_MENU, 270020));
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_true(application.owned && !application.visible);
+	zassert_equal(duty(20), UINT16_MAX, "Connection menu keeps Bluetooth white");
+	zassert_ok(hub_light_select(HOST_SHELL, HUB_LIGHT_NORMAL, 270040));
+	zassert_equal(duty(5), UINT16_MAX);
+	zassert_equal(duty(4), 0);
+	zassert_equal(duty(18), 16448);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_true(application.visible);
+	spi_error = -EIO;
+	zassert_equal(hub_light_release(), -EIO);
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_true(application.owned && !application.valid);
+	zassert_equal(application.error, -EIO);
+	zassert_equal(hub_light_write(BP_LIGHT_CENTER, blue), -EBUSY);
+	spi_error = 0;
+	zassert_ok(hub_light_release());
+	zassert_ok(hub_light_get(BP_LIGHT_CENTER, &application));
+	zassert_false(application.owned || application.pending || application.visible);
+	zassert_true(application.valid);
+	/* Releasing one light must preserve a manual color on the other. */
+	zassert_ok(hub_light_pwm(false, raw));
+	zassert_ok(hub_light_write(BP_LIGHT_CENTER, red));
+	hub_light_update(270060, HOST_BLE_NATIVE);
+	zassert_ok(hub_light_release());
+	for (int i = 0; i < 3; i++) {
+		zassert_equal(duty(20 - i), raw[i]);
+	}
+	zassert_ok(hub_light_manual(true, red));
 	zassert_ok(hub_light_off());
 	before = writes;
 	zassert_equal(hub_light_update(300000, HOST_BLE_WAITING), INT64_MAX);
@@ -449,6 +499,7 @@ ZTEST(hub, test_readiness_light_and_manual_override)
 	zassert_equal(hub_light_manual(false, manual), -ESHUTDOWN);
 	zassert_equal(hub_light_pwm(true, raw), -ESHUTDOWN);
 	zassert_equal(hub_light_pwm(false, raw), -ESHUTDOWN);
+	zassert_equal(hub_light_write(BP_LIGHT_CENTER, red), -ESHUTDOWN);
 	zassert_equal(hub_light_select(HOST_PYBRICKS, HUB_LIGHT_MENU, 300000), -ESHUTDOWN);
 	zassert_equal(writes, before, "No relighting after shutdown");
 	for (int channel = 3; channel <= 8; channel++) {

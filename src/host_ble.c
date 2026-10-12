@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_protocol.h"
 #include "host_transport.h"
+#include "application.h"
 #include "hub.h"
 
 #include <string.h>
@@ -28,6 +29,13 @@ static struct k_spinlock session_lock;
 static enum host_ble_status profile = HOST_BLE_CONNECTED;
 static void request_disconnect(struct bt_conn *conn);
 static bool exit_compatibility;
+static K_MUTEX_DEFINE(pybricks_lock);
+static struct host_protocol pybricks;
+static uint8_t pybricks_pending[HOST_PROTOCOL_PAYLOAD_MAX];
+static size_t pybricks_pending_size;
+static int64_t pybricks_tx_deadline;
+static void pybricks_output(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(pybricks_output_work, pybricks_output);
 static uint32_t shell_session;
 static int64_t shell_tx_deadline;
 static bool shell_retired;
@@ -54,11 +62,15 @@ enum host_ble_status host_ble_status(void)
 
 static void observe_pybricks(struct bt_conn *conn)
 {
+	k_mutex_lock(&pybricks_lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	if (conn == owner && !shell_session) {
 		profile = HOST_BLE_PYBRICKS;
+		application_output_stream(pybricks.subscribed);
 	}
 	k_spin_unlock(&session_lock, key);
+	k_mutex_unlock(&pybricks_lock);
+	k_work_schedule(&pybricks_output_work, K_NO_WAIT);
 }
 
 static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -89,15 +101,30 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	if (offset || (flags & BT_GATT_WRITE_FLAG_PREPARE)) {
 		return BT_GATT_ERR(BT_ATT_ERR_NOT_SUPPORTED);
 	}
-	uint8_t error = host_protocol_command(buf, len);
+	if (k_mutex_lock(&pybricks_lock, K_NO_WAIT)) {
+		return BT_GATT_ERR(PBIO_PYBRICKS_ERROR_BUSY);
+	}
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (!host_ble_request_begin()) {
+		k_mutex_unlock(&pybricks_lock);
+		return BT_GATT_ERR(PBIO_PYBRICKS_ERROR_BUSY);
+	}
+#endif
+	uint8_t error = host_protocol_command(&pybricks, buf, len);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	host_ble_request_end();
+#endif
 	if (error) {
+		k_mutex_unlock(&pybricks_lock);
 		return BT_GATT_ERR(error);
 	}
-	/* The sole supported command selects Shell after the link closes. */
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
-	exit_compatibility = true;
+	exit_compatibility = pybricks.exit_compatibility;
 	profile = HOST_BLE_PYBRICKS;
+	application_output_stream(pybricks.subscribed);
 	k_spin_unlock(&session_lock, key);
+	k_mutex_unlock(&pybricks_lock);
+	k_work_schedule(&pybricks_output_work, K_NO_WAIT);
 	return len;
 }
 
@@ -124,17 +151,17 @@ static ssize_t allow_subscription(struct bt_conn *conn, const struct bt_gatt_att
 
 static void subscribed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	if (value != BT_GATT_CCC_NOTIFY || !owner) {
-		return;
-	}
-	uint8_t status[PBIO_PYBRICKS_EVENT_STATUS_REPORT_SIZE];
-	pbio_pybricks_event_status_report(status,
-		BIT(PBIO_PYBRICKS_STATUS_BLE_HOST_CONNECTED), 0, 0);
-	/* The value attribute immediately precedes its CCC descriptor. */
-	int err = bt_gatt_notify(owner, attr - 1, status, sizeof(status));
-	if (err) {
-		LOG_ERR("Initial Pybricks status failed: %d", err);
-	}
+	k_mutex_lock(&pybricks_lock, K_FOREVER);
+	pybricks.subscribed = value == BT_GATT_CCC_NOTIFY && owner;
+	pybricks.status_dirty = true;
+	pybricks_pending_size = 0;
+	pybricks_tx_deadline = 0;
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	application_output_stream(pybricks.subscribed && !shell_session &&
+		profile == HOST_BLE_PYBRICKS);
+	k_spin_unlock(&session_lock, key);
+	k_mutex_unlock(&pybricks_lock);
+	k_work_reschedule(&pybricks_output_work, K_NO_WAIT);
 }
 
 BT_GATT_SERVICE_DEFINE(pybricks_service,
@@ -146,6 +173,48 @@ BT_GATT_SERVICE_DEFINE(pybricks_service,
 	BT_GATT_CHARACTERISTIC(&capabilities_uuid.uuid, BT_GATT_CHRC_READ,
 		BT_GATT_PERM_READ, read_value, NULL, NULL));
 
+static void pybricks_output(struct k_work *work)
+{
+	if (k_mutex_lock(&pybricks_lock, K_NO_WAIT)) {
+		k_work_reschedule(&pybricks_output_work, K_MSEC(20));
+		return;
+	}
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	struct bt_conn *conn = owner && !shell_session && profile == HOST_BLE_PYBRICKS &&
+		pybricks.subscribed ? bt_conn_ref(owner) : NULL;
+	k_spin_unlock(&session_lock, key);
+	if (!conn) {
+		k_mutex_unlock(&pybricks_lock);
+		return;
+	}
+	if (!pybricks_pending_size) {
+		pybricks_pending_size = host_protocol_event(&pybricks, true, pybricks_pending,
+			MIN(sizeof(pybricks_pending), bt_gatt_get_mtu(conn) - 3));
+	}
+	bool pending = pybricks_pending_size != 0;
+	int err = pending ? bt_gatt_notify(conn, &pybricks_service.attrs[2],
+		pybricks_pending, pybricks_pending_size) : 0;
+	if (!err) {
+		pybricks_pending_size = 0;
+		pybricks_tx_deadline = 0;
+	} else if (!pybricks_tx_deadline) {
+		pybricks_tx_deadline = k_uptime_get() + 3000;
+	}
+	bool retry = !err || ((err == -ENOMEM || err == -EAGAIN) &&
+		k_uptime_get() < pybricks_tx_deadline);
+	if (retry && (IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) || pybricks_pending_size)) {
+		/* Drain available output one notification per work item. Only idle
+		 * status polling and allocation backpressure need the delayed retry. */
+		k_work_reschedule(&pybricks_output_work, pending && !err ? K_NO_WAIT : K_MSEC(20));
+	}
+	k_mutex_unlock(&pybricks_lock);
+	if (!retry) {
+		LOG_ERR("Pybricks output failed: %d; closing link", err);
+		request_disconnect(conn);
+	}
+	bt_conn_unref(conn);
+}
+
 BT_GATT_SERVICE_DEFINE(device_information,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_DIS),
 	BT_GATT_CHARACTERISTIC(BT_UUID_DIS_FIRMWARE_REVISION, BT_GATT_CHRC_READ,
@@ -155,8 +224,8 @@ BT_GATT_SERVICE_DEFINE(device_information,
 	BT_GATT_CHARACTERISTIC(BT_UUID_DIS_PNP_ID, BT_GATT_CHRC_READ,
 		BT_GATT_PERM_READ, read_value, NULL, NULL));
 
-/* Existing clients subscribe even when no application can produce stdout.
- * Reject stdin explicitly until an execution engine exists. */
+/* Keep legacy NUS discovery/subscription for existing clients. Program I/O uses
+ * the Pybricks command/event characteristic; legacy stdin is unsupported. */
 BT_GATT_SERVICE_DEFINE(legacy_uart,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(BT_UUID_NUS_SRV_VAL)),
 	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(BT_UUID_NUS_TX_CHAR_VAL),
@@ -198,6 +267,7 @@ static ssize_t shell_subscription(struct bt_conn *conn, const struct bt_gatt_att
 			shell_session = session;
 			shell_tx_deadline = 0;
 			profile = HOST_BLE_NATIVE;
+			application_output_stream(false);
 		}
 	} else if (!value && shell_session) {
 		host_ble_shell_close(shell_session);
@@ -293,20 +363,29 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		request_disconnect(conn);
 		return;
 	}
+	k_mutex_lock(&pybricks_lock, K_FOREVER);
+	host_protocol_reset(&pybricks);
+	pybricks_pending_size = 0;
+	pybricks_tx_deadline = 0;
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	owner = bt_conn_ref(conn);
 	profile = HOST_BLE_CONNECTED;
 	exit_compatibility = false;
 	shell_retired = false;
 	k_spin_unlock(&session_lock, key);
+	k_mutex_unlock(&pybricks_lock);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	k_mutex_lock(&pybricks_lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	bool owned = conn == owner;
 	if (owned) {
 		owner = NULL;
+		host_protocol_reset(&pybricks);
+		pybricks_pending_size = 0;
+		k_work_cancel_delayable(&pybricks_output_work);
 		shell_session = 0;
 		k_work_cancel_delayable(&shell_output_work);
 		/* Keep the shared owner/power hold until any accepted packet finishes.
@@ -315,6 +394,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		exit_compatibility = false;
 	}
 	k_spin_unlock(&session_lock, key);
+	k_mutex_unlock(&pybricks_lock);
 	if (owned) {
 		bt_conn_unref(conn);
 	}
@@ -325,8 +405,9 @@ static bool request_begin(struct bt_conn *conn)
 {
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	bool valid = owner == conn && host_ble_request_begin();
-	if (valid) {
+	if (valid && profile != HOST_BLE_NATIVE) {
 		profile = HOST_BLE_NATIVE;
+		application_output_stream(false);
 	}
 	k_spin_unlock(&session_lock, key);
 	return valid;

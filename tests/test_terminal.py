@@ -48,6 +48,15 @@ def test_terminal_backpressure_and_exit(resume, via_uv):
             alive()
             assert time.monotonic() < deadline, "Console did not open the serial PTY"
             time.sleep(0.005)
+        # A plain terminal must preserve arbitrary output, including bytes that
+        # would be a framing prefix in an explicitly managed SMP connection.
+        binary = b"plain output\x06\x09not an SMP frame\x00\r\n"
+        os.write(peer, binary)
+        deadline = time.monotonic() + 1
+        while binary not in output:
+            alive()
+            assert time.monotonic() < deadline, output
+            time.sleep(0.005)
         os.set_blocking(keyboard, False)
         # Stop draining the simulated wire. A large paste then fills the serial
         # driver, the CLI's bounded queue and finally the local TTY input buffer.

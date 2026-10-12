@@ -6,7 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #ifdef CONFIG_BRICKPHYR_NATIVE
-#include "native.h"
+#include "application.h"
 #endif
 #ifdef CONFIG_BOARD_SPIKE_PRIME_F4
 #include "hub.h"
@@ -50,7 +50,7 @@ static int cmd_reboot(const struct shell *shell, size_t argc, char **argv)
 	}
 	/* Do not wait for a terminal to drain output before resetting the board. */
 #ifdef CONFIG_BRICKPHYR_NATIVE
-	int err = native_shutdown();
+	int err = application_shutdown();
 	if (err) {
 		return err;
 	}

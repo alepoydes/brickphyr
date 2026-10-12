@@ -35,7 +35,14 @@ The motor computation additionally carries the
 [LEGO BSD-3-Clause notice](../LICENSES/LEGO-BSD-3-Clause.txt); selected tables and
 initialization retain their notices in the [adapter](../src/motor/README.md).
 The optional Bluetooth build adds Mbed TLS, TF-PSA-Crypto and the
-CC2564C service pack described below. Neither build contains MicroPython or WAMR.
+CC2564C service pack described below. The experimental Python configuration adds
+the MIT-licensed MicroPython core and shared GC/output helpers, with its
+[license notice](../LICENSES/MicroPython-MIT.txt) in the firmware package. WAMR
+is not integrated. The optional Python library also compiles selected Pybricks
+bindings and their portable helpers directly from the dependency, covered by
+the existing Pybricks MIT and LEGO BSD notices. The adapted hub bindings retain
+their source attribution. The directly compiled 5x5 font also carries the 2016
+British Broadcasting Corporation copyright in the Pybricks MIT notice.
 The following is a preliminary platform inventory,
 not a completed distribution audit of a firmware image:
 

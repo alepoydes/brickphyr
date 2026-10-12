@@ -1,0 +1,10 @@
+tests:
+  brickphyr.python.runtime:
+    platform_allow: native_sim/native/64
+    integration_platforms: [native_sim/native/64]
+    tags: [python]
+  brickphyr.python.arm:
+    platform_allow: mps2/an385
+    integration_platforms: [mps2/an385]
+    extra_args: EXTRA_CONF_FILE=arm.conf
+    tags: [python, userspace]

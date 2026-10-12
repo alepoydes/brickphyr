@@ -12,6 +12,7 @@ Read [AGENTS.md](../AGENTS.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and
 - [Compatibility](../docs/compatibility.md) and [Bluetooth](../docs/bluetooth.md):
   Pybricks behavior, host interaction, and radio integration.
 - [Applications](../docs/applications.md): native, Python, and WASM lifecycle.
+- [Python](../docs/python.md): runtime, REPL, Pybricks integration and acceptance plan.
 - [Host connections](../docs/host.md): interface selection and one management session.
 - [Settings and power](../docs/settings.md): runtime changes, explicit save, and shutdown.
 - [Upstream](../docs/upstream.md): dependency changes and contributions.
@@ -30,14 +31,16 @@ Normal installation, Pybricks 4.1.0b4/b6 restoration and return to Brickphyr pas
 on that hub. Linux USB/BLE checks cover reconnection, editing/history, protocol
 handover, partial-input isolation, unread USB output followed by BLE admission,
 SMP settings and persistence. Pybricks Code discovery and reconnection pass in
-Chromium Web Bluetooth, with a profile-version warning. Pybricks program upload/execution
-is not implemented. An opt-in native profile now provides a matching C SDK,
+Chromium Web Bluetooth, with a profile-version warning. Pybricks execution is
+experimental in the optional Python profile; see its [client coverage](../docs/host.md#implemented-pybricks-subset).
+An opt-in native profile now provides a matching C SDK,
 protected LLEXT execution, RAM uploads and lifecycle control through SMP,
 `brickphyrdev app` and the shared Shell. Separate SDK images, constructors,
 soft-float arithmetic, MPU fault recovery, forced stop, interrupted transfers,
 USB/BLE reconnection and application power holds pass on the Inventor F4.
 The profile also installs several applications in LittleFS through standard SMP
-and runs them from the same Shell/CLI lifecycle. Python/WASM engines are not implemented.
+and runs them from the same Shell/CLI lifecycle. The optional Python profile adds
+temporary and installed Python programs with imports; WASM remains unimplemented.
 
 USB/battery transitions preserve a BLE session and uptime. An active management
 session inhibits idle shutdown. USB and battery expiry, long-press shutdown, and
@@ -85,10 +88,41 @@ The shared terminal's `port` inventory and `port A` detail expose
 [device metadata and raw/decoded observations](../docs/ports.md#device-inspection),
 including unknown UART IDs. Synthetic checks cover malformed optional fields,
 reconnects, escaped device strings and unchanged outputs. Physical third-party
-compatibility remains unverified. Next are physical sensor coverage, visual/audio
-acceptance, calibration and motor/service timing under combined load. Repeated
-BLE application transfers still produce occasional IMU acquisition failures;
-their cause remains to be isolated.
+compatibility remains unverified. Remaining hardware checks include physical sensor
+coverage, visual/audio acceptance, calibration and motor/service timing under
+combined load. Repeated BLE application transfers still produce occasional IMU
+acquisition failures; their cause remains to be isolated.
+
+The current milestone is [Python](../docs/python.md). One protected MicroPython
+engine shares the application supervisor, memory arena, store and transports with
+native applications. RAM and installed source/bytecode programs, imports,
+native/Viper and dynamic C `.mpy`, streams and resources have ARM QEMU and Inventor
+F4 USB/BLE checks. Fresh state, forced stop, fault recovery, transport handover
+and application power holds are covered; see [applications](../docs/applications.md#experimental-python-profile).
+
+Friendly/raw REPL, Shell/CLI integration, interactive output backpressure and
+reference standard modules have ARM/PTY checks. Parameters, geometry, timing and
+multitasking reuse Pybricks code. Initial hub bindings provide buttons, button
+lighting, static display/orientation and battery snapshots through the protected
+SDK and common services. Synthetic SPI/ADC checks cover validation, ownership,
+driver errors and cleanup, including REPL reset. These newer interactive and
+hub-library paths still need physical acceptance; the remaining hub, device,
+motor and robotics bindings are required work, not optional follow-ups.
+
+The Pybricks execution adapter has protected ARM checks through the actual serial
+client and a synthetic BLE adapter: RAM transfer, persistent slots, native ABI
+6.3, imports, output backpressure, interruption and reconnection. Physical client
+execution, slots and unchanged Pybricks Code acceptance remain open. See
+[client coverage](../docs/host.md#implemented-pybricks-subset) and
+[library coverage](../docs/compatibility.md#implemented-library-subset).
+
+The F4 task/hardware watchdog supervises startup, the hub loop and system queue,
+records reset flags and preserves USB-powered shutdown. Interrupt-lock and
+workqueue-stall recovery, USB management and subsequent DFU/reinstallation pass
+on the Inventor F4. Shutdown/button behavior has simulator checks; its physical
+recheck and battery-only watchdog recovery remain pending. See
+[power](../docs/settings.md#system-watchdog). Final combined acceptance, reduced
+profiles and published dependency pins are still required by the Python plan.
 
 ## Dependencies and remaining work
 

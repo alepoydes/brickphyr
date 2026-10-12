@@ -30,9 +30,8 @@ if(CONFIG_BRICKPHYR_PORTS)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
 endif()
 if(CONFIG_BRICKPHYR_PORT_UART)
-  target_sources(app PRIVATE src/ports/lump.c src/ports/uart.c src/ports/sensor.c
-    ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/color/conversion.c)
-  target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
+  target_sources(app PRIVATE src/ports/lump.c src/ports/uart.c src/ports/sensor.c)
+  include(cmake/pbio.cmake)
 endif()
 target_sources_ifdef(CONFIG_BRICKPHYR_BATTERY app PRIVATE src/hub_battery.c)
 if(CONFIG_BRICKPHYR_MOTOR_CONTROL)
@@ -56,6 +55,7 @@ if(CONFIG_BRICKPHYR_NATIVE)
 endif()
 
 if(CONFIG_BOARD_SPIKE_PRIME_F4)
+  include(cmake/pbio.cmake)
   if(CONFIG_BT_HCI_SETUP)
     target_sources(app PRIVATE drivers/ti_cc2564c.c src/hub_bluetooth.c src/host_ble.c)
     generate_inc_file_for_target(app
@@ -63,7 +63,6 @@ if(CONFIG_BOARD_SPIKE_PRIME_F4)
       ${ZEPHYR_BINARY_DIR}/include/generated/ti_cc2564c_bts.inc)
   endif()
   target_sources(app PRIVATE src/host_usb.c src/host_transport.c src/host_protocol.c
-    ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/cobs.c
     ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c
     src/hub.c src/hub_menu.c src/hub_light.c src/hub_power.c src/configuration.c src/storage.c src/storage_mount.c
     drivers/input_resistor_ladder.c drivers/led_tlc5955.c)

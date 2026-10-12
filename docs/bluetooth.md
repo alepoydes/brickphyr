@@ -16,6 +16,10 @@ one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide ec
 and settings read/write/save through the same runtime and persistence handlers as
 USB. The native interface also provides the [shared interactive Shell](host.md#native-bluetooth-terminal).
 Program execution, pairing and controller input are not implemented in this profile.
+Adding the [Python profile](builds.md#experimental-python-profile) supplies
+experimental program execution through the same endpoint; its current
+[client coverage](host.md#implemented-pybricks-subset) is separate from the
+physical controller checks above.
 
 Build this profile from the repository:
 
@@ -72,13 +76,14 @@ PY
 ```
 
 The Device Information and Pybricks services reuse the USB endpoint's identity
-and command validation. Capabilities report no engines, slots or program storage.
+and command handlers. The base profile reports no engines, slots or program storage.
 The Nordic UART notification characteristic exists because current clients
-subscribe to it; stdin writes are rejected until an execution engine exists.
+subscribe to it; legacy stdin is unsupported. Python input/output uses the
+Pybricks command/event characteristic.
 The Brickphyr exit command `0x80`, written with response to the Pybricks command
 characteristic, selects USB Shell after disconnection. Initial subscription
-reports BLE ownership and no running program; dynamic application status awaits
-the application supervisor.
+reports BLE ownership. With Python enabled it also reports the common
+supervisor's running state and streams program output.
 
 ### Pybricks Code
 
@@ -91,7 +96,7 @@ session so USB can reconnect.
 
 The tested website supports profile 1.5.0 and warns about the hub's 1.7.0 profile,
 but completes the connection. This verifies discovery and identification only:
-program upload, execution and REPL are not implemented. Do not install different
+program upload, execution and REPL through the website remain unverified. Do not install different
 firmware merely to dismiss the profile warning.
 
 ### Controller lifecycle

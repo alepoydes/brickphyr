@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "native.h"
+#include "application.h"
 #include "native_image.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
@@ -18,7 +18,7 @@
 
 /* Experimental Brickphyr application group; framing and transports remain SMP. */
 #define APPLICATION_GROUP 65
-BUILD_ASSERT(CONFIG_MCUMGR_SMP_CBOR_MAX_MAIN_MAP_ENTRIES >= 17);
+BUILD_ASSERT(CONFIG_MCUMGR_SMP_CBOR_MAX_MAIN_MAP_ENTRIES >= 22);
 
 static int result(struct smp_streamer *stream, int err)
 {
@@ -33,8 +33,8 @@ static bool number(zcbor_state_t *zs, const char *key, int64_t value)
 
 static int status_read(struct smp_streamer *stream)
 {
-	struct native_status status;
-	native_get_status(&status);
+	struct application_status status;
+	application_get_status(&status);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = number(zs, "api", 1) &&
 		zcbor_tstr_put_lit(zs, "abi") && zcbor_tstr_put_lit(zs, BRICKPHYR_ABI) &&
@@ -46,26 +46,34 @@ static int status_read(struct smp_streamer *stream)
 		number(zs, "queued", status.output_bytes) &&
 		number(zs, "received", status.upload_bytes) && number(zs, "total", status.upload_size) &&
 		zcbor_tstr_put_lit(zs, "ready") && zcbor_bool_put(zs, status.upload_ready) &&
-		number(zs, "limit", NATIVE_IMAGE_LIMIT);
+		number(zs, "limit", APPLICATION_IMAGE_LIMIT) && number(zs, "format", status.format) &&
+		number(zs, "formats", IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ? 15 : 1) &&
+		number(zs, "code", status.code_bytes) && number(zs, "code_used", status.code_used) &&
+		zcbor_tstr_put_lit(zs, "repl") && zcbor_bool_put(zs, status.repl);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
 static int upload_write(struct smp_streamer *stream)
 {
 	uint32_t offset = UINT32_MAX, total = 0;
+	uint32_t format = APPLICATION_NATIVE;
 	struct zcbor_string data = {0};
 	size_t decoded;
 	struct zcbor_map_decode_key_val fields[] = {
 		ZCBOR_MAP_DECODE_KEY_DECODER("off", zcbor_uint32_decode, &offset),
 		ZCBOR_MAP_DECODE_KEY_DECODER("total", zcbor_uint32_decode, &total),
 		ZCBOR_MAP_DECODE_KEY_DECODER("data", zcbor_bstr_decode, &data),
+		ZCBOR_MAP_DECODE_KEY_DECODER("format", zcbor_uint32_decode, &format),
 	};
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
-	    decoded != ARRAY_SIZE(fields)) {
+	    offset == UINT32_MAX || !total || !data.value) {
 		return MGMT_ERR_EINVAL;
 	}
+	if (format > APPLICATION_FILES) {
+		return result(stream, -ENOTSUP);
+	}
 	size_t next;
-	int err = native_upload(offset, total, data.value, data.len, &next);
+	int err = application_upload(format, offset, total, data.value, data.len, &next);
 	if (err) {
 		return result(stream, err);
 	}
@@ -74,18 +82,18 @@ static int upload_write(struct smp_streamer *stream)
 
 static int run_write(struct smp_streamer *stream)
 {
-	return result(stream, native_run_uploaded());
+	return result(stream, application_run_uploaded(false));
 }
 
 static int stop_write(struct smp_streamer *stream)
 {
-	return result(stream, native_stop());
+	return result(stream, application_stop());
 }
 
 static int output_read(struct smp_streamer *stream)
 {
 	uint8_t data[128];
-	size_t length = native_output(data, sizeof(data));
+	size_t length = application_output(data, sizeof(data));
 	bool ok = zcbor_tstr_put_lit(stream->writer->zs, "data") &&
 		zcbor_bstr_encode_ptr(stream->writer->zs, data, length);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
@@ -93,9 +101,50 @@ static int output_read(struct smp_streamer *stream)
 
 static int discard_write(struct smp_streamer *stream)
 {
-	native_discard_upload();
+	application_discard_upload();
 	return MGMT_ERR_EOK;
 }
+
+#ifdef CONFIG_BRICKPHYR_PYTHON
+static int output_write(struct smp_streamer *stream)
+{
+	bool attached;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("attached", zcbor_bool_decode, &attached),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !zcbor_map_decode_bulk_key_found(fields, ARRAY_SIZE(fields), "attached")) {
+		return MGMT_ERR_EINVAL;
+	}
+	application_output_stream(attached);
+	return MGMT_ERR_EOK;
+}
+
+static int input_write(struct smp_streamer *stream)
+{
+	struct zcbor_string data = {0};
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("data", zcbor_bstr_decode, &data),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !data.value) {
+		return MGMT_ERR_EINVAL;
+	}
+	return result(stream, application_input(data.value, data.len));
+}
+
+static int interrupt_write(struct smp_streamer *stream)
+{
+	return result(stream, application_interrupt());
+}
+
+static int repl_write(struct smp_streamer *stream)
+{
+	return result(stream, application_repl());
+}
+#endif
 
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 static int file_arguments(struct smp_streamer *stream, char *name, size_t capacity,
@@ -165,13 +214,22 @@ static const struct mgmt_handler handlers[] = {
 	[1] = {.mh_write = upload_write},
 	[2] = {.mh_write = run_write},
 	[3] = {.mh_write = stop_write},
-	[4] = {.mh_read = output_read},
+	[4] = {.mh_read = output_read,
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		.mh_write = output_write,
+#endif
+	},
 	[5] = {.mh_write = discard_write},
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 	[6] = {.mh_read = list_read},
 	[7] = {.mh_write = publish_write},
 	[8] = {.mh_write = remove_write},
 	[9] = {.mh_write = stored_run_write},
+#endif
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	[10] = {.mh_write = input_write},
+	[11] = {.mh_write = interrupt_write},
+	[12] = {.mh_write = repl_write},
 #endif
 };
 

@@ -180,6 +180,54 @@ fetches the pinned pybricksdev sibling checkout; uv installs it as an editable
 dependency. The released upstream Python package does not yet supply this CDC
 client, so install the CLI through the documented workspace procedure.
 
+## Python runtime prerequisites
+
+The MicroPython checkout has a local `readline_init0()` correction that clears
+the editor state as well as history. Otherwise a carriage return from a stopped
+REPL can pair with, and suppress, the first newline supplied to a new program.
+Brickphyr calls this public initialization API for every fresh interpreter,
+including soft reset. The correction belongs to MicroPython, not a second line
+editor in Brickphyr. Its Unix coverage case checks CR/LF pairing within a session
+and independent input after reset; the ARM application test reproduces the
+REPL-to-script transition. This dependency change is not yet published or pinned.
+
+## Python library prerequisites
+
+The Pybricks checkout has local corrections used by the experimental Python
+library. Its builtin-subpackage configuration now retains the existing
+`pybricks.geometry` alias. Task cancellation attempts every unfinished task even
+if one `close()` raises, retaining the original operation error or first cleanup
+error. `run_task` also closes its iterator when an interrupt arrives between
+iterations. The portable `multitasking/cleanup_error.py` case covers exception
+preservation and complete, idempotent cancellation; Brickphyr additionally checks
+external interrupt delivery through the protected application path.
+
+The float-to-integer argument helper now uses MicroPython's checked conversion,
+preserving ordinary truncation while rejecting NaN, infinity and overflow before
+hardware operations. Its `color/invalid_float.py` case checks the common helper
+without requiring devices. The original unchecked cast allowed NaN brightness
+through the ARM display binding; that regression is also checked in Brickphyr.
+
+These corrections independently improve Pybricks and remain in that repository.
+They are not yet published or included in the manifest pin. Brickphyr-specific
+clock, lifetime and device adaptations remain in Brickphyr.
+
+## Python client prerequisites
+
+The optional Python profile additionally needs local pybricksdev changes not yet
+included in the manifest pin. Its existing `download()` path now recognizes the
+native-v6.3 capability, selects the official `mpy-cross-v6.3` package and uses the
+`armv7m` target for Prime/Inventor source decorators. The multi-module packager
+includes precompiled modules and package initializers, validates their ABI and
+uses its existing MicroPython disassembler to follow imports. The v5/v6 bytecode
+paths remain available. This does not establish support for older native ABIs.
+
+Client tests cover compiler selection, precompiled imports and rejected headers;
+Brickphyr checks execution with the actual serial client on protected ARM
+emulation. Both repositories' uv locks resolve the added compiler package.
+Publish the dependency change before moving the shared manifest pin. The client
+and firmware changes have no physical USB/BLE execution acceptance yet.
+
 ## Settings storage prerequisites
 
 The experimental persistent-settings build also requires a Zephyr file-backend
@@ -336,6 +384,19 @@ default retains the upstream system-workqueue priority. Brickphyr enables that
 queue at a preemptible priority below IMU and motor service. Bluetooth retains
 its required cooperative system queue. F4 compilation and physical USB telemetry
 checks cover this integration.
+
+## CMSDK UART test prerequisite
+
+The ARM QEMU fixture for the shared host dispatcher additionally requires the
+local, uncommitted CMSDK APB UART correction. `uart_irq_tx_complete()` must report
+the transmitter's idle state independently of whether TX interrupts are enabled.
+Otherwise a caller that disables an idle TX interrupt waits indefinitely for a
+completion that already happened. The F4 uses a different UART implementation.
+
+Zephyr's local `tests/drivers/uart/cmsdk_apb` regression checks cold idle completion
+before and after disabling TX interrupts on `mps2/an385`. That case and
+Brickphyr's shared-dispatcher REPL tests pass on ARM QEMU. Publication and manifest
+integration remain pending.
 
 ## Speaker DMA prerequisite
 

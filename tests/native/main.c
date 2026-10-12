@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "native.h"
+#include "application.h"
 #include "hub_power.h"
 #include "hub_matrix.h"
+#include "hub_light.h"
 #include "hub_sound.h"
 #include "hub_battery.h"
 #include "hub_ports.h"
@@ -101,7 +102,7 @@ static size_t available(void)
 int main(void)
 {
 	LOG_WRN("Synthetic diagnostic before application unload");
-	struct native_status status;
+	struct application_status status;
 	size_t capacity = available();
 	for (int i = 0; i < 8; i++) {
 		int err = native_fixture_run("hello");
@@ -109,21 +110,25 @@ int main(void)
 		CHECK(err == 0);
 		k_msleep(60);
 		/* Observation must not unload a returned app or consume its output. */
-		CHECK(native_observe(&status) == 0 && status.output_bytes > 0);
+		CHECK(application_observe(&status) == 0 && status.output_bytes > 0);
 		size_t retained = available();
-		CHECK(retained < capacity);
-		CHECK(native_observe(&status) == 0 && available() == retained);
-		native_get_status(&status);
+		CHECK(status.state == APPLICATION_RUNNING && status.loaded_bytes > 0);
+		CHECK(application_observe(&status) == 0 && available() == retained);
+		application_get_status(&status);
 		printk("state %d result %d fault %u\n", status.state, status.result, status.fault);
-		CHECK(status.state == NATIVE_RETURNED && status.result == 0);
+		CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
 		char output[80] = {0};
-		CHECK(native_output(output, sizeof(output) - 1) > 0);
+		CHECK(application_output(output, sizeof(output) - 1) > 0);
 		CHECK(strstr(output, "Hello from a native application."));
 		CHECK(status.cleanup_error == 0 && available() == capacity);
 	}
 	void *reservation = k_malloc(capacity);
 	CHECK(reservation != NULL);
-	CHECK(native_fixture_run("hello") == -ENOMEM);
+	/* The execution arena is independent of transfer/system heap pressure. */
+	CHECK(native_fixture_run("hello") == 0);
+	k_msleep(60);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
 	k_free(reservation);
 	CHECK(available() == capacity);
 
@@ -131,8 +136,8 @@ int main(void)
 	 * board lacks an IMU: the real call must report ENOTSUP, without a fault. */
 	CHECK(native_fixture_run("imu") == 0);
 	k_msleep(20);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RETURNED && status.result == -ENOTSUP);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == -ENOTSUP);
 	CHECK(status.cleanup_error == 0 && available() == capacity);
 
 	CHECK(native_fixture_run("sound") == 0);
@@ -140,12 +145,12 @@ int main(void)
 	int64_t deadline = k_uptime_get() + k_ticks_to_ms_ceil64(100);
 	do {
 		k_sleep(K_TICKS(1));
-		native_get_status(&status);
+		application_get_status(&status);
 		CHECK(k_uptime_get() < deadline);
-	} while (status.state == NATIVE_RUNNING);
+	} while (status.state == APPLICATION_RUNNING);
 	printk("sound: state %d result %d fault %u cleanup %d\n", status.state,
 	       status.result, status.fault, status.cleanup_error);
-	CHECK(status.state == NATIVE_RETURNED && status.result == 0);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
 	struct bp_sound_state speaker;
 	CHECK(hub_sound_get(&speaker) == 0 && speaker.completed_samples == 8192);
 	CHECK(speaker.owner == BP_SOUND_FREE && !sound_output_active);
@@ -153,24 +158,24 @@ int main(void)
 	CHECK(native_fixture_run("sound") == 0);
 	k_msleep(10);
 	CHECK(sound_output_active);
-	CHECK(native_stop() == 0);
+	CHECK(application_stop() == 0);
 	CHECK(!sound_output_active);
 	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
 	CHECK(available() == capacity);
 	CHECK(native_fixture_run("sound_fault") == 0);
 	k_msleep(20);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
 	CHECK(!sound_output_active && available() == capacity);
 	CHECK(native_fixture_run("battery_fault") == 0);
 	deadline = k_uptime_get() + 1600;
 	do {
 		k_msleep(10);
-		native_get_status(&status);
+		application_get_status(&status);
 		CHECK(k_uptime_get() < deadline);
-	} while (status.state == NATIVE_RUNNING);
-	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	} while (status.state == APPLICATION_RUNNING);
+	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
 	CHECK(available() == capacity);
@@ -191,14 +196,14 @@ int main(void)
 		do {
 			k_msleep(1);
 			CHECK(hub_motor_get(0, &motor) == 0);
-			native_get_status(&status);
+			application_get_status(&status);
 			CHECK(k_uptime_get() < deadline);
-		} while (status.state == NATIVE_RUNNING && (test_buttons != 1 || !motor.duty));
+		} while (status.state == APPLICATION_RUNNING && (test_buttons != 1 || !motor.duty));
 		if (test_buttons == 1) {
-			CHECK(status.state == NATIVE_RUNNING && motor.owner == BP_PORT_APPLICATION);
-			CHECK(native_stop() == 0);
+			CHECK(status.state == APPLICATION_RUNNING && motor.owner == BP_PORT_APPLICATION);
+			CHECK(application_stop() == 0);
 		} else {
-			CHECK(status.state == (test_buttons == 0 ? NATIVE_RETURNED : NATIVE_FAULT));
+			CHECK(status.state == (test_buttons == 0 ? APPLICATION_RETURNED : APPLICATION_FAULT));
 			CHECK(status.result == 0 && status.cleanup_error == 0);
 		}
 		CHECK(hub_motor_get(0, &motor) == 0 && motor.owner == BP_PORT_UNOWNED);
@@ -214,8 +219,7 @@ int main(void)
 	CHECK(k_sem_take(&transfer_started, K_MSEC(100)) == 0);
 	k_sem_give(&stop_requested);
 	CHECK(k_sem_take(&stop_completed, K_MSEC(10)) == -EAGAIN);
-	CHECK(native_observe(&status) == -EBUSY);
-	CHECK(available() < capacity);
+	CHECK(application_observe(&status) == -EBUSY);
 	k_sem_give(&transfer_continue);
 	CHECK(k_sem_take(&stop_completed, K_MSEC(100)) == 0 && stop_result == 0);
 	struct bp_matrix_state display;
@@ -226,71 +230,82 @@ int main(void)
 	CHECK(available() == capacity);
 	CHECK(native_fixture_run("matrix_fault") == 0);
 	k_msleep(20);
-	native_get_status(&status);
+	application_get_status(&status);
 	printk("matrix fault: state %d result %d fault %u cleanup %d\n", status.state,
 	       status.result, status.fault, status.cleanup_error);
-	CHECK(status.state == NATIVE_FAULT && status.cleanup_error == 0);
+	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	CHECK(hub_matrix_get(&display) == 0 && display.owner == BP_MATRIX_FREE);
 	CHECK(led_frame[77] == 0 && led_frame[78] == 0);
 	CHECK(available() == capacity);
+	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
+		CHECK(native_fixture_run("light_fault") == 0);
+		k_msleep(20);
+		application_get_status(&status);
+		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+		struct bp_light_state light;
+		CHECK(hub_light_get(BP_LIGHT_CENTER, &light) == 0);
+		CHECK(!light.owned && !light.pending && light.valid);
+		CHECK(available() == capacity);
+	}
+	test_buttons = 5;
 	CHECK(native_fixture_run("spin") == 0);
 	k_msleep(20);
 	CHECK(native_fixture_run("truncated") == -ENOEXEC);
 	CHECK(native_fixture_run("badabi") == -EPROTONOSUPPORT);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RUNNING);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING);
 	k_sem_give(&stop_requested);
 	CHECK(k_sem_take(&stop_completed, K_MSEC(100)) == 0 && stop_result == 0);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_STOPPED);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_STOPPED);
 	CHECK(native_fixture_run("fault") == 0);
 	k_msleep(20);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_FAULT);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_FAULT);
 	CHECK(native_fixture_run("hello") == 0);
 	k_msleep(60);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RETURNED && status.result == 0);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
 	CHECK(available() == capacity);
 
 	/* Staging is independent of the running application and connection owner. */
 	CHECK(native_fixture_run("spin") == 0);
 	size_t size, next;
 	const uint8_t *image = native_fixture_hello(&size);
-	CHECK(native_upload(0, size, image, 128, &next) == 0 && next == 128);
-	CHECK(native_upload(129, size, image + 129, 1, &next) == -EINVAL);
+	CHECK(application_upload(APPLICATION_NATIVE, 0, size, image, 128, &next) == 0 && next == 128);
+	CHECK(application_upload(APPLICATION_NATIVE, 129, size, image + 129, 1, &next) == -EINVAL);
 	uint8_t changed = image[1] ^ 1;
-	CHECK(native_upload(1, size, &changed, 1, &next) == -EINVAL);
-	native_get_status(&status);
-	CHECK(status.upload_bytes == 128 && status.state == NATIVE_RUNNING);
-	native_session_closed();
-	native_poll();
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RUNNING && status.upload_size == 0);
-	CHECK(native_run_uploaded() == -ENODATA);
-	CHECK(native_upload(0, size - 1, image, size - 1, &next) == -ENOEXEC);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RUNNING && status.upload_size == 0);
+	CHECK(application_upload(APPLICATION_NATIVE, 1, size, &changed, 1, &next) == -EINVAL);
+	application_get_status(&status);
+	CHECK(status.upload_bytes == 128 && status.state == APPLICATION_RUNNING);
+	application_session_closed();
+	application_poll();
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING && status.upload_size == 0);
+	CHECK(application_run_uploaded(false) == -ENODATA);
+	CHECK(application_upload(APPLICATION_NATIVE, 0, size - 1, image, size - 1, &next) == -ENOEXEC);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING && status.upload_size == 0);
 	for (size_t offset = 0; offset < size;) {
 		size_t count = MIN(128, size - offset);
-		CHECK(native_upload(offset, size, image + offset, count, &next) == 0);
+		CHECK(application_upload(APPLICATION_NATIVE, offset, size, image + offset, count, &next) == 0);
 		CHECK(next == offset + count);
 		if (offset) {
-			CHECK(native_upload(offset, size, image + offset, count, &next) == 0);
+			CHECK(application_upload(APPLICATION_NATIVE, offset, size, image + offset, count, &next) == 0);
 		}
 		offset = next;
 	}
-	native_session_closed();
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RUNNING && status.upload_ready);
-	CHECK(native_run_uploaded() == 0);
+	application_session_closed();
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING && status.upload_ready);
+	CHECK(application_run_uploaded(false) == 0);
 	k_msleep(60);
-	native_get_status(&status);
-	CHECK(status.state == NATIVE_RETURNED && status.result == 0 && status.upload_size == 0);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0 && status.upload_size == 0);
 	CHECK(available() == capacity);
 	reservation = k_malloc(capacity);
 	CHECK(reservation != NULL);
-	CHECK(native_upload(0, size, image, 128, &next) == -ENOMEM);
+	CHECK(application_upload(APPLICATION_NATIVE, 0, size, image, 128, &next) == -ENOMEM);
 	k_free(reservation);
 	CHECK(available() == capacity);
 
@@ -301,7 +316,7 @@ int main(void)
 	CHECK(!hub_power_update(0, true, now));
 	CHECK(native_fixture_run("counter") == 0);
 	CHECK(!hub_power_update(0, false, now + 2000));
-	CHECK(native_stop() == 0);
+	CHECK(application_stop() == 0);
 	CHECK(hub_power_update(0, false, k_uptime_get() + 2000));
 	CHECK(native_fixture_run("hello") == -ESHUTDOWN);
 	printk("NATIVE PASS: lifecycle, MPU fault, forced stop, invalid image, power\n");

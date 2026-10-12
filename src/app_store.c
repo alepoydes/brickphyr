@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "app_store.h"
-#include "native.h"
-#include "native_image.h"
+#include "application.h"
 #include "storage_mount.h"
 
 #include <string.h>
@@ -9,9 +8,11 @@
 #include <zephyr/fs/littlefs.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
-#include <zephyr/llext/fs_loader.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
+#ifdef CONFIG_MCUMGR_GRP_FS
+#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
+#endif
 
 LOG_MODULE_REGISTER(app_store);
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(filesystem);
@@ -30,6 +31,24 @@ static bool name_valid(const char *name)
 	size_t length = strlen(name);
 	if (!length || length > APP_NAME_MAX || name[0] == '.') {
 		return false;
+	}
+	/* Keep slots readable/removable in builds without Python. Their reserved
+	 * namespace could not be used by earlier named applications. */
+	if (name[0] == '@') {
+		if (!name[1] || (name[1] == '0' && name[2])) {
+			return false;
+		}
+		unsigned int slot = 0;
+		for (size_t i = 1; i < length; i++) {
+			if (name[i] < '0' || name[i] > '9') {
+				return false;
+			}
+			slot = slot * 10 + name[i] - '0';
+			if (slot > 127) {
+				return false;
+			}
+		}
+		return true;
 	}
 	for (size_t i = 0; i < length; i++) {
 		char c = name[i];
@@ -133,6 +152,9 @@ int app_store_remove(const char *name)
 
 int app_store_publish(const char *name, size_t length)
 {
+	if (name[0] == '@') {
+		return -EACCES;
+	}
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
 	int err = path_for(name, path, sizeof(path));
@@ -143,18 +165,34 @@ int app_store_publish(const char *name, size_t length)
 	if (!err && (entry.size != length || entry.type != FS_DIR_ENTRY_FILE)) {
 		err = -EINVAL;
 	}
-	struct llext_fs_loader loader = LLEXT_FS_LOADER(APP_STAGE);
 	if (!err) {
-		err = loader.loader.prepare(&loader.loader);
-		if (!err) {
-			size_t heap;
-			err = native_image_check(&loader.loader, length, &heap);
-			loader.loader.finalize(&loader.loader);
-		}
+		err = application_check_file(APP_STAGE, length);
 	}
 	if (!err) {
 		/* LittleFS commits this replacement atomically; old content remains
 		 * visible until the fully validated incoming image takes its name. */
+		err = fs_rename(APP_STAGE, path);
+	}
+	k_mutex_unlock(&store_lock);
+	return err;
+}
+
+int app_store_publish_upload(const char *name)
+{
+	char path[sizeof("/apps/") + APP_NAME_MAX];
+	k_mutex_lock(&store_lock, K_FOREVER);
+	int err = path_for(name, path, sizeof(path));
+#ifdef CONFIG_MCUMGR_GRP_FS
+	if (!err) {
+		/* Profile handover can leave a partial standard upload. Close its
+		 * public handle before reusing the common staging path. */
+		err = fs_mgmt_file_close();
+	}
+#endif
+	if (!err) {
+		err = application_write_upload(APP_STAGE);
+	}
+	if (!err) {
 		err = fs_rename(APP_STAGE, path);
 	}
 	k_mutex_unlock(&store_lock);
@@ -167,7 +205,7 @@ int app_store_run(const char *name)
 	k_mutex_lock(&store_lock, K_FOREVER);
 	int err = path_for(name, path, sizeof(path));
 	if (!err) {
-		err = native_run_file(path);
+		err = application_run_file(path);
 	}
 	k_mutex_unlock(&store_lock);
 	return err;

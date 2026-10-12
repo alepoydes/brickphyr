@@ -27,6 +27,8 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         ("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"),
         ("LEGO PBIO motor computation", root / "LICENSES/LEGO-BSD-3-Clause.txt"),
     ]
+    if "CONFIG_BRICKPHYR_PYTHON=y" in (build / ".config").read_text().splitlines():
+        notices.append(("MicroPython core", root / "LICENSES/MicroPython-MIT.txt"))
     for project_name, license_path in (
         ("zephyr", "LICENSE"),
         ("cmsis_6", "LICENSE"),

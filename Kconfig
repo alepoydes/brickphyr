@@ -19,6 +19,11 @@ config USBD_CDC_ACM_WORKQUEUE
 config USBD_CDC_ACM_WORKQUEUE_PRIORITY
 	default 8 if BOARD_SPIKE_PRIME_F4
 
+# Python admission uses about 1 KiB in the GATT callback; the pinned F4 build's
+# HCI/L2CAP/ATT call chain adds 696 bytes. Leave room for exception/error paths.
+config BT_RX_STACK_SIZE
+	default 2048 if BRICKPHYR_PYTHON
+
 config TASK_WDT_MIN_TIMEOUT
 	default 1000 if BRICKPHYR_WATCHDOG
 
@@ -165,6 +170,14 @@ config BRICKPHYR_MATRIX
 	help
 	  Shared 5 by 5 display, with application and terminal ownership.
 
+config BRICKPHYR_LIGHT
+	bool "Application access to hub button lighting"
+	default y
+	depends on DT_HAS_TI_TLC5955_ENABLED && LED
+	help
+	  Shared system indication and application colors on the hub buttons.
+	  The base readiness indication remains available without this API.
+
 config BRICKPHYR_NATIVE
 	bool "Experimental protected native applications"
 	depends on CPU_CORTEX_M && USERSPACE && ARM_MPU && LLEXT
@@ -181,9 +194,46 @@ config BRICKPHYR_NATIVE_FIXTURES
 	help
 	  Board acceptance fixture; not an application upload mechanism.
 
+config BRICKPHYR_APPLICATION_STACK_SIZE
+	int "Application stack bytes"
+	depends on BRICKPHYR_NATIVE
+	default 12288 if BRICKPHYR_PYTHON
+	default 2048
+	range 2048 32768
+	help
+	  Shared by execution engines. Python compilation and exception reporting
+	  require more stack than the minimal native entry; measure high-water use.
+
+config BRICKPHYR_PYTHON
+	bool "Experimental MicroPython engine"
+	depends on BRICKPHYR_NATIVE || (TEST && (ARCH_POSIX || (CPU_CORTEX_M && USERSPACE)))
+	depends on ZCBOR
+	help
+	  MicroPython core with source compilation, bytecode loading and GC.
+	  Host integration and Pybricks bindings are under development.
+
+config BRICKPHYR_PYBRICKS
+	bool "Experimental Pybricks Python library"
+	depends on BRICKPHYR_PYTHON
+	default y
+	help
+	  Reuse the reference Python bindings over the shared runtime and
+	  device services. Current coverage is listed in docs/compatibility.md.
+
 config BRICKPHYR_APP_STORAGE
 	bool "Installed native applications in LittleFS"
 	depends on BRICKPHYR_NATIVE && FILE_SYSTEM_LITTLEFS && FLASH_MAP
 	depends on DT_HAS_FIXED_PARTITIONS_ENABLED
 	depends on FILE_SYSTEM_MKFS
 	depends on !MCUMGR || MCUMGR_GRP_FS_FILE_ACCESS_HOOK
+
+config BRICKPHYR_PYBRICKS_SLOTS
+	int "Persistent Pybricks program slots"
+	depends on BRICKPHYR_PYTHON && BRICKPHYR_APP_STORAGE && SHELL
+	range 0 128
+	default 5 if BOARD_SPIKE_PRIME_F4
+	default 0
+	help
+	  Map client slots to reserved names in the common application store.
+	  They share its free space with named applications. Zero keeps the
+	  RAM-only adapter. Native temporary uploads never write this store.

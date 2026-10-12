@@ -1,8 +1,9 @@
 # Compatibility
 
-Preserving Pybricks' Python behavior is a design commitment. No Python API is
-implemented by Brickphyr yet; a stable target contract must not be confused with
-a claim that the port is already complete.
+Preserving Pybricks' Python behavior is a design commitment. The optional Python
+library currently provides parameters, geometry, non-device tools and initial
+hub bindings. The target contract is broader than the implemented
+coverage below.
 
 ## Reference and scope
 
@@ -59,28 +60,96 @@ The [host interface](host.md) defines session ownership and the proposed USB
 selection experiment. Native/WASM delivery and management may use standard
 mechanisms beyond the unchanged Pybricks client's capabilities.
 
-The experimental [USB endpoint](host.md#implemented-pybricks-subset) implements
-identification and explicit unsupported-command errors, without Python execution.
-The optional [BLE endpoint](bluetooth.md#experimental-f4-controller) exposes the
-same subset to pybricksdev. Pybricks Code discovery, connection and reconnection
+The base [USB endpoint](host.md#implemented-pybricks-subset) implements
+identification and explicit unsupported-command errors. The optional Python
+profile adds experimental execution through the shared protocol handlers, with
+ARM serial-client and synthetic BLE-adapter checks. Its
+[persistent slots](host.md#stored-pybricks-programs) share the application store;
+physical execution and persistence acceptance remain open. The optional
+[BLE endpoint](bluetooth.md#experimental-f4-controller) exposes those same handlers.
+Pybricks Code discovery, connection and reconnection
 also pass on the Inventor F4 through Chromium Web Bluetooth; see the
 [tested browser and profile limitation](bluetooth.md#pybricks-code).
 
 ## Initial coverage plan
 
-| Area | Validation to add with implementation |
-| --- | --- |
-| Hub identification, buttons, light/display, power | Actual capabilities and observable API behavior |
-| Motors, encoders, control, DriveBase | Units, direction, quantization, stopping, wait/cancel, ownership |
-| IMU | Units/axes, filter/sample timing, calibration and persistence |
-| Tools, timing, asynchronous operations | Public API semantics under Zephyr execution |
-| BLE and controllers | Connection, timeout, input and disconnection behavior |
-| Storage and application launch | Explicit differences from Pybricks' program-slot model |
+The target comes from the selected
+[F4 configuration](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/bricks/primehub_f4/mpconfigport.h)
+and its enabled bindings. This inventory includes services still missing from
+Brickphyr; source availability is not implementation coverage.
 
-All rows are pending. Refine this into a method-level coverage report when there
-are executable compatibility cases; do not hand-maintain a huge empty API catalog.
+| Reference surface | Validation to add with implementation |
+| --- | --- |
+| `PrimeHub` / `InventorHub`: buttons, light, display, speaker, battery, charger, system | Hardware ownership, animation, power, storage and stop-button behavior |
+| Hub IMU | Units/axes, orientation, filter/sample timing, calibration and persistence |
+| `parameters`, `tools`, geometry alias | Values, matrix math, clocks, input, COBS, hub menu, `run_task` / `multitask`, waiting and cancellation |
+| `pupdevices`: motors and wired sensors/actuators | Mode selection, units, direction, gearing, limits, stall, stop modes and hotplug; includes light/matrix and infrared features |
+| `robotics`: `DriveBase`, `SpikeBase`, `Car` | Coordinated motion, gyro use, quantization, completion and cleanup |
+| `iodevices`: `PUPDevice`, `UARTDevice`, `LWP3Device`, controller bindings | Raw device access, ownership, bounded I/O, connection and disconnect behavior |
+| Wireless Powered Up devices and `messaging` | Remote/hub device bindings, `AppData`, `BLERadio`, `HubNetwork` and legacy aliases; distinguish peripheral links from the management owner |
+| Standard modules enabled by the reference | `io`, `math`, `micropython`, `struct`, `sys`, `errno`, `json`, `random`, `select`, `gc` and source/bytecode imports |
+| Pybricks Code and pybricksdev | Capability/profile negotiation, multi-module packaging, program slots, execution and input/output |
+
+Hardware binding coverage and complete client acceptance are pending. Core
+interpreter checks do not establish Pybricks API compatibility. Expand the
+coverage below with executable cases as bindings become available.
 Test the same small programs on the reference firmware and Brickphyr, retaining
 expected tolerances and genuine hardware differences.
+
+Reuse the reference repository's
+[virtual-hub cases](https://github.com/alepoydes/pybricks-micropython/tree/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/tests/virtualhub)
+for imports, color, tools, multitasking and motor/drive-base semantics, and its
+[Powered Up cases](https://github.com/alepoydes/pybricks-micropython/tree/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/tests/pup)
+for sensor units, motor gearing and hub lighting. Add the runnable examples from
+the [hub manual](https://docs.pybricks.com/en/latest/hubs/primehub.html) and
+[robotics manual](https://docs.pybricks.com/en/latest/robotics.html) to client
+acceptance, recording their version when captured. Online manuals can describe a
+different beta; they do not silently change the pinned behavior. Physical sensor,
+controller, sound/light and motion acceptance requires the corresponding device
+or observation, separately from simulated execution.
+
+## Implemented library subset
+
+`CONFIG_BRICKPHYR_PYBRICKS` enables the experimental library within the Python
+profile. Disabling it retains native Python scripts and REPL. The selected
+Pybricks sources supply the bindings directly; this is not a parallel Python
+implementation. The standard MicroPython importer supports both these builtin
+subpackages and application modules.
+
+| Surface | Current executable coverage |
+| --- | --- |
+| `parameters` | Axis, Button, Color, Direction, Icon, Port, Side and Stop; color values, arithmetic, hashing, GC and fresh application state |
+| `tools` geometry and `geometry` alias | Matrix/vector arithmetic, transpose, cross product, norms, incompatible dimensions and GC |
+| `StopWatch`, `wait` | Monotonic milliseconds, pause/reset/resume, blocking and asynchronous waits, zero-duration yields and interrupt delivery |
+| `run_task`, `multitask` | Results, concurrent waits, racing, exception propagation, cancellation despite cleanup errors and forced-stop recovery |
+| Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
+| `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery voltage/current snapshots |
+| Hub lighting | `light.on(Color)` and `light.off()` through the common button-light service |
+| Hub display | Static `on`, `off`, `pixel`, `icon`, `char`, `number` and `orientation`; shared display orientation and reference fonts |
+
+Checks execute through the protected ARM application path. Unchanged reference
+color, multitasking and COBS programs also pass through the actual pybricksdev
+serial client/compiler against QEMU. The [tools example](../examples/python/tools.py)
+uses concurrent timers without accessing hardware. These results do not establish
+physical USB/BLE delivery or clock accuracy. Hub binding checks use synthetic
+button/ADC inputs and a TLC5955 SPI peer with the production driver. They cover
+rendering, ownership conflicts, rejected input, I/O errors and cleanup on return,
+exception, forced stop and REPL reset. This does not verify perceived colors,
+display orientation or measurement accuracy on a physical hub. The
+[hub example](../examples/python/hub.py) exercises the static display and lighting.
+It also compiles and runs repeatedly through the actual pybricksdev serial client
+against the ARM fixture. This is client integration with synthetic I/O, not a
+physical USB/BLE or browser result.
+
+The constructor currently accepts no arguments. IMU orientation/radio arguments,
+display text and animation, light blinking/animation, speaker, IMU, charger,
+system/storage, `hub_menu` and messaging remain unfinished required work. Battery
+voltage/current use the common observation service and report acquisition errors;
+temperature/type and the remaining device bindings are not yet exposed.
+`hub.bluetooth_light` is a Brickphyr extension with the same `on`/`off` interface;
+system connection-menu indication takes priority over an application color.
+Portable fixes for builtin imports, cancellation and numeric validation remain local dependency
+changes listed in [upstream integration](upstream.md#python-library-prerequisites).
 
 ## Boundaries that are not automatically compatible
 

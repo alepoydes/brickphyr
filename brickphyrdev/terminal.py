@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 
-from . import console, monitor
+from . import application, console, monitor, repl
 
 
 class _OutputBoundary:
@@ -77,6 +77,18 @@ async def terminal(args):
     boundary = _OutputBoundary()
     last_screen = "Waiting for observations…"
     input_error = None
+    python = None
+    use_repl = getattr(args, "repl", False)
+
+    def discard_input():
+        loop.remove_reader(sys.stdin.fileno())
+        while not incoming.empty():
+            incoming.get_nowait()
+
+    def leave_repl():
+        if python is not None:
+            python.closing.set()
+            discard_input()
 
     def show_monitor(show):
         nonlocal view
@@ -120,13 +132,14 @@ async def terminal(args):
             if not input_closed and incoming.qsize() == incoming.maxsize - 1:
                 loop.add_reader(sys.stdin.fileno(), read_input)
             # Ctrl+] is handled by the TTY, independently of this sender.
-            # Editing, history and completion go unchanged to the Shell.
+            # Editing, history and completion go unchanged to the active parser.
+            send = python.write if python is not None else transport.write
             start = 0
             for index, byte in enumerate(data):
                 if not args.monitor or byte != 0x14:
                     continue
                 if not view:
-                    await transport.write(data[start:index])
+                    await send(data[start:index])
                 if view:
                     show_monitor(False)
                 elif pending_view:
@@ -137,17 +150,21 @@ async def terminal(args):
                     pending_view = True
                 start = index + 1
             if not view:
-                await transport.write(data[start:])
+                await send(data[start:])
 
     with monitor.recording(args.log) as log:
         print(
             "Ctrl+] closes the terminal."
+            + (" Ctrl+X stops REPL and returns to Shell; Ctrl+D resets Python." if use_repl else "")
             + (" Ctrl+T switches the monitor view." if args.monitor else ""),
             flush=True,
         )
         previous = termios.tcgetattr(sys.stdin.fileno())
         previous_interrupt = signal.getsignal(signal.SIGINT)
+        previous_quit = signal.getsignal(signal.SIGQUIT)
         loop.add_signal_handler(signal.SIGINT, exit_requested.set)
+        if use_repl:
+            loop.add_signal_handler(signal.SIGQUIT, leave_repl)
         try:
             tty.setraw(sys.stdin.fileno())
             mode = termios.tcgetattr(sys.stdin.fileno())
@@ -157,16 +174,43 @@ async def terminal(args):
             mode[6][termios.VINTR] = b"\x1d"
             disabled = bytes([os.fpathconf(sys.stdin.fileno(), "PC_VDISABLE")])
             mode[6][termios.VQUIT] = mode[6][termios.VSUSP] = disabled
+            if use_repl:
+                # Like detach, explicit REPL exit must work even when queued
+                # keyboard input is backpressured by a program that never reads.
+                mode[6][termios.VQUIT] = b"\x18"
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, mode)
-            async with console.connection(display, management=args.monitor, **target) as (
+            async with console.connection(
+                display, management=args.monitor or use_repl, **target
+            ) as (
                 transport,
                 client,
             ):
+                if use_repl:
+                    await application.checked(client, application.OutputStream(attached=True))
+                    await application.checked(client, application.Repl())
+                    python = repl.Session(client, display)
+
+                async def python_loop():
+                    nonlocal python
+                    await python.watch()
+                    await application.checked(client, application.OutputStream(attached=False))
+                    leave_repl()
+                    python = None
+                    mode[6][termios.VQUIT] = disabled
+                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, mode)
+                    display(b"\r\n")
+                    await transport.write(b"\x03")
+                    if not input_closed:
+                        loop.add_reader(sys.stdin.fileno(), read_input)
+
                 tasks = [
                     asyncio.create_task(input_loop(transport)),
                     asyncio.create_task(transport.closed.wait()),
                     asyncio.create_task(exit_requested.wait()),
                 ]
+                python_task = asyncio.create_task(python_loop()) if use_repl else None
+                if python_task is not None:
+                    tasks.append(python_task)
                 try:
                     if args.monitor:
                         identity, sources = await monitor.prepare(client, args.source)
@@ -187,11 +231,18 @@ async def terminal(args):
                             )
                         )
                     loop.add_reader(sys.stdin.fileno(), read_input)
-                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    if input_error:
-                        raise RuntimeError(f"Terminal input failed: {input_error}") from input_error
-                    for task in done:
-                        task.result()
+                    while True:
+                        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                        if input_error:
+                            raise RuntimeError(
+                                f"Terminal input failed: {input_error}"
+                            ) from input_error
+                        for task in done:
+                            task.result()
+                        if done == {python_task}:
+                            tasks.remove(python_task)
+                            continue
+                        break
                     if transport.closed.is_set():
                         raise transport.error or RuntimeError("Console disconnected")
                 finally:
@@ -216,6 +267,9 @@ async def terminal(args):
             try:
                 loop.remove_signal_handler(signal.SIGINT)
                 signal.signal(signal.SIGINT, previous_interrupt)
+                if use_repl:
+                    loop.remove_signal_handler(signal.SIGQUIT)
+                    signal.signal(signal.SIGQUIT, previous_quit)
             except Exception as error:
                 cleanup = cleanup or error
             try:

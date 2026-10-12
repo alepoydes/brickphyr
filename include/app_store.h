@@ -16,4 +16,6 @@ int app_store_next(const char *after, struct app_file *entry, size_t *available)
 int app_store_remove(const char *name);
 /* Called by the serial SMP dispatcher, after closing its standard FS transfer. */
 int app_store_publish(const char *name, size_t length);
+/* Install the common validated RAM upload; also owns reserved @0..@127 slots. */
+int app_store_publish_upload(const char *name);
 int app_store_run(const char *name);

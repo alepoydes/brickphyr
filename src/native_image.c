@@ -8,7 +8,7 @@
 
 /* The initial SDK emits ELF32 ARM relocatable objects. Bound parser work and
  * memory before giving an untrusted image to the privileged linker. */
-#define HEAP_LIMIT (64 * 1024)
+#define HEAP_LIMIT APPLICATION_MEMORY_LIMIT
 #define SECTION_LIMIT 64
 
 struct image {
@@ -53,7 +53,7 @@ static int name_at(struct image *image, const elf_shdr_t *strings, size_t offset
 
 int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_size)
 {
-	if (length > NATIVE_IMAGE_LIMIT) {
+	if (length > APPLICATION_IMAGE_LIMIT) {
 		return -EFBIG;
 	}
 	struct image image = {.loader = loader, .length = length};

@@ -4,6 +4,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
+#include <brickphyr_light.h>
 #include "host_transport.h"
 
 /* Advance readiness lighting; return next uptime deadline or INT64_MAX if stopped. */
@@ -16,5 +18,15 @@ int hub_light_manual(bool center, const uint8_t rgb[3]);
 int hub_light_pwm(bool center, const uint16_t duty[3]);
 /* Stop animation and reject further manual writes, then extinguish all button LEDs. */
 int hub_light_off(void);
+
+#ifdef CONFIG_BRICKPHYR_LIGHT
+int hub_light_write(uint32_t light, const uint8_t rgb[3]);
+int hub_light_get(uint32_t light, struct bp_light_state *state);
+int hub_light_release(void);
+#else
+static inline int hub_light_write(uint32_t light, const uint8_t rgb[3]) { return -ENOTSUP; }
+static inline int hub_light_get(uint32_t light, struct bp_light_state *state) { return -ENOTSUP; }
+static inline int hub_light_release(void) { return 0; }
+#endif
 
 #endif

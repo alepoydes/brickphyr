@@ -13,8 +13,10 @@ shares the Shell channel and passes native simulation and Linux USB checks with
 standard clients, including fragmented packets and persistent settings. The optional
 [Bluetooth profile](bluetooth.md#experimental-f4-controller) provides Pybricks BLE
 identification/status, SMP management, and the native interactive terminal with
-the same USB/BLE ownership rule. The optional native profile adds RAM application
-loading. Python/WASM execution remains outside this implementation.
+the same USB/BLE ownership rule. The optional native profile adds RAM and stored
+native applications; the Python profile adds temporary and installed programs with imports
+through those management operations. That profile also has an experimental
+[Pybricks execution adapter](#implemented-pybricks-subset); WASM remains unimplemented.
 
 ## One management session
 
@@ -23,6 +25,11 @@ including diagnostics and application transfers. An active USB owner excludes a
 second Bluetooth management owner, and conversely. Tools share the current owner
 or receive a busy result; another client cannot silently take over the session.
 USB power alone does not acquire ownership.
+
+Local transport closure does not acknowledge release by the firmware. While it
+finishes accepted operations or receives the BLE disconnection event, a new
+admission can still return busy. The USB selector reports ownership and readiness
+without acquiring a session.
 
 The selected interface determines how requests are interpreted for that session.
 Malformed input is an error, not a reason to guess another protocol. Switching
@@ -58,7 +65,7 @@ framing or file-transfer protocol merely to rename existing functionality.
 The experimental [native application operations](applications.md#host-and-input-devices)
 use SMP with equivalent USB/BLE support and the same lifecycle handlers as Shell.
 Their [implementation milestones](builds.md#native-application-milestone) include
-temporary RAM runs, now implemented, and persistent installation, still planned.
+temporary RAM runs and persistent native installation, both implemented.
 
 ## Native applications
 
@@ -110,29 +117,37 @@ changes may require rebuilding stored applications. See
 port for an already selected Shell interface or a simulator. `--ble` accepts a
 Bluetooth name or address. The CLI reuses `smpclient` for both transports.
 
-The experimental native management group is SMP group 65, API version 1:
+The experimental application management group is SMP group 65, API version 1:
 
 | Command ID | Operation | Fields/result |
 | --- | --- | --- |
-| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state and image limit |
-| 1 | Write upload fragment | `off`, `total`, `data`; returns accepted `off` |
+| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag |
+| 1 | Write upload fragment | `off`, `total`, `data`, optional `format` (default native); returns accepted `off` |
 | 2 | Write start | Start the completed RAM image |
 | 3 | Write stop | Confirm application termination and release |
 | 4 | Read output | At most 128 bytes in `data` |
+| 4 | Write Python output attachment | Required boolean `attached`: enable interruptible output backpressure, or detach and resume counted nonblocking logging |
 | 5 | Write discard | Discard the waiting RAM upload |
 | 6 | Read installed files | `name`: lexical cursor (empty for first); returns next `name`, `size`, `available` bytes; empty name ends iteration |
 | 7 | Write publish | `name`, `size`: validate and atomically publish `/apps/.incoming` |
 | 8 | Write remove | `name`: remove an installed image |
 | 9 | Write stored start | `name`: start an installed image |
+| 10 | Write Python input | `data`: at most 128 bytes; accepted atomically or rejected with `EAGAIN` when full |
+| 11 | Write Python interrupt | Discard queued input and request `KeyboardInterrupt`; forced termination remains command 3 |
+| 12 | Write REPL entry | Start fresh interactive Python or reattach to the existing REPL; reject another running application with `EBUSY` |
 
 Persistent file upload/download/status/close use standard SMP group 8. Only
 the application operations missing from that group are added above.
 
 Offset zero starts a new RAM upload. Later fragments must be contiguous or exact
-repeats of already accepted bytes. Group errors carry the positive Zephyr errno;
+repeats of already accepted bytes, with the same format throughout. Format values
+are native ELF (0), Python source (1), MicroPython bytecode/native code (2) and a
+[Python file map](applications.md#named-python-programs) (3); the corresponding
+bit in `formats` reports admission support. Older servers omit these fields and
+support only native ELF. Group errors carry the positive Zephyr errno;
 malformed requests use standard SMP errors. This group adds application operations,
 not another framing or firmware-update protocol. The versioned definitions are
-in [the firmware handler](../src/native_mgmt.c) and
+in [the firmware handler](../src/application_mgmt.c) and
 [the client](../brickphyrdev/application.py).
 
 Shell and SMP can share a serial channel through Zephyr's existing SMP transport.
@@ -140,7 +155,105 @@ This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetoot
 GATT characteristic addresses distinguish services without guessing payloads;
 that does not relax the single-management-session rule.
 
-### Host CLI
+## Python applications
+
+Use the [Python firmware profile](builds.md#experimental-python-profile). The same
+application commands select `.py` source or compatible `.mpy` bytecode/native code
+by extension. A directory containing `main.py` or `main.mpy` includes all its
+regular files; use a directory dedicated to the application. Symbolic links are
+rejected. A `.cbor` file supplies an already encoded file map. Use
+`--format native|python|mpy|files` after `run` or `upload` to override inference.
+
+```sh
+uv run brickphyrdev app run examples/python/hello.py
+uv run brickphyrdev app status
+uv run brickphyrdev app output
+uv run brickphyrdev app --ble Brickphyr run examples/python/hello.py
+uv run brickphyrdev app --ble Brickphyr output
+uv run brickphyrdev app --ble Brickphyr stop
+```
+
+`run` starts the program and returns its current status; it does not wait for
+completion or stream its output. `upload` transfers without starting. After an
+upload, `app run`, `app status`, `app output` and `app stop` in the hub Shell use
+that same program and supervisor. These operations do not write application flash.
+For a temporary program with local imports, pass its directory. Install explicitly
+to retain it across reboot; installation does not run the program:
+
+```sh
+uv run brickphyrdev app run examples/python/modules
+uv run brickphyrdev app output
+uv run brickphyrdev app install examples/python/modules --name fibonacci
+uv run brickphyrdev app list
+uv run brickphyrdev app start fibonacci
+uv run brickphyrdev app output
+uv run brickphyrdev app --ble Brickphyr start fibonacci
+uv run brickphyrdev app --ble Brickphyr output
+uv run brickphyrdev app remove fibonacci
+```
+
+A single source or MPY file can also be installed directly. The hub terminal uses
+the same stored-program operations:
+
+```text
+app list
+app run fibonacci
+app output
+app remove fibonacci
+```
+
+For a program waiting for input, send a line through the same USB/BLE commands:
+
+```sh
+uv run brickphyrdev app run examples/python/input.py
+uv run brickphyrdev app input Brickphyr
+uv run brickphyrdev app output
+```
+
+`input TEXT` appends a newline; `--no-newline` sends only the text. One command is
+limited to 128 UTF-8 bytes including that newline. Input already accepted belongs
+to the running application and survives the sender closing its connection.
+`app interrupt` requests a catchable Python `KeyboardInterrupt`; `app stop`
+forcibly terminates the application, including native code that never checks
+Python events. The hub Shell provides `app input "some text"` and `app interrupt`
+through the same handlers. These commands supply script input. Pybricks bindings
+are still pending.
+
+Programs can read their bundled resources with `open("data/file", "rb")`.
+Paths stay within that application's retained file map, including after an update
+or removal of its installed image. Writable Python files are not implemented.
+See [streams and resource limits](applications.md#python-input-and-output).
+
+For the experimental Python REPL, use the same terminal frontend:
+
+```sh
+uv run brickphyrdev terminal --usb --repl
+uv run brickphyrdev terminal --repl
+uv run brickphyrdev terminal --usb --repl --monitor --source application
+```
+
+Run one command at a time; the second selects BLE. Ctrl-C interrupts, Ctrl-D at an
+empty prompt resets Python, Ctrl-X stops REPL and returns to Shell, and Ctrl-]
+detaches without stopping Python. Repeating the command reattaches to its existing
+state. Entry while another application runs fails without stopping that program.
+The hub must run a Python build with SMP command 12; older builds reject it.
+These CLI workflows have ARM QEMU/PTY coverage; physical REPL acceptance remains
+pending. See [REPL behavior and limits](applications.md#interactive-python).
+
+From an ordinary terminal opened with `uv run brickphyrdev terminal` (BLE) or
+`uv run brickphyrdev terminal --usb`, enter:
+
+```text
+python
+```
+
+This uses the same VM with a plain input/output stream; Ctrl-X returns to Shell.
+For a connection sharing SMP operations such as monitoring, select `--repl`
+when opening the terminal instead. The hub rejects plain REPL entry once SMP
+is active on that connection. Plain Shell entry and reconnection have ARM QEMU
+coverage; their physical USB/BLE acceptance is pending too.
+
+## Host CLI
 
 `brickphyrdev` provides USB/BLE terminals, a text telemetry monitor, application
 management and USB interface commands.
@@ -358,17 +471,98 @@ The installed pybricksdev client supplies host reads and command framing.
 
 - Read device name, actual Brickphyr firmware version, protocol version, factory
   hub variant and hub kind. Unknown characteristics return an empty value.
-- Capabilities advertise no execution engines, program storage or program slots.
-- Subscribe emits current USB-connected status with no running program.
-- Application commands, including upload, run, STOP and DFU, return `INVALID_COMMAND` with the
-  original correlation tag. Use the working Shell `reboot dfu` for update entry.
+- Without the Python profile, capabilities advertise no execution engines,
+  program storage or slots. Subscription reports the connection; application
+  commands return `INVALID_COMMAND` with the original correlation tag.
 - Malformed envelopes and oversized frames are discarded through the next frame
   delimiter. They never select another protocol or execute shell text.
 
-This is identification interoperability, not full Pybricks Code or Python
-compatibility. The returned firmware version does not impersonate Pybricks.
+The Python profile additionally accepts multi-module format-6 bytecode uploads,
+start/stop, REPL and stdin. It reports connection/running status and stdout through
+the same command/event handlers over USB and BLE. A new start while an application
+runs returns busy; stop uses the common supervisor. In the F4 Python profile,
+completing a Pybricks download installs it in the selected persistent slot.
+Incomplete transfers are discarded without replacing the installed program.
+Builds with `CONFIG_BRICKPHYR_PYBRICKS_SLOTS=0` retain the RAM-only adapter:
+complete uploads survive disconnection until replacement or reboot. Native
+Brickphyr temporary uploads stay in RAM in both configurations.
+
+The reference client's module records are normalized to the common
+[Python file map](applications.md#named-python-programs), retaining one importer
+and application lifecycle. The advertised transfer limit is 31,728 bytes, leaving
+room for file-map metadata within the 32 KiB application limit. The Cortex-M Python
+profile also advertises native `.mpy` ABI 6.3. The
+[pybricksdev integration](upstream.md#python-client-prerequisites) selects the
+matching compiler and packages imported `.mpy` files. Native/Viper decorators,
+an imported Viper module and a dynamic C module pass through the actual serial
+client on protected ARM emulation, including GC and repeated execution.
+Incompatible module headers fail before the client starts a replacement transfer;
+the hub independently validates the received modules.
+
+The actual pybricksdev serial client passes upload, imports, input/output, stop,
+repeat and reconnect checks against ARM-emulated firmware. A separate protected
+ARM fixture covers the production BLE GATT adapter, ownership and interpreter
+with a synthetic controller, including notification backpressure and disconnect.
+Neither check establishes physical USB/BLE execution or unchanged Pybricks Code
+execution. Pybricks library bindings remain unfinished. Persistent slots additionally
+have ARM checks for selection, transfer failure, storage exhaustion and coexistence
+with named programs. Physical slot persistence and operation remain unverified.
+Subscribed output applies backpressure through the common
+[application queue](applications.md#python-input-and-output). Python waits
+interruptibly when it fills; USB continues receiving a STOP command behind a
+pending output event. BLE retries its retained notification before consuming
+another fragment. Detach or selection of native BLE management restores the
+nonblocking application log, whose overflow counter the Pybricks client does not
+expose. Long-output and blocked-stop cases have ARM checks; physical flow-control
+acceptance remains open.
+DFU through this protocol is still unsupported; use Shell `reboot dfu`.
+
+The returned firmware version does not impersonate Pybricks.
 Its build label uses PEP 440 local-version notation (`0.1.1+bringup`) for Python
 clients; the terminal retains Zephyr's `0.1.1-bringup` display format.
+
+### Stored Pybricks programs
+
+The F4 Python profile exposes five client slots, numbered 0–4. They are programs
+`@0` through `@4` in the same LittleFS store as named applications; there are no
+fixed per-slot flash partitions. All programs share the available space and the
+common execution-memory limits. The slot count is a build option, not a limit on
+the number of ordinary named programs.
+
+Select a slot with left/right outside the connections menu when USB or BLE is in
+Pybricks mode, or from the native hub terminal:
+
+```text
+pybricks_slot 2
+```
+
+After downloading a program through Pybricks, use the native terminal to inspect,
+run or remove its stored image:
+
+```text
+app list
+app run @2
+app remove @2
+```
+
+`pybricks_slot` without an argument reports the selection. Selection starts at
+zero after boot and cannot change during a download or running application.
+The reference status event reports the selected slot; upload metadata has no
+private slot or save field. A start command with an explicit ID runs that slot;
+without an ID it uses the current selection. Selecting an empty slot is allowed;
+starting it fails explicitly.
+
+The final metadata command acknowledges only after the validated image has been
+written, closed and atomically renamed. Failed replacement leaves the old program
+intact. File operations use a separate 4 KiB management worker; the calling
+protocol handler waits for its result. Physical response latency and BLE receive
+behavior during that wait remain acceptance items. No application is started by
+uploading or by rebooting the hub.
+
+Slots can also be started or removed through `brickphyrdev app` using their `@N`
+names. Ordinary `app install` cannot overwrite this reserved namespace; download
+through Pybricks to replace a slot. The underlying file map and running-version
+rules are shared with [named programs](applications.md#named-python-programs).
 
 ### pybricksdev CDC client
 

@@ -5,33 +5,6 @@ simulator, inspect the linked ARM image, and open its firmware package through
 Pybricks. Physical checks and their limits are listed in [hardware](hardware.md).
 Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
 
-The shared terminal checks run the same editing, completion, history and command
-sequence through USB and BLE byte adapters. The command observes the same Shell
-instance on both paths. Additional checks cover stale input/output, USB rejection
-during BLE ownership, and disconnect during an accepted command. These are native
-simulation checks, not evidence of Bluetooth radio behavior.
-
-The IMU fixtures use the production acquisition thread and pinned ST/Pybricks
-register code with a synthetic I²C/GPIO device. Checks cover cold configuration,
-physical units and signed limits, read-only Shell snapshots, stale timestamps,
-I/O failure recovery, overlapping updates and shutdown. A separate startup-failure
-fixture checks that a failed register read cannot cause a write and that cleanup
-does not replace the first error. These do not measure F4 sensor accuracy or timing.
-
-`tests/imu_processing` checks the [ported calculation](../src/imu/README.md) on
-ARM QEMU: six gravity poses, known turns, user axes, calibration, rejected settings,
-stationary bias learning and restart after missing measurements. Synthetic input
-sequences check the mathematics, not sensor accuracy. The acquisition fixture
-also exercises processing, Settings and explicit persistence through actual
-I²C/GPIO emulation and the LittleFS backend on simulated flash. It calls the real
-SMP observation handler with the transport's payload capacity, including a build
-where telemetry alone supplies the required CBOR nesting configuration.
-
-The Python protocol checks also run `brickphyrdev` USB identity and handover through
-the installed pybricksdev library against the production C handler over a PTY.
-USB enumeration/control is simulated. Packaging can be checked with `uv build`;
-the resulting wheel contains the CLI, not firmware sources or development reports.
-
 ## Watchdog
 
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a
@@ -63,6 +36,220 @@ The [power document](settings.md#system-watchdog) records physical coverage and
 the distinction between hardware reset, software reset and still-pending power
 checks. Watchdog-enabled builds require the [Zephyr fixes](upstream.md#watchdog-prerequisites).
 
+## Python core
+
+These checks run the production VM with captured output and a caller-owned heap.
+They cover source, bytecode from the matching compiler and pybricksdev, GC,
+exceptions, fresh state, memory exhaustion and every incomplete prefix of a
+compiled fixture. ARM checks execute in Zephyr user mode with separate VM state
+and test-buffer partitions. They do not exercise upload, storage, REPL, Pybricks
+bindings or physical hardware.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -p always -b native_sim/native/64 -s tests/python -d build/python-tests
+build/python-tests/zephyr/zephyr.exe
+uv run --locked west build -p always -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
+uv run --locked pytest -q tests/test_native.py -k python
+```
+
+The build initializes no dependency automatically: populate the manifest's
+MicroPython submodule first. The `mpy_cross` build target uses that same source
+revision. Use a pristine build when changing MicroPython feature selection;
+its current upstream registration generator can otherwise retain disabled
+modules. Compiler checks require local subprocesses and `asyncio` socket pairs.
+
+### Python application integration
+
+The ARM SMP fixture runs the production supervisor, protected VM, upload handlers
+and host CLI through QEMU UART/PTY. These checks cover errors, memory/stack limits,
+output overflow, maximum source length, forced stop and repeated Python/native
+transitions after an MPU fault. The UART fixture has no physical USB/BLE detach
+signal; it checks client reconnection, not radio or USB session cleanup.
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py
+```
+
+The same build produces native `.mpy` fixtures in `python-fixtures` using the
+matching compiler and upstream `dynruntime.mk` with the `armv7m` target.
+`test_native_mpy.py` checks native/Viper calculations, dynamic C initialization
+and GC, code/data/kernel memory protection, forced stop, code exhaustion, malformed
+input and another successful run after each failure. These are protected ARM
+checks, not physical fault injection.
+
+`test_python_hub.py` exercises the Pybricks hub bindings through that same
+protected engine. Synthetic button/ADC inputs and an observed SPI peer check
+button sets, battery units, static drawing, rotation, color channels, ownership,
+I/O failures and cleanup on return, exception, forced stop and REPL reset.
+These checks do not establish physical display or light appearance. NaN and
+malformed images must fail without altering the display.
+The native ARM fixture also supplies an invalid RGB pointer and a misaligned
+light snapshot buffer through the SDK. Both must end only the application,
+restore its claimed light and leave the next application usable.
+
+`test_python_files.py` exercises source/bytecode/native imports, relative packages,
+GC and recovery from a truncated native import. It also covers malformed maps,
+namespace escape, duplicate paths, atomic replacement, removal during repeated
+imports and directory-based CLI runs through the actual application store. An
+explicit entry is checked with an ordinary module named `main` and all 64 files;
+invalid or duplicate entry metadata is rejected. The
+existing native storage tests cover LittleFS capacity failures through the shared
+publication path.
+
+`test_python_io.py` covers standard text/binary streams, readline editing,
+input polling, bounded backpressure, catchable interrupts during execution and
+blocked input, and a subsequent application. Resource cases check reads, seek,
+close, GC, namespace boundaries and rejected writes. The same production SMP
+handlers are used by the installed input CLI. These are ARM user-mode checks;
+QEMU UART reconnection does not establish physical USB/BLE detach behavior.
+
+`test_python_modules.py` runs selected upstream cases unchanged through the
+protected application path. It compares portable cases with CPython and uses
+the dependency's expected output for MicroPython-only allocation locks. Cases
+exercise buffers, reverse operators, binary structures, IOBase, GC, JSON and
+random ranges. A focused diagnostic case checks numeric tolerances, exception
+formatting, memory information and module help. No source-text assertions or
+second implementation of these modules is used.
+
+`test_pybricks_tools.py` runs the dependency's color, multitasking and COBS cases
+unchanged, including its local cancellation regression. Additional cases check
+geometry, GC roots, fresh library state after forced stop, stopwatch semantics,
+concurrent waits, input and interruption. Time assertions allow scheduling delay;
+the upstream virtual-hub wait test's exact synthetic-clock assumptions are not
+used as physical timing requirements. These checks do not access a hub.
+
+`test_python_repl.py` uses the maintained REPL through the same protected VM and
+SMP handlers. It covers editing/history/completion, exceptions, blocked input,
+busy-loop interruption, native allocation cleanup on soft reset, friendly/raw
+mode switching, busy admission and reattachment. A synthetic disconnect
+notification checks unfinished-line cancellation without resetting globals.
+Real CLI/PTY cases check monitoring within that connection, detach, forced exit
+under input backpressure, complete long output before/after soft reset, final
+output draining, return to Shell and TTY restoration. SMP stream checks hold a
+producer behind a full output queue, then drain, interrupt, stop or detach it.
+A REPL-to-script case checks independent newline state using the
+[MicroPython reset correction](upstream.md#python-runtime-prerequisites).
+These checks do not establish physical BLE delivery or radio timing.
+
+The plain Shell variant uses the production host dispatcher instead of Zephyr's
+serial Shell backend. It requires the local
+[CMSDK UART correction](upstream.md#cmsdk-uart-test-prerequisite). Its synthetic
+DTR notification exercises real teardown and reattachment; UART device closure
+alone does not provide that notification in QEMU.
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
+uv run --locked pytest -q tests/test_native.py -k uart-cmsdk
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf
+uv run --locked pytest -q tests/test_python_shell.py
+```
+
+These cases cover cold Shell entry, early Ctrl-C, binary output, soft reset,
+return without replaying queued keystrokes, state retention across a session
+boundary and rejection of raw REPL entry on an active SMP connection. The actual
+pybricksdev serial client also identifies and reconnects through this dispatcher;
+that case detects drivers invoking TX callbacks synchronously under a caller's
+lock. Program transfer and execution use the separate cases below.
+
+### Pybricks execution adapter
+
+`test_pybricks_execution.py` uses the same dispatcher build and the actual
+pybricksdev serial client/compiler. It checks multi-module uploads, a `main`
+module separate from the entry, stdin/stdout, running status, busy-loop stop,
+repeat/reconnect and recovery after invalid module records. Transport framing
+and malformed-file checks use the production handlers, not a second parser.
+The long-output case checks a complete 4 KiB line through the client's ordinary
+run/output path, exceeding the application's bounded queue.
+The native case checks capability-based ABI selection, client-compiled native/Viper
+code, precompiled imports with a transitive dependency, a dynamic C module and GC.
+A mismatched native header fails before download; the installed program still runs.
+The client also compiles and executes the reference tools cases and the public
+concurrent-timer example through the same protocol, including repeated fresh VMs.
+The required local client changes are listed in
+[upstream integration](upstream.md#python-client-prerequisites).
+
+```sh
+uv run --locked pytest -q tests/test_pybricks_execution.py
+uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-ble-tests
+uv run --locked pytest -q tests/test_native.py -k python-ble
+uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-slots-tests -- \
+  '-DEXTRA_CONF_FILE=../native_smp/storage.conf;slots.conf' \
+  '-DDTC_OVERLAY_FILE=app.overlay;../native_smp/storage.overlay'
+uv run --locked pytest -q tests/test_native.py -k python-slots
+```
+
+The BLE fixture uses the real GATT adapter, common host owner and protected
+interpreter with synthetic controller calls and notifications at ATT MTU 23.
+The native Shell REPL checks complete long output and explicit exit while
+notifications are blocked. Standard SMP BLE requests also exercise the real
+Zephyr transport and application handlers: status polling preserves an attached
+output consumer and interruption remains available while its queue is full.
+It checks input across disconnect, retained and incomplete uploads, repeated
+execution, native/Viper execution with GC, busy-loop stop and lossless notification retry after transient
+resource exhaustion. With output blocked it checks forced stop, catchable
+interruption and autonomous completion after disconnect or native-profile
+selection. An emulated UART also checks STOP through the real USB dispatcher
+with its transmit FIFO unread. The normal lifecycle poll runs independently of
+status reads; UART0 carries test results. This does not emulate USB hardware or
+the complete HCI/ATT receive stack and radio.
+
+The slot variant uses that same fixture with the existing 64 KiB simulated
+LittleFS store. It checks multiple slots, selected-slot admission, interrupted
+and malformed replacement, reserved-name protection, and start across BLE/USB.
+A compiler-produced 24 KiB constant fills storage until a replacement fails;
+the previous program and an ordinary named program must still run. These are
+synthetic storage checks, not a physical power-cycle claim. The actual serial
+client also checks selection through the hub Shell and repeat after rejected
+replacement. The RAM-only fixture remains a separate configuration.
+The storage worker retains 1808 bytes of unused stack in this ARM fixture after
+the capacity checks. This guides its 4 KiB budget; real SPI flash response latency,
+Bluetooth receive behavior during synchronous completion and F4 stack high-water
+checks remain separate acceptance work.
+
+Python builds give the Bluetooth RX thread 2 KiB. The fixture's callback path
+uses about 1 KiB; the audited F4 compiler's HCI/L2CAP/ATT frames add 696 bytes.
+Package normalization and admission run sequentially, and Python launch does
+not reserve the ELF loader's buffer. These measurements guide the stack budget;
+physical high-water checks under combined device load remain required.
+
+On a named F4 running the Python profile, separately check source and client
+bytecode through both USB and BLE, then a bounded non-yielding program followed by
+explicit stop and another successful run. Observe application power holds and
+incomplete-upload cleanup during cross-transport reconnection. Keep motor outputs
+inactive; these calculations need no actuator operation. The watchdog recovery
+gate applies before such unattended execution. Leave no running diagnostic at
+handoff and distinguish these bounded checks from a long-duration workload.
+
+## Existing subsystem checks
+
+The shared terminal checks run the same editing, completion, history and command
+sequence through USB and BLE byte adapters. The command observes the same Shell
+instance on both paths. Additional checks cover stale input/output, USB rejection
+during BLE ownership, and disconnect during an accepted command. These are native
+simulation checks, not evidence of Bluetooth radio behavior.
+
+The IMU fixtures use the production acquisition thread and pinned ST/Pybricks
+register code with a synthetic I²C/GPIO device. Checks cover cold configuration,
+physical units and signed limits, read-only Shell snapshots, stale timestamps,
+I/O failure recovery, overlapping updates and shutdown. A separate startup-failure
+fixture checks that a failed register read cannot cause a write and that cleanup
+does not replace the first error. These do not measure F4 sensor accuracy or timing.
+
+`tests/imu_processing` checks the [ported calculation](../src/imu/README.md) on
+ARM QEMU: six gravity poses, known turns, user axes, calibration, rejected settings,
+stationary bias learning and restart after missing measurements. Synthetic input
+sequences check the mathematics, not sensor accuracy. The acquisition fixture
+also exercises processing, Settings and explicit persistence through actual
+I²C/GPIO emulation and the LittleFS backend on simulated flash. It calls the real
+SMP observation handler with the transport's payload capacity, including a build
+where telemetry alone supplies the required CBOR nesting configuration.
+
+The Python protocol checks also run `brickphyrdev` USB identity and handover through
+the installed pybricksdev library against the production C handler over a PTY.
+USB enumeration/control is simulated. Packaging can be checked with `uv build`;
+the resulting wheel contains the CLI, not firmware sources or development reports.
+
 ## Run the bring-up checks
 
 After [workspace setup](builds.md), including the experimental
@@ -89,6 +276,10 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay &&
 uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests &&
 uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests &&
+uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf &&
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y &&
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf &&
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests &&
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
 mkdir -p build/native-smp-sdk &&
 tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&

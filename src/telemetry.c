@@ -6,7 +6,7 @@
 #include "hub_battery.h"
 #include "hub_ports.h"
 #include "input_resistor_ladder.h"
-#include "native.h"
+#include "application.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -138,8 +138,8 @@ static void capture(enum source source, struct observation *out)
 		}
 	} else if (source == APPLICATION) {
 #ifdef CONFIG_BRICKPHYR_NATIVE
-		struct native_status value;
-		out->error = native_observe(&value);
+		struct application_status value;
+		out->error = application_observe(&value);
 		if (!out->error) {
 			field(out, "state", value.state);
 			field(out, "result", value.result);

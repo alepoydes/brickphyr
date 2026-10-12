@@ -1,0 +1,109 @@
+# MicroPython integration
+
+The engine uses the `micropython` submodule selected by the pinned Pybricks
+checkout: `740cbf265cda4d404fef11848e3bdf32fcd24420`. Its parent baseline is
+MicroPython `0fd6c573ea815774668bbb16b8e197c8822368b2` (version 1.29.0).
+The five subsequent Pybricks commits make math modules extensible, add `%i`
+formatting, guard standard streams, select the Pybricks STM32 library and adjust
+upstream CI tests. Brickphyr compiles core and selected shared runtime files;
+the STM32 library and upstream hardware ports are not included.
+
+`CMakeLists.txt` reuses MicroPython's source list and generated qstr/module/root
+tables. The `mpy_cross` target builds the compiler from that same checkout into
+the build directory. Plain bytecode uses format 6; native modules use format 6.3
+and additionally depend on architecture and runtime ABI. The tested producer
+target is `armv7m` with software floating point and MicroPython single precision.
+
+`runtime.c` adapts initialization and execution from
+`ports/embed/port/embed_util.c` at that revision, preserving its MIT attribution.
+It returns execution failures to the application caller, bounds bytecode reads,
+and uses caller-owned heap and stack budgets. GC and its architecture-specific
+register/stack tracing remain upstream implementations. The
+[MicroPython notice](../../LICENSES/MicroPython-MIT.txt) accompanies Python images.
+Every interpreter also initializes the shared readline editor through its public
+API; the required [reset correction](../../docs/upstream.md#python-runtime-prerequisites)
+prevents newline state from leaking across application lifetimes.
+
+The library's mutable state joins Zephyr's C-library application-memory partition
+when present, leaving MPU regions for the GC arena and native code. Otherwise it
+has its own partition. Partition descriptors remain in privileged firmware memory;
+granting the VM write access to those descriptors would weaken its isolation.
+The engine neither allocates a separate permanent heap nor creates its own system
+thread. The application supervisor supplies its memory domain, lifecycle and output,
+reusing the same execution arena for Python and native applications. Its protected
+thread supplies the actual stack lower bound for MicroPython's stack checks.
+
+The maintained `MP_PLAT_COMMIT_EXEC` hook publishes native code through a bounded
+supervisor operation. The application relocates a temporary GC buffer, then blocks
+while the system workqueue copies it into a reserved code region. That worker has
+its own MPU mapping; the application always sees native code as read/execute and
+its GC arena as non-executable. The lifecycle lock serializes publication with
+stop/unload. Code is retained until application exit; upstream root tracking keeps
+native BSS/rodata alive across GC. Current targets have no instruction/data caches;
+a cache-enabled target requires explicit integration.
+
+The current execution checks cover source, bytecode from both compiler builds,
+GC, exceptions, exhaustion and truncated bytecode. RAM launch, stop and output now
+use the shared supervisor and SMP handlers, checked through ARM QEMU and USB/BLE
+on the Inventor F4. Native/Viper source and bytecode, and a separately compiled C
+module with GC also execute over both transports. ARM tests cover code writes,
+heap execution, protected-memory access, native loops, allocation exhaustion and
+subsequent successful execution.
+
+`files.c` supplies the port's `mp_import_stat`, lexer and bytecode-reader hooks
+over an application-owned CBOR file map. The same zcbor library used by SMP
+validates its bounded namespace without a second index allocation. Import lookup
+references the retained bytes; module resolution, relative packages and native
+loading remain upstream code. Installed programs snapshot the entire map so
+updates cannot change later imports in a running instance. See
+[program format and limits](../../docs/applications.md#named-python-programs).
+Source/bytecode/native imports and installed launches have ARM and F4 USB/BLE
+coverage, including reboot persistence. Writable file I/O and remaining Pybricks hardware bindings
+remain in the [implementation plan](../../docs/python.md).
+
+`files.c` adapts read-only stream operations from `extmod/vfs_rom_file.c` at the
+same revision to that existing namespace. `streams.c` adapts
+`shared/runtime/sys_stdio_mphal.c`, preserving separate input/output directions
+for `.buffer` and polling and adding flush without a second buffering layer.
+Both retain the original MIT attribution. Readline, JSON, random and select reuse
+upstream implementations. Private application syscalls supply the bounded input
+queue and event wait. A host interrupt sets only an atomic signal; VM/event hooks
+schedule the exception in the interpreter's own thread.
+
+The port explicitly enables the reference F4 build's memoryviews, builtin help,
+memory diagnostics, GC finalizers and extended/reverse class operators on top of
+MicroPython's basic feature set. Standard modules remain upstream code; their
+[integration coverage](../../docs/applications.md#standard-python-modules) runs
+through the protected application lifecycle.
+
+`shared/runtime/pyexec.c` supplies friendly/raw REPL without a second interpreter
+or parser. Its stdio-mode hooks distinguish command editing from execution for
+interrupt and session-boundary handling. Soft reset returns to the supervisor,
+which joins/releases the application before rebuilding VM state; executable
+allocations cannot survive merely because the host keeps its connection open.
+Core REPL and the common CLI terminal have ARM/PTY checks. Plain Shell entry and
+reconnection use the same VM through the shared dispatcher, checked on ARM QEMU
+with simulated session boundaries. Physical REPL acceptance remains pending.
+
+The optional Pybricks library compiles its selected parameters, matrix, stopwatch,
+awaitable/task and tools sources directly from the pinned dependency checkout.
+MicroPython's builtin-subpackage support keeps application imports on the same
+standard importer; no Pybricks firmware scheduler or driver is linked. The PBIO
+clock hook delegates to the VM clock, while `mp_hal_delay_ms` waits interruptibly
+on the application's existing event channel against a monotonic deadline.
+Each fresh VM resets Color's GC-rooted dictionary and the tools' async state.
+Portable integer, error, time-comparison and COBS helpers are compiled once for
+both firmware services and bindings. Current [library coverage](../../docs/compatibility.md#implemented-library-subset)
+and its [dependency corrections](../../docs/upstream.md#python-library-prerequisites)
+remain distinct from physical hardware acceptance.
+
+`hub.c`, `light.c` and `matrix.c` adapt the hub, battery, internal color-light and
+light-matrix bindings from Pybricks v4.1.0b6 (`a7b1b04ae`). They retain the upstream
+MIT attribution. The keypad wrapper, fonts and color conversion compile directly
+from that checkout; the font's BBC notice is retained in the distribution notice.
+The adaptation replaces PBIO device access with the protected C SDK and common
+ownership/cleanup, without linking another driver scheduler. Static display calls
+wait interruptibly for the shared service's completion. Color calls do likewise;
+system menus can temporarily hide their output without revoking ownership.
+Matrix orientation belongs to the hub display and is shared by hub objects,
+resetting with a fresh constructor or interpreter as in the reference.

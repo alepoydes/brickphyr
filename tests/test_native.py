@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run the production loader and user threads on an ARM MPU model."""
+"""Run production components and user threads on an ARM MPU model."""
 
 import asyncio
 import os
@@ -34,12 +34,28 @@ def qemu(build):
     )
 
 
+def test_reserved_slot_names():
+    from brickphyrdev.application import installed_name
+
+    for name in ("@0", "@127"):
+        assert installed_name(name, allow_slot=True) == name
+        with pytest.raises(ValueError):
+            installed_name(name)  # Ordinary installation cannot overwrite a slot.
+    for name in ("@", "@00", "@01", "@128", "@-1", "@١", "@1/../program"):
+        with pytest.raises(ValueError):
+            installed_name(name, allow_slot=True)
+
+
 @pytest.mark.parametrize(
     ("suite", "success"),
     [
         ("native-app-tests", b"NATIVE PASS:"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-slots-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),
     ],
 )
 def test_arm_firmware(suite, success):

@@ -12,6 +12,7 @@ target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_battery.c battery_adc.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_ports.c ${BRICKPHYR_ROOT}/src/ports/output.c ../ports/wiring.c)
 target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_matrix.c
+  ${BRICKPHYR_ROOT}/src/hub_light.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c)
 target_sources(app PRIVATE sound_output.c ${BRICKPHYR_ROOT}/src/hub_sound.c
   ${BRICKPHYR_ROOT}/src/sound/waveform.c)

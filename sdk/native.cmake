@@ -2,7 +2,7 @@
 # Included after Zephyr configuration by firmware and ARM acceptance fixtures.
 zephyr_include_directories(${BRICKPHYR_ROOT}/sdk/include)
 zephyr_syscall_header(${BRICKPHYR_ROOT}/sdk/include/brickphyr.h)
-zephyr_syscall_header(${BRICKPHYR_ROOT}/include/native_private.h)
+zephyr_syscall_header(${BRICKPHYR_ROOT}/include/application_private.h)
 set(native_abi ${ZEPHYR_BINARY_DIR}/include/generated/brickphyr_abi.h)
 add_custom_command(OUTPUT ${native_abi}
   COMMAND ${PYTHON_EXECUTABLE} ${BRICKPHYR_ROOT}/tools/native_abi.py ${native_abi}
@@ -10,6 +10,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
@@ -22,6 +23,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/syscall_list.h
     ${ZEPHYR_BASE}/VERSION ${BRICKPHYR_ROOT}/sdk/include/brickphyr.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_matrix.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
@@ -34,15 +36,15 @@ add_custom_command(OUTPUT ${native_abi}
   VERBATIM)
 add_custom_target(brickphyr_abi DEPENDS ${native_abi})
 add_dependencies(app brickphyr_abi)
-target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/native.c ${BRICKPHYR_ROOT}/src/native_image.c
+target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application.c ${BRICKPHYR_ROOT}/src/native_image.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include)
 if(CONFIG_MCUMGR)
-  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/native_mgmt.c)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application_mgmt.c)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault imu sound sound_fault battery_fault motor)
+  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault motor)
     if(example MATCHES "_fault$" OR example STREQUAL "motor")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
@@ -70,4 +72,8 @@ endif()
 
 if(CONFIG_BRICKPHYR_APP_STORAGE)
   target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c)
+endif()
+
+if(CONFIG_BRICKPHYR_PYTHON)
+  add_subdirectory(${BRICKPHYR_ROOT}/src/python ${CMAKE_BINARY_DIR}/python)
 endif()

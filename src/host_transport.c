@@ -6,10 +6,11 @@
 #include "hub_sound.h"
 #include "hub_ports.h"
 #include "storage.h"
-#include "native.h"
+#include "application.h"
 
 #include <errno.h>
 #include <string.h>
+#include <pbio/protocol.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
@@ -58,6 +59,8 @@ static int shell_close_error;
 static bool running;
 static uint32_t generation;
 static uint32_t shell_generation;
+/* A connection that negotiated SMP keeps that framing until it closes. */
+static bool managed_shell;
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
 
@@ -79,6 +82,7 @@ static void process_smp(void)
 			smp_packet_free(packet);
 			continue;
 		}
+		managed_shell = true;
 		struct cbor_nb_reader reader;
 		struct cbor_nb_writer writer;
 		struct smp_streamer stream = {
@@ -102,7 +106,7 @@ static enum mgmt_cb_return management_access(uint32_t event, enum mgmt_cb_return
 		*rc = MGMT_ERR_EACCESSDENIED;
 		return MGMT_CB_ERROR_RC;
 	}
-	if (event == MGMT_EVT_OP_OS_MGMT_RESET && (native_shutdown() || hub_sound_shutdown())) {
+	if (event == MGMT_EVT_OP_OS_MGMT_RESET && (application_shutdown() || hub_sound_shutdown())) {
 		*rc = MGMT_ERR_EUNKNOWN;
 		return MGMT_CB_ERROR_RC;
 	}
@@ -208,17 +212,22 @@ static int transport_enable(const struct shell_transport *transport, bool blocki
 	return blocking ? -ENOTSUP : 0;
 }
 
+static size_t stream_read(void *data, size_t capacity)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	size_t count = occupied && generation == shell_generation ?
+		ring_buf_get(&receive_buffer, data, capacity) : 0;
+	k_spin_unlock(&lock, key);
+	return count;
+}
+
 static int transport_read(const struct shell_transport *transport, void *data,
 			  size_t length, size_t *count)
 {
 	*count = 0;
 	while (*count < length) {
 		uint8_t byte;
-		k_spinlock_key_t key = k_spin_lock(&lock);
-		bool received = occupied && generation == shell_generation &&
-			ring_buf_get(&receive_buffer, &byte, 1);
-		k_spin_unlock(&lock, key);
-		if (!received) {
+		if (!stream_read(&byte, 1)) {
 			break;
 		}
 		if (!smp_shell_rx_bytes(&smp_input, &byte, 1)) {
@@ -231,12 +240,17 @@ static int transport_read(const struct shell_transport *transport, void *data,
 	return 0;
 }
 
-/* Called under lock; the BLE callback only schedules nonblocking output work. */
+/* UART drivers may invoke their callback synchronously when enabling TX.
+ * Never enable it while holding lock. The BLE hook only schedules work. */
 static void output_ready(void)
 {
-	if (ble_shell) {
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool serial = occupied && !ble_shell;
+	if (occupied && ble_shell) {
 		ble_tx_ready();
-	} else {
+	}
+	k_spin_unlock(&lock, key);
+	if (serial) {
 		uart_irq_tx_enable(uart);
 	}
 }
@@ -251,11 +265,11 @@ static int transport_write(const struct shell_transport *transport, const void *
 		if (!ble_shell) {
 			tx_idle = false;
 		}
-		output_ready();
 	} else {
 		*count = length;
 	}
 	k_spin_unlock(&lock, key);
+	output_ready();
 	return 0;
 }
 
@@ -270,9 +284,11 @@ static int smp_write(const void *data, int length)
 			if (!ble_shell) {
 				tx_idle = false;
 			}
-			output_ready();
 		}
 		k_spin_unlock(&lock, key);
+		if (sent) {
+			output_ready();
+		}
 		if (!valid) {
 			return -ENOTCONN;
 		}
@@ -309,6 +325,93 @@ static const struct shell_transport_api transport_api = {
 static const struct shell_transport transport = { .api = &transport_api };
 SHELL_DEFINE(host_shell, "brickphyr> ", &transport, 0, 0, SHELL_FLAG_OLF_CRLF);
 
+#ifdef CONFIG_BRICKPHYR_PYTHON
+static int cmd_python(const struct shell *shell, size_t argc, char **argv)
+{
+	if (shell != &host_shell || !shell_owner()) {
+		return -ENOTCONN;
+	}
+	if (managed_shell) {
+		shell_error(shell, "SMP is active. Use brickphyrdev terminal --repl for Python.");
+		return -EBUSY;
+	}
+	int err = application_repl();
+	if (err) {
+		shell_error(shell, "REPL: %d", err);
+		return err;
+	}
+	application_output_stream(true);
+	shell_print(shell, "Ctrl-X: stop and return to Shell. Ctrl-D: reset Python.");
+	uint8_t input[128], output[128];
+	size_t received = 0, pending = 0, sent = 0;
+	struct application_status status;
+	while (shell_owner()) {
+		application_get_status(&status);
+		if (!status.repl) {
+			break;
+		}
+		bool ended = status.state != APPLICATION_RUNNING;
+		if (!ended && !received) {
+			received = stream_read(input, sizeof(input));
+			uart_irq_rx_enable(uart);
+		}
+		if (memchr(input, 0x18, received)) {
+			err = application_stop();
+			break;
+		}
+		if (!ended && received) {
+			err = application_input(input, received);
+			if (!err) {
+				received = 0;
+			} else if (err != -EAGAIN) {
+				break;
+			}
+		}
+		if (sent == pending) {
+			pending = application_output(output, sizeof(output));
+			sent = 0;
+		}
+		if (ended && !pending) {
+			break;
+		}
+		if (pending > sent) {
+			size_t count;
+			transport_write(&transport, output + sent, pending - sent, &count);
+			sent += count;
+		}
+		/* Two 20 ms legs leave a 50 ms human-interaction budget for keyboard
+		 * delivery and echo. One bounded I/O batch per wake also yields to the
+		 * lower-priority VM. Transport backpressure retains unsent bytes. */
+		k_msleep(20);
+	}
+	application_output_stream(false);
+	/* Disconnect must return promptly so teardown can join the Shell. It
+	 * neither stops Python nor transfers old bytes into the next session. */
+	if (!shell_owner()) {
+		return 0;
+	}
+	/* Unsent REPL keystrokes must not become Shell commands on exit. */
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (occupied && generation == shell_generation) {
+		ring_buf_reset(&receive_buffer);
+		if (!ble_shell) {
+			unsigned char stale;
+			while (uart_poll_in(uart, &stale) == 0) { }
+		}
+	}
+	k_spin_unlock(&lock, key);
+	uart_irq_rx_enable(uart);
+	application_get_status(&status);
+	shell_print(shell, "\nREPL: result %d; fault %u; cleanup %d; output dropped %u",
+		status.result, status.fault, status.cleanup_error, status.output_dropped);
+	if (err == -EAGAIN) {
+		err = 0;
+	}
+	return err ? err : status.cleanup_error;
+}
+SHELL_CMD_ARG_REGISTER(python, NULL, "Enter Python REPL on a plain terminal.", cmd_python, 1, 0);
+#endif
+
 static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 {
 	if (strcmp(argv[1], "pybricks")) {
@@ -343,11 +446,14 @@ static void host_thread(void *a, void *b, void *c)
 	struct host_protocol protocol = {0};
 	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
 	size_t reply_length = 0;
+	uint8_t event_reply[HOST_PROTOCOL_FRAME_MAX];
+	size_t event_length = 0;
 	uint32_t session_generation = 0;
 	bool shell_initialized = false;
 
 	for (;;) {
-		k_sem_take(&wake, K_FOREVER);
+		k_sem_take(&wake, IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) && protocol.subscribed ?
+			K_MSEC(20) : K_FOREVER);
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool changed = session_generation != generation;
 		bool open = occupied;
@@ -371,13 +477,14 @@ static void host_thread(void *a, void *b, void *c)
 				}
 				shell_initialized = false;
 			}
-			native_session_closed();
+			application_session_closed();
 			hub_matrix_session_closed();
 			hub_sound_session_closed();
 			hub_ports_session_closed(BP_PORT_TERMINAL);
 			smp_shell_rx_reset(&smp_input, &smp_serial);
-			protocol = (struct host_protocol){0};
+			host_protocol_reset(&protocol);
 			reply_length = 0;
+			event_length = 0;
 			session_generation = current_generation;
 		}
 		if (!open) {
@@ -397,6 +504,7 @@ static void host_thread(void *a, void *b, void *c)
 		if (selected == HOST_SHELL && !shell_initialized) {
 			static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
 			shell_generation = session_generation;
+			managed_shell = false;
 			int err = shell_init(&host_shell, NULL, flags, false, 0);
 			if (err) {
 				key = k_spin_lock(&lock);
@@ -421,8 +529,11 @@ static void host_thread(void *a, void *b, void *c)
 			continue;
 		}
 		k_spin_unlock(&lock, key);
-		/* Backpressure leaves complete replies intact and pauses input consumption. */
+		/* Keep one pending event separate from command replies. Unread stdout
+		 * must not prevent consuming a STOP/input command. Once its reply is
+		 * pending, pause further commands until it can be queued intact. */
 		for (;;) {
+			bool queued = false;
 			key = k_spin_lock(&lock);
 			if (generation != session_generation) {
 				k_spin_unlock(&lock, key);
@@ -436,12 +547,31 @@ static void host_thread(void *a, void *b, void *c)
 				ring_buf_put(&transmit_buffer, reply, reply_length);
 				tx_idle = false;
 				reply_length = 0;
-				uart_irq_tx_enable(uart);
+				queued = true;
+			}
+			if (event_length && ring_buf_space_get(&transmit_buffer) >= event_length) {
+				ring_buf_put(&transmit_buffer, event_reply, event_length);
+				tx_idle = false;
+				event_length = 0;
+				queued = true;
 			}
 			uint8_t byte;
 			bool received = ring_buf_get(&receive_buffer, &byte, 1);
 			k_spin_unlock(&lock, key);
+			if (queued) {
+				output_ready();
+			}
 			if (!received) {
+				if (event_length) {
+					break;
+				}
+				uint8_t event[HOST_PROTOCOL_PAYLOAD_MAX];
+				size_t length = host_protocol_event(&protocol, false, event, sizeof(event));
+				if (length) {
+					event_length = pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_EVENT,
+						event, length, event_reply);
+					continue;
+				}
 				break;
 			}
 			reply_length = host_protocol_receive(&protocol, byte, variant, reply);
@@ -595,7 +725,7 @@ int host_ble_acquire(void)
 static void finish_ble_session(void)
 {
 	if (ble_closing && !ble_request_thread && !ble_shell) {
-		native_session_closed();
+		application_session_closed();
 		hub_matrix_session_closed();
 		hub_sound_session_closed();
 		hub_ports_session_closed(BP_PORT_TERMINAL);

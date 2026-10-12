@@ -25,7 +25,12 @@ Bluetooth is an optional [build profile](docs/bluetooth.md). One computer owns
 the management connection at a time. The experimental [native profile](docs/builds.md#experimental-native-sdk)
 adds a C SDK, protected execution and RAM uploads over USB/BLE with `brickphyrdev app`.
 The native profile also installs several applications in LittleFS and runs them
-through the same protected loader. Python/WASM execution remains unimplemented.
+through the same protected loader. The experimental [Python profile](docs/builds.md#experimental-python-profile)
+adds temporary and installed programs, source/bytecode/native imports and the same
+shared lifecycle. REPL and temporary Pybricks-protocol execution have software
+checks. Parameters, geometry and non-device Pybricks tools have software coverage;
+physical client acceptance and hardware bindings remain open.
+WASM remains unimplemented. See the [Python plan](docs/python.md).
 LEGO restoration and interrupted-transfer recovery remain unverified. See
 [hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
 for setup and commands.
