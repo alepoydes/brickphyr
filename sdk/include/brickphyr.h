@@ -111,10 +111,15 @@ __syscall int bp_motor_get(uint32_t port, struct bp_motor_state *state);
  * trajectory completion. Coast or release cancels regulation. */
 __syscall int bp_motor_control(uint32_t port, const struct bp_motor_command *command);
 
-/* Acquire the free speaker and queue a square tone: 20..20000 Hz, 0..100 volume.
+/* Acquire the free speaker and queue a square tone: 20..24000 Hz, 0..100 volume.
+ * Frequency zero produces silence. An idle reservation can start another tone.
  * Zero duration continues until stopped; otherwise duration is milliseconds.
  * All sound commands are nonblocking; completion/error is visible in get(). */
 __syscall int bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume);
+/* Reserve the free speaker across tones/streams and pauses. Completion leaves
+ * it idle but owned; stop or application cleanup releases it. No wait/allocation.
+ * EBUSY leaves any existing operation unchanged, including this app's playback. */
+__syscall int bp_sound_reserve(void);
 /* Acquire the free speaker for signed 16-bit mono PCM, 8000..48000 samples/s.
  * Playback starts after two chunks are queued, or finish marks a shorter stream. */
 __syscall int bp_sound_stream(uint32_t rate);

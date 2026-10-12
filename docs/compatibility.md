@@ -127,6 +127,7 @@ subpackages and application modules.
 | `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery voltage/current snapshots |
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
+| Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -143,8 +144,14 @@ against the ARM fixture and through both USB/BLE clients on the Inventor F4.
 Display cleanup and error-free driver completion are checked there; perceived
 output and browser execution remain separate acceptance items.
 
+Speaker checks use synthetic DMA through the same protected API, including
+ownership during rests, iterator errors, replacement and cleanup. The
+[speaker example](../examples/python/speaker.py) also executes on the Inventor F4
+through native USB/BLE management and both actual Pybricks clients. Interruption
+and REPL reset release playback there. Acoustic quality remains unverified.
+
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-speaker, IMU, charger,
+IMU, charger,
 system/storage, `hub_menu` and messaging remain unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.

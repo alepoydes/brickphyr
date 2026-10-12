@@ -17,7 +17,7 @@ static uint16_t buffer[2 * HALF], queue[BP_SOUND_QUEUE_SAMPLES];
 static size_t read_index, half_valid[2];
 static uint64_t remaining;
 static struct sound_waveform tone;
-static bool disabled;
+static bool disabled, reserved;
 
 static void update(struct k_work *work);
 static K_WORK_DEFINE(work, update);
@@ -116,7 +116,9 @@ static void update(struct k_work *item)
 			state.phase = BP_SOUND_FAILED;
 		} else {
 			state.phase = BP_SOUND_IDLE;
-			state.owner = BP_SOUND_FREE;
+			if (!reserved) {
+				state.owner = BP_SOUND_FREE;
+			}
 			state.queued_samples = 0;
 		}
 		state.changed_ms = k_uptime_get();
@@ -179,7 +181,8 @@ static int acquire(enum bp_sound_owner owner, enum bp_sound_mode mode, uint32_t 
 	if (!device_is_ready(output)) {
 		return -ENODEV;
 	}
-	if (disabled || state.owner != BP_SOUND_FREE) {
+	if (disabled || (state.owner != BP_SOUND_FREE &&
+	    !(reserved && state.owner == owner && state.phase == BP_SOUND_IDLE))) {
 		return disabled ? -ESHUTDOWN : -EBUSY;
 	}
 	state = (struct bp_sound_state){.owner = owner, .phase = BP_SOUND_PRIMING,
@@ -190,10 +193,22 @@ static int acquire(enum bp_sound_owner owner, enum bp_sound_mode mode, uint32_t 
 	return 0;
 }
 
+int hub_sound_reserve(enum bp_sound_owner owner)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = state.owner != BP_SOUND_FREE ? -EBUSY : acquire(owner, BP_SOUND_TONE, TONE_RATE);
+	if (!err) {
+		reserved = true;
+		state.phase = BP_SOUND_IDLE;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
 int hub_sound_tone(enum bp_sound_owner owner, uint32_t frequency, uint32_t duration_ms,
 	uint32_t volume)
 {
-	if (frequency < 20 || frequency > 20000 || volume > 100) {
+	if ((frequency && frequency < 20) || frequency > 24000 || volume > 100) {
 		return -EINVAL;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -268,6 +283,7 @@ int hub_sound_stop(enum bp_sound_owner owner)
 	int err = owner != BP_SOUND_APPLICATION && owner != BP_SOUND_TERMINAL ? -EINVAL :
 		state.owner != BP_SOUND_FREE && state.owner != owner ? -EACCES : 0;
 	if (!err && state.owner == owner) {
+		reserved = false;
 		err = stopping(0);
 	}
 	k_spin_unlock(&lock, key);
@@ -293,6 +309,7 @@ int hub_sound_release(enum bp_sound_owner owner)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	bool owned = owner != BP_SOUND_FREE && state.owner == owner;
 	if (owned) {
+		reserved = false;
 		stopping(0);
 	}
 	k_spin_unlock(&lock, key);
@@ -316,6 +333,7 @@ void hub_sound_session_closed(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (state.owner == BP_SOUND_TERMINAL) {
+		reserved = false;
 		stopping(0);
 	}
 	k_spin_unlock(&lock, key);

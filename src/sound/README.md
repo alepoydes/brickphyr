@@ -33,6 +33,6 @@ PCM input is signed 16-bit mono; the DAC consumes its upper 12 bits after conver
 to unsigned samples. No sample queue points into application memory.
 
 The application/terminal owner, bounded queue, draining, error reporting and
-cleanup are implemented in `src/hub_sound.c`. Native and future Python/WASM
-bindings use that service. See [hardware](../../docs/hardware.md#hub-sound) and
+cleanup are implemented in `src/hub_sound.c`. Native, Python and future WASM
+bindings share this service. See [hardware](../../docs/hardware.md#hub-sound) and
 [testing](../../docs/testing.md) for contracts and evidence limits.

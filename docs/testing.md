@@ -68,7 +68,7 @@ signal; it checks client reconnection, not radio or USB session cleanup.
 
 ```sh
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
-uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py
+uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py tests/test_python_speaker.py
 ```
 
 The same build produces native `.mpy` fixtures in `python-fixtures` using the
@@ -90,6 +90,13 @@ malformed images must fail without altering the display.
 The native ARM fixture also supplies invalid RGB/animation pointers and misaligned
 animation/snapshot buffers through the SDK. Each must end only the application,
 restore its claimed light, recover its allocation and leave the next application usable.
+
+`test_python_speaker.py` uses the same protected engine and synthetic DMA sink.
+It checks note frequencies, duration, volume and consumed sample counts through
+the common service; reservations during rests; blocking/awaitable operations;
+replacement, lazy-iterator failures, Ctrl-C, forced stop and REPL reset. Injected
+start/cleanup errors preserve the first failure and allow explicit retry. These
+checks do not measure acoustic output or physical note timing.
 
 `test_python_files.py` exercises source/bytecode/native imports, relative packages,
 GC and recovery from a truncated native import. It also covers malformed maps,

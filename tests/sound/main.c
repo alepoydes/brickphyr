@@ -111,7 +111,7 @@ static void tone_checks(void)
 	zassert_ok(value.error);
 	zassert_equal(value.owner, BP_SOUND_FREE);
 	zassert_false(active);
-	zassert_equal(hub_sound_tone(BP_SOUND_APPLICATION, 20001, 0, 10), -EINVAL);
+	zassert_equal(hub_sound_tone(BP_SOUND_APPLICATION, 24001, 0, 10), -EINVAL);
 	zassert_equal(hub_sound_tone(BP_SOUND_APPLICATION, 440, 0, 101), -EINVAL);
 	zassert_equal(hub_sound_tone(BP_SOUND_FREE, 440, 0, 10), -EINVAL);
 
@@ -182,6 +182,58 @@ static void stream_checks(void)
 	zassert_false(active);
 }
 
+static void reservation_checks(void)
+{
+	zassert_ok(hub_sound_reserve(BP_SOUND_APPLICATION));
+	zassert_equal(snapshot().phase, BP_SOUND_IDLE);
+	zassert_equal(snapshot().owner, BP_SOUND_APPLICATION);
+	zassert_equal(hub_sound_reserve(BP_SOUND_APPLICATION), -EBUSY);
+	zassert_equal(hub_sound_tone(BP_SOUND_TERMINAL, 440, 20, 100), -EBUSY);
+	zassert_ok(hub_sound_tone(BP_SOUND_APPLICATION, 0, 1, 100));
+	(void)wait_phase(BP_SOUND_PLAYING);
+	for (size_t i = 0; i < dma_count; i++) zassert_equal(dma_buffer[i], 0x8000);
+	advance();
+	advance();
+	struct bp_sound_state value = wait_phase(BP_SOUND_IDLE);
+	zassert_equal(value.completed_samples, 48);
+	zassert_equal(value.owner, BP_SOUND_APPLICATION);
+	zassert_false(active);
+	zassert_equal(hub_sound_stream(BP_SOUND_TERMINAL, 8000), -EBUSY);
+
+	/* The 24 kHz Nyquist endpoint alternates on each 48 kHz sample. */
+	zassert_ok(hub_sound_tone(BP_SOUND_APPLICATION, 24000, 1, 100));
+	(void)wait_phase(BP_SOUND_PLAYING);
+	for (size_t i = 0; i < 48; i += 2) {
+		zassert_equal(dma_buffer[i], 0);
+		zassert_equal(dma_buffer[i + 1], 0xfff0);
+	}
+	advance();
+	advance();
+	(void)wait_phase(BP_SOUND_IDLE);
+
+	/* A failed reserved operation stays owned and preserves its cause. */
+	start_error = -EIO;
+	zassert_ok(hub_sound_tone(BP_SOUND_APPLICATION, 440, 1, 0));
+	value = wait_phase(BP_SOUND_IDLE);
+	zassert_equal(value.owner, BP_SOUND_APPLICATION);
+	zassert_equal(value.error, -EIO);
+	zassert_false(active);
+	for (size_t i = 0; i < dma_count; i++) zassert_equal(dma_buffer[i], 0x8000);
+	start_error = 0;
+	zassert_ok(hub_sound_release(BP_SOUND_APPLICATION));
+	zassert_equal(snapshot().owner, BP_SOUND_FREE);
+	zassert_equal(snapshot().error, -EIO);
+
+	/* A reservation without starting DMA can be released or disconnected. */
+	zassert_ok(hub_sound_reserve(BP_SOUND_TERMINAL));
+	hub_sound_session_closed();
+	value = wait_phase(BP_SOUND_IDLE);
+	zassert_equal(value.owner, BP_SOUND_FREE);
+	zassert_ok(hub_sound_reserve(BP_SOUND_APPLICATION));
+	zassert_ok(hub_sound_release(BP_SOUND_APPLICATION));
+	zassert_equal(snapshot().owner, BP_SOUND_FREE);
+}
+
 static void failure_checks(void)
 {
 	int16_t chunk[BP_SOUND_CHUNK_SAMPLES] = {0};
@@ -240,6 +292,7 @@ ZTEST(sound, test_playback)
 	zassert_equal(starts, 0);
 	tone_checks();
 	stream_checks();
+	reservation_checks();
 	failure_checks();
 	zassert_true(stops >= starts);
 }

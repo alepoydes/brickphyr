@@ -12,6 +12,9 @@ void sound_waveform_init(struct sound_waveform *wave, uint32_t frequency, uint32
 	*wave = (struct sound_waveform){.frequency = frequency, .rate = rate,
 		.low = (INT16_MAX - amplitude) & 0xfff0U,
 		.high = (INT16_MAX + amplitude) & 0xfff0U};
+	if (!frequency || !volume) {
+		wave->low = wave->high = 0x8000;
+	}
 }
 
 void sound_waveform_fill(struct sound_waveform *wave, uint16_t *dest, size_t count)

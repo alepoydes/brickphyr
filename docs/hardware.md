@@ -356,7 +356,7 @@ current remain open.
 ## Hub sound
 
 `CONFIG_BRICKPHYR_SOUND` provides one speaker service for the shared USB/BLE Shell
-and native applications. The F4 backend ports Pybricks' DAC1 channel 1 output on
+and native/Python applications. The F4 backend ports Pybricks' DAC1 channel 1 output on
 PA4, PC10 amplifier enable, TIM6 trigger and DMA1 stream 5/channel 7 to Zephyr.
 Nothing plays at startup. [Source provenance](../src/sound/README.md) records the
 reused implementation and its changes.
@@ -370,7 +370,7 @@ observe sound
 sound stop
 ```
 
-Tone arguments are frequency in Hz (20–20000), duration in milliseconds (zero
+Tone arguments are frequency in Hz (20–24000, or zero for silence), duration in milliseconds (zero
 continues until stopped), and volume (0–100). Tones are square waves at a fixed
 48 kHz sample clock, with Pybricks' logarithmic volume law. Edges are quantized to
 one sample; no claim of high-fidelity tone synthesis is made.
@@ -391,6 +391,32 @@ Keep the application alive until idle to hear the complete stream: return, fault
 and forced stop quiesce DMA before unload. Terminal disconnection stops only its
 own playback. Completion or successful stop releases ownership; a failed stop
 retains it and can be retried. Shutdown, reboot and DFU quiesce sound as well.
+
+`bp_sound_reserve()` optionally claims the free speaker across several tones,
+streams and pauses. With a reservation, completion leaves it idle but owned;
+the same application can start the next tone or stream. Explicit stop or
+application cleanup releases it. The Python speaker uses this to prevent a
+terminal command from interrupting a melody between notes. An error remains
+observable while reserved; a failed cleanup still retains the owner.
+
+Python provides `hub.speaker.volume()`, `beep()` and `play_notes()` through this
+same service. Calls wait interruptibly, or return awaitables inside `run_task`.
+The [speaker example](../examples/python/speaker.py) combines a quiet melody with
+display text and checks cancellation. Notes retain the Pybricks octave range,
+sharps/flats, dotted duration, slurs and rests. A note iterator is consumed lazily;
+malformed notes or iterator exceptions stop playback. Zero tempo and zero note
+divisors raise `ValueError`. Negative beep duration continues until replaced or
+the application ends; zero duration stops an existing tone. Finite tones stop in
+the service even while Python is busy. Advancing the melody requires Python to
+run; it does not add another background interpreter task.
+
+Nonzero beep frequencies clamp to 64–24000 Hz, as in Pybricks' sampled driver;
+negative frequencies use the lower limit instead of unsigned wraparound. The
+volume defaults to 100 and applies to subsequent tones. Hub objects share one
+speaker and its volume until interpreter reset. New playback cancels the previous
+awaitable; closing that obsolete awaitable cannot stop its replacement. Sound
+completion includes DMA draining, so note boundaries include buffer/workqueue
+latency and are not a sample-accurate musical sequencer.
 
 DMA has two 256-sample halves; the queue holds another 1024 samples. These buffers
 occupy 3072 bytes, independently of stream length. At 48 kHz, a half lasts about
@@ -423,6 +449,12 @@ hub responsiveness and both attached ID-75 encoder links, using the required
 [ARM MPU and thread-cleanup corrections](upstream.md#native-loader-prerequisites).
 These checks do not establish worst-case timing with six active ports. Acoustic
 quality and actual sample timing still require listening and instrumented checks.
+
+Python speaker checks use the same service with synthetic DMA in protected ARM
+execution. On the Inventor F4, the speaker example completes through native
+USB/BLE management and the actual Pybricks USB/BLE clients. Interruption and REPL
+reset release playback, with no reported underrun or cleanup failure. These
+checks confirm execution and driver completion, not acoustic quality.
 The repeated BLE application sequence also produced occasional IMU acquisition
 failures; combined-load acquisition timing remains unresolved.
 

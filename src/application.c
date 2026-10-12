@@ -656,6 +656,13 @@ static inline int z_vrfy_bp_sound_tone(uint32_t frequency, uint32_t duration_ms,
 }
 #include <zephyr/syscalls/bp_sound_tone_mrsh.c>
 
+int z_impl_bp_sound_reserve(void)
+{
+	return hub_sound_reserve(BP_SOUND_APPLICATION);
+}
+static inline int z_vrfy_bp_sound_reserve(void) { return z_impl_bp_sound_reserve(); }
+#include <zephyr/syscalls/bp_sound_reserve_mrsh.c>
+
 int z_impl_bp_sound_stream(uint32_t rate)
 {
 	return hub_sound_stream(BP_SOUND_APPLICATION, rate);

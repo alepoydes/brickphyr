@@ -99,8 +99,8 @@ both firmware services and bindings. Current [library coverage](../../docs/compa
 and its [dependency corrections](../../docs/upstream.md#python-library-prerequisites)
 remain distinct from physical hardware acceptance.
 
-`hub.c`, `light.c` and `matrix.c` adapt the hub, battery, internal color-light and
-light-matrix bindings from Pybricks v4.1.0b6 (`a7b1b04ae`). They retain the upstream
+`hub.c`, `light.c`, `matrix.c` and `speaker.c` adapt the hub, battery, internal color-light,
+light-matrix and speaker bindings from Pybricks v4.1.0b6 (`a7b1b04ae`). They retain the upstream
 MIT attribution. The keypad wrapper, fonts and color conversion compile directly
 from that checkout; the font's BBC notice is retained in the distribution notice.
 The adaptation replaces PBIO device access with the protected C SDK and common
@@ -126,3 +126,14 @@ maintained Pybricks awaitable drives the same rendering state machine. Replacing
 the display exhausts its previous text awaitable; cancelling that obsolete
 awaitable cannot blank the replacement. Cancellation of an active text operation
 blanks it. Application termination and REPL reset use the common service cleanup.
+
+The speaker retains the reference note grammar, pitch table, articulation and
+logarithmic volume behavior. Note parsing bounds every read, consumes the whole
+token and rejects zero divisors. The binding retains a lazy iterator on the GC
+heap and uses the common service's reservation across notes and rests. It never
+owns a DAC buffer or generates samples. That service stops finite tones without
+Python cooperation. Ordinary calls poll its bounded status at millisecond
+intervals; `run_task` drives the same state machine through the maintained
+awaitable. Iterator, driver and interruption errors release playback while
+preserving the original exception. Superseded awaitables cannot cancel a newer
+tone, including indefinite beeps. See [sound semantics](../../docs/hardware.md#hub-sound).
