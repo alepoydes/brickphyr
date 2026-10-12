@@ -128,7 +128,7 @@ format, connection owner or Bluetooth service is introduced.
 | `imu.calibrated` | `sample_us`, `sequence`, `epoch`, `ready`, `stationary`, calibrated `ax_um_s2`, `ay_um_s2`, `az_um_s2`, `gx_mdps`, `gy_mdps`, `gz_mdps`, current bias `bx_mdps`, `by_mdps`, `bz_mdps` |
 | `imu.orientation` | `sample_us`, `sequence`, `epoch`, `ready`, rotation matrix `m11`…`m33` multiplied by 1000000, `heading1_mdeg`, `heading3_mdeg` |
 | `sound` | `changed_ms`, `owner`, `phase`, `mode`, `requested_hz`, `actual_hz`, `queued`, `completed`, `frequency`, `duration_ms`, `volume`, `eof`, `underruns`, `failures`, `cleanup` |
-| `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw` |
+| `battery` | `sample_ms`, `completed_ms`, `sequence`, `failures`, `voltage_mv`, `current_ma`, `voltage_raw`, `current_raw`, `type`, `temperature_mdegc`, `temperature_error`, `temperature_ms`, `temperature_failures`, `temperature_raw` |
 | `port.A` … `port.F` | `sample_ms`, `changed_ms`, `sequence`, `generation`, `failures`, `phase`, `type_id`, `cleanup`, `supply`; passive `pressed` or UART format, timestamps and raw `data` as defined by [external ports](ports.md) |
 | `sensor.A` … `sensor.F` | `sample_ms`, `sequence`, `generation`, `type_id`, `mode`, `measurement`, `available`, `owner`, `fields`; applicable distance, light, HSV, force, displacement, tilt, count or presence values in [sensor units](ports.md#sensor-measurements) |
 | `motor.A` … `motor.F` | `requested_ms`, `applied_ms`, `deadline_ms`, `generation`, `request`, `completed`, `mode`, `duty_permille`, `requested_mode`, `requested_duty`, `owner`, `pending`, `releasing`, `valid`, `cleanup`, `failures`; [drive and ownership semantics](ports.md#direct-motor-drive) |
@@ -178,6 +178,10 @@ reads must succeed before publishing a pair. Errors retain its previous values,
 Startup settling, stale data and stopped acquisition remain explicit errors.
 Neither voltage nor current implies battery percentage or charging status. See
 [battery acquisition and scaling](hardware.md#hub-battery).
+Battery `type` is 0 unknown, 1 alkaline or 2 Li-ion. The top-level error applies
+to voltage/current; inspect `temperature_error` separately before using the
+signed temperature. `temperature_ms` is its last valid acquisition timestamp.
+Chemistry is a board property and remains available when acquisition fails.
 
 Native simulation checks Shell/SMP reads, matrix payloads, unsupported sources,
 write rejection and acquisition timestamps. Host tests use the real Shell/SMP

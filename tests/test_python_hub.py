@@ -70,9 +70,11 @@ try:
     assert False
 except AttributeError:
     pass
+assert hub.battery.type() == 'Li-ion'
 wait(1050)
 assert 7000 < hub.battery.voltage() < 9000
 assert hub.battery.current() == 1825
+assert 24000 <= hub.battery.temperature() <= 26000
 print('hub observations passed')
 """)
         == b"hub observations passed\n"

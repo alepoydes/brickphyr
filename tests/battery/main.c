@@ -57,7 +57,7 @@ static struct bp_battery_sample next(uint32_t previous)
 		k_msleep(1);
 		value = snapshot();
 		zassert_true(k_uptime_get() < deadline, "No new pair, error %d", value.error);
-	} while (value.sequence == previous);
+	} while (value.sequence == previous || value.temperature_error == -EINPROGRESS);
 	zassert_ok(value.error);
 	return value;
 }
@@ -78,11 +78,15 @@ ZTEST(battery, test_acquisition)
 {
 	struct bp_battery_sample value = snapshot();
 	zassert_equal(value.error, -EINPROGRESS);
+	zassert_equal(value.temperature_error, -EINPROGRESS);
+	zassert_equal(value.type, BP_BATTERY_LI_ION);
 	zassert_equal(value.sequence, 0);
 	zassert_equal(value.voltage_mv, 0, "Startup must not fabricate 7 V");
 	zassert_equal(hub_battery_get(NULL), -EINVAL);
 	zassert_ok(adc_emul_raw_value_func_set(adc, 10, convert, NULL));
 	zassert_ok(adc_emul_raw_value_func_set(adc, 11, convert, NULL));
+	/* Reference divider with a 10 kohm thermistor at 25 C. */
+	zassert_ok(adc_emul_const_raw_value_set(adc, 8, 2625));
 	zassert_ok(adc_emul_const_raw_value_set(adc, 1, 4095));
 	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 4073));
 	k_msleep(900);
@@ -94,6 +98,8 @@ ZTEST(battery, test_acquisition)
 	zassert_equal(value.voltage_raw, 3072);
 	zassert_equal(value.current_ma, 1825);
 	zassert_equal(value.voltage_mv, 7767);
+	zassert_ok(value.temperature_error);
+	zassert_within(value.temperature_mdegc, 25000, 1);
 	zassert_true(value.sample_ms >= 1000);
 	zassert_equal(value.sample_ms, value.read_ms);
 	zassert_equal(resistor_ladder_get_key(center, INPUT_KEY_ENTER), 0);
@@ -103,6 +109,30 @@ ZTEST(battery, test_acquisition)
 	const char *output = shell_backend_dummy_get_output(shell, &length);
 	zassert_not_null(strstr(output, "voltage_mv=7767"));
 	zassert_not_null(strstr(output, "current_ma=1825"));
+	zassert_not_null(strstr(output, "temperature_raw=2625"));
+
+	/* A failed thermistor does not disable voltage/current observations. */
+	zassert_ok(adc_emul_const_raw_value_set(adc, 8, 0));
+	k_msleep(25);
+	struct bp_battery_sample thermal = snapshot();
+	zassert_ok(thermal.error);
+	zassert_true(thermal.sequence > value.sequence);
+	zassert_equal(thermal.temperature_error, -ERANGE);
+	zassert_equal(thermal.temperature_mdegc, value.temperature_mdegc);
+	zassert_true(thermal.temperature_failures > 0);
+	k_msleep(15);
+	zassert_equal(snapshot().temperature_ms, thermal.temperature_ms);
+	/* A high thermistor resistance is below freezing, not unsigned wrap. */
+	zassert_ok(adc_emul_const_raw_value_set(adc, 8, 3000));
+	k_msleep(25);
+	thermal = snapshot();
+	zassert_ok(thermal.temperature_error);
+	zassert_true(thermal.temperature_mdegc < 0);
+	zassert_ok(adc_emul_const_raw_value_set(adc, 8, 4095));
+	k_msleep(25);
+	zassert_equal(snapshot().temperature_error, -ERANGE);
+	zassert_ok(adc_emul_const_raw_value_set(adc, 8, 2625));
+	value = next(snapshot().sequence);
 
 	/* A failed second conversion must not publish a mixed pair. */
 	raw[0] = 0;
@@ -142,6 +172,7 @@ ZTEST(battery, test_acquisition)
 	k_msleep(45);
 	value = snapshot();
 	zassert_equal(value.error, -ETIMEDOUT);
+	zassert_equal(value.temperature_error, -ETIMEDOUT);
 	zassert_equal(value.failures, failures, "Reading stale cache must not count another I/O failure");
 	unsigned int current_reads = reads[0];
 	voltage_reads = reads[1];
@@ -160,6 +191,7 @@ ZTEST(battery, test_acquisition)
 	k_sem_give(&resume);
 	zassert_ok(k_sem_take(&stop_completed, K_MSEC(100)));
 	zassert_equal(snapshot().error, -ESHUTDOWN);
+	zassert_equal(snapshot().temperature_error, -ESHUTDOWN);
 	current_reads = reads[0];
 	voltage_reads = reads[1];
 	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 4073));

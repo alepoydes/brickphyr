@@ -326,6 +326,12 @@ static void capture(enum source source, struct observation *out)
 			field(out, "current_ma", value.current_ma);
 			field(out, "voltage_raw", value.voltage_raw);
 			field(out, "current_raw", value.current_raw);
+			field(out, "type", value.type);
+			field(out, "temperature_mdegc", value.temperature_mdegc);
+			field(out, "temperature_error", value.temperature_error);
+			field(out, "temperature_ms", value.temperature_ms);
+			field(out, "temperature_failures", value.temperature_failures);
+			field(out, "temperature_raw", value.temperature_raw);
 		}
 	} else if (source == SOUND) {
 		struct bp_sound_state value;

@@ -8,6 +8,10 @@ static int initialize(void)
 {
 	const struct device *adc = DEVICE_DT_GET(DT_NODELABEL(adc1));
 	int err = adc_emul_const_raw_value_set(adc, 10, 1024);
-	return err ? err : adc_emul_const_raw_value_set(adc, 11, 3072);
+	if (!err) {
+		err = adc_emul_const_raw_value_set(adc, 11, 3072);
+	}
+	/* A 10 kohm thermistor at 25 C in the reference divider gives 2625. */
+	return err ? err : adc_emul_const_raw_value_set(adc, 8, 2625);
 }
 SYS_INIT(initialize, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

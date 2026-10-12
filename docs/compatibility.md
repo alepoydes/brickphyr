@@ -124,7 +124,7 @@ subpackages and application modules.
 | `StopWatch`, `wait` | Monotonic milliseconds, pause/reset/resume, blocking and asynchronous waits, zero-duration yields and interrupt delivery |
 | `run_task`, `multitask` | Results, concurrent waits, racing, exception propagation, cancellation despite cleanup errors and forced-stop recovery |
 | Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
-| `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery voltage/current snapshots |
+| `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery chemistry and voltage/current/temperature snapshots |
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |

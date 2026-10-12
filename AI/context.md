@@ -37,7 +37,7 @@ On the Inventor F4, native and Python programs run over USB/BLE; checks cover
 protected execution, imports, forced stop, reconnection and application power
 holds. Native matrix, IMU, speaker and motor examples run there, including short
 motor drive/hold and release with two suspended ID-75 motors. Python hub,
-speaker, system, REPL and explicit user-data save/reboot workflows also have
+speaker, system, battery chemistry/temperature, REPL and explicit user-data save/reboot workflows also have
 F4 USB/BLE checks. These checks do not establish perceived display/audio quality,
 sensor accuracy, sustained combined load or full device compatibility.
 

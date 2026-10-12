@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-description: LEGO battery load-current and voltage ADC measurements
+description: LEGO battery voltage, load current and 103AT thermistor measurements
 compatible: "lego,adc-battery"
 include: base.yaml
 properties:
@@ -7,7 +7,12 @@ properties:
     required: true
   io-channel-names:
     required: true
-    description: Separate 12-bit ADC inputs named current and voltage.
+    description: Separate 12-bit ADC inputs named current, voltage and temperature.
+  chemistry:
+    type: string
+    required: true
+    enum: [unknown, alkaline, li-ion]
+    description: Battery chemistry fixed by the board's battery connector.
   current-full-scale-ma:
     type: int
     required: true

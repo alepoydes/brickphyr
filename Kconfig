@@ -111,10 +111,11 @@ config BRICKPHYR_MOTOR_CONTROL
 	  motor and reports an error. Physical timing and tuning are experimental.
 
 config BRICKPHYR_BATTERY
-	bool "Battery voltage and load-current observations"
+	bool "Battery voltage, load-current and temperature observations"
 	default y if BOARD_SPIKE_PRIME_F4
 	depends on DT_HAS_LEGO_ADC_BATTERY_ENABLED
 	select ADC
+	select REQUIRES_FULL_LIBC
 	help
 	  Shared native/Shell/SMP snapshots from Zephyr ADC, using the board's
 	  Pybricks scaling. No charging control or state-of-charge estimate.

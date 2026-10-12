@@ -482,7 +482,7 @@ unverified.
 
 ## Hub battery
 
-`CONFIG_BRICKPHYR_BATTERY` provides voltage and load-current snapshots through
+`CONFIG_BRICKPHYR_BATTERY` provides chemistry, voltage, load current and temperature through
 `bp_battery_get()`, `observe battery` and the same USB/BLE monitor:
 
 ```sh
@@ -490,7 +490,18 @@ uv run brickphyrdev monitor --source battery
 uv run brickphyrdev monitor --ble Brickphyr --source battery --log battery.jsonl
 ```
 
-On F4, PC0/ADC1 channel 10 measures current and PC1/channel 11 measures voltage.
+Python uses the same cached observations:
+
+```python
+from pybricks.hubs import PrimeHub
+hub = PrimeHub()
+print(hub.battery.type())         # "Li-ion" on F4
+print(hub.battery.temperature())  # signed millidegrees Celsius
+```
+
+On F4, PC0/ADC1 channel 10 measures current, PC1/channel 11 measures voltage,
+and PB0/channel 8 measures the battery thermistor. The board declares Li-ion
+chemistry; this is a connector property, not an ADC estimate.
 The 12-bit conversion and coefficients retain Pybricks' implementation at
 [`a7b1b04ae`](https://github.com/alepoydes/pybricks-micropython/tree/a7b1b04ae4f8449dd46b3dfb97c420334439fd35):
 `lib/pbio/drv/battery/battery_adc.c` and the Prime F4 platform/configuration.
@@ -501,8 +512,15 @@ Current-offset variation of tens of milliamps is known in the source; these are
 not calibrated laboratory measurements. Current is not signed charging current,
 and no state-of-charge percentage is inferred. Charging control remains separate.
 
-The existing system workqueue takes two single-channel conversions, current then
-voltage, without DMA or a new thread. This avoids depending on CPU service of
+Temperature reuses the reference 103AT conversion: a 2.4 kΩ series and 7.5 kΩ
+parallel network, 10 kΩ at 25 °C and beta 3435 K. The cached result is signed
+millidegrees Celsius. Zero ADC input and readings implying nonpositive thermistor
+resistance return `-ERANGE`. A thermistor failure retains its last valid value
+and timestamp, with its own error and saturating failure count; it does not
+invalidate voltage/current observations or stop a motor using those observations.
+
+The existing system workqueue takes three single-channel conversions, current,
+voltage, then temperature, without DMA or a new thread. This avoids depending on CPU service of
 back-to-back results at the ADC's full conversion rate. A new pair is requested
 10 ms after the preceding attempt, matching the reference's nominal polling
 period; scheduling can lengthen it. There is no sample history or allocation.
@@ -512,22 +530,28 @@ policy. A pair is published only when both reads succeed within 40 ms. Its
 `sample_ms` is the completion time of that accepted pair, not a simultaneous
 hardware latch of both channels. `completed_ms` records the last attempt's end.
 Read errors preserve values and acquisition time; a cached pair older than 40 ms
-reports `-ETIMEDOUT`. Shutdown joins this work without disabling the button ADC.
+reports `-ETIMEDOUT`. Temperature uses its own completion timestamp and the same
+freshness bound, independently of the pair. Chemistry remains available during
+settling and acquisition failures. Shutdown joins this work without disabling the button ADC.
 
 F4 conversions use the [local Zephyr timeout correction](upstream.md#adc-timeout-prerequisite).
 At the board's 24 MHz ADC clock, one 12-bit conversion with 15-cycle acquisition
 takes 27 cycles, nominally 1.125 µs. A 2 ms failure deadline bounds missing
 completion interrupts; this is a recovery budget, not measured normal latency.
 Stopping the conversion and its interrupts precedes returning an error, preserving
-buffer lifetime. Two additional ADC interrupts per pair add at most 200/s to the
-two button ladders' nominal 200/s. Each conversion arms and cancels a kernel timer;
-combined CPU/IRQ cost and measurement accuracy still require physical testing.
+buffer lifetime. Three ADC interrupts per battery acquisition add at most 300/s
+to the two button ladders' nominal 200/s. Each conversion arms and cancels a kernel
+timer. The thermistor conversion adds one `logf` per successful acquisition;
+cached readers perform neither conversion nor floating-point calculation.
+Combined CPU/IRQ cost and measurement accuracy still require physical testing.
 
 Synthetic ADC checks exercise startup, scaling boundaries, first-error preservation,
-partial-pair rejection, stale snapshots, shutdown and continued button sampling.
+partial-pair rejection, the 25 °C reference point, negative temperatures, thermistor
+fault isolation, stale snapshots, shutdown and continued button sampling.
 ARM QEMU checks protected SDK access and SMP snapshots. On the Inventor F4,
 USB/BLE observations provide changing voltage/current readings, including during
-the short motor checks, without reported ADC failures. Absolute accuracy and
+the short motor checks. Python and Shell/SMP checks also return Li-ion chemistry
+and fresh thermistor readings, without reported ADC failures. Absolute accuracy and
 the hardware timeout path have not been verified with instruments or fault injection.
 
 ## A support claim must be reproducible

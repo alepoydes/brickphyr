@@ -47,10 +47,36 @@ static mp_obj_t battery_current(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(battery_current_obj, battery_current);
 
+static mp_obj_t battery_type(void)
+{
+	struct bp_battery_sample sample;
+	python_device_check(bp_battery_get(&sample));
+	switch (sample.type) {
+	case BP_BATTERY_ALKALINE:
+		return MP_OBJ_NEW_QSTR(MP_QSTR_Alkaline);
+	case BP_BATTERY_LI_ION:
+		return MP_OBJ_NEW_QSTR(MP_QSTR_Li_hyphen_ion);
+	default:
+		return MP_OBJ_NEW_QSTR(MP_QSTR_Unknown);
+	}
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(battery_type_obj, battery_type);
+
+static mp_obj_t battery_temperature(void)
+{
+	struct bp_battery_sample sample;
+	python_device_check(bp_battery_get(&sample));
+	python_device_check(sample.temperature_error);
+	return mp_obj_new_int(sample.temperature_mdegc);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(battery_temperature_obj, battery_temperature);
+
 static const mp_rom_map_elem_t battery_globals[] = {
 	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_battery) },
 	{ MP_ROM_QSTR(MP_QSTR_voltage), MP_ROM_PTR(&battery_voltage_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_current), MP_ROM_PTR(&battery_current_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_type), MP_ROM_PTR(&battery_type_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_temperature), MP_ROM_PTR(&battery_temperature_obj) },
 };
 static MP_DEFINE_CONST_DICT(battery_dict, battery_globals);
 static const mp_obj_module_t battery = {{&mp_type_module}, (mp_obj_dict_t *)&battery_dict};

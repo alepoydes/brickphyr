@@ -12,6 +12,7 @@ set(MICROPY_SOURCE_QSTR ${MICROPY_SOURCE_PY}
   ${MICROPY_DIR}/extmod/modselect.c)
 if(CONFIG_BRICKPHYR_PYBRICKS)
   set(pybricks ${WEST_TOPDIR}/pybricks-micropython)
+  set(MICROPY_QSTRDEFS_PORT ${pybricks}/bricks/_common/qstrdefs.h)
   list(APPEND MICROPY_SOURCE_QSTR
     ${pybricks}/pybricks/pybricks.c
     ${pybricks}/pybricks/parameters/pb_module_parameters.c

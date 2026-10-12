@@ -89,6 +89,8 @@ Shell entry/return, soft reset and reconnection with preserved globals.
 
 The optional Pybricks library compiles its selected parameters, matrix, stopwatch,
 awaitable/task and tools sources directly from the pinned dependency checkout.
+Its common `qstrdefs.h` supplies strings with punctuation, such as `Li-ion`, that
+automatic identifier collection cannot reconstruct.
 MicroPython's builtin-subpackage support keeps application imports on the same
 standard importer; no Pybricks firmware scheduler or driver is linked. The PBIO
 clock hook delegates to the VM clock, while `mp_hal_delay_ms` waits interruptibly

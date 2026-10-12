@@ -4,6 +4,7 @@
  * Acquisition uses Zephyr ADC; board coefficients live in devicetree.
  * See docs/hardware.md, Hub battery, for provenance and validity limits. */
 #include "hub_battery.h"
+#include <math.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/kernel.h>
 
@@ -13,9 +14,15 @@
 #define STALE_MS (4 * PERIOD_MS)
 static const struct adc_dt_spec current = ADC_DT_SPEC_GET_BY_NAME(BATTERY, current);
 static const struct adc_dt_spec voltage = ADC_DT_SPEC_GET_BY_NAME(BATTERY, voltage);
+static const struct adc_dt_spec temperature = ADC_DT_SPEC_GET_BY_NAME(BATTERY, temperature);
+static int temperature_init_error;
 static struct k_spinlock lock;
 static atomic_t stopping;
-static struct bp_battery_sample sample = {.error = -EINPROGRESS};
+static struct bp_battery_sample sample = {
+	.error = -EINPROGRESS,
+	.type = UTIL_CAT(BP_BATTERY_, DT_STRING_UPPER_TOKEN(BATTERY, chemistry)),
+	.temperature_error = -EINPROGRESS,
+};
 static void acquire(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(work, acquire);
 
@@ -27,6 +34,29 @@ static int read_channel(const struct adc_dt_spec *channel, uint16_t *raw)
 		err = adc_read_dt(channel, &sequence);
 	}
 	return !err && *raw >= BIT(channel->resolution) ? -ERANGE : err;
+}
+
+static int read_temperature(uint16_t *raw, int32_t *mdegc)
+{
+	int err = read_channel(&temperature, raw);
+	if (err) {
+		return err;
+	}
+	if (!*raw) {
+		return -ERANGE;
+	}
+	/* Pybricks' 103AT/MP2639A conversion: 2.4 kohm series, 7.5 kohm
+	 * parallel, 10 kohm at 25 C, beta 3435 K. A nonpositive conductance is
+	 * an invalid circuit reading, not a temperature. */
+	float conductance = (4095.0f / *raw - 1.0f) / 2400.0f - 1.0f / 7500.0f;
+	if (conductance <= 0) {
+		return -ERANGE;
+	}
+	float kelvin = 3435.0f / (logf(1.0f / conductance / 10000.0f) + 3435.0f / 298.15f);
+	/* Valid 12-bit readings bound this result within int32_t; signed storage
+	 * also keeps temperatures below freezing defined. */
+	*mdegc = (kelvin - 273.15f) * 1000.0f;
+	return 0;
 }
 
 static void acquire(struct k_work *item)
@@ -65,6 +95,27 @@ static void acquire(struct k_work *item)
 		sample.sequence++;
 	}
 	k_spin_unlock(&lock, key);
+	/* Keep thermistor errors separate from the pair used by motor control. */
+	if (!temperature_init_error) {
+		uint16_t raw;
+		int32_t mdegc;
+		started = k_uptime_get();
+		err = read_temperature(&raw, &mdegc);
+		completed = k_uptime_get();
+		if (!err && completed - started > STALE_MS) {
+			err = -ETIMEDOUT;
+		}
+		key = k_spin_lock(&lock);
+		sample.temperature_error = err;
+		if (err) {
+			sample.temperature_failures += sample.temperature_failures != UINT32_MAX;
+		} else {
+			sample.temperature_raw = raw;
+			sample.temperature_mdegc = mdegc;
+			sample.temperature_ms = completed;
+		}
+		k_spin_unlock(&lock, key);
+	}
 	if (!atomic_get(&stopping)) {
 		k_work_schedule(&work, K_MSEC(PERIOD_MS));
 	}
@@ -80,9 +131,16 @@ static int initialize(void)
 	}
 	if (err) {
 		sample.error = err;
+		sample.temperature_error = err;
 		sample.failures = 1;
 		sample.read_ms = k_uptime_get();
 		return err;
+	}
+	temperature_init_error = !adc_is_ready_dt(&temperature) ? -ENODEV :
+		temperature.resolution != 12 ? -EINVAL : adc_channel_setup_dt(&temperature);
+	if (temperature_init_error) {
+		sample.temperature_error = temperature_init_error;
+		sample.temperature_failures = 1;
 	}
 	/* Pybricks suppresses low readings for one second after power-on.
 	 * Expose settling instead of fabricating a minimum battery voltage. */
@@ -102,6 +160,9 @@ int hub_battery_get(struct bp_battery_sample *value)
 	if (!value->error && k_uptime_get() - value->sample_ms > STALE_MS) {
 		value->error = -ETIMEDOUT;
 	}
+	if (!value->temperature_error && k_uptime_get() - value->temperature_ms > STALE_MS) {
+		value->temperature_error = -ETIMEDOUT;
+	}
 	return 0;
 }
 
@@ -113,6 +174,9 @@ void hub_battery_shutdown(void)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (!sample.error || sample.error == -EINPROGRESS) {
 		sample.error = -ESHUTDOWN;
+	}
+	if (!sample.temperature_error || sample.temperature_error == -EINPROGRESS) {
+		sample.temperature_error = -ESHUTDOWN;
 	}
 	k_spin_unlock(&lock, key);
 }

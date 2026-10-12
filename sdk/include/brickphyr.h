@@ -96,8 +96,9 @@ __syscall int bp_imu_configure(const struct bp_imu_command *command);
  * before comparing angles; raw angles cannot bridge missing measurements. */
 __syscall int bp_imu_get_application(struct bp_imu_application_state *state);
 
-/* Copy the latest battery pair without starting ADC or waiting for acquisition.
- * Check sample.error; startup, stale, failed and stopped readings stay explicit. */
+/* Copy cached battery observations without I/O or waiting for acquisition.
+ * Check error for voltage/current, temperature_error for temperature. Chemistry
+ * is independent of both; startup, stale, failed and stopped readings are explicit. */
 __syscall int bp_battery_get(struct bp_battery_sample *sample);
 
 /* Copy port identity and raw UART data; no I/O or port reconfiguration.
