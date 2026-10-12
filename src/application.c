@@ -606,6 +606,16 @@ static inline int z_vrfy_bp_port_get_mode(uint32_t port, uint32_t generation, ui
 }
 #include <zephyr/syscalls/bp_port_get_mode_mrsh.c>
 
+int z_impl_bp_port_select(uint32_t port, uint32_t generation, uint32_t mode)
+{
+	return hub_port_select(BP_PORT_APPLICATION, port, generation, mode);
+}
+static inline int z_vrfy_bp_port_select(uint32_t port, uint32_t generation, uint32_t mode)
+{
+	return z_impl_bp_port_select(port, generation, mode);
+}
+#include <zephyr/syscalls/bp_port_select_mrsh.c>
+
 int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	return hub_sensor_get(port, value);

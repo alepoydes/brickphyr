@@ -67,4 +67,9 @@ struct bp_port_state {
 	uint8_t data_type, num_values;
 	uint8_t supply; /* Sensor DC: 0 none, 1 P1, 2 P2. Motor drive is reported separately. */
 	uint8_t data[32];
+	/* Explicit raw-mode selection: UINT8_MAX when normalized sensing owns
+	 * the mode. Check error, mode_error and matching mode before using data.
+	 * Settling and fresh-sample checks belong to the shared port worker. */
+	int32_t mode_error;
+	uint8_t selected_mode;
 };

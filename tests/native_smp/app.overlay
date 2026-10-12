@@ -4,11 +4,20 @@
 #include "../ports/ports.dtsi"
 #include "../ports/motor-pwm.dtsi"
 / {
+	pup_uart: pup-uart {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <1024>;
+		tx-fifo-size = <128>;
+	};
 	hub_speaker: speaker {
 		compatible = "vnd,sound-output";
 		status = "okay";
 	};
 
+};
+&hub_ports {
+	port@0 { uart = <&pup_uart>; };
 };
 
 #include "storage.overlay"

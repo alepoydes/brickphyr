@@ -23,6 +23,9 @@ target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_battery.c ../native/battery
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_light.c ${BRICKPHYR_ROOT}/src/hub_matrix.c
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_ports.c ${BRICKPHYR_ROOT}/src/ports/output.c ../ports/wiring.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_PORT_UART app PRIVATE pup_peer.c
+  ${BRICKPHYR_ROOT}/src/ports/uart.c ${BRICKPHYR_ROOT}/src/ports/lump.c
+  ${BRICKPHYR_ROOT}/src/ports/sensor.c)
 target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/storage_mount.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/telemetry.c)

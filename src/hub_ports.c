@@ -96,6 +96,8 @@ static void drop_claim(struct port *p)
 {
 	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
 	p->measurement = BP_SENSOR_DEFAULT;
+	p->value.selected_mode = UINT8_MAX;
+	p->value.mode_error = -ENOTSUP;
 	p->command++;
 	p->sensor.error = -EAGAIN;
 	p->sensor.fields = 0;
@@ -205,7 +207,12 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 		phase == BP_PORT_PASSIVE || phase == BP_PORT_UART ? p->previous : 0;
 	int64_t now = k_uptime_get();
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	struct bp_port_state v = uart ? *uart : (struct bp_port_state){0};
+	struct bp_port_state v = uart ? *uart :
+		(struct bp_port_state){.selected_mode = UINT8_MAX, .mode_error = -ENOTSUP};
+	if (uart && p->command != command) {
+		v.selected_mode = p->measurement & PORT_RAW_MODE ? p->measurement & 0xff : UINT8_MAX;
+		v.mode_error = p->measurement & PORT_RAW_MODE ? -EAGAIN : -ENOTSUP;
+	}
 	v.generation = p->value.generation;
 	v.changed_ms = p->value.changed_ms;
 	if (p->value.phase != phase || p->value.type_id != id) {
@@ -698,6 +705,38 @@ int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	return err;
 }
 
+int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
+		return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		p->value.generation != generation ? -ESTALE :
+		p->value.phase != BP_PORT_READY ? -ENODEV :
+		p->value.error && p->value.error != -EAGAIN ? p->value.error :
+		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
+		mode >= p->value.num_modes ? -EINVAL :
+		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing ||
+		!p->motor.valid || p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
+	if (!err) {
+		p->owner = p->sensor.owner = owner;
+		uint32_t request = PORT_RAW_MODE | mode;
+		if (p->measurement != request) {
+			p->measurement = request;
+			p->command++;
+			p->value.selected_mode = mode;
+			p->value.mode_error = -EAGAIN;
+			p->sensor.error = -ENOTSUP;
+			p->sensor.fields = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
 int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
@@ -742,6 +781,8 @@ int hub_sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t measu
 		if (p->measurement != measurement) {
 			p->measurement = measurement;
 			p->command++;
+			p->value.selected_mode = UINT8_MAX;
+			p->value.mode_error = -ENOTSUP;
 			p->sensor.error = -EAGAIN;
 			p->sensor.fields = 0;
 		}

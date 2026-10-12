@@ -130,6 +130,7 @@ subpackages and application modules.
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
 | Hub system | `name`, `info`, `reset_reason`, `set_stop_button`, `storage` and supervised `shutdown`; shared boot cause, launch identity, management connection and persistent user data |
+| `PUPDevice`, `LUMPDevice` | `info` and blocking/awaitable `read`; shared raw-mode selection, signed/float wire values, passive touch input and connection generation checks; `write` and `reset` remain unimplemented |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -143,6 +144,16 @@ display orientation or measurement accuracy on a physical hub. The
 [hub example](../examples/python/hub.py) exercises display text, icons and background lighting.
 It also compiles and runs repeatedly through the actual pybricksdev serial client
 against the ARM fixture and through both USB/BLE clients on the Inventor F4.
+
+Generic wired-device checks use a synthetic UART peer and the production port
+service. They cover all four wire formats, async reads, replacement without
+silently rebinding an existing object, passive touch input and release on return.
+These checks do not establish third-party device compatibility. See
+[raw device usage and ownership](ports.md#arbitrary-uart-modes).
+On the Inventor F4, `PUPDevice.info()` and synchronous/async CALIB reads from an
+idle ID-75 motor also pass through USB/BLE application upload and execution, with
+port release afterwards. No motor drive is part of this check; physical sensor,
+touch-switch and third-party raw-mode acceptance remain pending.
 Display cleanup and error-free driver completion are checked there; perceived
 output and running that example through the browser remain separate acceptance items.
 

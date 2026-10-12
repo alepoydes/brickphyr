@@ -54,8 +54,8 @@ Missing metadata remains explicitly unavailable. Unknown models retain their
 reported identity, modes and raw data; they do not acquire guessed units or the
 semantics of a similarly named LEGO sensor. Passive devices show only the
 information their electrical interface provides. Inspection does not select
-modes, claim a port or actuate a device. Any later explicit mode selection must
-use the existing port ownership and validation rules.
+modes, claim a port or actuate a device. Explicit mode selection uses the
+existing port ownership and validation rules.
 
 Wire values are signed integers or IEEE-754 float32, without applying the
 advertised scaling or decimal precision. Ranges are device claims, including
@@ -81,6 +81,42 @@ optional and malformed metadata, maximum mode/payload sizes, reconnects and
 unchanged ownership/outputs. Physical third-party compatibility and USB/BLE
 inspection on the hub remain unverified. First inspect what a device advertises;
 a matching ID alone does not establish compatibility.
+
+## Arbitrary UART modes
+
+`bp_port_select(port, generation, mode)` claims an idle UART port and queues an
+advertised mode through the same selector used by normalized measurements.
+Invalid modes, stale connections, competing owners and active or unconfirmed
+motor outputs fail before selection. This operation sends SELECT only; it does
+not write device data or command motor motion.
+
+Read `bp_port_get()` until `error` and `mode_error` are zero, checking the same
+`generation` and matching `selected_mode` and `mode`. Selection invalidates the
+previous observation immediately. Matching DATA must satisfy the existing
+settling and freshness rules. The returned bytes retain their advertised wire
+format and are not scaled. Normalized sensor observations report `-ENOTSUP`
+while raw selection owns the mode. Release restores automatic measurement;
+`selected_mode=UINT8_MAX` means there is no explicit raw selection.
+
+The Python binding provides `pybricks.iodevices.PUPDevice` (`LUMPDevice` alias):
+
+```python
+from pybricks.iodevices import PUPDevice
+from pybricks.parameters import Port
+
+device = PUPDevice(Port.C)  # Choose the connected device's port.
+print(device.info())
+print(device.read(0))      # Select an advertised mode appropriate to that device.
+```
+
+`info()` returns the device ID and advertised mode names, value counts and data
+types. `read(mode)` returns a tuple of signed integers or float32 values; it is
+awaitable inside `run_task`. Passive touch switches return a boolean and have
+no UART modes. Objects retain their original connection generation: create a
+new object after unplugging/replacing a device. Program cleanup releases the
+port; disconnecting the host alone does not. `write` and `reset` are not yet
+implemented, and this generic interface does not imply device-specific Python
+sensor or motor support.
 
 ## Sensor measurements
 

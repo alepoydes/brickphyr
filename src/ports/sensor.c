@@ -5,6 +5,7 @@
  * ownership remain outside these calculations. RGB/HSV conversion is reused
  * unchanged from PBIO. See docs/ports.md for provenance and units. */
 #include "sensor.h"
+#include "port_uart.h"
 #include <errno.h>
 #include <lego/device.h>
 #include <pbio/color.h>
@@ -101,6 +102,15 @@ static void select_mode(struct port_sensor *s, uint8_t mode)
 
 int port_sensor_request(struct port_sensor *s, const struct lump *l, uint32_t measurement)
 {
+	if (measurement & PORT_RAW_MODE) {
+		uint32_t mode = measurement & ~PORT_RAW_MODE;
+		if (mode >= l->num_modes) return -EINVAL;
+		if (!s->raw || s->mode != mode) {
+			select_mode(s, mode);
+		}
+		s->raw = true;
+		return 0;
+	}
 	const struct measurement *m = find(l->id, measurement);
 	if (!m) {
 		return -ENOTSUP;
@@ -112,9 +122,10 @@ int port_sensor_request(struct port_sensor *s, const struct lump *l, uint32_t me
 	uint8_t mode = m->id == LEGO_DEVICE_TYPE_ID_SPIKE_FORCE_SENSOR && s->calibrated ?
 		LEGO_DEVICE_MODE_PUP_FORCE_SENSOR__FRAW : m->mode;
 	s->value.measurement = m->measurement;
-	if (s->mode != mode) {
+	if (s->raw || s->mode != mode) {
 		select_mode(s, mode);
 	}
+	s->raw = false;
 	return 0;
 }
 
@@ -264,8 +275,8 @@ static int convert(struct port_sensor *s, const struct lump *l, struct bp_sensor
 
 void port_sensor_receive(struct port_sensor *s, const struct lump *l, int64_t now)
 {
-	const struct measurement *m = find(l->id, s->value.measurement);
-	if (s->pending || s->mode != l->mode || !m) {
+	const struct measurement *m = find(l->id, s->raw ? BP_SENSOR_DEFAULT : s->value.measurement);
+	if (s->pending || s->mode != l->mode || (!s->raw && !m)) {
 		return;
 	}
 	/* Other modes cannot keep a stopped measurement alive. Use the UART
@@ -275,7 +286,12 @@ void port_sensor_receive(struct port_sensor *s, const struct lump *l, int64_t no
 		s->first_ms = now;
 		s->awaiting = false;
 	}
-	if (now - s->first_ms < m->settle_ms) {
+	uint32_t settle = m ? m->settle_ms : 0;
+	if (now - s->first_ms < settle) {
+		return;
+	}
+	if (s->raw) {
+		s->value.error = 0;
 		return;
 	}
 	struct bp_sensor_sample value = {.type_id = l->id, .mode = l->mode,

@@ -5,6 +5,9 @@
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
 
+/* Private measurement selector; public raw requests use bp_port_select(). */
+#define PORT_RAW_MODE (1U << 31)
+
 #ifdef CONFIG_BRICKPHYR_PORT_UART
 /* Trusted port worker only. Start with the buffer disabled, then enable it
  * before the first poll. Stop IRQ access before reclaiming GPIO pins. */

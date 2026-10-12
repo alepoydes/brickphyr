@@ -339,6 +339,7 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 			int result = port_sensor_request(&l->sensor, &l->lump, measurement);
 			if (result) {
 				l->sensor.pending = l->sensor.awaiting = false;
+				l->sensor.raw = false;
 				l->sensor.mode = UINT8_MAX;
 				l->sensor.value.error = result;
 				l->sensor.value.fields = 0;
@@ -397,8 +398,15 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	out->num_values = l->lump.modes[l->lump.mode].num_values;
 	memcpy(out->data, l->lump.data, out->length);
 	*sensor = l->sensor.value;
+	out->selected_mode = measurement & PORT_RAW_MODE ? measurement & 0xff : UINT8_MAX;
+	out->mode_error = measurement & PORT_RAW_MODE ?
+		l->measurement != measurement ? -EAGAIN : l->sensor.value.error : -ENOTSUP;
+	if (measurement & PORT_RAW_MODE) {
+		sensor->error = -ENOTSUP;
+		sensor->fields = 0;
+	}
 	sensor->type_id = out->type_id;
-	if (l->measurement != measurement) {
+	if (!(measurement & PORT_RAW_MODE) && l->measurement != measurement) {
 		sensor->error = -EAGAIN;
 		sensor->fields = 0;
 	}

@@ -126,6 +126,14 @@ and GC, code/data/kernel memory protection, forced stop, code exhaustion, malfor
 input and another successful run after each failure. These are protected ARM
 checks, not physical fault injection.
 
+For generic wired-device changes, run
+`uv run --locked pytest -q tests/test_python_pupdevice.py` against that same build.
+Its synthetic UART peer supplies independent signed/float32 samples through the
+real UART parser, selector and protected Python binding. One boot covers normal
+and async reads, hotplug rejection, passive touch input and application cleanup.
+The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
+negotiation window; this is functional simulation, not hardware timing evidence.
+
 `test_python_hub.py` exercises the Pybricks hub bindings through that same
 protected engine. Synthetic button/ADC inputs and an observed SPI peer check
 button sets, battery units, static drawing, rotation, color channels, ownership,

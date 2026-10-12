@@ -110,6 +110,11 @@ __syscall int bp_port_get(uint32_t port, struct bp_port_state *state);
  * ESTALE means a different connection. No mode change, ownership or device I/O. */
 __syscall int bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *info);
+/* Claim an idle UART port and select an advertised mode without writing data
+ * or driving a motor. Generation guards hotplug; 0 means queued. Wait for
+ * bp_port_get().mode_error == 0 and the same generation/selected_mode/mode.
+ * Other claims, active motor control and invalid modes fail before changes. */
+__syscall int bp_port_select(uint32_t port, uint32_t generation, uint32_t mode);
 /* Shared converted measurement. Inspect error, fields, sample_ms and generation.
  * Reads never change modes or interfere with a running application. */
 __syscall int bp_sensor_get(uint32_t port, struct bp_sensor_sample *sample);
