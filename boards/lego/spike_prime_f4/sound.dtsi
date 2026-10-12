@@ -26,7 +26,8 @@ hub_speaker: &dac1 {
 
 &dma1 {
 	/* A UART byte arrives every 86.8 us at 115200 baud; an audio half lasts
-	 * at least 5.33 ms. Only speaker stream 5 yields to the byte-fed UARTs. */
-	interrupts = <11 0 12 0 13 0 14 0 15 0 16 1 17 0 47 0>;
+	 * at least 5.33 ms. Speaker stream 5 and flash streams 3/4 yield to UARTs;
+	 * flash completion retains SPI2's IRQ priority. */
+	interrupts = <11 0 12 0 13 0 14 5 15 5 16 1 17 0 47 0>;
 	status = "okay";
 };

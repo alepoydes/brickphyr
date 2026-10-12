@@ -102,6 +102,14 @@ the Pybricks disabled value; [charging](#hub-charger) owns subsequent changes.
 Ordinary LED writes cannot change that reserved channel. The matrix uses the
 same controller and frame; see [hub matrix](#hub-matrix).
 
+Both F4 SPI controllers use Zephyr's STM32 DMA driver to avoid per-byte
+interrupt service: SPI1 uses DMA2 streams 2/3 for the TLC5955, and SPI2 uses DMA1
+streams 3/4 for external flash. The assignments follow the Pybricks F4 platform;
+the speaker retains its separate DMA1 stream 5. Completion interrupts retain the
+SPI priority below the byte-fed UARTs. Calls still wait for completion before
+latching a frame or finishing a flash transaction, preserving buffer lifetimes
+and the existing driver locks.
+
 Readiness lighting uses a driver extension for 16-bit RGB writes, latching both
 central LEDs and the Bluetooth LED in one transfer. The experimental reactor animation has a saturated
 cyan base for Pybricks (40% dominant-channel duty) and yellow for Brickphyr (95%).
