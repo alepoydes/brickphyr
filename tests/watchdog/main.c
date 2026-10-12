@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_watchdog.h"
+#include "hub_reset.h"
+#include <zephyr/drivers/hwinfo.h>
 #include "device.h"
 #include <posix_board_if.h>
 #include <zephyr/shell/shell_dummy.h>
@@ -28,6 +30,13 @@ static K_WORK_DEFINE(block, stall);
 
 ZTEST(watchdog, test_progress_and_expiry)
 {
+	uint32_t boot, cleared, again;
+	zassert_ok(hub_reset_cause(&boot));
+	zassert_not_equal(boot, 0);
+	zassert_ok(hwinfo_get_reset_cause(&cleared));
+	zassert_equal(cleared, 0);
+	zassert_ok(hub_reset_cause(&again));
+	zassert_equal(again, boot);
 	zassert_equal(watchdog_starts, 1);
 	zassert_ok(hub_watchdog_run());
 	const struct shell *shell = shell_backend_dummy_get_ptr();

@@ -33,6 +33,7 @@ struct application_status {
 	enum application_format upload_format;
 	bool upload_ready;
 	bool repl;
+	int32_t program_id;
 };
 
 /* Privileged lifecycle. All callers share this one instance. */
@@ -40,7 +41,7 @@ struct application_status {
 int application_run_native(const void *image, size_t length);
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 int application_check_file(const char *path, size_t length);
-int application_run_file(const char *path);
+int application_run_file(const char *path, int program_id);
 /* Consume a validated persistent-format upload into a closed staging file.
  * Flash I/O does not hold the lifecycle lock; failure still consumes the upload. */
 int application_write_upload(const char *path);
@@ -62,6 +63,8 @@ void application_session_closed(void);
 int application_stop(void);
 int application_shutdown(void);
 void application_poll(void);
+/* Called by the hub UI with zero while the connection menu consumes buttons. */
+void application_buttons(uint32_t buttons);
 void application_get_status(struct application_status *status);
 /* No cleanup, expiration, output consumption or wait; EBUSY during lifecycle work. */
 int application_observe(struct application_status *status);
@@ -77,6 +80,7 @@ int application_repl(void);
 #else
 static inline int application_shutdown(void) { return 0; }
 static inline void application_poll(void) { }
+static inline void application_buttons(uint32_t buttons) { }
 static inline void application_session_closed(void) { }
 #endif
 

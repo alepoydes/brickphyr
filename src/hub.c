@@ -236,6 +236,7 @@ void hub_run(void)
 			shutdown();
 		}
 		enum host_mode current = host_interface_current();
+		application_buttons(menu.open ? 0 : hub_buttons());
 		/* Menu entry/cancel precedes navigation. Center confirms on release,
 		 * leaving its entire hold interval available for power-off. */
 		const uint8_t order[] = {3, 1, 2, 0};

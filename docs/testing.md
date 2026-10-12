@@ -68,7 +68,7 @@ signal; it checks client reconnection, not radio or USB session cleanup.
 
 ```sh
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
-uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py tests/test_python_speaker.py
+uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py tests/test_python_speaker.py tests/test_python_system.py
 ```
 
 The same build produces native `.mpy` fixtures in `python-fixtures` using the
@@ -97,6 +97,15 @@ the common service; reservations during rests; blocking/awaitable operations;
 replacement, lazy-iterator failures, Ctrl-C, forced stop and REPL reset. Injected
 start/cleanup errors preserve the first failure and allow explicit retry. These
 checks do not measure acoustic output or physical note timing.
+
+`test_python_system.py` checks launch information, rejected button settings,
+combination presses, catchable `SystemExit`, disabling/restoring the stop button,
+and shutdown through supervisor cleanup. Buttons are synthetic and shutdown ends
+at the application-cleanup boundary; this does not prove physical power-off.
+The actual serial client also checks the selected slot and live USB identity.
+Host transport tests distinguish a disconnected USB/BLE link from its still-held
+power reservation during accepted work. Watchdog tests check that repeated boot
+cause reads retain the captured flags after hardware flags have been cleared.
 
 `test_python_files.py` exercises source/bytecode/native imports, relative packages,
 GC and recovery from a truncated native import. It also covers malformed maps,

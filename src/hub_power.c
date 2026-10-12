@@ -19,7 +19,8 @@ const struct config_entry power_config[] = {
 static uint32_t timeout_s[ARRAY_SIZE(power_config)];
 static struct k_spinlock lock;
 static int source = -ENODEV;
-static bool connected;
+static enum hub_connection connected;
+static enum hub_connection link;
 static bool application;
 static bool shutting_down;
 static int64_t idle_since;
@@ -32,6 +33,7 @@ void hub_power_get(struct hub_power_state *state)
 		.sampled_ms = sampled_ms, .idle_since_ms = idle_since, .source = source,
 		.battery_idle_s = timeout_s[0], .usb_idle_s = timeout_s[1],
 		.connected = connected, .application = application, .shutting_down = shutting_down,
+		.transport = link,
 	};
 	k_spin_unlock(&lock, key);
 }
@@ -81,16 +83,25 @@ int hub_power_load(void)
 	return config_load(power_config, ARRAY_SIZE(power_config));
 }
 
-bool hub_power_connection(bool open)
+bool hub_power_connection(enum hub_connection open)
 {
+	if (open < HUB_DISCONNECTED || open > HUB_BLE) return false;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	bool allowed = !open || !shutting_down;
 	if (allowed && connected != open) {
 		connected = open;
 		idle_since = k_uptime_get();
 	}
+	if (allowed) link = open;
 	k_spin_unlock(&lock, key);
 	return allowed;
+}
+
+void hub_power_link_closed(enum hub_connection transport)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (link == transport) link = HUB_DISCONNECTED;
+	k_spin_unlock(&lock, key);
 }
 
 void hub_power_request_shutdown(void)

@@ -17,6 +17,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_system.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
   DEPENDS ${ZEPHYR_BINARY_DIR}/include/generated/zephyr/autoconf.h
@@ -30,6 +31,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_system.h
     ${ZEPHYR_BASE}/include/zephyr/arch/arm/syscall.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h
     ${BRICKPHYR_ROOT}/tools/native_abi.py
@@ -44,7 +46,7 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault motor)
+  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault system_fault motor)
     if(example MATCHES "_fault$" OR example STREQUAL "motor")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()

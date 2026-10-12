@@ -11,4 +11,13 @@ int hub_bluetooth_power_off(void);
 void hub_run(void);
 uint32_t hub_buttons(void);
 
+static inline const char *hub_name(void)
+{
+#ifdef CONFIG_BT
+	return CONFIG_BT_DEVICE_NAME;
+#else
+	return "Brickphyr";
+#endif
+}
+
 #endif

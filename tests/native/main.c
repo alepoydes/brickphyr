@@ -176,6 +176,10 @@ int main(void)
 		CHECK(k_uptime_get() < deadline);
 	} while (status.state == APPLICATION_RUNNING);
 	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+	CHECK(native_fixture_run("system_fault") == 0);
+	k_msleep(20);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
 	CHECK(available() == capacity);

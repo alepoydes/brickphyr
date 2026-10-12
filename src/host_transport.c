@@ -495,7 +495,7 @@ static void host_thread(void *a, void *b, void *c)
 				ble_tx_ready = NULL;
 				finish_ble_session();
 				if (!ble_occupied) {
-					hub_power_connection(false);
+					hub_power_connection(HUB_DISCONNECTED);
 				}
 			}
 			k_spin_unlock(&lock, key);
@@ -661,8 +661,9 @@ void host_connection_changed(bool open)
 		}
 	}
 	usb_open = open;
+	if (!open) hub_power_link_closed(HUB_USB);
 	if (!ble_occupied && open != occupied &&
-	    (!open || (!first_error && hub_power_connection(true)))) {
+	    (!open || (!first_error && hub_power_connection(HUB_USB)))) {
 		stream_changed(open);
 	}
 	k_spin_unlock(&lock, key);
@@ -713,7 +714,7 @@ int host_ble_acquire(void)
 	/* Old USB output still gates a USB protocol switch, not a BLE session. */
 	if (usb_open || occupied || ble_occupied || !ready || first_error) {
 		err = -EBUSY;
-	} else if (!hub_power_connection(true)) {
+	} else if (!hub_power_connection(HUB_BLE)) {
 		err = -ESHUTDOWN;
 	} else {
 		ble_occupied = true;
@@ -731,7 +732,7 @@ static void finish_ble_session(void)
 		hub_ports_session_closed(BP_PORT_TERMINAL);
 		ble_occupied = false;
 		ble_closing = false;
-		hub_power_connection(false);
+		hub_power_connection(HUB_DISCONNECTED);
 		if (ble_exit) {
 			mode = HOST_SHELL;
 		}
@@ -743,6 +744,7 @@ void host_ble_release(bool exit_compatibility)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (ble_occupied && !ble_closing) {
+		hub_power_link_closed(HUB_BLE);
 		ble_closing = true;
 		ble_exit = exit_compatibility;
 		if (ble_shell && occupied) {

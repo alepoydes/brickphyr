@@ -79,10 +79,10 @@ ZTEST(poweroff, test_shutdown_requires_real_release_and_new_press)
 		run_hub, NULL, NULL, NULL, 1, 0, K_NO_WAIT);
 
 	/* Explicit shutdown must work even with a management owner and held key. */
-	zassert_true(hub_power_connection(true));
+	zassert_true(hub_power_connection(HUB_USB));
 	zassert_ok(shell_execute_cmd(shell, "shutdown"));
 	zassert_ok(k_sem_take(&power_released, K_MSEC(100)));
-	zassert_false(hub_power_connection(true), "Shutdown admitted another owner");
+	zassert_false(hub_power_connection(HUB_USB), "Shutdown admitted another owner");
 	zassert_equal(k_sem_take(&restarted, K_SECONDS(3)), -EAGAIN,
 		"The shutdown hold restarted the hub");
 

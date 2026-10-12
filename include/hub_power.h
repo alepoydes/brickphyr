@@ -4,13 +4,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum hub_connection { HUB_DISCONNECTED, HUB_USB, HUB_BLE };
+
 struct hub_power_state {
 	int64_t sampled_ms;
 	int64_t idle_since_ms;
 	int source;
 	uint32_t battery_idle_s;
 	uint32_t usb_idle_s;
-	bool connected;
+	bool connected; /* Management reservation, including disconnect cleanup. */
+	enum hub_connection transport; /* Live accepted connection, excluding cleanup. */
 	bool application;
 	bool shutting_down;
 };
@@ -19,7 +22,9 @@ struct hub_power_state {
 void hub_power_get(struct hub_power_state *state);
 
 /* A host acquisition and expiry claim serialize on the same policy lock. */
-bool hub_power_connection(bool connected);
+bool hub_power_connection(enum hub_connection transport);
+/* The link ended, while accepted work may still hold the power reservation. */
+void hub_power_link_closed(enum hub_connection transport);
 /* An autonomous application's lifetime holds power independently of a host. */
 bool hub_power_application(bool running);
 /* Explicit shutdown also closes admission, even with an active owner. */

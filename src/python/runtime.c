@@ -57,7 +57,12 @@ void mp_hal_stdio_mode_orig(void)
 
 void python_interrupt(void)
 {
-	atomic_set(&interrupt_pending, 1);
+	atomic_set_bit(&interrupt_pending, 0);
+}
+
+void python_stop(void)
+{
+	atomic_set_bit(&interrupt_pending, 1);
 }
 
 int python_interrupt_char(void)
@@ -72,7 +77,13 @@ void mp_hal_set_interrupt_char(int value)
 
 void python_poll(void)
 {
-	if (atomic_get(&interrupt_pending) && atomic_cas(&interrupt_pending, 1, 0)) {
+	atomic_val_t pending = atomic_set(&interrupt_pending, 0);
+	if (pending & 2) {
+		/* Preallocate like KeyboardInterrupt, keeping traceback references
+		 * visible to GC when application code catches and retains the error. */
+		mp_obj_exception_clear_traceback(MP_STATE_PORT(python_stop_exception));
+		mp_sched_exception(MP_STATE_PORT(python_stop_exception));
+	} else if (pending & 1) {
 		mp_sched_keyboard_interrupt();
 	}
 }
@@ -137,6 +148,7 @@ int python_execute(const void *program, size_t length, enum application_format f
 	nlr_buf_t nlr;
 	if (nlr_push(&nlr) == 0) {
 		mp_init();
+		MP_STATE_PORT(python_stop_exception) = mp_obj_new_exception(&mp_type_SystemExit);
 		readline_init0();
 #ifdef CONFIG_BRICKPHYR_PYBRICKS
 		pb_type_Color_reset();
@@ -187,8 +199,11 @@ int python_execute(const void *program, size_t length, enum application_format f
 		mp_call_function_0(function);
 		nlr_pop();
 	} else {
-		mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
-		result = -ENOEXEC;
+		mp_obj_t exception = MP_OBJ_FROM_PTR(nlr.ret_val);
+		if (!mp_obj_exception_match(exception, MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
+			mp_obj_print_exception(&mp_plat_print, exception);
+			result = -ENOEXEC;
+		}
 	}
 	mp_deinit();
 	return result;
@@ -207,3 +222,5 @@ void nlr_jump_fail(void *value)
 	k_oops();
 	CODE_UNREACHABLE;
 }
+
+MP_REGISTER_ROOT_POINTER(mp_obj_t python_stop_exception);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_protocol.h"
+#include "hub.h"
 
 #include <string.h>
 #include <pbio/protocol.h>
@@ -143,7 +144,7 @@ size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 	if (service == PBIO_PYBRICKS_READ_SERVICE_GATT) {
 		switch (id) {
 		case PBIO_GATT_DEVICE_NAME_CHAR_UUID:
-			text = "Brickphyr";
+			text = hub_name();
 			break;
 		case PBIO_GATT_FIRMWARE_VERSION_CHAR_UUID:
 			text = APP_VERSION_STRING;

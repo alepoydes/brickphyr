@@ -39,6 +39,9 @@ static const unsigned char sound_fault[] = {
 static const unsigned char battery_fault[] = {
 #include <native_battery_fault.inc>
 };
+static const unsigned char system_fault[] = {
+#include <native_system_fault.inc>
+};
 static const unsigned char motor[] = {
 #include <native_motor.inc>
 };
@@ -80,6 +83,7 @@ int native_fixture_run(const char *name)
 		{"imu", imu, sizeof(imu)},
 		{"sound", sound, sizeof(sound)}, {"sound_fault", sound_fault, sizeof(sound_fault)},
 		{"battery_fault", battery_fault, sizeof(battery_fault)},
+		{"system_fault", system_fault, sizeof(system_fault)},
 		{"motor", motor, sizeof(motor)},
 		{"truncated", hello, sizeof(hello) - 1},
 	};

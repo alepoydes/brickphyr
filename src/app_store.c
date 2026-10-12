@@ -205,7 +205,13 @@ int app_store_run(const char *name)
 	k_mutex_lock(&store_lock, K_FOREVER);
 	int err = path_for(name, path, sizeof(path));
 	if (!err) {
-		err = application_run_file(path);
+		/* path_for already validated the reserved slot's canonical name. */
+		int slot = -1;
+		if (name[0] == '@') {
+			slot = 0;
+			for (size_t i = 1; name[i]; i++) slot = 10 * slot + name[i] - '0';
+		}
+		err = application_run_file(path, slot);
 	}
 	k_mutex_unlock(&store_lock);
 	return err;

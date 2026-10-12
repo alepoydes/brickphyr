@@ -128,6 +128,7 @@ subpackages and application modules.
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
 | Hub display | `on`, `off`, `pixel`, `icon`, `char`, `number`, `orientation`, background `animate` and blocking/awaitable `text`; shared orientation and reference fonts |
 | Hub speaker | `volume`, blocking/awaitable `beep` and lazy `play_notes`; common tone service, rests/articulation, cancellation, ownership and driver-error cleanup |
+| Hub system | `name`, `info`, `reset_reason`, `set_stop_button` and supervised `shutdown`; shared boot cause, launch identity and current management connection |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -150,9 +151,29 @@ ownership during rests, iterator errors, replacement and cleanup. The
 through native USB/BLE management and both actual Pybricks clients. Interruption
 and REPL reset release playback there. Acoustic quality remains unverified.
 
+`hub.system.info()` reports the accepted USB/BLE management link, excluding work
+still draining after disconnection. Pybricks program IDs identify the selected
+slot; REPL uses 128, while named programs and temporary SMP uploads use -1. Current
+starts are remote (3). Reset reasons use the reference values: 0 normal, 1 software,
+2 watchdog. A target without reset-cause support omits that field from `info()`
+and raises `OSError(ENOTSUP)` from `reset_reason()`.
+
+`set_stop_button()` accepts a hub button, an iterable specifying a combination,
+or `None` to disable the program stop button. A fresh press of the whole
+combination raises catchable `SystemExit`; an uncaught one ends the script without
+a traceback. Each new interpreter restores `Button.CENTER`. The connection menu
+consumes its own button events. Long-center-press power-off and host-forced stop
+remain independent. `shutdown()` requests the ordinary supervised cleanup and
+power-off path and does not return. The [system example](../examples/python/system.py)
+inspects launch information and temporarily selects a two-button combination.
+System information, REPL identity/reset, and autonomous USB-to-BLE handover pass
+on the Inventor F4. Both actual Pybricks clients execute the example with the
+correct slot and connection fields. Stop-button combinations and Python-requested
+shutdown have protected ARM checks; their physical acceptance remains pending.
+
 The constructor currently accepts no arguments. IMU orientation/radio arguments,
-IMU, charger,
-system/storage, `hub_menu` and messaging remain unfinished required work. Battery
+IMU, charger, system `storage`/`reset_storage`, `hub_menu` and messaging remain
+unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;
 temperature/type and the remaining device bindings are not yet exposed.
 `hub.bluetooth_light` is a Brickphyr extension with the same color-light interface;

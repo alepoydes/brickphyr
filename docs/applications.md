@@ -38,6 +38,13 @@ Typed result structures and PCM buffers require their natural C alignment.
 Syscall validation checks it and the complete memory range before entering
 service locks; a bad pointer ends the application without stranding those locks.
 
+`bp_system_get()` reads the calling application's identity, hub name, cached boot
+cause and current USB/BLE management link. `bp_set_stop_buttons()` selects a
+fresh-press combination; native applications default to no program stop button,
+while Python defaults to the center button and receives `SystemExit`.
+`bp_shutdown()` requests the same supervisor cleanup and power-off as the hub UI.
+Long-center-press power-off remains independent of program button selection.
+
 The supervisor joins the application before removing partitions and freeing its
 loader allocation. Return, stop and MPU faults retain their result for inspection;
 cleanup errors are reported separately. Host disconnection leaves the application

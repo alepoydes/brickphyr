@@ -99,8 +99,9 @@ both firmware services and bindings. Current [library coverage](../../docs/compa
 and its [dependency corrections](../../docs/upstream.md#python-library-prerequisites)
 remain distinct from physical hardware acceptance.
 
-`hub.c`, `light.c`, `matrix.c` and `speaker.c` adapt the hub, battery, internal color-light,
-light-matrix and speaker bindings from Pybricks v4.1.0b6 (`a7b1b04ae`). They retain the upstream
+`hub.c`, `light.c`, `matrix.c`, `speaker.c` and `system.c` adapt the hub, battery,
+internal color-light, light-matrix, speaker and system bindings from Pybricks
+v4.1.0b6 (`a7b1b04ae`). They retain the upstream
 MIT attribution. The keypad wrapper, fonts and color conversion compile directly
 from that checkout; the font's BBC notice is retained in the distribution notice.
 The adaptation replaces PBIO device access with the protected C SDK and common
@@ -137,3 +138,11 @@ intervals; `run_task` drives the same state machine through the maintained
 awaitable. Iterator, driver and interruption errors release playback while
 preserving the original exception. Superseded awaitables cannot cancel a newer
 tone, including indefinite beeps. See [sound semantics](../../docs/hardware.md#hub-sound).
+
+System information comes from protected snapshots of the launch metadata,
+cached reset cause and live management link. The supervisor owns stop-button
+selection and delivers a preallocated, GC-rooted `SystemExit` through the VM's
+existing event poll. Menu button events remain with the hub UI; forced stop and
+long-press shutdown remain independent. The shutdown syscall requests the normal
+power policy and waits for supervisor cleanup without running user finalizers.
+User-data storage remains required integration work.

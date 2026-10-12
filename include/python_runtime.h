@@ -20,6 +20,7 @@ int python_pybricks_package(const void *data, size_t length, void **image, size_
 /* A host request sets a signal only; the VM handles it at its own safe points. */
 void python_input_reset(bool soft_reset, bool repl);
 void python_interrupt(void);
+void python_stop(void);
 int python_interrupt_char(void);
 bool python_repl_reading(void);
 

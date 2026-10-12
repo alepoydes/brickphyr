@@ -35,6 +35,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
     list(APPEND MICROPY_SOURCE_QSTR
       ${CMAKE_CURRENT_SOURCE_DIR}/hub.c ${CMAKE_CURRENT_SOURCE_DIR}/light.c
       ${CMAKE_CURRENT_SOURCE_DIR}/matrix.c ${CMAKE_CURRENT_SOURCE_DIR}/speaker.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/system.c
       ${pybricks}/pybricks/hubs/pb_module_hubs.c
       ${pybricks}/pybricks/common/pb_type_keypad.c
       ${pybricks}/pybricks/common/pb_type_lightmatrix_fonts.c)

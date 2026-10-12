@@ -23,6 +23,7 @@ if(GIT_FOUND)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_HWINFO app PRIVATE src/hub_reset.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_WATCHDOG app PRIVATE src/hub_watchdog.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_WATCHDOG_FIXTURE app PRIVATE tests/watchdog/fixture.c)
 if(CONFIG_BRICKPHYR_PORTS)

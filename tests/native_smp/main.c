@@ -2,6 +2,7 @@
 #include "application.h"
 #include "host_transport.h"
 #include "hub_light.h"
+#include "hub_power.h"
 
 #include <errno.h>
 #include <string.h>
@@ -62,7 +63,18 @@ static int frame_failure(const struct shell *shell, size_t argc, char **argv)
 }
 SHELL_CMD_ARG_REGISTER(led_error, NULL, "Synthetic SPI failure: 0|1.", frame_failure, 2, 0);
 
-uint32_t hub_buttons(void) { return 5; } /* Synthetic buttons. */
+static atomic_t pressed_buttons = ATOMIC_INIT(5);
+uint32_t hub_buttons(void) { return atomic_get(&pressed_buttons); }
+static int button_input(const struct shell *shell, size_t argc, char **argv)
+{
+	int err = 0;
+	unsigned long value = shell_strtoul(argv[1], 10, &err);
+	if (err || value > 15) return -EINVAL;
+	atomic_set(&pressed_buttons, value);
+	application_buttons(value);
+	return 0;
+}
+SHELL_CMD_ARG_REGISTER(button_input, NULL, "Synthetic button mask, 0..15.", button_input, 2, 0);
 int storage_status(void) { return -ENOTSUP; }
 
 /* QEMU UART has no DTR. Exercise the production notification explicitly. */
@@ -102,6 +114,10 @@ int main(void)
 #endif
 	for (;;) {
 		application_poll();
+		application_buttons(hub_buttons());
+		struct hub_power_state power;
+		hub_power_get(&power);
+		if (power.shutting_down) application_shutdown();
 		hub_light_update(k_uptime_get(), HOST_BLE_OFF);
 #ifndef CONFIG_SHELL_BACKEND_SERIAL
 		if (atomic_cas(&detach_requested, 1, 0)) {

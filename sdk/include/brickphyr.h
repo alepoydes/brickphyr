@@ -14,6 +14,7 @@
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
 #include <brickphyr_motor.h>
+#include <brickphyr_system.h>
 
 /* Every image carries the identity generated with its SDK. */
 #define BRICKPHYR_APPLICATION() \
@@ -29,6 +30,15 @@ __syscall int bp_sleep(uint32_t milliseconds);
 __syscall int bp_write(const void *data, size_t length);
 /* Bit 0 center, 1 left, 2 right, 3 Bluetooth. Read-only, no allocation. */
 __syscall uint32_t bp_buttons(void);
+/* Read the calling application's launch identity and current management link.
+ * No I/O or wait; name and boot cause share the firmware's existing providers. */
+__syscall int bp_system_get(struct bp_system_info *info);
+/* Select a stop-button combination using bp_buttons() bits; 0 disables it.
+ * New presses are required. Python receives SystemExit; native apps are stopped.
+ * This never disables long-center-press power-off or host-forced stop. */
+__syscall int bp_set_stop_buttons(uint32_t buttons);
+/* Request the ordinary shutdown/cleanup path; this call does not return. */
+__syscall void bp_shutdown(void);
 
 /* Queue logical RGB (0..255 per channel), copied before return. Claims one
  * button light until application exit. No allocation, I/O or wait; a pending

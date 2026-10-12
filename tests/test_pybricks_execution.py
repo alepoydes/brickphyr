@@ -226,7 +226,13 @@ def test_pybricks_long_output(tmp_path):
 
 def test_pybricks_selected_slot_and_rejected_replacement(tmp_path):
     source = tmp_path / "program.py"
-    source.write_text("print('stored in slot 2')\n")
+    source.write_text(
+        "from pybricks.hubs import PrimeHub\n"
+        "info = PrimeHub().system.info()\n"
+        "assert info['program_id'] == 2 and info['program_start_type'] == 3\n"
+        "assert info['host_connected_usb'] and not info['host_connected_ble']\n"
+        "print('stored in slot 2')\n"
+    )
 
     async def exercise(port):
         hub = PybricksHubSerial(port)

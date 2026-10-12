@@ -7,6 +7,7 @@
 mp_obj_t python_light_new(uint32_t light);
 mp_obj_t python_matrix_new(void);
 mp_obj_t python_speaker_new(void);
+extern const mp_obj_module_t python_system;
 
 static inline void python_device_check(int result)
 {

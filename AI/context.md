@@ -103,15 +103,18 @@ and application power holds are covered; see [applications](../docs/applications
 Friendly/raw REPL, Shell/CLI integration, interactive output backpressure and
 reference standard modules have ARM/PTY checks. Parameters, geometry, timing and
 multitasking reuse Pybricks code. Initial hub bindings provide buttons, static and
-animated button lighting, display text/animation/orientation, speaker tones/notes
-and battery snapshots
+animated button lighting, display text/animation/orientation, speaker tones/notes,
+system information/stop/shutdown and battery snapshots
 through the protected SDK and common services. Synthetic SPI/ADC checks cover
 validation, ownership, driver errors and cleanup, including REPL reset. On the
 Inventor F4, the hub example, friendly/raw REPL, editing, soft reset and plain Shell
 reconnection now pass over USB/BLE. Perceived output and combined flow-control
 acceptance remain open. Speaker melodies, interruption and REPL cleanup pass over
 USB/BLE on the Inventor F4, including upload through both actual Pybricks clients;
-acoustic quality remains unverified. The remaining hub, device, motor and robotics bindings
+acoustic quality remains unverified. System information, REPL identity/reset and
+autonomous USB-to-BLE handover pass on the Inventor F4; both Pybricks clients run
+the system example. Stop-button and Python shutdown checks are synthetic; user-data
+storage remains unimplemented. The remaining hub, device, motor and robotics bindings
 are required work, not optional follow-ups.
 
 The Pybricks execution adapter has protected ARM checks through the actual serial

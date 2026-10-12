@@ -464,6 +464,10 @@ ZTEST(host, test_smp_ble_inflight_disconnect)
 	host_ble_release(true);
 	host_interface_status(state);
 	zassert_true(state[2], "Released owner while accepted request still runs");
+	struct hub_power_state disconnected;
+	hub_power_get(&disconnected);
+	zassert_equal(disconnected.transport, HUB_DISCONNECTED);
+	zassert_true(disconnected.connected);
 	zassert_equal(host_ble_acquire(), -EBUSY);
 	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
 	zassert_false(host_ble_request_begin(), "Admitted packet after disconnect");
@@ -635,6 +639,9 @@ ZTEST(host, test_ble_usb_exclusion)
 	close_session();
 	zassert_ok(host_ble_acquire());
 	zassert_equal(host_ble_acquire(), -EBUSY);
+	struct hub_power_state connection;
+	hub_power_get(&connection);
+	zassert_equal(connection.transport, HUB_BLE);
 	zassert_equal(host_interface_select(HOST_PYBRICKS), -EBUSY);
 	host_interface_status(state);
 	zassert_true(state[2]);
@@ -736,6 +743,10 @@ ZTEST(host, test_usb_power_during_teardown)
 	zassert_ok(k_sem_take(&probe_entered, K_SECONDS(1)));
 	host_connection_changed(false);
 	zassert_false(hub_power_update(1, false, now + 2000), "Accepted USB work lost power hold");
+	struct hub_power_state disconnected;
+	hub_power_get(&disconnected);
+	zassert_equal(disconnected.transport, HUB_DISCONNECTED);
+	zassert_true(disconnected.connected);
 	zassert_equal(host_ble_acquire(), -EBUSY);
 	sys_put_le32(0, seconds);
 	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
@@ -774,6 +785,7 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	zassert_equal(snapshot.sampled_ms, base + 10000);
 	zassert_equal(snapshot.source, 1);
 	zassert_true(snapshot.connected);
+	zassert_equal(snapshot.transport, HUB_USB);
 	zassert_equal(snapshot.usb_idle_s, 2);
 	hub_power_get(&snapshot);
 	zassert_equal(snapshot.sampled_ms, base + 10000, "Reading must not refresh acquisition time");
@@ -794,7 +806,7 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	zassert_false(hub_power_update(1, false, base + 1001000));
 	zassert_false(hub_power_update(1, false, base + 1002999));
 	zassert_true(hub_power_update(1, false, base + 1003000));
-	zassert_false(hub_power_connection(true), "A claimed shutdown must reject a late owner");
+	zassert_false(hub_power_connection(HUB_USB), "A claimed shutdown must reject a late owner");
 }
 
 ZTEST_SUITE(host, NULL, setup, NULL, NULL, NULL);

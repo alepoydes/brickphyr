@@ -18,6 +18,7 @@
 #include "hub_battery.h"
 #include "hub_ports.h"
 #include "hub_power.h"
+#include "hub_reset.h"
 
 #include <brickphyr.h>
 #include <errno.h>
@@ -68,9 +69,13 @@ static size_t upload_size;
 static size_t upload_bytes;
 static size_t upload_heap;
 static enum application_format upload_format;
+static bool upload_pybricks;
 static atomic_t session_generation;
 static atomic_val_t upload_generation;
 static bool shutting_down;
+static struct k_spinlock button_lock;
+static uint32_t stop_buttons;
+static bool stop_pressed;
 
 /* Native logging never waits. Python may leave an unwritten suffix with the VM
  * while a continuous consumer is attached; both use this one bounded queue. */
@@ -126,7 +131,7 @@ static void refresh_input(void)
 }
 
 static int run_python(const void *program, size_t length, enum application_format format,
-	bool soft_reset);
+	bool soft_reset, int program_id);
 
 /* Allocated only when a program first compiles/loads native code. The allocator
  * needs up to twice this size transiently for MPU alignment. */
@@ -716,6 +721,46 @@ static inline int z_vrfy_bp_sound_get(struct bp_sound_state *value)
 }
 #include <zephyr/syscalls/bp_sound_get_mrsh.c>
 
+int z_impl_bp_system_get(struct bp_system_info *value)
+{
+	/* Launch metadata is immutable while this application's thread runs. */
+	*value = (struct bp_system_info){.program_id = status.program_id, .program_start_type = 3};
+	strncpy(value->name, hub_name(), sizeof(value->name) - 1);
+	value->reset_error = hub_reset_cause(&value->reset_cause);
+	struct hub_power_state power;
+	hub_power_get(&power);
+	value->connected_usb = power.transport == HUB_USB;
+	value->connected_ble = power.transport == HUB_BLE;
+	return 0;
+}
+static inline int z_vrfy_bp_system_get(struct bp_system_info *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_system_get(value);
+}
+#include <zephyr/syscalls/bp_system_get_mrsh.c>
+
+int z_impl_bp_set_stop_buttons(uint32_t buttons)
+{
+	if (buttons & ~15U) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&button_lock);
+	stop_buttons = buttons;
+	stop_pressed = buttons && (hub_buttons() & buttons) == buttons;
+	k_spin_unlock(&button_lock, key);
+	return 0;
+}
+static inline int z_vrfy_bp_set_stop_buttons(uint32_t buttons) { return z_impl_bp_set_stop_buttons(buttons); }
+#include <zephyr/syscalls/bp_set_stop_buttons_mrsh.c>
+
+void z_impl_bp_shutdown(void)
+{
+	hub_power_request_shutdown();
+	for (;;) k_sleep(K_FOREVER);
+}
+static inline void z_vrfy_bp_shutdown(void) { z_impl_bp_shutdown(); }
+#include <zephyr/syscalls/bp_shutdown_mrsh.c>
+
 /* Completion is a private syscall used by the user-mode trampoline. */
 void z_impl_application_finished(int result)
 {
@@ -851,7 +896,7 @@ static int reap(bool stop)
 	 * prepare/reap(true) sees an already joined thread and cannot restart it. */
 	if (!err && ended && !stop && !fault && status.repl &&
 	    result == PYTHON_RESTART && !shutting_down) {
-		return run_python(NULL, 0, APPLICATION_PYTHON, true);
+		return run_python(NULL, 0, APPLICATION_PYTHON, true, 128);
 	}
 #endif
 	return err;
@@ -948,6 +993,28 @@ void application_poll(void)
 	k_mutex_unlock(&lifecycle);
 }
 
+void application_buttons(uint32_t buttons)
+{
+	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return;
+	k_spinlock_key_t key = k_spin_lock(&button_lock);
+	bool pressed = stop_buttons && (buttons & stop_buttons) == stop_buttons;
+	bool trigger = pressed && !stop_pressed;
+	stop_pressed = pressed;
+	k_spin_unlock(&button_lock, key);
+	if (trigger && atomic_get(&active)) {
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		if (status.format != APPLICATION_NATIVE) {
+			python_stop();
+			k_sem_give(&io_ready);
+		} else
+#endif
+		{
+			(void)reap(true);
+		}
+	}
+	k_mutex_unlock(&lifecycle);
+}
+
 /* lifecycle is held; neither engine may replace a thread before it is joined. */
 static int prepare(void)
 {
@@ -974,6 +1041,7 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 	status = value;
 	status.state = APPLICATION_RUNNING;
 	status.stack_bytes = sizeof(application_stack);
+	(void)z_impl_bp_set_stop_buttons(value.format == APPLICATION_NATIVE ? 0 : 1);
 	atomic_clear(&return_value);
 	atomic_clear(&fault_reason);
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -1035,7 +1103,7 @@ static int run_image(struct llext_loader *loader, size_t length, size_t heap_siz
 		goto failed;
 	}
 	err = start_thread(native_entry, extension, (void *)function, NULL,
-		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length,
+		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length, .program_id = -1,
 			.loader_bytes = heap_size, .loaded_bytes = extension->alloc_size}, false);
 	if (err) {
 		goto failed;
@@ -1049,7 +1117,7 @@ failed:
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 static int run_python(const void *program, size_t length, enum application_format format,
-	bool soft_reset)
+	bool soft_reset, int program_id)
 {
 	int err = prepare();
 	if (err) {
@@ -1067,6 +1135,7 @@ static int run_python(const void *program, size_t length, enum application_forma
 	if (!err) {
 		err = start_thread(python_entry, retained, (void *)length, (void *)(uintptr_t)format,
 			(struct application_status){.format = format, .image_bytes = length, .repl = !program,
+				.program_id = program_id,
 				.loader_bytes = sizeof(execution_memory), .loaded_bytes = sizeof(execution_memory)},
 			soft_reset);
 	}
@@ -1084,7 +1153,7 @@ int application_repl(void)
 	if (err == -EAGAIN) {
 		err = status.repl ? 0 : -EBUSY;
 	} else if (!err && !atomic_get(&active)) {
-		err = run_python(NULL, 0, APPLICATION_PYTHON, false);
+		err = run_python(NULL, 0, APPLICATION_PYTHON, false, 128);
 	}
 	k_mutex_unlock(&lifecycle);
 	return err;
@@ -1188,7 +1257,7 @@ int application_check_file(const char *path, size_t length)
 	return err;
 }
 
-int application_run_file(const char *path)
+int application_run_file(const char *path, int program_id)
 {
 	struct fs_dirent info;
 	int err = fs_stat(path, &info);
@@ -1205,7 +1274,7 @@ int application_run_file(const char *path)
 		k_mutex_lock(&lifecycle, K_FOREVER);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (image) {
-			err = run_python(image, info.size, APPLICATION_FILES, false);
+			err = run_python(image, info.size, APPLICATION_FILES, false, program_id);
 		} else
 #endif
 		{
@@ -1319,6 +1388,7 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 		upload = data_buffer;
 		upload_size = total;
 		upload_format = format;
+		upload_pybricks = format == APPLICATION_PYBRICKS;
 		upload_generation = atomic_get(&session_generation);
 	}
 	if (!upload || total != upload_size || offset > upload_bytes || format != upload_format) {
@@ -1356,7 +1426,7 @@ int application_run_uploaded(bool retain)
 	if (upload_heap) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (upload_format != APPLICATION_NATIVE) {
-			err = run_python(upload, upload_size, upload_format, false);
+			err = run_python(upload, upload_size, upload_format, false, upload_pybricks ? 0 : -1);
 		} else
 #endif
 		{

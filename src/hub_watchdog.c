@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_watchdog.h"
+#include "hub_reset.h"
 #include <inttypes.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/hwinfo.h>
@@ -14,8 +15,6 @@ LOG_MODULE_REGISTER(hub_watchdog);
 static int hub_channel = -1;
 static int work_channel = -1;
 static int status = -EAGAIN;
-static uint32_t reset_cause;
-static int reset_error;
 
 static void work_progress(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(progress, work_progress);
@@ -57,10 +56,6 @@ int hub_watchdog_run(void)
 
 static int initialize(void)
 {
-	reset_error = hwinfo_get_reset_cause(&reset_cause);
-	if (!reset_error) {
-		reset_error = hwinfo_clear_reset_cause();
-	}
 	const struct device *wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 
 	status = device_is_ready(wdt) ? task_wdt_init(wdt) : -ENODEV;
@@ -80,6 +75,8 @@ SYS_INIT(initialize, POST_KERNEL, 51);
 
 static int cmd_watchdog(const struct shell *shell, size_t argc, char **argv)
 {
+	uint32_t reset_cause;
+	int reset_error = hub_reset_cause(&reset_cause);
 	shell_print(shell, "Watchdog: %s; error %d; progress timeout %u ms",
 		status ? "unavailable" : "armed", status, CONFIG_BRICKPHYR_WATCHDOG_TIMEOUT_MS);
 	if (reset_error) {
