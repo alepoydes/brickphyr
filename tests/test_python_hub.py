@@ -56,7 +56,7 @@ async def ready(client):
     assert text.strip() == b"ready", bytes(text)
 
 
-def test_hub_identity_buttons_and_battery():
+def test_hub_identity_buttons_battery_and_charger():
     assert (
         execute(b"""
 from pybricks.hubs import PrimeHub, InventorHub, ThisHub
@@ -75,6 +75,8 @@ wait(1050)
 assert 7000 < hub.battery.voltage() < 9000
 assert hub.battery.current() == 1825
 assert 24000 <= hub.battery.temperature() <= 26000
+assert hub.charger.current() == 412
+assert hub.charger.status() == 1
 print('hub observations passed')
 """)
         == b"hub observations passed\n"

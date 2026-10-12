@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2023 The Pybricks Authors
-// Adapted from pybricks/hubs/pb_type_primehub.c and common/pb_type_battery.c.
+// Adapted from pybricks/hubs/pb_type_primehub.c and common/pb_type_{battery,charger}.c.
 #include "devices.h"
 #include <brickphyr.h>
 #include <pybricks/common.h>
@@ -12,7 +12,7 @@
 
 typedef struct {
 	mp_obj_base_t base;
-	mp_obj_t buttons, light, bluetooth_light, display, battery, speaker, system, imu;
+	mp_obj_t buttons, light, bluetooth_light, display, battery, charger, speaker, system, imu;
 } hub_obj_t;
 
 static mp_obj_t buttons_pressed(mp_obj_t parent)
@@ -81,6 +81,44 @@ static const mp_rom_map_elem_t battery_globals[] = {
 static MP_DEFINE_CONST_DICT(battery_dict, battery_globals);
 static const mp_obj_module_t battery = {{&mp_type_module}, (mp_obj_dict_t *)&battery_dict};
 
+/* pb_type_charger.c interface over the same cached native observations used
+ * by Shell and telemetry. Acquisition errors must not masquerade as a status. */
+static struct bp_charger_state charger_sample(void)
+{
+	struct bp_charger_state value;
+	python_device_check(bp_charger_get(&value));
+	python_device_check(value.error);
+	return value;
+}
+
+static mp_obj_t charger_current(void)
+{
+	return mp_obj_new_int(charger_sample().current_ma);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(charger_current_obj, charger_current);
+
+static mp_obj_t charger_status(void)
+{
+	return MP_OBJ_NEW_SMALL_INT(charger_sample().status);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(charger_status_obj, charger_status);
+
+static mp_obj_t charger_connected(void)
+{
+	/* Configuration alone cannot distinguish SDP from CDP. */
+	mp_raise_NotImplementedError(MP_ERROR_TEXT("USB charger type detection"));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(charger_connected_obj, charger_connected);
+
+static const mp_rom_map_elem_t charger_globals[] = {
+	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_charger) },
+	{ MP_ROM_QSTR(MP_QSTR_current), MP_ROM_PTR(&charger_current_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_status), MP_ROM_PTR(&charger_status_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_connected), MP_ROM_PTR(&charger_connected_obj) },
+};
+static MP_DEFINE_CONST_DICT(charger_dict, charger_globals);
+static const mp_obj_module_t charger = {{&mp_type_module}, (mp_obj_dict_t *)&charger_dict};
+
 static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args,
@@ -96,6 +134,7 @@ static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 	self->bluetooth_light = python_light_new(BP_LIGHT_BLUETOOTH);
 	self->display = python_matrix_new();
 	self->battery = MP_OBJ_FROM_PTR(&battery);
+	self->charger = MP_OBJ_FROM_PTR(&charger);
 	self->speaker = python_speaker_new();
 	self->system = MP_OBJ_FROM_PTR(&python_system);
 	self->imu = MP_OBJ_FROM_PTR(&python_imu);
@@ -108,6 +147,7 @@ static const pb_attr_dict_entry_t hub_attributes[] = {
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_bluetooth_light, hub_obj_t, bluetooth_light),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_display, hub_obj_t, display),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_battery, hub_obj_t, battery),
+	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_charger, hub_obj_t, charger),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_speaker, hub_obj_t, speaker),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_system, hub_obj_t, system),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_imu, hub_obj_t, imu),

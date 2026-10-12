@@ -2,11 +2,13 @@
 #include "application.h"
 #include "host_transport.h"
 #include "hub_light.h"
+#include "hub_charger.h"
 #include "hub_power.h"
 
 #include <errno.h>
 #include <string.h>
 #include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/spi_emul.h>
 #include <zephyr/kernel.h>
 #include <zephyr/fff.h>
@@ -99,6 +101,13 @@ SHELL_CMD_ARG_REGISTER(detach, NULL, "Schedule a synthetic DTR cycle in 1.2 s.",
 
 int main(void)
 {
+	/* Synthetic configured host and stable charge indication. The production
+	 * service acquires these ADC/ladder samples in the normal hub loop below. */
+	const struct device *adc = DEVICE_DT_GET(DT_NODELABEL(adc1));
+	__ASSERT_NO_MSG(!adc_emul_const_raw_value_set(adc, 3, 1000));
+	__ASSERT_NO_MSG(!adc_emul_const_raw_value_set(adc, 14, 3600));
+	__ASSERT_NO_MSG(!adc_emul_const_raw_value_set(adc, 1, 4095));
+	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
 #ifndef CONFIG_SHELL_BACKEND_SERIAL
 	/* Actual shared host dispatcher over QEMU's UART. DTR is synthetic. */
 	int err = host_transport_init(DEVICE_DT_GET(DT_CHOSEN(zephyr_console)), 0);
@@ -119,6 +128,7 @@ int main(void)
 		hub_power_get(&power);
 		if (power.shutting_down) application_shutdown();
 		hub_light_update(k_uptime_get(), HOST_BLE_OFF);
+		hub_charger_update(1, k_uptime_get());
 #ifndef CONFIG_SHELL_BACKEND_SERIAL
 		if (atomic_cas(&detach_requested, 1, 0)) {
 			detach_at = k_uptime_get() + 1200;

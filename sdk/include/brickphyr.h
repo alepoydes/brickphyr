@@ -11,6 +11,7 @@
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
+#include <brickphyr_charger.h>
 #include <brickphyr_port.h>
 #include <brickphyr_sensor.h>
 #include <brickphyr_motor.h>
@@ -102,6 +103,9 @@ __syscall int bp_imu_get_application(struct bp_imu_application_state *state);
  * Check error for voltage/current, temperature_error for temperature. Chemistry
  * is independent of both; startup, stale, failed and stopped readings are explicit. */
 __syscall int bp_battery_get(struct bp_battery_sample *sample);
+/* Copy the charger's cached observations without I/O. Check state.error before
+ * using current/status; a driver fault is distinct from stale/failed sensing. */
+__syscall int bp_charger_get(struct bp_charger_state *state);
 
 /* Copy port identity and raw UART data; no I/O or port reconfiguration.
  * Ports are numbered 0..5 (A..F). */

@@ -596,6 +596,21 @@ observe battery
 uv run brickphyrdev monitor --source charger --source battery --log charging.jsonl
 ```
 
+Native applications read `bp_charger_get()`; Python uses the same snapshot:
+
+```python
+from pybricks.hubs import PrimeHub
+hub = PrimeHub()
+print(hub.charger.current())  # empirical charger current, mA
+print(hub.charger.status())   # 0 discharging, 1 charging, 2 complete, 3 fault
+```
+
+Both methods raise `OSError` for unavailable, failed or stale observations.
+`hub.charger.connected()` remains unimplemented: its reference result is the
+BC1.2 source class, which cannot be inferred from USB configuration alone. It
+raises `NotImplementedError` until detection is integrated with Zephyr's USB
+controller owner. Reading an observation does not change charging policy.
+
 `enabled` is the last successfully applied charge-enable state; `limit_ma` names
 the selected reference preset. `current_ma` is the empirical IB conversion,
 clamped at zero instead of wrapping below its offset. `status` is 0 discharging,
@@ -608,7 +623,9 @@ hour enabled, charging pauses for 30 seconds and restarts, as in Pybricks.
 Suspend or removal revokes charging at the next hub-loop update.
 
 Initial charging and recovery of battery voltage, lighting and the center button
-are checked on the Inventor F4. Full-charge termination, all temperature/fault
+are checked on the Inventor F4. Python current/status readings through the
+protected SDK are checked with synthetic ADC input on ARM and over USB/BLE on
+that F4. Full-charge termination, all temperature/fault
 conditions, adapter recognition and instrumented current accuracy remain open.
 
 ## A support claim must be reproducible

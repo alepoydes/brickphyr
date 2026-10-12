@@ -17,6 +17,7 @@
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
+#include "hub_charger.h"
 #include "hub_ports.h"
 #include "hub_power.h"
 #include "hub_reset.h"
@@ -579,6 +580,18 @@ static inline int z_vrfy_bp_battery_get(struct bp_battery_sample *value)
 	return z_impl_bp_battery_get(value);
 }
 #include <zephyr/syscalls/bp_battery_get_mrsh.c>
+
+int z_impl_bp_charger_get(struct bp_charger_state *value)
+{
+	return hub_charger_get(value);
+}
+static inline int z_vrfy_bp_charger_get(struct bp_charger_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_charger_get(value);
+}
+#include <zephyr/syscalls/bp_charger_get_mrsh.c>
 
 int z_impl_bp_port_get(uint32_t port, struct bp_port_state *value)
 {

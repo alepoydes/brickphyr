@@ -21,3 +21,26 @@
 };
 
 #include "storage.overlay"
+
+#include "../../boards/lego/spike_prime_f4/buttons.dtsi"
+&adc1 {
+	nchannels = <15>;
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+/ {
+	hub_charger: charger {
+		compatible = "lego,prime-charger";
+		mode-controller = <&hub_leds>;
+		mode-channel = <14>;
+		pwms = <&matrix_pwm 1 10417>;
+		io-channels = <&adc1 3>;
+		status-ladder = <&center_keys>;
+		status-bit = <2>;
+	};
+};

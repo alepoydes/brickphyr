@@ -180,7 +180,8 @@ negotiation window; this is functional simulation, not hardware timing evidence.
 
 `test_python_hub.py` exercises the Pybricks hub bindings through that same
 protected engine. Synthetic button/ADC inputs and an observed SPI peer check
-button sets, battery units, static drawing, rotation, color channels, ownership,
+button sets, battery units, charger current/status, static drawing, rotation, color
+channels, ownership,
 I/O failures and cleanup on return, exception, forced stop and REPL reset.
 Light sequences are copied before caller mutation/GC, invalid replacements
 preserve the preceding pattern, and both lights animate during a non-yielding

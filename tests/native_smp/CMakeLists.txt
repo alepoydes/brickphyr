@@ -38,3 +38,6 @@ if(CONFIG_BRICKPHYR_IMU)
   include(${BRICKPHYR_ROOT}/cmake/hub_imu.cmake)
   target_sources(app PRIVATE imu.c)
 endif()
+
+target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_charger.c
+  ${BRICKPHYR_ROOT}/drivers/input_resistor_ladder.c)

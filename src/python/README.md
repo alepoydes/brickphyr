@@ -163,7 +163,8 @@ both independent logger buffers belong to the firmware, and their shared CSV
 export implementation uses application stdout.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
-battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
+battery, charger observations, internal color-light, light-matrix, speaker, system
+and IMU bindings from Pybricks
 v4.1.0b6 (`a7b1b04ae`). They retain the upstream
 MIT attribution. The keypad wrapper, fonts and color conversion compile directly
 from that checkout; the font's BBC notice is retained in the distribution notice.

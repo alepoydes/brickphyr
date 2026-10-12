@@ -14,6 +14,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_charger.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
@@ -28,6 +29,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_charger.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_port.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sensor.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_motor.h
