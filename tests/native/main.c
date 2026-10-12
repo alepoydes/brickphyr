@@ -186,6 +186,12 @@ int main(void)
 		application_get_status(&status);
 		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	}
+	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
+		CHECK(native_fixture_run("imu_fault") == 0);
+		k_msleep(20);
+		application_get_status(&status);
+		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
+	}
 	test_buttons = 5;
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);

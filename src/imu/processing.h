@@ -4,6 +4,20 @@
 
 #include <pbio/imu.h>
 
+/* Coordinate/heading view of the one estimator, not another pose filter.
+ * Update on every successful sample so winding counts do not depend on readers. */
+typedef struct {
+    pbio_geometry_matrix_3x3_t base;
+    float projection;
+    int32_t rotations;
+    float offset_1d, offset_3d;
+} imu_processing_frame_t;
+
+void imu_processing_frame_update(imu_processing_frame_t *frame);
+void imu_processing_frame_restart(imu_processing_frame_t *frame);
+float imu_processing_frame_heading(imu_processing_frame_t *frame, pbio_imu_heading_type_t type);
+void imu_processing_frame_set_heading(imu_processing_frame_t *frame, float angle);
+
 /**
  * Private boundary of Brickphyr's port of the Pybricks IMU estimator.
  * Serialize processing, settings and all pbio_imu getters in the caller.
@@ -36,5 +50,7 @@ pbio_error_t imu_processing_sample(const pbio_geometry_xyz_t *angular_velocity,
 bool imu_processing_stationary(const pbio_geometry_xyz_t *gyro_average, uint32_t now_ms);
 bool imu_processing_ready(uint32_t now_ms);
 void imu_processing_get_bias(pbio_geometry_xyz_t *bias);
+/** Integrated rotations in physical hub axes, before the application mapping. */
+void imu_processing_get_rotation(pbio_geometry_xyz_t *rotation, bool calibrated);
 
 #endif // BRICKPHYR_IMU_PROCESSING_H_

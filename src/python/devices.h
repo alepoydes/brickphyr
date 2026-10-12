@@ -9,6 +9,7 @@ mp_obj_t python_matrix_new(void);
 mp_obj_t python_speaker_new(void);
 extern const mp_obj_module_t python_system;
 extern const mp_obj_base_t python_imu;
+void python_imu_axes(mp_obj_t top, mp_obj_t front);
 
 static inline void python_device_check(int result)
 {

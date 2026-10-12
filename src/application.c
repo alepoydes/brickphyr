@@ -541,6 +541,32 @@ static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 }
 #include <zephyr/syscalls/bp_imu_get_state_mrsh.c>
 
+int z_impl_bp_imu_configure(const struct bp_imu_command *command)
+{
+	return hub_imu_configure(command);
+}
+
+static inline int z_vrfy_bp_imu_configure(const struct bp_imu_command *command)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(command, __alignof__(*command))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	return z_impl_bp_imu_configure(command);
+}
+#include <zephyr/syscalls/bp_imu_configure_mrsh.c>
+
+int z_impl_bp_imu_get_application(struct bp_imu_application_state *value)
+{
+	return hub_imu_get_application(value);
+}
+
+static inline int z_vrfy_bp_imu_get_application(struct bp_imu_application_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_imu_get_application(value);
+}
+#include <zephyr/syscalls/bp_imu_get_application_mrsh.c>
+
 int z_impl_bp_battery_get(struct bp_battery_sample *value)
 {
 	return hub_battery_get(value);
@@ -847,6 +873,7 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 static int release(void)
 {
 	int err = hub_ports_release(BP_PORT_APPLICATION);
+	hub_imu_release();
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */
 	int sound_error = hub_sound_release(BP_SOUND_APPLICATION);

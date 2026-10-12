@@ -8,6 +8,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
+#include "hub_imu.h"
+#include <math.h>
 
 static uint8_t registers[256] = {[0x0f] = 0x6a, [0x12] = 4};
 static int16_t input[6] = {0, 0, 0, 0, 0, -4096};
@@ -89,3 +91,17 @@ static int set_fault(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(imu_error, NULL, "Synthetic fault: 0=none, 1=I2C, 2=no edges.", set_fault, 2, 0);
+
+static int view_frame(const struct shell *shell, size_t argc, char **argv)
+{
+	struct bp_imu_application_state state;
+	int err = hub_imu_get_application(&state);
+	if (err) return err;
+	shell_fprintf(shell, SHELL_NORMAL, "base:");
+	for (size_t i = 0; i < ARRAY_SIZE(state.base); i++) {
+		shell_fprintf(shell, SHELL_NORMAL, " %ld", lroundf(state.base[i] * 1000));
+	}
+	shell_print(shell, " pending:%u error:%d", state.pending, state.command_error);
+	return 0;
+}
+SHELL_CMD_REGISTER(imu_view, NULL, "Inspect production application coordinates.", view_frame);

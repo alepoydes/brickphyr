@@ -115,34 +115,9 @@ static pbio_geometry_matrix_3x3_t pbio_imu_rotation = {
  *
  * Default orientation is identity, hub flat.
  */
-static pbio_geometry_matrix_3x3_t pbio_imu_base_orientation = {
-    .m11 = 1.0f, .m12 = 0.0f, .m13 = 0.0f,
-    .m21 = 0.0f, .m22 = 1.0f, .m23 = 0.0f,
-    .m31 = 0.0f, .m32 = 0.0f, .m33 = 1.0f,
+static imu_processing_frame_t default_frame = {
+    .base = { .m11 = 1, .m22 = 1, .m33 = 1 },
 };
-
-/**
- * The heading is defined as follows.
- *
- * Take the x-axis (after transformation to application frame) and project
- * into the inertial frame. Then project onto the horizontal (X-Y) plane. Then
- * take the angle between the projection and the x-axis, counterclockwise
- * positive.
- *
- * In practice, this means that when you look at a robot from the top, it is
- * the angle that its "forward direction vector" makes with respect to the
- * x-axis, even when the robot isn't perfectly flat.
- *
- */
-static float heading_projection;
-
-/**
- * When the heading_projection flips from 180 to -180 or vice versa, we
- * increment or decrement the overal rotation counter to maintain a continuous
- * heading.
- */
-static int32_t heading_rotations;
-
 
 /**
  * Hub calibration settings. Cannot be used until loaded.
@@ -196,13 +171,13 @@ void imu_processing_apply_settings(pbio_imu_persistent_settings_t *settings) {
  * This is also called when the orientation frame is changed because this sets
  * the application x-axis used for the heading projection.
  */
-static void update_heading_projection(void) {
+void imu_processing_frame_update(imu_processing_frame_t *frame) {
 
     // Transform application x axis back into the hub frame (R_base^T * x_unit).
     pbio_geometry_xyz_t x_application = {
-        .x = pbio_imu_base_orientation.m11,
-        .y = pbio_imu_base_orientation.m12,
-        .z = pbio_imu_base_orientation.m13
+        .x = frame->base.m11,
+        .y = frame->base.m12,
+        .z = frame->base.m13
     };
 
     // Transform application x axis into the inertial frame via quaternion matrix.
@@ -213,12 +188,12 @@ static void update_heading_projection(void) {
     float heading_now = pbio_geometry_radians_to_degrees(atan2f(-x_inertial.y, x_inertial.x));
 
     // Update full rotation counter if the projection jumps across the 180/-180 boundary.
-    if (heading_now < -90 && heading_projection > 90) {
-        heading_rotations++;
-    } else if (heading_now > 90 && heading_projection < -90) {
-        heading_rotations--;
+    if (heading_now < -90 && frame->projection > 90) {
+        frame->rotations++;
+    } else if (heading_now > 90 && frame->projection < -90) {
+        frame->rotations--;
     }
-    heading_projection = heading_now;
+    frame->projection = heading_now;
 }
 
 // Process physical samples supplied by the platform adapter.
@@ -323,7 +298,7 @@ pbio_error_t imu_processing_sample(const pbio_geometry_xyz_t *angular_velocity,
 
     // All outputs describe this sample, not the previous integration step.
     pbio_geometry_quaternion_to_rotation_matrix(&quaternion, &pbio_imu_rotation);
-    update_heading_projection();
+    imu_processing_frame_update(&default_frame);
     return PBIO_SUCCESS;
 }
 
@@ -390,13 +365,13 @@ bool imu_processing_stationary(const pbio_geometry_xyz_t *gyro_average, uint32_t
  */
 pbio_error_t pbio_imu_set_base_orientation(pbio_geometry_xyz_t *front_side_axis, pbio_geometry_xyz_t *top_side_axis) {
 
-    pbio_error_t err = pbio_geometry_map_from_base_axes(front_side_axis, top_side_axis, &pbio_imu_base_orientation);
+    pbio_error_t err = pbio_geometry_map_from_base_axes(front_side_axis, top_side_axis, &default_frame.base);
     if (err != PBIO_SUCCESS) {
         return err;
     }
 
     // Need to update heading projection since the application axes were changed.
-    update_heading_projection();
+    imu_processing_frame_update(&default_frame);
 
     // Reset offsets such that the new frame starts with zero heading.
     pbio_imu_set_heading(0.0f);
@@ -533,7 +508,7 @@ pbio_error_t pbio_imu_get_settings(pbio_imu_persistent_settings_t **settings) {
  */
 void pbio_imu_get_angular_velocity(pbio_geometry_xyz_t *values, bool calibrated) {
     pbio_geometry_xyz_t *angular_velocity = calibrated ? &angular_velocity_calibrated : &angular_velocity_uncalibrated;
-    pbio_geometry_vector_map(&pbio_imu_base_orientation, angular_velocity, values);
+    pbio_geometry_vector_map(&default_frame.base, angular_velocity, values);
 }
 
 /**
@@ -545,7 +520,7 @@ void pbio_imu_get_angular_velocity(pbio_geometry_xyz_t *values, bool calibrated)
  */
 void pbio_imu_get_acceleration(pbio_geometry_xyz_t *values, bool calibrated) {
     pbio_geometry_xyz_t *acceleration = calibrated ? &acceleration_calibrated : &acceleration_uncalibrated;
-    pbio_geometry_vector_map(&pbio_imu_base_orientation, acceleration, values);
+    pbio_geometry_vector_map(&default_frame.base, acceleration, values);
 }
 
 /**
@@ -560,37 +535,33 @@ void pbio_imu_get_tilt_vector(pbio_geometry_xyz_t *values) {
         .y = pbio_imu_rotation.m32,
         .z = pbio_imu_rotation.m33,
     };
-    pbio_geometry_vector_map(&pbio_imu_base_orientation, &direction, values);
+    pbio_geometry_vector_map(&default_frame.base, &direction, values);
 }
 
-/**
- * Gets the rotation along a particular axis of the robot frame.
- *
- * The resulting value makes sense only for one-dimensional rotations.
- *
- * @param [in]  axis        The axis to project the rotation onto.
- * @param [out] angle       The angle of rotation in degrees.
- * @param [in]  calibrated  Whether to use the adjusted scale (true) or the raw scale (false).
- * @return                  ::PBIO_SUCCESS on success, ::PBIO_ERROR_INVALID_ARG if axis has zero length.
- */
-pbio_error_t pbio_imu_get_single_axis_rotation(pbio_geometry_xyz_t *axis, float *angle, bool calibrated) {
+/* Per-axis integrated rotations in the physical hub frame, in degrees. */
+void imu_processing_get_rotation(pbio_geometry_xyz_t *rotation, bool calibrated) {
 
     // Local copy so we can change it in-place.
-    pbio_geometry_xyz_t axis_rotation = single_axis_rotation;
+    *rotation = single_axis_rotation;
     if (!calibrated && persistent_settings) {
         // In this context, calibrated means that the angular velocity values
         // were scaled by the user calibration factors before integrating. This
         // is done within the update loop since we need it for 3D integration.
         // Since this method only returns the separate 1D rotations, we can
         // undo this scaling here to get the "uncalibrated" values.
-        for (uint8_t i = 0; i < PBIO_ARRAY_SIZE(axis_rotation.values); i++) {
-            axis_rotation.values[i] *= persistent_settings->angular_velocity_scale.values[i] / 360.0f;
+        for (uint8_t i = 0; i < PBIO_ARRAY_SIZE(rotation->values); i++) {
+            rotation->values[i] *= persistent_settings->angular_velocity_scale.values[i] / 360.0f;
         }
     }
+}
 
+/** Project integrated rotations into the robot frame. Meaningful for 1D turns. */
+pbio_error_t pbio_imu_get_single_axis_rotation(pbio_geometry_xyz_t *axis, float *angle, bool calibrated) {
+    pbio_geometry_xyz_t axis_rotation;
+    imu_processing_get_rotation(&axis_rotation, calibrated);
     // Transform the single axis rotations to the robot frame.
     pbio_geometry_xyz_t rotation_user;
-    pbio_geometry_vector_map(&pbio_imu_base_orientation, &axis_rotation, &rotation_user);
+    pbio_geometry_vector_map(&default_frame.base, &axis_rotation, &rotation_user);
 
     // Get the requested scalar rotation along the given axis.
     return pbio_geometry_vector_project(axis, &rotation_user, angle);
@@ -620,8 +591,6 @@ pbio_geometry_side_t pbio_imu_get_up_side(bool calibrated) {
     return pbio_geometry_side_from_vector(&vector);
 }
 
-static float heading_offset_1d = 0;
-static float heading_offset_3d = 0;
 
 /**
  * Reads the estimated IMU heading in degrees, accounting for user offset and
@@ -633,7 +602,7 @@ static float heading_offset_3d = 0;
  *
  * @return                  Heading angle in the base frame.
  */
-float pbio_imu_get_heading(pbio_imu_heading_type_t type) {
+float imu_processing_frame_heading(imu_processing_frame_t *frame, pbio_imu_heading_type_t type) {
 
     float correction = (persistent_settings && (persistent_settings->flags & PBIO_IMU_SETTINGS_FLAGS_HEADING_CORRECTION_1D_SET)) ?
         // If set, adjust by the user-specified scaling constant.
@@ -643,15 +612,19 @@ float pbio_imu_get_heading(pbio_imu_heading_type_t type) {
 
     // 3D. Mapping into user frame is already accounted for in the projection.
     if (type == PBIO_IMU_HEADING_TYPE_3D) {
-        return (heading_rotations * 360.0f + heading_projection) * correction - heading_offset_3d;
+        return (frame->rotations * 360.0f + frame->projection) * correction - frame->offset_3d;
     }
 
     // 1D. Map the per-axis integrated rotation to the user frame, then take
     // the negative z component as the heading for positive-clockwise convention.
     pbio_geometry_xyz_t heading_mapped;
-    pbio_geometry_vector_map(&pbio_imu_base_orientation, &single_axis_rotation, &heading_mapped);
+    pbio_geometry_vector_map(&frame->base, &single_axis_rotation, &heading_mapped);
 
-    return -heading_mapped.z * correction - heading_offset_1d;
+    return -heading_mapped.z * correction - frame->offset_1d;
+}
+
+float pbio_imu_get_heading(pbio_imu_heading_type_t type) {
+    return imu_processing_frame_heading(&default_frame, type);
 }
 
 /**
@@ -662,10 +635,19 @@ float pbio_imu_get_heading(pbio_imu_heading_type_t type) {
  *
  * @param [in] desired_heading  The desired heading value.
  */
+void imu_processing_frame_set_heading(imu_processing_frame_t *frame, float angle) {
+    frame->rotations = 0;
+    frame->offset_1d = frame->offset_3d = 0;
+    frame->offset_1d = imu_processing_frame_heading(frame, PBIO_IMU_HEADING_TYPE_1D) - angle;
+    frame->offset_3d = imu_processing_frame_heading(frame, PBIO_IMU_HEADING_TYPE_3D) - angle;
+}
+
 void pbio_imu_set_heading(float desired_heading) {
-    heading_rotations = 0;
-    heading_offset_3d = pbio_imu_get_heading(PBIO_IMU_HEADING_TYPE_3D) + heading_offset_3d - desired_heading;
-    heading_offset_1d = pbio_imu_get_heading(PBIO_IMU_HEADING_TYPE_1D) + heading_offset_1d - desired_heading;
+    imu_processing_frame_set_heading(&default_frame, desired_heading);
+}
+
+void imu_processing_frame_restart(imu_processing_frame_t *frame) {
+    *frame = (imu_processing_frame_t) { .base = frame->base };
 }
 
 /**
@@ -715,8 +697,7 @@ void imu_processing_restart_orientation(void) {
     quaternion = (pbio_geometry_quaternion_t) { .q4 = 1 };
     quaternion_initialized = false;
     pbio_imu_rotation = (pbio_geometry_matrix_3x3_t) { .m11 = 1, .m22 = 1, .m33 = 1 };
-    heading_projection = heading_offset_1d = heading_offset_3d = 0;
-    heading_rotations = 0;
+    imu_processing_frame_restart(&default_frame);
 }
 
 void imu_processing_reset(void) {
@@ -726,7 +707,7 @@ void imu_processing_reset(void) {
     acceleration_uncalibrated = (pbio_geometry_xyz_t) {0};
     acceleration_calibrated = (pbio_geometry_xyz_t) {0};
     gyro_bias = (pbio_geometry_xyz_t) {0};
-    pbio_imu_base_orientation = pbio_imu_rotation;
+    default_frame.base = pbio_imu_rotation;
     stationary_counter = stationary_time_last = 0;
     persistent_settings = NULL;
 }

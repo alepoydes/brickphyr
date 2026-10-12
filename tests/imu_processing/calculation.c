@@ -97,6 +97,38 @@ static void rotations(void) {
     near(tilt.z, 0.8f, 0.0001f);
 }
 
+static void independent_frames(void) {
+    reset();
+    assert(imu_processing_sample(&zero, &gravity, 0) == PBIO_SUCCESS);
+    imu_processing_frame_t frame = {0};
+    pbio_geometry_xyz_t front = { .y = 1 }, top = { .z = 1 }, rate = { .z = 90 };
+    assert(pbio_geometry_map_from_base_axes(&front, &top, &frame.base) == PBIO_SUCCESS);
+    imu_processing_frame_update(&frame);
+    imu_processing_frame_set_heading(&frame, 23);
+    for (unsigned int i = 0; i < 8000; i++) {
+        assert(imu_processing_sample(&rate, &gravity, 0.001f) == PBIO_SUCCESS);
+        imu_processing_frame_update(&frame);
+    }
+    // Reading only after two turns still retains every winding. Changing the
+    // application reference leaves the physical one and integrated axes intact.
+    near(imu_processing_frame_heading(&frame, PBIO_IMU_HEADING_TYPE_3D), 23 - 720, 0.02f);
+    near(imu_processing_frame_heading(&frame, PBIO_IMU_HEADING_TYPE_1D), 23 - 720, 0.08f);
+    imu_processing_frame_set_heading(&frame, 1e30f);
+    imu_processing_frame_set_heading(&frame, 17);
+    near(imu_processing_frame_heading(&frame, PBIO_IMU_HEADING_TYPE_3D), 17, 0.0001f);
+    near(imu_processing_frame_heading(&frame, PBIO_IMU_HEADING_TYPE_1D), 17, 0.0001f);
+    near(pbio_imu_get_heading(PBIO_IMU_HEADING_TYPE_3D), -720, 0.02f);
+    pbio_geometry_xyz_t rotation;
+    imu_processing_get_rotation(&rotation, true);
+    near(rotation.z, 720, 0.08f);
+    imu_processing_restart_orientation();
+    imu_processing_frame_restart(&frame);
+    assert(imu_processing_sample(&zero, &gravity, 0) == PBIO_SUCCESS);
+    imu_processing_frame_update(&frame);
+    near(frame.base.m21, 1, 0);
+    near(imu_processing_frame_heading(&frame, PBIO_IMU_HEADING_TYPE_1D), 0, 0);
+}
+
 static void calibration(void) {
     reset();
     pbio_imu_persistent_settings_t changed = settings;
@@ -258,6 +290,7 @@ int imu_processing_checks(void) {
     poses_and_reads();
     rotations();
     calibration();
+    independent_frames();
     settings_rejection();
     stationary();
     stationary_windows();

@@ -120,6 +120,16 @@ When no initial bias has been selected or loaded, the first three stationary
 windows supply a starting bias in RAM. Only explicit save persists it. Existing
 saved settings remain unchanged during subsequent learning.
 
+Python `hub.imu.settings()` uses this same configuration. Its positional arguments
+are angular-velocity threshold, acceleration threshold, heading correction,
+gyro bias, gyro scale and acceleration correction. With no arguments it returns
+thresholds, bias, scale, acceleration correction and heading correction, in that
+order. Angles use degrees and acceleration uses mm/s²; acceleration correction
+interleaves `+X, -X, +Y, -Y, +Z, -Z`. Selected values are rounded to the integer
+resolution in the table above. An invalid field rejects the entire update.
+Changes persist across application exit in RAM; only `config save` writes them
+to flash. Axis selection and heading reset are application state, not settings.
+
 These paths are checked with synthetic acquisition and real simulated
 LittleFS/Settings. Physical calibration accuracy is not yet verified.
 

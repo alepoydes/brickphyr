@@ -86,6 +86,15 @@ __syscall int bp_imu_get(struct bp_imu_sample *sample);
 /* Calibrated vectors and orientation paired with their original raw sample.
  * Same bounded read and error convention. Orientation continuity uses epoch. */
 __syscall int bp_imu_get_state(struct bp_imu_state *state);
+/* Copy a frame or calibration command for asynchronous execution. EBUSY preserves
+ * the outstanding command. Invalid input has no effects. No flash writes.
+ * Observe pending/command_error with get_application. Cleanup restores axes
+ * and heading independently of finalizers; selected calibration remains in RAM.
+ * Frame changes do not alter physical observations or their orientation epoch. */
+__syscall int bp_imu_configure(const struct bp_imu_command *command);
+/* Coherent physical sample and application frame. Check physical.error/epoch
+ * before comparing angles; raw angles cannot bridge missing measurements. */
+__syscall int bp_imu_get_application(struct bp_imu_application_state *state);
 
 /* Copy the latest battery pair without starting ADC or waiting for acquisition.
  * Check sample.error; startup, stale, failed and stopped readings stay explicit. */

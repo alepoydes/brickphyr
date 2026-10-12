@@ -102,8 +102,13 @@ The IMU Python fixture adds a synthetic I2C register peer and GPIO ready edges
 to the protected ARM application build. It runs the production acquisition,
 stationary detection, estimator, snapshots and Python bindings. Six orthogonal
 poses check axes, gravity units, side, tilt and orientation; constant synthetic
-gyro inputs check raw units and learned bias. I2C failures, missing edges, invalid
-axes, forced stop/reuse and a build without IMU support check error boundaries.
+gyro inputs check raw units, learned bias and integrated calibrated/raw rotation.
+Selected frames leave physical telemetry unchanged; heading resets and multiple
+complete turns have separate numerical coverage. Calibration updates validate
+all supplied groups atomically and share the terminal's settings. I2C failures,
+missing edges, invalid axes, forced stop/reuse, REPL reset and a build without
+IMU support check error boundaries. Native ARM checks reject misaligned and
+out-of-range IMU command/snapshot buffers before entering service locks.
 This does not establish physical calibration accuracy or acquisition deadlines.
 This fixture uses paced instruction-count time so laptop scheduling pauses do
 not become synthetic sensor gaps. Its finest clock resolution is for functional

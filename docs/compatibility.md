@@ -172,25 +172,45 @@ correct slot and connection fields. Stop-button combinations and Python-requeste
 shutdown have protected ARM checks; their physical acceptance remains pending.
 
 `hub.imu` reads the common IMU service: `acceleration`, `angular_velocity`,
-`tilt`, `up`, `orientation`, `ready` and `stationary`. Acceleration is in mm/s²
+`tilt`, `up`, `orientation`, `ready`, `stationary`, `heading`, `reset_heading`,
+`rotation` and `settings`. Acceleration is in mm/s²
 and angular velocity in degrees/s. Vector reads return a three-row `Matrix` or
 a scalar projection onto the supplied `Axis`/three-element `Matrix`. The
 `calibrated=False` option reads raw measurements; calibrated tilt and `up` use
-the fused gravity direction. Axes are currently +X front, +Y left and +Z top.
+the fused gravity direction. Default axes are +X front, +Y left and +Z top.
+`PrimeHub(top_side=Axis.Z, front_side=Axis.X)` selects the application frame,
+following the reference constructor's axis convention. Acceleration, angular
+velocity, tilt and integrated rotation use that frame. `up` and `orientation`
+retain physical hub coordinates, as do native telemetry observations.
+The IMU object and application frame are shared by hub instances; constructing
+another instance selects its axes and resets heading. Application exit, forced
+stop and REPL soft reset restore the default frame independently of finalizers.
+
+Headings are clockwise-positive degrees; `reset_heading(angle)` changes their
+reference without changing physical orientation or accumulated axis rotations.
+`rotation(axis, calibrated=False)` undoes gyro scale correction while retaining
+bias correction. Integration restarts after missing data or calibration changes;
+Brickphyr's `imu.epoch()` exposes this reference change. Compare angles only
+within one epoch, checking it before and after a measurement sequence. A heading
+reset alone does not change that epoch. This is not an absolute compass heading.
+`settings()` reads or atomically changes the shared calibration in RAM using
+Pybricks units and tuple order. Values have the integer resolution of the
+[common settings](settings.md#imu-calibration); saving remains explicit.
 Invalid or stale measurements raise `OSError`; readiness/stationary return false
 while measurements are invalid. A build without IMU support raises
 `OSError(ENOTSUP)` without preventing construction or other hub operations.
 See the [IMU example](../examples/python/imu.py).
 Protected ARM checks use actual acquisition and processing with synthetic I2C/GPIO:
-six poses, axis projections, bias compensation, invalid inputs, missing samples
-and restart after forced stop. On the Inventor F4, native USB/BLE scripts and REPL
-read observations; both actual Pybricks clients run the example in bounded checks.
+six poses, selected frames, heading resets, integrated rotation, bias compensation,
+atomic calibration, invalid inputs, missing samples and cleanup on stop/REPL reset.
+On the Inventor F4, native USB/BLE scripts check frame selection, heading reset,
+calibration access and epoch changes; REPL observations and soft reset pass.
+Both actual Pybricks clients run the expanded example in bounded checks.
 Pybricks BLE execution can also report a transient `EOVERFLOW` observation during
 the known acquisition gaps under radio load. Subsequent reads recover, but sustained
 error-free combined operation and physical calibration accuracy remain unverified.
 
-The constructor currently accepts no arguments. IMU orientation/radio arguments,
-IMU heading/reset, integrated rotation and calibration settings, charger,
+Radio constructor arguments, charger,
 system `reset_storage`, `hub_menu` and messaging remain
 unfinished required work. Battery
 voltage/current use the common observation service and report acquisition errors;

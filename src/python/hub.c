@@ -5,8 +5,10 @@
 #include <brickphyr.h>
 #include <pybricks/common.h>
 #include <pybricks/hubs.h>
+#include <pybricks/parameters.h>
 #include <pybricks/parameters/pb_type_button.h>
 #include <pybricks/util_mp/pb_obj_helper.h>
+#include <pybricks/util_mp/pb_kwarg_helper.h>
 
 typedef struct {
 	mp_obj_base_t base;
@@ -55,8 +57,12 @@ static const mp_obj_module_t battery = {{&mp_type_module}, (mp_obj_dict_t *)&bat
 
 static mp_obj_t hub_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
-	if (n_args || n_kw) {
-		mp_raise_NotImplementedError(MP_ERROR_TEXT("hub orientation and radio arguments are not implemented"));
+	PB_PARSE_ARGS_CLASS(n_args, n_kw, args,
+		PB_ARG_DEFAULT_OBJ(top_side, pb_type_Axis_Z_obj),
+		PB_ARG_DEFAULT_OBJ(front_side, pb_type_Axis_X_obj));
+	/* Default construction remains usable in a profile without an IMU. */
+	if (IS_ENABLED(CONFIG_BRICKPHYR_IMU) || n_args || n_kw) {
+		python_imu_axes(top_side_in, front_side_in);
 	}
 	hub_obj_t *self = mp_obj_malloc(hub_obj_t, type);
 	self->buttons = pb_type_Keypad_obj_new(MP_OBJ_FROM_PTR(self), buttons_pressed);
