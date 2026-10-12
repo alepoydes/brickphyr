@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2023 The Pybricks Authors
-/* Adapted from robotics/pb_type_drivebase.c at a7b1b04ae. The shared native
+/* Adapted from robotics/pb_type_{drivebase,spikebase}.c at a7b1b04ae. The shared native
  * service owns both motor controllers; Python retains handles and awaitables. */
 #include "devices.h"
 #include "py/mphal.h"
 #include <brickphyr.h>
 #include <errno.h>
 #include <math.h>
+#include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/tools.h>
 #include <pybricks/tools/pb_type_async.h>
@@ -134,7 +135,9 @@ static pbio_error_t motion_next(pbio_os_state_t *state, mp_obj_t self_in)
 	return PBIO_SUCCESS;
 }
 
-static mp_obj_t move(drivebase_obj_t *self, struct bp_drivebase_command command, bool wait)
+enum motion_wait { MOTION_NO_WAIT, MOTION_AWAITABLE, MOTION_BLOCKING };
+
+static mp_obj_t move(drivebase_obj_t *self, struct bp_drivebase_command command, enum motion_wait wait)
 {
 	uint32_t request;
 	check(bp_drivebase_command(self->handle, &command, &request));
@@ -146,7 +149,7 @@ static mp_obj_t move(drivebase_obj_t *self, struct bp_drivebase_command command,
 		mp_obj_t result = mp_const_none;
 		if (wait) {
 			pb_type_async_t config = {.parent_obj = MP_OBJ_FROM_PTR(self), .iter_once = motion_next, .close = cancel_motion};
-			if (pb_module_tools_run_loop_is_active()) result = pb_type_async_wait_or_await(&config, &self->iter, true);
+			if (wait == MOTION_AWAITABLE && pb_module_tools_run_loop_is_active()) result = pb_type_async_wait_or_await(&config, &self->iter, true);
 			else while (motion_next(NULL, MP_OBJ_FROM_PTR(self)) == PBIO_ERROR_AGAIN) mp_hal_delay_ms(2);
 		}
 		nlr_pop();
@@ -173,6 +176,16 @@ static mp_obj_t straight(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 		mp_obj_is_true(wait_in));
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(straight_obj, 1, straight);
+
+static mp_obj_t move_by(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self, PB_ARG_REQUIRED(dx), PB_ARG_REQUIRED(dy),
+		PB_ARG_DEFAULT_OBJ(then, pb_Stop_HOLD_obj));
+	return move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_VECTOR,
+		.distance = pb_obj_get_int(dx_in), .angle = pb_obj_get_int(dy_in),
+		.finish = pb_type_enum_get_value(then_in, &pb_enum_type_Stop)}, true);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(move_by_obj, 1, move_by);
 
 static mp_obj_t turn(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
@@ -305,6 +318,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(use_gyro_obj, 1, use_gyro);
 
 static const mp_rom_map_elem_t drivebase_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_straight), MP_ROM_PTR(&straight_obj)},
+	{MP_ROM_QSTR(MP_QSTR_move_by), MP_ROM_PTR(&move_by_obj)},
 	{MP_ROM_QSTR(MP_QSTR_turn), MP_ROM_PTR(&turn_obj)},
 	{MP_ROM_QSTR(MP_QSTR_arc), MP_ROM_PTR(&arc_obj)},
 	{MP_ROM_QSTR(MP_QSTR_curve), MP_ROM_PTR(&curve_obj)},
@@ -324,9 +338,113 @@ static const mp_rom_map_elem_t drivebase_methods[] = {
 static MP_DEFINE_CONST_DICT(drivebase_dict, drivebase_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(drivebase_type, MP_QSTR_DriveBase, MP_TYPE_FLAG_NONE,
 	make_new, drivebase_new, locals_dict, &drivebase_dict);
+
+static mp_obj_t spike_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
+{
+	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(left_motor), PB_ARG_REQUIRED(right_motor));
+	return new_pair(type, left_motor_in, right_motor_in, 1000, 1000, true);
+}
+
+static uint32_t duration(mp_obj_t time)
+{
+	int32_t ms = pb_obj_get_int(time);
+	if (ms < 0 || ms >= 300000) mp_raise_ValueError(MP_ERROR_TEXT("time must be 0..299999 ms"));
+	return ms;
+}
+
+/* SpikeBase retains the reference's blocking wait=True contract, including
+ * inside run_task. Only DriveBase exposes awaitable movement methods. */
+static mp_obj_t spike_move(drivebase_obj_t *self, struct bp_drivebase_command command, mp_obj_t wait)
+{
+	return move(self, command, mp_obj_is_true(wait) ? MOTION_BLOCKING : MOTION_NO_WAIT);
+}
+
+static mp_obj_t tank_degrees(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed_left), PB_ARG_REQUIRED(speed_right), PB_ARG_REQUIRED(angle),
+		PB_ARG_DEFAULT_OBJ(then, pb_Stop_HOLD_obj), PB_ARG_DEFAULT_TRUE(wait));
+	return spike_move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_TANK_ANGLE,
+		.speed = pb_obj_get_int(speed_left_in), .turn_rate = pb_obj_get_int(speed_right_in),
+		.angle = pb_obj_get_int(angle_in), .finish = pb_type_enum_get_value(then_in, &pb_enum_type_Stop)}, wait_in);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(tank_degrees_obj, 1, tank_degrees);
+
+static mp_obj_t steering_degrees(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed), PB_ARG_REQUIRED(steering), PB_ARG_REQUIRED(angle),
+		PB_ARG_DEFAULT_OBJ(then, pb_Stop_HOLD_obj), PB_ARG_DEFAULT_TRUE(wait));
+	return spike_move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_STEERING_ANGLE,
+		.speed = pb_obj_get_int(speed_in), .steering = pb_obj_get_int(steering_in),
+		.angle = pb_obj_get_int(angle_in), .finish = pb_type_enum_get_value(then_in, &pb_enum_type_Stop)}, wait_in);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(steering_degrees_obj, 1, steering_degrees);
+
+static mp_obj_t tank_time(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed_left), PB_ARG_REQUIRED(speed_right), PB_ARG_REQUIRED(time),
+		PB_ARG_DEFAULT_OBJ(then, pb_Stop_HOLD_obj), PB_ARG_DEFAULT_TRUE(wait));
+	return spike_move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_TANK_TIME,
+		.speed = pb_obj_get_int(speed_left_in), .turn_rate = pb_obj_get_int(speed_right_in),
+		.duration_ms = duration(time_in), .finish = pb_type_enum_get_value(then_in, &pb_enum_type_Stop)}, wait_in);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(tank_time_obj, 1, tank_time);
+
+static mp_obj_t steering_time(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed), PB_ARG_REQUIRED(steering), PB_ARG_REQUIRED(time),
+		PB_ARG_DEFAULT_OBJ(then, pb_Stop_HOLD_obj), PB_ARG_DEFAULT_TRUE(wait));
+	return spike_move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_STEERING_TIME,
+		.speed = pb_obj_get_int(speed_in), .steering = pb_obj_get_int(steering_in),
+		.duration_ms = duration(time_in), .finish = pb_type_enum_get_value(then_in, &pb_enum_type_Stop)}, wait_in);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(steering_time_obj, 1, steering_time);
+
+static mp_obj_t tank_forever(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed_left), PB_ARG_REQUIRED(speed_right));
+	return move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_TANK_TIME,
+		.speed = pb_obj_get_int(speed_left_in), .turn_rate = pb_obj_get_int(speed_right_in),
+		.duration_ms = 300000, .finish = BP_MOTOR_FINISH_CONTINUE}, false);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(tank_forever_obj, 1, tank_forever);
+
+static mp_obj_t steering_forever(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, drivebase_obj_t, self,
+		PB_ARG_REQUIRED(speed), PB_ARG_REQUIRED(steering));
+	return move(self, (struct bp_drivebase_command){.action = BP_DRIVEBASE_STEERING_TIME,
+		.speed = pb_obj_get_int(speed_in), .steering = pb_obj_get_int(steering_in),
+		.duration_ms = 300000, .finish = BP_MOTOR_FINISH_CONTINUE}, false);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(steering_forever_obj, 1, steering_forever);
+
+static const pb_attr_dict_entry_t spike_attributes[] = {
+	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_left, drivebase_obj_t, motors[0]),
+	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_right, drivebase_obj_t, motors[1]),
+	PB_ATTR_DICT_SENTINEL
+};
+static const mp_rom_map_elem_t spike_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR_tank_move_for_degrees), MP_ROM_PTR(&tank_degrees_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tank_move_for_time), MP_ROM_PTR(&tank_time_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tank_move_forever), MP_ROM_PTR(&tank_forever_obj)},
+	{MP_ROM_QSTR(MP_QSTR_steering_move_for_degrees), MP_ROM_PTR(&steering_degrees_obj)},
+	{MP_ROM_QSTR(MP_QSTR_steering_move_for_time), MP_ROM_PTR(&steering_time_obj)},
+	{MP_ROM_QSTR(MP_QSTR_steering_move_forever), MP_ROM_PTR(&steering_forever_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&stop_obj)},
+};
+static MP_DEFINE_CONST_DICT(spike_dict, spike_methods);
+static MP_DEFINE_CONST_OBJ_TYPE(spike_type, MP_QSTR_SpikeBase, MP_TYPE_FLAG_NONE,
+	make_new, spike_new, attr, pb_attribute_handler, protocol, spike_attributes, locals_dict, &spike_dict);
+
 static const mp_rom_map_elem_t robotics_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_robotics)},
 	{MP_ROM_QSTR(MP_QSTR_DriveBase), MP_ROM_PTR(&drivebase_type)},
+	{MP_ROM_QSTR(MP_QSTR_SpikeBase), MP_ROM_PTR(&spike_type)},
 };
 static MP_DEFINE_CONST_DICT(robotics_dict, robotics_globals);
 const mp_obj_module_t pb_module_robotics = {{&mp_type_module}, (mp_obj_dict_t *)&robotics_dict};

@@ -93,8 +93,9 @@ checks. Model tuning/state and motor/controller CSV logging also have synthetic 
 physical Python motor acceptance remains pending.
 Native/Python DriveBase uses the same paired port worker and shared IMU, with
 synthetic scheduling, gyro reset, cancellation and cleanup checks. Shared control
-objects, `move_by`, `SpikeBase`, `Car` and physical paired-motion acceptance remain
-pending; see [paired drive control](../docs/ports.md#paired-drive-control).
+objects, `Car` and physical paired-motion acceptance remain pending. `move_by`
+and SpikeBase movement use that worker, with numerical and protected ARM checks.
+See [paired drive control](../docs/ports.md#paired-drive-control).
 The native motor observer now continues through DC/brake/coast while claimed;
 synthetic service checks cover speed, model load/stall and feedback loss.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;

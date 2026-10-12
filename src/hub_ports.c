@@ -963,7 +963,8 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 			struct drivebase_command move = {.distance = command.distance, .angle = command.angle,
 				.speed = command.speed, .turn_rate = command.turn_rate, .duration_ms = command.duration_ms,
 				.finish = command.finish, .motion = command.action == BP_DRIVEBASE_TIMED ? DRIVEBASE_TIMED :
-				command.action == BP_DRIVEBASE_TURN ? DRIVEBASE_ABSOLUTE_TURN : DRIVEBASE_RELATIVE};
+				command.action == BP_DRIVEBASE_TURN ? DRIVEBASE_ABSOLUTE_TURN :
+				command.action == BP_DRIVEBASE_VECTOR ? DRIVEBASE_VECTOR : DRIVEBASE_RELATIVE};
 			if (command.action >= BP_DRIVEBASE_ARC_ANGLE && command.action <= BP_DRIVEBASE_CURVE) {
 				command_error = drivebase_arc_command(command.radius,
 					command.action == BP_DRIVEBASE_ARC_DISTANCE ? command.distance : command.angle,
@@ -971,6 +972,11 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 			} else if (command.action == BP_DRIVEBASE_TANK_ANGLE || command.action == BP_DRIVEBASE_TANK_TIME) {
 				command_error = db->setup.spike ? drivebase_tank_command(command.speed, command.turn_rate,
 					command.angle, command.action == BP_DRIVEBASE_TANK_TIME, &move) : -EINVAL;
+			} else if (command.action == BP_DRIVEBASE_STEERING_ANGLE || command.action == BP_DRIVEBASE_STEERING_TIME) {
+				int32_t left, right;
+				command_error = db->setup.spike ? drivebase_steering_to_tank(command.speed, command.steering, &left, &right) : -EINVAL;
+				if (!command_error) command_error = drivebase_tank_command(left, right, command.angle,
+					command.action == BP_DRIVEBASE_STEERING_TIME, &move);
 			}
 			if (!command_error) command_error = drivebase_control_command(&db->controller, now * 10, &state, &move);
 			if (!command_error) {
@@ -2294,7 +2300,7 @@ int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drive
 int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
 	const struct bp_drivebase_command *command, uint32_t *request)
 {
-	if (!command || !request || command->action > BP_DRIVEBASE_TANK_TIME ||
+	if (!command || !request || command->action > BP_DRIVEBASE_VECTOR ||
 	    command->finish > BP_MOTOR_FINISH_BRAKE_SMART || command->gyro > 1) return -EINVAL;
 	if (command->action == BP_DRIVEBASE_GYRO && command->gyro && !IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
 	k_spinlock_key_t key = k_spin_lock(&lock);

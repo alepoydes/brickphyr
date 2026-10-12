@@ -13,11 +13,14 @@ struct bp_drivebase_setup {
 enum bp_drivebase_action { BP_DRIVEBASE_RELATIVE, BP_DRIVEBASE_TURN,
 	BP_DRIVEBASE_TIMED, BP_DRIVEBASE_COAST, BP_DRIVEBASE_BRAKE, BP_DRIVEBASE_RESET,
 	BP_DRIVEBASE_GYRO, BP_DRIVEBASE_ARC_ANGLE, BP_DRIVEBASE_ARC_DISTANCE,
-	BP_DRIVEBASE_CURVE, BP_DRIVEBASE_TANK_ANGLE, BP_DRIVEBASE_TANK_TIME };
+	BP_DRIVEBASE_CURVE, BP_DRIVEBASE_TANK_ANGLE, BP_DRIVEBASE_TANK_TIME,
+	BP_DRIVEBASE_STEERING_ANGLE, BP_DRIVEBASE_STEERING_TIME, BP_DRIVEBASE_VECTOR };
 struct bp_drivebase_command {
 	int32_t distance, angle, speed, turn_rate; /* mm, deg, mm/s, deg/s */
 	int32_t radius; /* signed mm for ARC/CURVE */
+	int32_t steering; /* STEERING: -100..100; speed in wheel deg/s */
 	/* TANK uses speed/turn_rate as left/right deg/s and angle as wheel deg. */
+	/* VECTOR uses distance/angle as dx/dy mm: absolute heading, then straight. */
 	uint32_t duration_ms; /* TIMED: 300000 means indefinite CONTINUE */
 	uint32_t action, finish; /* bp_motor_finish */
 	uint32_t gyro; /* GYRO: 0 encoders, 1 application-frame 3D heading */

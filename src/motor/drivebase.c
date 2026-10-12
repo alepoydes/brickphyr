@@ -8,7 +8,9 @@
 #include "drivebase.h"
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
+#include <pbio/geometry.h>
 #include <pbio/int_math.h>
 
 static void drivebase_adopt_settings(pbio_control_settings_t *s_distance, pbio_control_settings_t *s_heading, const pbio_control_settings_t *s_left, const pbio_control_settings_t *s_right) {
@@ -120,6 +122,7 @@ void drivebase_control_stop(struct drivebase_control *db)
 {
     for (size_t i = 0; i < DRIVEBASE_AXES; i++) pbio_control_stop(&db->control[i]);
     db->paused = false;
+    db->secondary_pending = false;
 }
 
 static int reset_offsets(const struct drivebase_control *db,
@@ -171,7 +174,7 @@ bool drivebase_control_active(const struct drivebase_control *db)
 
 bool drivebase_control_done(const struct drivebase_control *db)
 {
-    return pbio_control_is_done(&db->control[0]) && pbio_control_is_done(&db->control[1]);
+    return !db->secondary_pending && pbio_control_is_done(&db->control[0]) && pbio_control_is_done(&db->control[1]);
 }
 
 static int start(struct drivebase_control *db, uint32_t ticks,
@@ -215,6 +218,24 @@ static int start(struct drivebase_control *db, uint32_t ticks,
 int drivebase_control_command(struct drivebase_control *db, uint32_t ticks,
     const struct drivebase_state *state, const struct drivebase_command *command)
 {
+    /* move_by's geometry and two-phase order come from pb_type_drivebase.c.
+     * Keep the sequence here so native and Python callers share cancellation,
+     * and its straight phase does not depend on Python being scheduled. */
+    bool vector = command->motion == DRIVEBASE_VECTOR;
+    struct drivebase_command turn;
+    int32_t length = 0;
+    pbio_control_on_completion_t finish = command->finish;
+    if (vector) {
+        int32_t dx = command->distance, dy = command->angle;
+        if (dx < -INT16_MAX || dx > INT16_MAX || dy < -INT16_MAX || dy > INT16_MAX ||
+            command->duration_ms || command->speed || command->turn_rate ||
+            finish < PBIO_CONTROL_ON_COMPLETION_COAST || finish > PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART) return -EINVAL;
+        length = (int32_t)sqrtf(dx * dx + dy * dy);
+        turn = (struct drivebase_command){.motion = DRIVEBASE_ABSOLUTE_TURN,
+            .angle = -(int32_t)pbio_geometry_radians_to_degrees(atan2f(dy, dx)),
+            .finish = PBIO_CONTROL_ON_COMPLETION_HOLD};
+        command = &turn;
+    }
     if (command->motion < DRIVEBASE_RELATIVE || command->motion > DRIVEBASE_TIMED ||
         command->finish < PBIO_CONTROL_ON_COMPLETION_COAST || command->finish > PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART ||
         (command->motion == DRIVEBASE_ABSOLUTE_TURN && (command->distance || command->speed || command->turn_rate)) ||
@@ -240,12 +261,23 @@ int drivebase_control_command(struct drivebase_control *db, uint32_t ticks,
     struct drivebase_control previous = *db;
     int err = start(db, ticks, state, command);
     if (err) *db = previous;
+    else {
+        db->secondary_pending = vector;
+        db->secondary_distance = length;
+        db->secondary_finish = finish;
+    }
     return err;
 }
 
 int drivebase_control_step(struct drivebase_control *db, uint32_t ticks,
     const struct drivebase_state *state, struct drivebase_reference *value)
 {
+    if (db->secondary_pending && pbio_control_is_done(&db->control[0]) && pbio_control_is_done(&db->control[1])) {
+        struct drivebase_command straight = {.motion = DRIVEBASE_RELATIVE,
+            .distance = db->secondary_distance, .finish = db->secondary_finish};
+        int err = drivebase_control_command(db, ticks, state, &straight);
+        if (err) return err;
+    }
     if (!drivebase_control_active(db)) return -EAGAIN;
     struct drivebase_reference out = {0};
     /* Reject both inputs before advancing either PID. The owner coasts the

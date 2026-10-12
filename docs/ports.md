@@ -707,6 +707,13 @@ and `hold` select passive coast, electrical brake and position hold.
 native state. Acceleration settings accept a scalar or an acceleration/deceleration
 pair.
 
+`move_by(dx, dy, then=Stop.HOLD)` moves by a fixed-heading displacement in
+millimetres, with each component limited to ±32767. It turns to the absolute
+direction first and holds that heading, then drives straight for the vector's
+length using `then` on completion. The native pair worker owns both phases, so
+replacement or stop cancels the whole move. It blocks outside `run_task` and
+returns an awaitable inside it; this method has no `wait=False` argument.
+
 `use_gyro(True)` selects the application's shared IMU heading; it defaults to
 encoder heading. Changing the selection stops the pair, while selecting its
 current value leaves motion intact. In gyro mode, `reset(distance, angle)` also
@@ -722,6 +729,18 @@ the prior Python awaitable; closing a superseded awaitable cannot stop its
 replacement. Application cleanup releases both associations without relying on
 Python finalizers. Normal host disconnect leaves autonomous motion running.
 
+`SpikeBase(left_motor, right_motor)` uses the same paired worker without wheel
+dimensions. Its `tank_move_for_degrees`, `tank_move_for_time` and
+`tank_move_forever` methods take left and right wheel speeds in degrees per
+second. As in Pybricks, the left speed is negated relative to its Motor's
+positive direction, while the right speed is unchanged. The corresponding `steering_move_for_degrees`,
+`steering_move_for_time` and `steering_move_forever` methods take speed and
+steering from −100 to 100. Angle moves use wheel degrees, with the faster wheel
+covering the requested angle; finite time moves accept 0–299999 ms. Use the
+dedicated `*_forever` methods for continuous motion. Finite methods default to
+`then=Stop.HOLD` and `wait=True`; waiting blocks even inside `run_task`.
+`SpikeBase.stop()` coasts the pair, and `.left` and `.right` reference its motors.
+
 Native applications use `bp_drivebase_open/get/command/settings_set/close`.
 Setup contains both port generations and dimensions in micrometres. Open and
 queued commands expose request/completion tokens; completion acknowledges
@@ -732,9 +751,11 @@ fields. A failed pair must be closed and reconstructed before reuse.
 
 Numerical, native simulator and protected ARM checks cover paired scheduling,
 replacement, gyro configuration/reset, cancellation, hotplug, output failure and
-application cleanup with synthetic devices. Physical paired motion and gyro
-accuracy remain unverified. `move_by`, `heading_control`, `distance_control`,
-`SpikeBase` and `Car` remain required work.
+application cleanup with synthetic devices. Numerical checks cover `move_by`'s
+two phases and cancellation; protected ARM checks cover its wait/await behavior
+and SpikeBase's wheel directions, timed completion and interruption. Physical
+paired motion and gyro accuracy remain unverified. Shared `heading_control`,
+`distance_control` and `Car` remain required work.
 
 ## Speed and position control
 

@@ -12,10 +12,13 @@ struct drivebase_control {
 	pbio_control_t control[DRIVEBASE_AXES];
 	pbio_angle_t offset[DRIVEBASE_AXES];
 	bool paused;
+	bool secondary_pending;
+	int32_t secondary_distance;
+	pbio_control_on_completion_t secondary_finish;
 };
 
 struct drivebase_state { pbio_control_state_t axis[DRIVEBASE_AXES]; };
-enum drivebase_motion { DRIVEBASE_RELATIVE, DRIVEBASE_ABSOLUTE_TURN, DRIVEBASE_TIMED };
+enum drivebase_motion { DRIVEBASE_RELATIVE, DRIVEBASE_ABSOLUTE_TURN, DRIVEBASE_TIMED, DRIVEBASE_VECTOR };
 struct drivebase_command {
 	int32_t distance, angle, speed, turn_rate;
 	uint32_t duration_ms;

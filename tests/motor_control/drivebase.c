@@ -224,6 +224,79 @@ ZTEST(drivebase, test_timed_pair_coast_then_hold)
 	zassert_true(output[0].voltage_mv < 0 && output[1].voltage_mv < 0);
 }
 
+ZTEST(drivebase, test_vector_turn_then_straight_and_cancellation)
+{
+	struct drive_fixture *f = &fixture[0];
+	fixture_init(f, 0);
+	struct drivebase_command vector = {.motion = DRIVEBASE_VECTOR,
+		.distance = 60, .angle = 80, .finish = PBIO_CONTROL_ON_COMPLETION_HOLD};
+	command(f, 0, &vector);
+	uint32_t ticks = 0;
+	struct drivebase_reference reference;
+	struct motor_reference output[2];
+	bool started_straight = false;
+	for (unsigned i = 0; i < 2000 && !started_straight; i++) {
+		advance(f, ticks, &reference, output);
+		ticks += 50;
+		if (f->db.secondary_pending) {
+			zassert_false(reference.done);
+		} else {
+			started_straight = true;
+			zassert_false(reference.done);
+		}
+	}
+	zassert_true(started_straight, "vector never started its straight phase");
+	until_done(f, &ticks, &reference, output);
+	struct drivebase_state state;
+	state_get(f, &state);
+	int32_t distance = pbio_control_settings_ctl_to_app_long(
+		&f->db.control[DRIVEBASE_DISTANCE].settings,
+		&state.axis[DRIVEBASE_DISTANCE].position);
+	int32_t heading = pbio_control_settings_ctl_to_app_long(
+		&f->db.control[DRIVEBASE_HEADING].settings,
+		&state.axis[DRIVEBASE_HEADING].position);
+	zassert_within(distance, 100, 20);
+	zassert_within(heading, -53, 15);
+
+	/* A stop and a direct replacement during the turn must each discard the
+	 * old straight phase, rather than resuming it after the new move ends. */
+	fixture_init(f, 0);
+	ticks = 0;
+	command(f, ticks, &vector);
+	for (unsigned i = 0; i < 20; i++) {
+		advance(f, ticks, &reference, output);
+		ticks += 50;
+	}
+	zassert_true(f->db.secondary_pending);
+	drivebase_control_stop(&f->db);
+	zassert_false(f->db.secondary_pending);
+	command(f, ticks, &vector);
+	for (unsigned i = 0; i < 20; i++) {
+		advance(f, ticks, &reference, output);
+		ticks += 50;
+	}
+	zassert_true(f->db.secondary_pending);
+	state_get(f, &state);
+	int32_t before = pbio_control_settings_ctl_to_app_long(
+		&f->db.control[DRIVEBASE_DISTANCE].settings,
+		&state.axis[DRIVEBASE_DISTANCE].position);
+	struct drivebase_command replacement = {.motion = DRIVEBASE_RELATIVE,
+		.distance = 20, .finish = PBIO_CONTROL_ON_COMPLETION_HOLD};
+	command(f, ticks, &replacement);
+	zassert_false(f->db.secondary_pending);
+	until_done(f, &ticks, &reference, output);
+	for (unsigned i = 0; i < 20; i++) {
+		advance(f, ticks, &reference, output);
+		ticks += 50;
+		zassert_false(f->db.secondary_pending);
+	}
+	state_get(f, &state);
+	distance = pbio_control_settings_ctl_to_app_long(
+		&f->db.control[DRIVEBASE_DISTANCE].settings,
+		&state.axis[DRIVEBASE_DISTANCE].position);
+	zassert_within(distance - before, 20, 15);
+}
+
 ZTEST(drivebase, test_rejected_configuration_and_conversion_edges)
 {
 	struct drive_fixture *f = &fixture[0];
