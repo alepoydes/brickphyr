@@ -506,7 +506,13 @@ and application lifecycle. The first record is the entry point, including when
 Pybricks Code names it after the opened file instead of `__main__`; its original
 module name remains available to imports. The advertised transfer limit is
 31,728 bytes, leaving room for file-map metadata within the 32 KiB application
-limit. The Cortex-M Python
+limit. The receive buffer grows with accepted data instead of reserving that
+maximum for every program. Growth temporarily retains the old buffer; package
+normalization also needs space for the common file map. Allocation failure
+preserves acknowledged fragments, and starting a new transfer releases the
+incomplete one. Protected ARM checks cover small-program execution under heap
+pressure, rejected growth and subsequent recovery.
+The Cortex-M Python
 profile also advertises native `.mpy` ABI 6.3. The
 [pybricksdev integration](upstream.md#python-client-prerequisites) selects the
 matching compiler and packages imported `.mpy` files. Native/Viper decorators,

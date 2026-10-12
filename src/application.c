@@ -67,6 +67,7 @@ static struct k_spinlock output_lock;
 static uint32_t output_dropped;
 static bool output_attached;
 static void *upload;
+static size_t upload_capacity;
 static size_t upload_size;
 static size_t upload_bytes;
 static size_t upload_heap;
@@ -333,7 +334,7 @@ static void discard_upload(void)
 {
 	k_free(upload);
 	upload = NULL;
-	upload_size = upload_bytes = upload_heap = 0;
+	upload_capacity = upload_size = upload_bytes = upload_heap = 0;
 }
 
 static void expire_upload(void)
@@ -1835,7 +1836,7 @@ static int complete_upload(void)
 		}
 		k_free(upload);
 		upload = image;
-		upload_size = upload_bytes = size;
+		upload_capacity = upload_size = upload_bytes = size;
 		upload_format = APPLICATION_FILES;
 	}
 	if (upload_format != APPLICATION_NATIVE) {
@@ -1899,13 +1900,15 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 	}
 	if (!offset) {
 		/* Allocate before replacing a previous complete image. */
-		void *data_buffer = k_malloc(bound);
+		size_t capacity = open_size ? length : bound;
+		void *data_buffer = k_malloc(capacity);
 		if (!data_buffer) {
 			err = -ENOMEM;
 			goto out;
 		}
 		discard_upload();
 		upload = data_buffer;
+		upload_capacity = capacity;
 		upload_size = total;
 		upload_format = format;
 		upload_pybricks = format == APPLICATION_PYBRICKS;
@@ -1922,6 +1925,27 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 			goto out;
 		}
 	} else {
+		if (offset + length > upload_capacity) {
+			/* Unknown-length Pybricks transfers grow geometrically instead of
+			 * reserving the maximum image for every small program. Copy outside
+			 * the heap lock: k_realloc may copy with interrupts masked. */
+			size_t capacity = MIN(bound, MAX(offset + length, upload_capacity * 2));
+			void *buffer = k_malloc(capacity);
+			if (!buffer && capacity > offset + length) {
+				/* Optional growth headroom must not reject a fragment that fits. */
+				capacity = offset + length;
+				buffer = k_malloc(capacity);
+			}
+			if (!buffer) {
+				/* Keep the accepted bytes and offset available for a retry. */
+				err = -ENOMEM;
+				goto out;
+			}
+			memcpy(buffer, upload, upload_bytes);
+			k_free(upload);
+			upload = buffer;
+			upload_capacity = capacity;
+		}
 		memcpy((uint8_t *)upload + offset, data, length);
 		upload_bytes += length;
 	}

@@ -27,9 +27,12 @@ async def stopped(hub):
 
 
 @contextmanager
-def pybricks_port(slot=None):
+def pybricks_port(slot=None, heap_hold=0):
     with native_console(BUILD) as device:
         with serial.Serial(device, timeout=0.05, exclusive=True) as port:
+            if heap_hold:
+                port.write(f"heap_hold {heap_hold}\r".encode())
+                assert f"Heap held: {heap_hold}".encode() in received(port, b"brickphyr> ")
             if slot is not None:
                 port.write(f"pybricks_slot {slot}\r".encode())
                 assert f"Pybricks slot: {slot} of".encode() in received(port, b"brickphyr> ")
@@ -156,6 +159,50 @@ def test_hub_example_through_client():
             await hub.disconnect()
 
     with pybricks_port() as port:
+        asyncio.run(exercise(port))
+
+
+def test_pybricks_upload_under_heap_pressure(tmp_path):
+    source = tmp_path / "program.py"
+    source.write_text("print('small program')\n")
+
+    async def exercise(port):
+        hub = PybricksHubSerial(port)
+
+        async def command(data):
+            await hub.write_gatt_char(PYBRICKS_COMMAND_EVENT_UUID, data, response=True)
+
+        try:
+            await hub.connect()
+            await hub.run(str(source), print_output=False)
+            assert hub.output == [b"small program"]
+            await command(struct.pack("<BI", Command.WRITE_USER_PROGRAM_META, 0))
+            # Synthetic transfer: stop before validation, at actual heap exhaustion.
+            previous = None
+            for offset in range(0, 30000, 50):
+                fragment = struct.pack("<BI", Command.COMMAND_WRITE_USER_RAM, offset) + bytes(range(50))
+                try:
+                    await command(fragment)
+                except RuntimeError as error:
+                    assert "Write failed: 129" in str(error)
+                    assert offset > 100 and previous is not None
+                    # A rejected growth must preserve the last acknowledged bytes.
+                    await command(previous)
+                    with pytest.raises(RuntimeError, match="Write failed"):
+                        await command(previous[:-1] + b"\xff")
+                    break
+                previous = fragment
+            else:
+                pytest.fail("Synthetic heap pressure did not exhaust the upload")
+            # Abandon the failed transfer and reclaim its buffers without reboot.
+            await hub.run(str(source), print_output=False)
+            assert hub.output == [b"small program"]
+        finally:
+            await hub.disconnect()
+
+    # The ARM fixture has a 64 KiB heap. This leaves less than the former
+    # unconditional 31 KiB upload reservation, while management remains usable.
+    with pybricks_port(heap_hold=40960) as port:
         asyncio.run(exercise(port))
 
 

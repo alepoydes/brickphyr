@@ -88,6 +88,22 @@ static int close_session(const struct shell *shell, size_t argc, char **argv)
 }
 SHELL_CMD_ARG_REGISTER(session_close, NULL, "Synthetic disconnect notification.", close_session, 1, 0);
 
+#ifdef CONFIG_BRICKPHYR_PYTHON
+static int hold_heap(const struct shell *shell, size_t argc, char **argv)
+{
+	static void *held;
+	int err = 0;
+	unsigned long size = shell_strtoul(argv[1], 10, &err);
+	if (err) return err;
+	k_free(held);
+	held = size ? k_malloc(size) : NULL;
+	if (size && !held) return -ENOMEM;
+	shell_print(shell, "Heap held: %lu", size);
+	return 0;
+}
+SHELL_CMD_ARG_REGISTER(heap_hold, NULL, "Synthetic heap pressure in bytes.", hold_heap, 2, 0);
+#endif
+
 #ifndef CONFIG_SHELL_BACKEND_SERIAL
 static atomic_t detach_requested;
 static int detach(const struct shell *shell, size_t argc, char **argv)
