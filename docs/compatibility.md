@@ -136,6 +136,7 @@ subpackages and application modules.
 | `ColorSensor`, `UltrasonicSensor`, `ColorDistanceSensor` | Native measurements, HSV/color matching, shared copied palettes and blocking/awaitable sensor lights |
 | `Light`, `ColorLightMatrix` | Passive light brightness/off and UART 3×3 colors/off, native output encoding, connection-bound commands and port cleanup |
 | `PFMotor` | Native IR command encoding through ColorDistanceSensor, blocking/awaitable duty/coast/brake, direction, generation checks and coast transmission during cleanup; no remote acknowledgement |
+| `DCMotor` | Shared native direction/voltage limits, duty, coast, brake, settings and close; generation-bound output and supervised release; regulated `Motor` remains pending |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev

@@ -7,6 +7,7 @@
  * trajectory and observer APIs; device ownership and scheduling stay outside.
  * See README.md for the boundary and numerical assumptions. */
 #include "control.h"
+#include "voltage.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -262,7 +263,7 @@ int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_m
     if (err) return err;
     *motor = (struct motor_control){0};
     motor->observer.model = d->model;
-    int32_t max_voltage = id == LEGO_DEVICE_TYPE_ID_SPIKE_S_MOTOR ? 6000 : 9000;
+    int32_t max_voltage = motor_max_voltage(id);
     motor->max_voltage = max_voltage;
     int32_t precision_profile = d->precision_profile;
     int32_t nominal_torque = pbio_observer_voltage_to_torque(d->model, pbio_int_math_min(max_voltage, 7500));

@@ -145,6 +145,10 @@ and checksums. Run this case for those bindings; it uses the same ARM fixture.
 connection rejection and forced-stop coast, followed by ColorLightMatrix UART
 frames, rejected short input and port release. It observes the PWM driver and
 transmitted bytes separately from the firmware status snapshots.
+`tests/test_python_dcmotor.py` covers direction, duty saturation, voltage settings,
+brake/coast, close, stale objects after hotplug and forced-stop coast in one ARM
+boot. It observes passive-motor PWM and uses synthetic battery inputs; physical
+motor behavior is a separate acceptance item.
 `tests/test_python_pfmotor.py` covers IR command encoding, 250 ms spacing,
 sensor-mode reuse, eight-output coast on stop and cleanup failure/reconnection.
 Its long asynchronous command sequence uses QEMU's normal paced clock; the

@@ -29,6 +29,10 @@ struct bp_motor_state {
 	int32_t error, cleanup_error;
 	int32_t requested_duty, duty; /* -1000..1000 permille; zero DUTY brakes */
 	uint8_t requested_mode, mode, owner, pending, releasing, valid;
+	/* DCMotor configuration, shared by objects on this connection. Direction
+	 * is +1/-1; zero means no configured application motor. Limit is mV. */
+	int8_t direction;
+	int32_t max_voltage;
 	struct bp_motor_command command;
 	struct bp_motor_control_state control;
 };

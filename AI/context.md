@@ -76,7 +76,9 @@ have protected ARM and synthetic UART checks, including shared palettes, sensor
 lights and port cleanup. `Light` and `ColorLightMatrix` additionally have protected
 ARM checks for shared PWM/UART output, stale commands and cleanup. `PFMotor`
 has synthetic UART coverage for IR commands, cleanup and reconnect errors;
-physical PF output, other sensor acceptance and wired motor bindings remain pending.
+physical PF output and other sensor acceptance remain pending. `DCMotor` has
+ARM checks for the shared native direction/voltage configuration, PWM, hotplug
+and cleanup. Physical Python motor acceptance and regulated `Motor` remain pending.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;
 custom P1/P2 supply and physical serial acceptance remain pending.
 Repeated BLE application transfers still cause occasional IMU acquisition

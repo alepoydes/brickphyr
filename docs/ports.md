@@ -471,6 +471,47 @@ command does not shorten them. Scheduler starvation or a stalled driver can dela
 command completion and timeout handling. Waveforms, stopping latency and operation
 under physical hub load remain unverified. DriveBase is subsequent work.
 
+## Python DC motors
+
+`pybricks.pupdevices.DCMotor` and its `pybricks.iodevices` alias use the same
+port worker and output driver. Construction accepts `port` and optional
+`positive_direction=Direction.CLOCKWISE`, confirms coast, and selects the motor
+model's voltage limit: 6000 mV for SPIKE Small, 9000 mV otherwise.
+
+```python
+from pybricks.pupdevices import DCMotor
+from pybricks.parameters import Port, Direction
+
+motor = DCMotor(Port.A, Direction.COUNTERCLOCKWISE)
+motor.settings(max_voltage=3000)
+motor.dc(25)
+motor.brake()
+motor.stop()
+motor.close()
+```
+
+This example actuates port A. `dc(duty)` clamps percentage to -100..100 and
+converts it using the shared battery observation, configured direction and
+voltage limit. Integer conversion to native permille quantizes the result.
+`brake()` applies zero-duty braking; `stop()` coasts. Both retain ownership and
+work without a battery observation. These methods return `None` after driver
+completion, without waiting for mechanical motion.
+
+`settings()` returns `(max_voltage,)` in mV. Its setter accepts 0 through the
+model's maximum; it changes subsequent DC commands, not an already applied
+output. Configuration is shared by objects on that physical connection, stays
+in RAM and resets on setup/release. The existing raw native duty API retains its
+physical permille semantics. Its connection-bound counterpart uses
+`bp_motor_setup`, `bp_motor_dc` and `bp_motor_set_voltage`; inspect their request
+completion through `bp_motor_get`.
+
+`close()` coasts and releases the port; repeated close is harmless. Commands on
+a closed object or an object from a disconnected device raise `ENODEV`. A stale
+close cannot release a replacement device. Release errors preserve ownership for
+retry and supervised cleanup. Protected ARM checks cover passive-motor PWM,
+voltage limiting, hotplug and cleanup with synthetic I/O. Physical Python motor
+acceptance and the regulated Python `Motor` binding remain pending.
+
 ## Speed and position control
 
 `CONFIG_BRICKPHYR_MOTOR_CONTROL` enables the PBIO observer, feedback controller

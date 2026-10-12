@@ -880,6 +880,50 @@ static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *valu
 }
 #include <zephyr/syscalls/bp_motor_get_mrsh.c>
 
+int z_impl_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
+{
+	return hub_motor_setup(BP_PORT_APPLICATION, port, generation, direction, request);
+}
+static inline int z_vrfy_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_motor_setup(port, generation, direction, request);
+}
+#include <zephyr/syscalls/bp_motor_setup_mrsh.c>
+
+int z_impl_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
+{
+	return hub_motor_dc(BP_PORT_APPLICATION, port, generation, duty, coast, request);
+}
+static inline int z_vrfy_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_motor_dc(port, generation, duty, coast, request);
+}
+#include <zephyr/syscalls/bp_motor_dc_mrsh.c>
+
+int z_impl_bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t max_voltage)
+{
+	return hub_motor_set_voltage(BP_PORT_APPLICATION, port, generation, max_voltage);
+}
+static inline int z_vrfy_bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t max_voltage)
+{
+	return z_impl_bp_motor_set_voltage(port, generation, max_voltage);
+}
+#include <zephyr/syscalls/bp_motor_set_voltage_mrsh.c>
+
+int z_impl_bp_motor_close(uint32_t port, uint32_t generation)
+{
+	return hub_motor_close(BP_PORT_APPLICATION, port, generation);
+}
+static inline int z_vrfy_bp_motor_close(uint32_t port, uint32_t generation)
+{
+	return z_impl_bp_motor_close(port, generation);
+}
+#include <zephyr/syscalls/bp_motor_close_mrsh.c>
+
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
 	return hub_motor_control(BP_PORT_APPLICATION, port, command);

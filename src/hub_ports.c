@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2018-2025 The Pybricks Authors
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2020-2023 LEGO System A/S
 /* Electrical tests ported from lib/pbio/src/port_dcm_pup.c at a7b1b04ae.
+ * DC direction/voltage semantics follow lib/pbio/src/dcmotor.c there.
  * Zephyr GPIO and a single delayed work item replace the PBIO scheduler.
  * See docs/ports.md for provenance, settling and identification limits. */
 #include "hub_ports.h"
@@ -9,6 +12,7 @@
 #include "ports/sensor.h"
 #include "hub_battery.h"
 #include "hub_watchdog.h"
+#include "motor/voltage.h"
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 #include "motor/control.h"
 #endif
@@ -198,6 +202,8 @@ static void pf_release(struct port *p)
 static void drop_claim(struct port *p)
 {
 	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
+	p->motor.direction = 0;
+	p->motor.max_voltage = 0;
 	p->measurement = BP_SENSOR_DEFAULT;
 	p->value.selected_mode = UINT8_MAX;
 	p->value.mode_error = -ENOTSUP;
@@ -1272,14 +1278,15 @@ int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	return err;
 }
 
-int hub_port_release(enum bp_port_owner owner, uint32_t port)
+static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t *generation)
 {
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
 		return -EINVAL;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
-	int err = p->owner && p->owner != owner ? -EBUSY : 0;
+	int err = generation && p->value.generation != *generation ? -ESTALE :
+		p->owner && p->owner != owner ? -EBUSY : 0;
 	if (!err && p->owner && p->serial) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
@@ -1323,6 +1330,16 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port)
 	}
 	k_spin_unlock(&lock, key);
 	return err;
+}
+
+int hub_port_release(enum bp_port_owner owner, uint32_t port)
+{
+	return port_release(owner, port, NULL);
+}
+
+int hub_motor_close(enum bp_port_owner owner, uint32_t port, uint32_t generation)
+{
+	return port_release(owner, port, &generation);
 }
 
 void hub_ports_session_closed(enum bp_port_owner owner)
@@ -1387,6 +1404,86 @@ int hub_motor_get(uint32_t port, struct bp_motor_state *value)
 		output_device_error(&ports[port], ports[port].value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
 	k_spin_unlock(&lock, key);
 	return 0;
+}
+
+/* Connection and configuration checks share the command lock, so a disconnect
+ * or another resource owner cannot slip between validation and queueing. */
+static int motor_connection_error(const struct port *p, enum bp_port_owner owner, uint32_t generation)
+{
+	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
+		p->serial || p->motor.releasing || write_pending(p) || p->pf_used ||
+		(p->owner && p->owner != owner) ? -EBUSY : 0;
+}
+
+int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t direction, uint32_t *request)
+{
+	if (port >= BP_PORT_COUNT || !request || (direction != 1 && direction != -1) ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	int err = port_output_check(port);
+	if (err) return err;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	err = motor_connection_error(p, owner, generation);
+	if (!err) err = p->motor.pending || p->motor.control.active ? -EBUSY : output_device_error(p, false);
+	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
+	if (!err) {
+		p->owner = p->sensor.owner = owner;
+		p->motor.direction = direction;
+		p->motor.max_voltage = motor_max_voltage(p->value.type_id);
+		p->motor.error = p->motor.cleanup_error = 0;
+		*request = p->motor.request;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t max_voltage)
+{
+	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	int err = motor_connection_error(p, owner, generation);
+	if (!err) err = !p->motor.direction || p->owner != owner ? -ENODEV :
+		max_voltage < 0 || max_voltage > motor_max_voltage(p->value.type_id) ? -EINVAL : 0;
+	if (!err) p->motor.max_voltage = max_voltage;
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t duty, uint32_t coast, uint32_t *request)
+{
+	if (port >= BP_PORT_COUNT || !request || duty < -1000 || duty > 1000 || coast > 1 || (coast && duty) ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	int err = port_output_check(port);
+	if (err) return err;
+	/* Reading the battery snapshot never nests its lock inside the port lock.
+	 * A missing battery sample must not prevent coast or active braking. */
+	struct bp_battery_sample battery;
+	int battery_error = duty ? hub_battery_get(&battery) : 0;
+	if (duty && !battery_error) battery_error = battery.error ? battery.error :
+		(!battery.voltage_mv || battery.voltage_mv > 12000) ? -ERANGE : 0;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	err = motor_connection_error(p, owner, generation);
+	if (!err) err = !p->motor.direction || p->owner != owner ? -ENODEV :
+		!coast && p->motor.pending ? -EBUSY : coast ? 0 : output_device_error(p, false);
+	if (!err) err = battery_error;
+	if (!err && duty) {
+		/* PBIO dcmotor.c applies direction and the model's voltage cap after
+		 * converting duty to battery-relative voltage. Native PWM uses permille. */
+		int32_t voltage = duty * (int32_t)battery.voltage_mv / 1000;
+		voltage = CLAMP(voltage, -p->motor.max_voltage, p->motor.max_voltage);
+		duty = voltage * 1000 / (int32_t)battery.voltage_mv * p->motor.direction;
+	}
+	if (!err) err = request_motor(p, coast ? BP_MOTOR_COAST : BP_MOTOR_DUTY, duty, 0);
+	if (!err) {
+		p->motor.error = p->motor.cleanup_error = 0;
+		*request = p->motor.request;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
 }
 
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms)

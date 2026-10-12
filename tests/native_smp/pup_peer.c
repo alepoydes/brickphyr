@@ -402,10 +402,10 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	    strcmp(argv[1], "tilt") && strcmp(argv[1], "infrared") &&
 	    strcmp(argv[1], "color") && strcmp(argv[1], "ultrasonic") &&
 	    strcmp(argv[1], "color_distance") && strcmp(argv[1], "matrix") &&
-	    strcmp(argv[1], "light") &&
+	    strcmp(argv[1], "light") && strcmp(argv[1], "motor") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
+		shell_error(shell, "Expected a peer kind, motor, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -438,6 +438,7 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	pf_count = 0;
 	pf_dropped = 0;
 	pup_test_circuits[0].kind = !strcmp(argv[1], "light") ? LIGHT :
+		!strcmp(argv[1], "motor") ? TRAIN_MOTOR :
 		!strcmp(argv[1], "serial") ? UNPLUGGED :
 		!strcmp(argv[1], "connect") || !strcmp(argv[1], "generic") ||
 		peer_kind != GENERIC ? UART_DEVICE :
@@ -449,5 +450,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	"Synthetic port A: connect|generic|serial|serial_rx <hex>|serial_close_error|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
 	pup_peer, 2, 1);

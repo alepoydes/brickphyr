@@ -189,6 +189,20 @@ __syscall int bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms);
 __syscall int bp_motor_coast(uint32_t port);
 /* Latest command/output result, no I/O. Inspect pending, valid and error. */
 __syscall int bp_motor_get(uint32_t port, struct bp_motor_state *state);
+/* Configure a connected DC motor with direction +1/-1 and its model's voltage
+ * limit, queueing coast first. These connection-bound operations use the same
+ * owner/worker as direct native drive. Match request with motor_get().completed;
+ * wait for setup completion before settings or drive. No driver I/O in caller. */
+__syscall int bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request);
+/* Duty is -1000..1000 in configured direction. Convert using cached battery
+ * voltage and clamp to the configured limit. coast=1 requires duty=0; duty=0
+ * with coast=0 brakes. Both stop modes work without a battery observation. */
+__syscall int bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request);
+/* 0..model maximum mV; applies to subsequent DC commands, without flash I/O. */
+__syscall int bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t max_voltage);
+/* Connection-bound asynchronous coast/release. Stale objects cannot release
+ * a replacement device. Completion is unowned + valid coast, or cleanup_error. */
+__syscall int bp_motor_close(uint32_t port, uint32_t generation);
 /* Queue a regulated speed/position command; does not wait for motion. The
  * command is copied. bp_motor_get reports driver completion separately from
  * trajectory completion. Coast or release cancels regulation. */

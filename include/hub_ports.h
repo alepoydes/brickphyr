@@ -37,6 +37,10 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port);
 void hub_ports_session_closed(enum bp_port_owner owner);
 int hub_ports_release(enum bp_port_owner owner);
 int hub_motor_get(uint32_t port, struct bp_motor_state *value);
+int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t direction, uint32_t *request);
+int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request);
+int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t max_voltage);
+int hub_motor_close(enum bp_port_owner owner, uint32_t port, uint32_t generation);
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms);
 int hub_motor_coast(enum bp_port_owner owner, uint32_t port);
 int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_motor_command *command);
@@ -83,6 +87,13 @@ static inline int hub_port_release(enum bp_port_owner owner, uint32_t port) { re
 static inline void hub_ports_session_closed(enum bp_port_owner owner) { }
 static inline int hub_ports_release(enum bp_port_owner owner) { return 0; }
 static inline int hub_motor_get(uint32_t port, struct bp_motor_state *value) { return -ENOTSUP; }
+static inline int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t direction, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t duty, uint32_t coast, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	int32_t max_voltage) { return -ENOTSUP; }
+static inline int hub_motor_close(enum bp_port_owner owner, uint32_t port, uint32_t generation) { return -ENOTSUP; }
 static inline int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty,
 	uint32_t duration_ms) { return -ENOTSUP; }
 static inline int hub_motor_coast(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }

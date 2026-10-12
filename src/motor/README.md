@@ -6,6 +6,8 @@
 [`a7b1b04ae4f8449dd46b3dfb97c420334439fd35`](https://github.com/alepoydes/pybricks-micropython/tree/a7b1b04ae4f8449dd46b3dfb97c420334439fd35).
 It preserves the [Pybricks MIT](../../LICENSES/Pybricks-MIT.txt) and
 [LEGO BSD-3-Clause](../../LICENSES/LEGO-BSD-3-Clause.txt) notices.
+`voltage.h` supplies the model voltage cap to both this controller and the
+port service's DC commands, using that same source and revision.
 
 The numerical control, trajectory, observer, integrator, differentiator, angle
 and integer-math implementations compile directly from the west dependency.
