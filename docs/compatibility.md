@@ -71,6 +71,11 @@ Power-cycle slot retention and complete client acceptance remain open. The optio
 Pybricks Code discovery, program upload, imports, input/output, stop, repeat and
 reconnection also pass on the Inventor F4 through Chromium Web Bluetooth; see the
 [tested browser and profile limitation](bluetooth.md#pybricks-code).
+Pybricks Beta additionally passes REPL reset/interruption, asynchronous tools and
+the unchanged reference status-light example. Browser native/Viper compilation
+has a client limitation; matching pybricksdev builds and executes these modules
+through both physical transports. Software-reboot slot retention passes, while
+a sporadic final USB upload acknowledgment timeout remains unresolved.
 
 ## Initial coverage plan
 

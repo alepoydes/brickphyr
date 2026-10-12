@@ -511,7 +511,8 @@ profile also advertises native `.mpy` ABI 6.3. The
 [pybricksdev integration](upstream.md#python-client-prerequisites) selects the
 matching compiler and packages imported `.mpy` files. Native/Viper decorators,
 an imported Viper module and a dynamic C module pass through the actual serial
-client on protected ARM emulation, including GC and repeated execution.
+client on protected ARM emulation and both USB/BLE clients on the Inventor F4,
+including GC and repeated execution.
 Incompatible module headers fail before the client starts a replacement transfer;
 the hub independently validates the received modules.
 
@@ -527,14 +528,20 @@ also passes upload, imports, input/output, stop, repeat and reconnect checks on
 that hub. This does not establish complete library compatibility. Persistent slots
 additionally have ARM checks for selection, transfer failure, storage exhaustion and coexistence
 with named programs. Physical slot retention across power loss remains unverified.
+Slot contents and execution after a software reboot pass on the Inventor F4;
+this does not establish retention across complete power removal.
 Subscribed output applies backpressure through the common
 [application queue](applications.md#python-input-and-output). Python waits
 interruptibly when it fills; USB continues receiving a STOP command behind a
 pending output event. BLE retries its retained notification before consuming
 another fragment. Detach or selection of native BLE management restores the
 nonblocking application log, whose overflow counter the Pybricks client does not
-expose. Long-output and blocked-stop cases have ARM checks; physical flow-control
-acceptance remains open.
+expose. Long-output and blocked-stop cases have ARM checks. Both physical clients
+also deliver a finite 4 KiB output exactly, stop continuous printing, interrupt a
+non-yielding loop and run again after reconnecting. Deliberately stalled physical
+consumers remain unverified. A final USB upload acknowledgment exceeded the
+client's two-second timeout in one check; its cause remains unresolved. A later
+successful transfer does not establish a worst-case storage-response bound.
 DFU through this protocol is still unsupported; use Shell `reboot dfu`.
 
 The returned firmware version does not impersonate Pybricks.
@@ -571,6 +578,9 @@ The reference status event reports the selected slot; upload metadata has no
 private slot or save field. A start command with an explicit ID runs that slot;
 without an ID it uses the current selection. Selecting an empty slot is allowed;
 starting it fails explicitly.
+Use the [client correction](upstream.md#python-client-prerequisites) when starting
+without an explicit slot immediately after connection; a cached status selection
+may not yet match the hub.
 
 The final metadata command acknowledges only after the validated image has been
 written, closed and atomically renamed. Failed replacement leaves the old program
@@ -598,8 +608,9 @@ uv run --locked python -m pybricksdev usb-info /dev/ttyACM0
 
 On the Inventor F4, this transport identifies both Brickphyr and official
 Pybricks 4.1.0b6 over Linux USB. The official image also passes STOP/status and
-reconnection checks. Program upload and execution through this transport remain
-unverified.
+reconnection checks. The Brickphyr Python profile additionally passes upload,
+execution and the input/output checks described above. Program execution through
+this transport on the official image remains unverified.
 
 The library entry point is `pybricksdev.connections.serial.PybricksHubSerial`.
 Use its `connect()`, inherited command methods and status/stdout observables, and
@@ -609,8 +620,8 @@ ambiguous late replies. A rejected command leaves a healthy connection available
 Disconnection does not stop a user program.
 
 The same transport supports `pybricksdev run usb --port PORT SCRIPT` for hubs that
-advertise a supported execution engine. Brickphyr currently advertises none, so
-this is not evidence that Python programs can be loaded or run here.
+advertise a supported execution engine. Brickphyr's Python profile advertises
+the implemented formats above; the base image without Python advertises none.
 
 ### Experimental control requests
 

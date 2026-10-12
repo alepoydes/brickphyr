@@ -229,12 +229,19 @@ includes precompiled modules and package initializers, validates their ABI and
 uses its existing MicroPython disassembler to follow imports. The v5/v6 bytecode
 paths remain available. This does not establish support for older native ABIs.
 
+The client also leaves the slot argument absent when `start_user_program(None)`
+requests the hub's current selection. Substituting the client's cached selection
+can start the wrong slot before the first status event arrives. This correction
+is local commit `b67efa0` in the pybricksdev fork and applies to all transports.
+
 Client tests cover compiler selection, precompiled imports and rejected headers;
 Brickphyr checks execution with the actual serial client on protected ARM
 emulation. Both repositories' uv locks resolve the added compiler package.
 Publish the dependency change before moving the shared manifest pin. Both actual
 clients now upload and repeat the hub example over USB/BLE on the Inventor F4;
-physical native-module negotiation and broader client acceptance remain open.
+native/Viper imports and a dynamic C module also execute through both clients.
+Selection immediately after connection and stored execution after software reboot
+have F4 USB/BLE checks. Broader client acceptance remains open.
 
 ## Settings storage prerequisites
 

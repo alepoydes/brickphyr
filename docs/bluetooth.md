@@ -97,10 +97,22 @@ stdout. Checks cover `PrimeHub` and `math` imports, battery voltage, normal retu
 Stop while waiting for input, repeat execution and a new run after reconnection.
 Disconnecting or closing the browser releases management so USB can reconnect.
 
-The tested website supports profile 1.5.0 and warns about the hub's 1.7.0 profile,
-but completes these operations. Browser REPL, native `.mpy` compilation and full
-library compatibility remain unverified; the checks above use ordinary bytecode.
-Do not install different firmware merely to dismiss the profile warning.
+The tested stable website supports profile 1.5.0 and warns about the hub's 1.7.0
+profile, but completes these operations. [Pybricks Beta](https://beta.pybricks.com)
+supports profile 1.7.0 and connects without that warning. Its F4 checks also cover
+hub observations, asynchronous tools, REPL input, Ctrl-C interruption, Ctrl-D
+soft reset, Stop and subsequent program execution. Use the website's Stop button
+to leave its REPL; the native terminal's Ctrl-X Shell return is a separate command.
+The unchanged reference `tests/pup/hub/status_light.py` uploads and completes there;
+perceived light output still requires operator observation.
+
+Browser-side native/Viper compilation remains unsupported by the tested beta
+client: its Run compiler rejects decorators with `SyntaxError: invalid arch`.
+The same decorators work when compiled on the hub through its browser REPL,
+and through the [matching pybricksdev compiler](upstream.md#python-client-prerequisites).
+Full library compatibility remains open. Firmware identity remains Brickphyr;
+the website can independently suggest updating firmware because it compares that
+version to Pybricks. Do not install different firmware merely to dismiss a warning.
 
 ### Controller lifecycle
 

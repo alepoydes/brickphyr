@@ -58,8 +58,10 @@ and [testing](../docs/testing.md) separate simulated from named-board evidence.
 The Pybricks execution adapter has ARM checks for transfer, persistent slots,
 imports, interruption, output and reconnection. USB/BLE client uploads and a
 hub example pass on the Inventor F4. Unchanged Pybricks Code over BLE also passes
-upload, imports, input/output, stop, repeat and reconnection there. Profile
-negotiation and complete client acceptance remain open;
+upload, imports, input/output, stop, repeat and reconnection there. Pybricks Beta
+accepts profile 1.7 and adds checked REPL reset/interruption and asynchronous tools;
+its browser compiler cannot yet build native/Viper decorators. Complete client
+acceptance remains open;
 see [host coverage](../docs/host.md#implemented-pybricks-subset).
 The F4 watchdog has USB-powered fault-recovery checks; battery-only recovery
 remains pending.
@@ -100,8 +102,11 @@ before expanding the F4 profile; no capacity figure is established here.
 
 Define `reset_storage` scope before implementing it: decide what happens to
 Pybricks slots, shared user data, named applications and Brickphyr settings.
-Open acceptance includes browser reference examples, slot retention across power cycles,
-Pybricks-client flow control, battery-only watchdog recovery and operator
+Both pybricksdev transports pass native-module, finite long-output and active-stop
+checks; selected-slot execution after software reboot also passes. A final USB
+upload acknowledgment timed out once and needs diagnosis. Open acceptance includes
+remaining browser reference examples, slot retention across power cycles,
+stalled physical consumers, battery-only watchdog recovery and operator
 checks for physical output, sensors, shutdown and persistence. See the owning
 documents for precise procedures and current status; simulation does not close
 these physical items.

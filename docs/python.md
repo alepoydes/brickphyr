@@ -30,7 +30,7 @@ record their [runtime](applications.md#experimental-python-profile),
 | 0 | Task and hardware watchdogs; USB recovery and shutdown/button restart checks on F4 | Battery-only watchdog recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
 | 5 | Common streams/resources, standard modules and REPL; ARM/CLI and F4 USB/BLE checks for interaction, exit/reset, native SMP backpressure and combined REPL/monitor operation | Preserve native interactive coverage; complete Pybricks-client flow-control acceptance in step 6 |
-| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, an F4 hub example through both actual clients and unchanged Pybricks Code execution | Profile negotiation, power-cycle slot retention and combined client acceptance |
+| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, F4 USB/BLE native-module execution and slot retention after reboot; unchanged Pybricks Code execution and beta REPL | Power-cycle slot retention, bounded upload acknowledgments, stalled physical consumers and remaining reference examples |
 | 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage, battery and IMU observations/frame/heading/calibration controls; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
@@ -46,12 +46,14 @@ Inventor F4 USB/BLE checks. Ctrl-D rebuilds Python state and Ctrl-X returns to t
 same usable Shell through both frontends. Native SMP output backpressure and
 combined REPL/application-monitor operation have USB/BLE checks. Compact stream
 responses and negotiated BLE packet sizes reduce the shared connection's
-overhead; monitor rates remain best-effort. Pybricks-client flow control is a
-separate acceptance item.
+overhead; monitor rates remain best-effort. Both physical pybricksdev transports
+also pass finite long-output, active-printing stop and reconnect checks. A final
+USB upload acknowledgment timed out once; its cause and deliberately stalled
+physical consumers remain separate acceptance items.
 
 | Delivery block | Remaining work | Usable result |
 | --- | --- | --- |
-| Pybricks clients | Resolve the profile warning, complete slot power-cycle retention and combined input/output acceptance; extend browser checks to covered reference examples | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
+| Pybricks clients | Resolve the upload-acknowledgment timeout; complete slot power-cycle retention and stalled-consumer acceptance; extend browser reference coverage and track the browser native-compiler limitation | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
 | Hub APIs and observations | Complete charger source detection (`connected()`) and storage reset; current/status use the shared service; accept physical menu selection; isolate and fix IMU acquisition gaps under BLE transfers | Reference hub examples share the existing hardware services, with valid observations or explicit errors and reliable cleanup |
 | Wired devices | Accept physical writes, the six sensor classes, Light/ColorLightMatrix and PFMotor; complete UART custom-supply permission/persistence and physical serial acceptance | Reference programs use device modes and measurements; generic access and the existing terminal inventory expose unknown compatible devices |
 | Motors | Accept reference examples/physical motion; coordinates, motion, shared control/model settings, motor/controller logging and blocking/awaitable bindings have synthetic ARM checks | Reference motor programs complete or cancel without stranding port ownership or active outputs |
