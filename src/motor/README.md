@@ -68,3 +68,23 @@ range-checked separately from motion, so a logging overflow cannot stop a valid
 long-angle maneuver. Both log kinds share the same port-owned buffer lifecycle,
 protected row API and Python Logger implementation. PBIO tools and logging use
 the same Zephyr monotonic clock, including builds without Python.
+
+`drivebase.c` ports the computation from `lib/pbio/src/drivebase.c` at the same
+Pybricks revision and with the same MIT/BSD notices. It adopts motor settings,
+forms distance/heading states, coordinates finite and timed trajectories, pauses
+both controllers together, and mixes feedback/feed-forward into wheel voltages.
+Arc and Spike tank/steering conversions use the reference conventions. The PBIO
+controllers, trajectory stretching and observer models remain shared with motors.
+One arithmetic guard serves both kinds of controller. Pair commands roll back
+both controllers when either trajectory is rejected; geometry and settings are
+validated before mutation. Absolute turns choose the nearest revolution in
+bounded time. Reset discards smart endpoints in the previous coordinates.
+
+Inputs are directed shaft states and explicit time; an owner can replace the
+heading position/speed with a scaled IMU reading while retaining motor-based
+derivative feedback. Output conversion returns directed shaft voltage; it does
+not advance either observer. The owner must predict once using the output which
+actually reached each driver, and stop both motors if acquisition or either
+output fails. This numerical layer has synthetic ARM checks; paired port
+ownership, scheduling, gyro integration and native/Python entry points remain
+unimplemented. It does not yet provide a usable `DriveBase` on the hub.

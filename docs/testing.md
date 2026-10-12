@@ -579,6 +579,12 @@ observation errors when a coasting encoder stops reporting. Neither fixture
 measures physical tuning,
 motor stopping or service jitter on the hub.
 
+The same numerical fixture covers the drivebase computation with two independent
+synthetic shafts: straight/turn/arc motion, synchronized trajectories, hold
+feedback, timed pair completion, long origins, rejected second-axis commands and
+configuration, and tank/steering signs. These cases do not exercise paired port
+ownership, scheduling, gyro acquisition or Python bindings, which remain pending.
+
 An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:
 
 ```sh

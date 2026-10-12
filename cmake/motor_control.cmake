@@ -2,6 +2,7 @@
 set(pbio ${WEST_TOPDIR}/pybricks-micropython/lib/pbio)
 include(${CMAKE_CURRENT_LIST_DIR}/pbio.cmake)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/motor/control.c
+  ${BRICKPHYR_ROOT}/src/motor/drivebase.c
   ${pbio}/src/angle.c ${pbio}/src/trajectory.c
   ${pbio}/src/integrator.c ${pbio}/src/control_settings.c ${pbio}/src/control.c
   ${pbio}/src/logger.c ${pbio}/src/differentiator.c ${pbio}/src/observer.c)

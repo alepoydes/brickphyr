@@ -398,6 +398,12 @@ Focused upstream trajectory checks and Brickphyr's numerical ARM checks cover
 these boundaries. The complete upstream PBIO test application has not been built
 with this patch; its Bluetooth submodule is not present in the local checkout.
 
+Drivebase computation also requires local Pybricks commit `3d9e6dca9` on that
+branch. `pbio_angle_from_low_res` now normalizes a 64-bit scaled angle instead of
+overflowing intermediate 32-bit products. The existing scale limits are retained.
+An upstream angle regression and Brickphyr's ARM numerical checks cover the
+conversion; publication and manifest integration remain pending.
+
 ## USB acquisition scheduling prerequisite
 
 F4 builds with high-rate acquisition require local Zephyr commit `b4ffd4217`

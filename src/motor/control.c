@@ -453,7 +453,7 @@ int motor_model_settings_set(uint16_t id, pbio_observer_settings_t *settings, co
     return 0;
 }
 
-static int state_get(struct motor_control *motor, int64_t measured, pbio_control_state_t *state)
+int motor_control_state_get(struct motor_control *motor, int64_t measured, pbio_control_state_t *state)
 {
     int err = angle_from_mdeg(measured, &state->position);
     if (err) return err;
@@ -479,7 +479,7 @@ static int run_duration(struct motor_control *motor, uint32_t ticks, int64_t ang
         speed < -motor->control.settings.speed_max || speed > motor->control.settings.speed_max ||
         duration >= PBIO_TRAJECTORY_DURATION_FOREVER_MS) return -EINVAL;
     pbio_control_state_t state;
-    int err = state_get(motor, angle, &state);
+    int err = motor_control_state_get(motor, angle, &state);
     if (err) return err;
     /* PBIO's timed HOLD narrows the absolute position through int32 application
      * units. Complete with brake, then start a zero-relative position command
@@ -549,7 +549,7 @@ int motor_control_command(struct motor_control *motor, uint32_t ticks, int64_t a
         return 0;
     }
     pbio_control_state_t state;
-    int err = state_get(motor, angle, &state);
+    int err = motor_control_state_get(motor, angle, &state);
     if (err) return err;
     if (command->action == BP_MOTOR_HOLD) {
         pbio_trajectory_reference_t ref = {.position = state.position};
@@ -570,7 +570,7 @@ int motor_control_target(struct motor_control *motor, uint32_t ticks, int64_t an
     if (finish > PBIO_CONTROL_ON_COMPLETION_BRAKE_SMART || finish < 0 || speed < 0 ||
         speed > motor->control.settings.speed_max) return -EINVAL;
     pbio_control_state_t state;
-    int err = state_get(motor, angle, &state);
+    int err = motor_control_state_get(motor, angle, &state);
     if (err) return err;
     pbio_angle_t checked_target;
     err = angle_from_mdeg(target, &checked_target);
@@ -587,27 +587,41 @@ int motor_control_target(struct motor_control *motor, uint32_t ticks, int64_t an
     return err;
 }
 
+int motor_control_reference(pbio_control_t *control, uint32_t ticks,
+    const pbio_control_state_t *state, pbio_trajectory_reference_t *ref)
+{
+    pbio_trajectory_get_reference(&control->trajectory,
+        pbio_control_get_ref_time(control, ticks), ref);
+    pbio_trajectory_reference_t end;
+    pbio_trajectory_get_endpoint(&control->trajectory, &end);
+    int64_t angle = angle_mdeg(&state->position);
+    int64_t error = angle_mdeg(&ref->position) - angle;
+    int64_t remaining = angle_mdeg(&end.position) - angle;
+    int64_t speed_error = (int64_t)ref->speed - state->speed_estimate;
+    if (llabs(error) >= INT32_MAX / 4 || llabs(remaining) >= INT32_MAX ||
+        llabs(speed_error) >= INT32_MAX || state->speed == INT32_MIN) return -ERANGE;
+    /* PBIO computes differences and the sum of PID terms in int32. Reserve
+     * room for derivative and bounded integral torque before entering it. */
+    int64_t derivative = llabs(speed_error) *
+        control->settings.pid_kd / 1000;
+    int64_t proportional = llabs(error) * control->settings.pid_kp / 1000;
+    int64_t windup_margin = llabs((int64_t)state->speed) / (1000 / PBIO_CONFIG_CONTROL_LOOP_TIME_MS) * 2;
+    if (proportional + derivative + control->settings.actuation_max >= INT32_MAX ||
+        windup_margin * control->settings.pid_kp / 1000 + control->settings.actuation_max_temporary >= INT32_MAX) return -ERANGE;
+    return 0;
+}
+
 int motor_control_step(struct motor_control *motor, uint32_t ticks, int64_t angle,
     struct motor_reference *out, struct motor_pid_sample *log)
 {
     pbio_control_state_t state;
-    int err = state_get(motor, angle, &state);
+    int err = motor_control_state_get(motor, angle, &state);
     if (err) return err;
     if (!pbio_control_is_active(&motor->control)) return -EAGAIN;
     pbio_trajectory_reference_t ref;
-    pbio_trajectory_get_reference(&motor->control.trajectory,
-        pbio_control_get_ref_time(&motor->control, ticks), &ref);
-    pbio_trajectory_reference_t end;
-    pbio_trajectory_get_endpoint(&motor->control.trajectory, &end);
+    err = motor_control_reference(&motor->control, ticks, &state, &ref);
+    if (err) return err;
     int64_t error = angle_mdeg(&ref.position) - angle;
-    int64_t remaining = angle_mdeg(&end.position) - angle;
-    /* PBIO computes differences and the sum of PID terms in int32. Reserve
-     * room for derivative and bounded integral torque before entering it. */
-    int64_t derivative = llabs((int64_t)ref.speed - state.speed_estimate) *
-        motor->control.settings.pid_kd / 1000;
-    int64_t proportional = llabs(error) * motor->control.settings.pid_kp / 1000;
-    if (llabs(error) >= INT32_MAX / 4 || llabs(remaining) >= INT32_MAX ||
-        proportional + derivative + motor->control.settings.actuation_max >= INT32_MAX) return -ERANGE;
     pbio_dcmotor_actuation_t actuation;
     int32_t feedback;
     bool pause = false;
@@ -661,7 +675,7 @@ int motor_control_predict(struct motor_control *motor, uint32_t ticks,
 {
     if (voltage < -12000 || voltage > 12000 || (coast && voltage)) return -EINVAL;
     pbio_control_state_t state;
-    int err = state_get(motor, measured, &state);
+    int err = motor_control_state_get(motor, measured, &state);
     if (err) return err;
     pbio_observer_update(&motor->observer, ticks, &state.position,
         coast ? PBIO_DCMOTOR_ACTUATION_COAST : PBIO_DCMOTOR_ACTUATION_VOLTAGE, voltage);
@@ -673,7 +687,7 @@ int motor_control_observe(struct motor_control *motor, uint32_t ticks,
 {
     if (!out) return -EINVAL;
     pbio_control_state_t state;
-    int err = state_get(motor, measured, &state);
+    int err = motor_control_state_get(motor, measured, &state);
     if (err) return err;
     struct motor_observation value = {.estimated_angle = angle_mdeg(&state.position_estimate),
         .estimated_speed = state.speed_estimate, .estimated_current = motor->observer.current,
@@ -704,7 +718,7 @@ int motor_control_log_sample(struct motor_control *motor, uint32_t ticks, int64_
     bool coast, int32_t voltage, const struct motor_reference *reference, struct motor_log_sample *value)
 {
     pbio_control_state_t state;
-    int err = state_get(motor, angle, &state);
+    int err = motor_control_state_get(motor, angle, &state);
     if (err) return err;
     uint32_t duration;
     bool stalled = pbio_control_is_active(&motor->control) ?

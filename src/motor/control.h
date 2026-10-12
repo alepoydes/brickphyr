@@ -73,3 +73,7 @@ int motor_control_predict(struct motor_control *motor, uint32_t time_ticks,
 /* Read the already predicted observer state. Does not advance it again. */
 int motor_control_observe(struct motor_control *motor, uint32_t time_ticks,
 	int64_t angle_mdeg, bool coast, struct motor_observation *result);
+int motor_control_state_get(struct motor_control *motor, int64_t angle_mdeg, pbio_control_state_t *state);
+/* Shared arithmetic guard before either a servo or drivebase PID update. */
+int motor_control_reference(pbio_control_t *control, uint32_t ticks,
+	const pbio_control_state_t *state, pbio_trajectory_reference_t *reference);
