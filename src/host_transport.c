@@ -61,6 +61,7 @@ static uint32_t generation;
 static uint32_t shell_generation;
 /* A connection that negotiated SMP keeps that framing until it closes. */
 static bool managed_shell;
+static const struct shell host_shell;
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
 
@@ -225,6 +226,9 @@ static int transport_read(const struct shell_transport *transport, void *data,
 			  size_t length, size_t *count)
 {
 	*count = 0;
+	/* Session admission already discards stale bytes. Shell startup also
+	 * drains its backend; retain new-session input until Shell is active. */
+	if (!shell_ready(&host_shell)) return 0;
 	while (*count < length) {
 		uint8_t byte;
 		if (!stream_read(&byte, 1)) {

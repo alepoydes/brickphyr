@@ -26,6 +26,10 @@ second Bluetooth management owner, and conversely. Tools share the current owner
 or receive a busy result; another client cannot silently take over the session.
 USB power alone does not acquire ownership.
 
+New-session Shell input is retained through startup, including commands sent
+before the first prompt. Closing a session discards its remaining input; it
+cannot become a command in the next USB or BLE session.
+
 Local transport closure does not acknowledge release by the firmware. While it
 finishes accepted operations or receives the BLE disconnection event, a new
 admission can still return busy. The USB selector reports ownership and readiness

@@ -373,6 +373,48 @@ ZTEST(host, test_smp_before_shell_prompt)
 	close_session();
 }
 
+ZTEST(host, test_text_before_shell_prompt)
+{
+	BUILD_ASSERT(CONFIG_ZTEST_THREAD_PRIORITY < 0 && CONFIG_SHELL_THREAD_PRIORITY > 0);
+	char output[512];
+	wait_idle();
+	zassert_ok(host_interface_select(HOST_SHELL));
+	zassert_ok(host_ble_acquire());
+	unsigned int previous_probes = probes;
+	/* The cooperative test thread queues input before the preemptible host
+	 * worker and Shell (both priority 8) can start this session. */
+	int opened = host_ble_shell_open(ble_output_ready, &terminal_session);
+	uint32_t stale = terminal_session;
+	int queued = opened ? opened : host_ble_shell_receive(stale, "probe stale\r", 12);
+	if (!opened) host_ble_shell_close(stale);
+	host_ble_release(false);
+	terminal_session = 0;
+	zassert_ok(opened);
+	zassert_ok(queued);
+	wait_idle();
+	zassert_equal(host_ble_shell_receive(stale, "probe late\r", 11), -ENOTCONN);
+	zassert_equal(probes, previous_probes, "Closed session executed queued input");
+
+	unsigned int previous_marks = calls;
+	zassert_ok(host_ble_acquire());
+	opened = host_ble_shell_open(ble_output_ready, &terminal_session);
+	queued = opened ? opened : host_ble_shell_receive(terminal_session, "mark\r", 5);
+	zassert_ok(opened);
+	zassert_ok(queued);
+	/* A new-session command must survive Zephyr Shell's startup flush. */
+	receive_until("MARK ", output, sizeof(output));
+	zassert_equal(calls, previous_marks + 1);
+	zassert_equal(probes, previous_probes, "Old Shell input crossed the session boundary");
+	char *command_output = strstr(output, "MARK ");
+	if (!strstr(command_output, "brickphyr> ")) {
+		receive_until("brickphyr> ", output, sizeof(output));
+	}
+	host_ble_shell_close(terminal_session);
+	host_ble_release(false);
+	terminal_session = 0;
+	wait_idle();
+}
+
 K_SEM_DEFINE(management_entered, 0, 1);
 K_SEM_DEFINE(management_release, 0, 1);
 static unsigned int management_calls;

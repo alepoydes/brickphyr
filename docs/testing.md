@@ -786,6 +786,8 @@ subscription status and malformed/oversized frame recovery. A host C compiler is
 required. No check inspects source contents.
 
 The host test first acquires BLE ownership without preceding USB status requests.
+Cold-session cases send SMP or a text command before the first Shell prompt;
+the text case also verifies that a closed session cannot supply that command.
 It also drives the production BLE ownership entry points: USB/BLE
 exclusion, power inhibition, rejected USB input and fresh-open requirements. This
 simulates ownership transitions, not radio traffic. The optional Bluetooth profile

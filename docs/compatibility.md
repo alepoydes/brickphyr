@@ -259,9 +259,10 @@ have direct calculation checks; bias learning has acquisition-service checks.
 On the Inventor F4, native USB/BLE scripts check frame selection, heading reset,
 calibration access and epoch changes; REPL observations and soft reset pass.
 Both actual Pybricks clients run the expanded example in bounded checks.
-Pybricks BLE execution can also report a transient `EOVERFLOW` observation during
-the known acquisition gaps under radio load. Subsequent reads recover, but sustained
-error-free combined operation and physical calibration accuracy remain unverified.
+Python observations can report transient `EOVERFLOW` during acquisition gaps,
+including idle operation and USB/BLE application transfers. Subsequent reads
+recover, but sustained error-free combined operation and physical calibration
+accuracy remain unverified.
 
 Radio constructor arguments, charger source detection (`connected()`),
 system `reset_storage` and messaging remain unfinished required work.

@@ -187,7 +187,10 @@ static void worker(void *a, void *b, void *c)
 		consumed = sequence;
 		uint8_t data[12];
 		err = i2c_burst_read_dt(&bus, LSM6DS3TR_C_OUTX_L_G, data, sizeof(data));
+		key = k_spin_lock(&lock);
 		int64_t completed = now_us();
+		bool overlapped = sequence != edges;
+		k_spin_unlock(&lock, key);
 		if (err) {
 			/* A partial word can remain latched by BDU. Drain one complete
 			 * frame before accepting samples from subsequent ready edges. */
@@ -196,6 +199,10 @@ static void worker(void *a, void *b, void *c)
 			resync = false;
 			err = -EAGAIN;
 		}
+		/* Admit the copied frame at I2C completion. A later ready edge cannot
+		 * change these bytes and belongs to the next iteration, even if it
+		 * preempts conversion/publication of this frame. */
+		if (!err && overlapped) err = -EOVERFLOW;
 		struct bp_imu_sample next = {.sample_us = acquired, .read_us = completed,
 			.sequence = sequence};
 		int16_t raw[6];
@@ -212,11 +219,6 @@ static void worker(void *a, void *b, void *c)
 			}
 		}
 		key = k_spin_lock(&lock);
-		/* Without FIFO there is no sample tag in the registers. Do not pair
-		 * an overlapping update with the previous edge's timestamp. */
-		if (!err && sequence != edges) {
-			err = -EOVERFLOW;
-		}
 		missed += err != 0;
 		next.missed = sample.missed + MIN(missed, UINT32_MAX - sample.missed);
 		next.failures = sample.failures;

@@ -95,9 +95,9 @@ The native motor observer now continues through DC/brake/coast while claimed;
 synthetic service checks cover speed, model load/stall and feedback loss.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;
 custom P1/P2 supply and physical serial acceptance remain pending.
-Repeated BLE application transfers still cause occasional IMU acquisition
-failures; isolate the cause before claiming combined-load reliability. Account
-separately for static reservations, stacks, Python heap and peak loading memory
+Occasional IMU acquisition failures remain during idle operation and USB/BLE
+application transfers; isolate the scheduling/I/O cause before claiming reliability.
+Account separately for static reservations, stacks, Python heap and peak loading memory
 before expanding the F4 profile; no capacity figure is established here.
 
 Define `reset_storage` scope before implementing it: decide what happens to

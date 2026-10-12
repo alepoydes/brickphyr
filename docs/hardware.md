@@ -324,8 +324,10 @@ through [Settings](settings.md#imu-calibration); learning never writes flash.
 `sample_us` timestamps the observed gyro-ready edge on the monotonic clock.
 Acceleration accompanies it in the same 12-byte burst. This is not a simultaneous
 hardware latch of six axes, nor the physical sampling instant before filter
-delay. The driver rejects reads crossed by another observed gyro-ready edge and
-drains a complete frame after an I²C failure before accepting new values.
+delay. When the synchronous I²C read returns, the driver rejects frames crossed
+by another observed gyro-ready edge. A later edge during conversion or publication
+belongs to the next frame and does not invalidate bytes already copied. After an I²C failure,
+the driver drains a complete frame before accepting new values.
 The chip's BDU protection covers each two-byte word; see
 [ST AN5130, sections 3.9 and 4](https://www.st.com/resource/en/application_note/dm00472670-lsm6ds3tr-c-always-on-3d-accelerometer-and-3d-gyroscope-stmicroelectronics.pdf).
 
@@ -354,6 +356,9 @@ requests. This does not establish a worst-case latency guarantee: startup/sessio
 transitions and all peripheral combinations still require characterization.
 Mounting verification, calibrated accuracy, CPU use, stack margin and residual
 current remain open.
+
+Occasional acquisition overruns remain during idle operation and USB/BLE
+application transfers on the Inventor F4; acquisition timing remains unresolved.
 
 ## Hub sound
 
@@ -457,8 +462,6 @@ execution. On the Inventor F4, the speaker example completes through native
 USB/BLE management and the actual Pybricks USB/BLE clients. Interruption and REPL
 reset release playback, with no reported underrun or cleanup failure. These
 checks confirm execution and driver completion, not acoustic quality.
-The repeated BLE application sequence also produced occasional IMU acquisition
-failures; combined-load acquisition timing remains unresolved.
 
 ## External ports and sensors
 
