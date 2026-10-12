@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <stdint.h>
+#include <brickphyr_motor.h>
 
 /* The two already configured servos must have identical gearing. Dimensions
  * are micrometres; Spike geometry uses average/difference shaft degrees. */
@@ -38,4 +39,12 @@ struct bp_drivebase_state {
 	uint8_t pending, active, done, stalled, valid;
 	uint8_t gyro;
 	struct bp_drivebase_settings settings;
+};
+
+/* Paired controls use millimetres or heading degrees (Spike: shaft degrees).
+ * Trajectory diagnostics retain PBIO raw trajectory units, as Motor.control. */
+enum bp_drivebase_axis { BP_DRIVEBASE_DISTANCE, BP_DRIVEBASE_HEADING, BP_DRIVEBASE_AXES };
+struct bp_drivebase_axis_state {
+	struct bp_servo_settings settings;
+	struct bp_servo_trajectory trajectory;
 };

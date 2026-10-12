@@ -48,8 +48,8 @@ void motor_control_settings_get(const pbio_control_settings_t *settings, int32_t
 	struct bp_servo_settings *value);
 int motor_control_settings_set(pbio_control_settings_t *settings, uint32_t group,
 	const struct bp_servo_settings *value);
-void motor_control_settings_apply(struct motor_control *motor, const pbio_control_settings_t *settings);
-void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_trajectory *value);
+void controller_settings_apply(pbio_control_t *ctl, const pbio_control_settings_t *settings);
+void controller_trajectory_get(pbio_control_t *ctl, struct bp_servo_trajectory *value);
 void motor_model_settings_get(const pbio_observer_settings_t *settings, struct bp_motor_model_settings *value);
 int motor_model_settings_set(uint16_t id, pbio_observer_settings_t *settings, const struct bp_motor_model_settings *value);
 int motor_control_log_sample(struct motor_control *motor, uint32_t ticks, int64_t angle,
@@ -77,3 +77,7 @@ int motor_control_state_get(struct motor_control *motor, int64_t angle_mdeg, pbi
 /* Shared arithmetic guard before either a servo or drivebase PID update. */
 int motor_control_reference(pbio_control_t *control, uint32_t ticks,
 	const pbio_control_state_t *state, pbio_trajectory_reference_t *reference);
+
+void controller_log_begin(pbio_control_t *ctl, const pbio_control_state_t *state,
+	const pbio_trajectory_reference_t *ref, struct motor_pid_sample *log);
+void controller_log_end(pbio_control_t *ctl);

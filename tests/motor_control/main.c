@@ -270,9 +270,9 @@ ZTEST(motor_control, test_settings_during_motion)
 	int32_t temporary = motor.control.settings.actuation_max_temporary;
 	zassert_true(temporary < motor.control.settings.actuation_max);
 	struct bp_servo_trajectory before, after;
-	motor_control_trajectory_get(&motor, &before);
-	motor_control_settings_apply(&motor, &settings);
-	motor_control_trajectory_get(&motor, &after);
+	controller_trajectory_get(&motor.control, &before);
+	controller_settings_apply(&motor.control, &settings);
+	controller_trajectory_get(&motor.control, &after);
 	zassert_true(after.active);
 	zassert_equal(memcmp(before.points, after.points, sizeof(before.points)), 0);
 	zassert_equal(motor.control.settings.actuation_max_temporary, temporary);
@@ -284,7 +284,7 @@ ZTEST(motor_control, test_settings_during_motion)
 	zassert_equal(motor.control.settings.actuation_max_temporary, motor.control.settings.actuation_max);
 	zassert_ok(motor_control_step(&motor, 100, 0, &out, NULL));
 	zassert_equal(out.acceleration_mdeg_s2, 600000);
-	motor_control_trajectory_get(&motor, &after);
+	controller_trajectory_get(&motor.control, &after);
 	zassert_true(after.active);
 	zassert_equal(after.points[11], 600);
 	zassert_equal(motor_control_run(&motor, 100, 0, 500001, 1000,

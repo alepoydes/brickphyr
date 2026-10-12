@@ -395,23 +395,22 @@ int motor_control_settings_set(pbio_control_settings_t *settings, uint32_t group
         return -EINVAL;
     }
     if (err) return -EINVAL;
-    s.ctl_steps_per_app_step = 1;
+    s.ctl_steps_per_app_step = settings->ctl_steps_per_app_step;
     *settings = s;
     return 0;
 }
 
-void motor_control_settings_apply(struct motor_control *motor, const pbio_control_settings_t *settings)
+void controller_settings_apply(pbio_control_t *ctl, const pbio_control_settings_t *settings)
 {
     /* PBIO samples the torque cap when a command starts, including temporary
      * stall caps. A settings update must not erase that command-local limit. */
-    int32_t temporary = motor->control.settings.actuation_max_temporary;
-    motor->control.settings = *settings;
-    motor->control.settings.actuation_max_temporary = temporary;
+    int32_t temporary = ctl->settings.actuation_max_temporary;
+    ctl->settings = *settings;
+    ctl->settings.actuation_max_temporary = temporary;
 }
 
-void motor_control_trajectory_get(struct motor_control *motor, struct bp_servo_trajectory *value)
+void controller_trajectory_get(pbio_control_t *ctl, struct bp_servo_trajectory *value)
 {
-    pbio_control_t *ctl = &motor->control;
     pbio_trajectory_t *t = &ctl->trajectory;
     bool active = pbio_control_is_active(ctl);
     *value = (struct bp_servo_trajectory){
@@ -611,6 +610,31 @@ int motor_control_reference(pbio_control_t *control, uint32_t ticks,
     return 0;
 }
 
+void controller_log_begin(pbio_control_t *ctl, const pbio_control_state_t *state,
+    const pbio_trajectory_reference_t *ref, struct motor_pid_sample *log)
+{
+    if (!log) return;
+    int64_t angle = angle_mdeg(&state->position);
+    int64_t error = angle_mdeg(&ref->position) - angle;
+    int64_t logged_ref = angle_mdeg(&ref->position);
+    if (pbio_control_type_is_time(ctl)) {
+        logged_ref = angle + pbio_speed_integrator_get_error(&ctl->speed_integrator, error);
+    }
+    int64_t estimate = angle_mdeg(&state->position_estimate);
+    int64_t scale = ctl->settings.ctl_steps_per_app_step;
+    /* The CSV hook narrows to int32 application units, with nearest rounding.
+     * A diagnostic overflow must stop logging, not the full-range motion. */
+    int64_t limit = (INT32_MAX - 1LL) * scale;
+    log->error = llabs(angle) > limit || llabs(estimate) > limit || llabs(logged_ref) > limit ? -ERANGE : 0;
+    if (!log->error) pbio_logger_start(&ctl->log, log->values, 1, BP_CONTROL_LOG_COLUMNS, 1);
+}
+
+void controller_log_end(pbio_control_t *ctl)
+{
+    pbio_logger_stop(&ctl->log);
+    ctl->log.data = NULL;
+}
+
 int motor_control_step(struct motor_control *motor, uint32_t ticks, int64_t angle,
     struct motor_reference *out, struct motor_pid_sample *log)
 {
@@ -621,31 +645,12 @@ int motor_control_step(struct motor_control *motor, uint32_t ticks, int64_t angl
     pbio_trajectory_reference_t ref;
     err = motor_control_reference(&motor->control, ticks, &state, &ref);
     if (err) return err;
-    int64_t error = angle_mdeg(&ref.position) - angle;
     pbio_dcmotor_actuation_t actuation;
     int32_t feedback;
     bool pause = false;
-    if (log) {
-        /* PBIO's CSV hook converts its positions to int32 application units.
-         * Our controller uses shaft millidegrees. Reject an unrepresentable
-         * sample rather than let the diagnostic conversion wrap. Motion keeps
-         * its full angle range; only logging stops on this error. */
-        int64_t logged_ref = angle_mdeg(&ref.position);
-        if (pbio_control_type_is_time(&motor->control)) {
-            logged_ref = angle + pbio_speed_integrator_get_error(&motor->control.speed_integrator, error);
-        }
-        int64_t estimate = angle_mdeg(&state.position_estimate);
-        log->error = angle < INT32_MIN || angle > INT32_MAX || estimate < INT32_MIN ||
-            estimate > INT32_MAX || logged_ref < INT32_MIN || logged_ref > INT32_MAX ? -ERANGE : 0;
-        if (!log->error) {
-            /* Include the D term already produced by the reference hook.
-             * Its pinned default width accidentally omits that final value. */
-            pbio_logger_start(&motor->control.log, log->values, 1, BP_CONTROL_LOG_COLUMNS, 1);
-        }
-    }
+    controller_log_begin(&motor->control, &state, &ref, log);
     pbio_control_update(&motor->control, ticks, &state, &ref, &actuation, &feedback, &pause);
-    pbio_logger_stop(&motor->control.log);
-    motor->control.log.data = NULL;
+    controller_log_end(&motor->control);
     int32_t feedforward = pbio_observer_get_feedforward_torque(motor->observer.model,
         ref.speed, ref.acceleration);
     int32_t torque = pbio_int_math_clamp(feedback + feedforward,

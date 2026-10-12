@@ -122,10 +122,15 @@ static struct drivebase {
 	struct bp_drivebase_state value;
 	struct bp_drivebase_command command;
 	struct bp_drivebase_settings settings;
+	struct bp_drivebase_axis_state axis[DRIVEBASE_AXES];
+	struct bp_servo_settings axis_settings;
+	uint32_t settings_axis, settings_group;
+	struct motor_log log[DRIVEBASE_AXES];
 	struct drivebase_control controller;
 	struct drivebase_reference reference;
 	uint32_t applied, imu_epoch;
-	bool initializing, configure, cancelled, detach, frame;
+	enum { DRIVE_CONFIG_NONE, DRIVE_CONFIG_BASIC, DRIVE_CONFIG_AXIS } configure;
+	bool initializing, cancelled, detach, frame;
 } drivebases[BP_PORT_COUNT / 2];
 static uint32_t drivebase_handle;
 static void cancel_drivebase(struct port *p, int error, bool detach);
@@ -258,6 +263,45 @@ static void stop_motor_logs(struct port *p, int error)
 	for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) stop_motor_log(&p->log[kind], error);
 }
 
+static void free_motor_log(struct motor_log *log)
+{
+	k_free(log->data);
+	log->data = NULL;
+	log->owner = BP_PORT_UNOWNED;
+	log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1};
+}
+
+/* Nonwaiting allocation under lock leaves no unpublished buffer when an
+ * application is forcibly stopped. Only initialized rows become readable. */
+static int start_motor_log(struct motor_log *log, enum bp_port_owner owner, uint32_t generation,
+	uint32_t duration_ms, uint32_t down_sample, uint32_t columns)
+{
+	if (!down_sample) return -EINVAL;
+	uint32_t rows = duration_ms / CONTROL_MS / down_sample;
+	if (rows > SIZE_MAX / sizeof(int32_t) / columns) return -EOVERFLOW;
+	int32_t *data = rows ? k_malloc(rows * columns * sizeof(*data)) : NULL;
+	if (rows && !data) return -ENOMEM;
+	k_free(log->data);
+	log->data = data;
+	log->owner = owner;
+	log->generation = generation;
+	log->down_sample = down_sample;
+	log->skipped = 0;
+	log->start_ms = k_uptime_get_32();
+	log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1,
+		.capacity = rows, .columns = columns, .active = rows != 0};
+	return 0;
+}
+
+static int read_motor_log(struct motor_log *log, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
+{
+	if (revision != log->status.revision) return -ECANCELED;
+	if (row >= log->status.rows) return -ENOENT;
+	*value = (struct bp_motor_log_row){0};
+	memcpy(value->values, log->data + row * log->status.columns, log->status.columns * sizeof(int32_t));
+	return 0;
+}
+
 static void free_motor_logs(enum bp_port_owner owner)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -265,10 +309,13 @@ static void free_motor_logs(enum bp_port_owner owner)
 		for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
 			struct motor_log *log = &ports[i].log[kind];
 			if (log->owner != owner) continue;
-			k_free(log->data);
-			log->data = NULL;
-			log->owner = BP_PORT_UNOWNED;
-			log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1};
+			free_motor_log(log);
+		}
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+		for (size_t axis = 0; axis < DRIVEBASE_AXES; axis++) {
+			struct motor_log *log = &drivebases[i].log[axis];
+			if (log->owner == owner) free_motor_log(log);
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -685,6 +732,10 @@ static void cancel_drivebase(struct port *p, int error, bool detach)
 		db->detach = true;
 		if (!db->value.error) db->value.error = error;
 	}
+	for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
+		db->axis[i].trajectory = (struct bp_servo_trajectory){.done = true};
+		if (detach || db->value.error) stop_motor_log(&db->log[i], error);
+	}
 }
 #endif
 
@@ -736,6 +787,15 @@ static int servo_angle(const struct bp_motor_state *motor, int64_t shaft, int32_
 	return 0;
 }
 
+/* Caller holds lock; rows contain only initialized firmware-owned values. */
+static void append_log_row(struct motor_log *log, int32_t *values)
+{
+	values[0] = k_uptime_get_32() - log->start_ms;
+	memcpy(log->data + log->status.rows++ * log->status.columns,
+		values, log->status.columns * sizeof(int32_t));
+	if (log->status.rows == log->status.capacity) log->status.active = false;
+}
+
 /* PBIO logger.c's bounded row append/downsampling, with explicit sample time
  * and firmware-owned memory. Caller holds lock; never copies a whole log. */
 static void append_motor_log(struct port *p, uint32_t kind, uint32_t ticks,
@@ -773,10 +833,7 @@ static void append_motor_log(struct port *p, uint32_t kind, uint32_t ticks,
 		stop_motor_log(log, err);
 		return;
 	}
-	row.values[0] = k_uptime_get_32() - log->start_ms;
-	memcpy(log->data + log->status.rows++ * log->status.columns,
-		row.values, log->status.columns * sizeof(int32_t));
-	if (log->status.rows == log->status.capacity) log->status.active = false;
+	append_log_row(log, row.values);
 }
 
 static int control_frame(struct port *p, int64_t angle,
@@ -891,7 +948,16 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 	uint32_t request = db->value.request;
 	bool pending = db->value.pending && db->applied != request;
 	struct bp_drivebase_command command = db->command;
-	bool configure = db->configure;
+	int configure = db->configure;
+	uint32_t settings_axis = db->settings_axis, settings_group = db->settings_group;
+	struct bp_servo_settings axis_settings = db->axis_settings;
+	struct motor_pid_sample samples[DRIVEBASE_AXES];
+	struct motor_pid_sample *logs[DRIVEBASE_AXES];
+	uint32_t log_revision[DRIVEBASE_AXES];
+	for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
+		logs[i] = db->log[i].status.active ? &samples[i] : NULL;
+		log_revision[i] = db->log[i].status.revision;
+	}
 	bool gyro = db->value.gyro;
 	bool gyro_change = pending && !configure && command.action == BP_DRIVEBASE_GYRO && command.gyro != gyro;
 	struct bp_drivebase_settings settings = db->settings;
@@ -947,8 +1013,13 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 					if (gyro) err = drivebase_gyro(db, &state, false);
 				}
 			}
-		} else if (configure) {
+		} else if (configure == DRIVE_CONFIG_BASIC) {
 			command_error = drivebase_settings_set(&db->controller, &settings);
+		} else if (configure == DRIVE_CONFIG_AXIS) {
+			pbio_control_t *ctl = &db->controller.control[settings_axis];
+			pbio_control_settings_t next = ctl->settings;
+			command_error = motor_control_settings_set(&next, settings_group, &axis_settings);
+			if (!command_error) controller_settings_apply(ctl, &next);
 		} else if (command.action == BP_DRIVEBASE_GYRO) {
 			if (gyro_change) {
 				if (command.gyro) command_error = drivebase_gyro(db, &state, false);
@@ -986,7 +1057,7 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 	}
 	bool active = !err && drivebase_control_active(&db->controller);
 	struct drivebase_reference reference;
-	if (active) err = drivebase_control_step(&db->controller, now * 10, &state, &reference);
+	if (active) err = drivebase_control_step(&db->controller, now * 10, &state, &reference, logs);
 	struct bp_drivebase_state value = {0};
 	if (!err) {
 		int32_t distance_scale = db->controller.control[0].settings.ctl_steps_per_app_step;
@@ -1019,6 +1090,24 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 		value.pending = db->value.pending;
 		value.command_error = db->value.command_error;
 		db->value = value;
+		for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
+			pbio_control_t *ctl = &db->controller.control[i];
+			struct bp_servo_settings *s = &db->axis[i].settings;
+			if (initializing || (pending && !command_error && (configure == DRIVE_CONFIG_BASIC ||
+			    (configure == DRIVE_CONFIG_AXIS && settings_axis == i)))) {
+				/* Settings conversions need not repeat on every 5 ms frame. */
+				motor_control_settings_get(&ctl->settings, ctl->settings.ctl_steps_per_app_step, s);
+				s->revision = s->applied = request;
+			}
+			controller_trajectory_get(ctl, &db->axis[i].trajectory);
+			struct motor_log *log = &db->log[i];
+			if (!active || !logs[i] || log->status.revision != log_revision[i]) continue;
+			if (samples[i].error) stop_motor_log(log, samples[i].error);
+			else if (log->status.active && ++log->skipped == log->down_sample) {
+				log->skipped = 0;
+				append_log_row(log, samples[i].values);
+			}
+		}
 		db->initializing = false;
 		if (active) db->reference = reference;
 		db->frame = active;
@@ -1136,7 +1225,7 @@ static int64_t apply_motor(uint32_t port)
 		next_frame = (next_frame ? next_frame : k_uptime_get()) + CONTROL_MS;
 		if (reset) err = motor_control_init_profile(&p->controller, type, angle, profile);
 		else if (rebase) err = motor_control_reset_angle(&p->controller, angle);
-		if (!err && settings_pending) motor_control_settings_apply(&p->controller, &settings);
+		if (!err && settings_pending) controller_settings_apply(&p->controller.control, &settings);
 		if (!err && settings_pending) p->controller.observer.settings = model_settings;
 	}
 	if (observing && command_pending && !controlled && !err) {
@@ -1188,7 +1277,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 	p->control_due = !err && observing ? next_frame : 0;
 	struct bp_servo_trajectory trajectory = {0};
-	if (!err && observing && !paired && (frame || command_pending)) motor_control_trajectory_get(&p->controller, &trajectory);
+	if (!err && observing && !paired && (frame || command_pending)) controller_trajectory_get(&p->controller.control, &trajectory);
 #endif
 	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
 	key = k_spin_lock(&lock);
@@ -2265,6 +2354,7 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 	if (!err) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
+			for (size_t i = 0; i < DRIVEBASE_AXES; i++) free_motor_log(&db->log[i]);
 			*db = (struct drivebase){.motor = {p[0], p[1]}, .owner = owner, .setup = *setup,
 				.handle = ++drivebase_handle, .initializing = true,
 				.value = {.request = 1, .pending = true}};
@@ -2312,7 +2402,7 @@ int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
 			db->command = *command;
-			db->configure = false;
+			db->configure = DRIVE_CONFIG_NONE;
 			db->value.command_error = 0;
 			db->value.pending = true;
 			*request = ++db->value.request;
@@ -2325,6 +2415,7 @@ int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
 				db->value.motion = *request;
 				db->value.active = false;
 				db->value.done = true;
+			for (size_t i = 0; i < DRIVEBASE_AXES; i++) db->axis[i].trajectory = (struct bp_servo_trajectory){.done = true};
 				for (size_t i = 0; i < 2; i++) set_motor_request(db->motor[i],
 					command->action == BP_DRIVEBASE_COAST ? BP_MOTOR_COAST : BP_MOTOR_DUTY, 0, 0);
 			}
@@ -2347,7 +2438,7 @@ int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
 			db->settings = *settings;
-			db->configure = true;
+			db->configure = DRIVE_CONFIG_BASIC;
 			db->value.command_error = 0;
 			db->value.pending = true;
 			*request = ++db->value.request;
@@ -2367,6 +2458,100 @@ int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle)
 		cancel_drivebase(db->motor[0], -ECANCELED, true);
 		err = 0;
 	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+/* Axis settings are published by the same worker as pair state. Requests
+ * share pair acknowledgment, but never replace the active motion token. */
+int hub_drivebase_axis_get(enum bp_port_owner owner, uint32_t handle, uint32_t axis,
+	struct bp_drivebase_axis_state *value)
+{
+	if (axis >= DRIVEBASE_AXES || !value) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = !db || db->detach ? -ENODEV : db->value.error;
+	if (!err) err = !db->value.valid ? -EAGAIN :
+		k_uptime_get() - db->value.sample_ms >= 2 * CONTROL_MS ? -ETIMEDOUT : 0;
+	if (!err) *value = db->axis[axis];
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_drivebase_axis_set(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *request)
+{
+	if (axis >= DRIVEBASE_AXES || group > BP_SERVO_STALL_TOLERANCES || !value || !request) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : !db || db->detach ? -ENODEV :
+		db->value.pending ? -EBUSY : db->value.error;
+	if (!err && (value->revision != db->axis[axis].settings.revision ||
+	    value->scale != db->axis[axis].settings.scale)) err = -EAGAIN;
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			db->axis_settings = *value;
+			db->settings_axis = axis;
+			db->settings_group = group;
+			db->configure = DRIVE_CONFIG_AXIS;
+			db->value.command_error = 0;
+			db->value.pending = true;
+			*request = ++db->value.request;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t axis,
+	uint32_t duration_ms, uint32_t down_sample)
+{
+	if (axis >= DRIVEBASE_AXES) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct drivebase *db = find_drivebase(owner, handle);
+	int err = !db || db->detach ? -ENODEV : db->value.error;
+	if (!err) err = !db->value.valid ? -EAGAIN : start_motor_log(&db->log[axis], owner,
+		handle, duration_ms, down_sample, BP_CONTROL_LOG_COLUMNS);
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+/* Retain stopped rows after disconnection until application cleanup or reuse
+ * of this bounded pair slot. Old handles can never read a replacement's log. */
+static struct motor_log *drivebase_log(enum bp_port_owner owner, uint32_t handle, uint32_t axis)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+		struct drivebase *db = &drivebases[i];
+		if (db->handle == handle && (db->owner == owner || db->log[axis].owner == owner)) return &db->log[axis];
+	}
+	return NULL;
+}
+
+int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis,
+	uint32_t stop, struct bp_motor_log_status *value)
+{
+	if (axis >= DRIVEBASE_AXES || !value || stop > 1 ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct motor_log *log = drivebase_log(owner, handle, axis);
+	if (log) {
+		if (stop) log->status.active = false;
+		*value = log->status;
+	}
+	k_spin_unlock(&lock, key);
+	return log ? 0 : -ENODEV;
+}
+
+int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis,
+	uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
+{
+	if (axis >= DRIVEBASE_AXES || !value ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct motor_log *log = drivebase_log(owner, handle, axis);
+	int err = log ? read_motor_log(log, revision, row, value) : -ENODEV;
 	k_spin_unlock(&lock, key);
 	return err;
 }
@@ -2391,6 +2576,11 @@ int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
 int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
 	const struct bp_drivebase_settings *settings, uint32_t *request) { return -ENOTSUP; }
 int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle) { return -ENOTSUP; }
+int hub_drivebase_axis_get(enum bp_port_owner owner, uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value) { return -ENOTSUP; }
+int hub_drivebase_axis_set(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t group, const struct bp_servo_settings *value, uint32_t *request) { return -ENOTSUP; }
+int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample) { return -ENOTSUP; }
+int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value) { return -ENOTSUP; }
+int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value) { return -ENOTSUP; }
 #endif
 
 int hub_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
@@ -2503,9 +2693,7 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !down_sample ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
-	uint32_t rows = duration_ms / CONTROL_MS / down_sample;
 	uint32_t columns = kind == BP_MOTOR_LOG ? BP_MOTOR_LOG_COLUMNS : BP_CONTROL_LOG_COLUMNS;
-	if (rows > SIZE_MAX / sizeof(int32_t) / columns) return -EOVERFLOW;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
@@ -2514,24 +2702,7 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 	    (p->drivebase->value.active || p->drivebase->value.pending)) err = -EBUSY;
 	if (!err && (p->motor.releasing || p->owner != owner ||
 	    (log->owner && log->owner != owner))) err = -EBUSY;
-	if (!err) {
-		/* Nonwaiting heap allocation under the service lock leaves no
-		 * unpublished buffer to leak if the application is forcibly stopped.
-		 * Only initialized rows are readable; no bulk zero/copy is needed. */
-		int32_t *data = rows ? k_malloc(rows * columns * sizeof(*data)) : NULL;
-		if (rows && !data) err = -ENOMEM;
-		else {
-			k_free(log->data);
-			log->data = data;
-			log->owner = owner;
-			log->generation = generation;
-			log->down_sample = down_sample;
-			log->skipped = 0;
-			log->start_ms = k_uptime_get_32();
-			log->status = (struct bp_motor_log_status){.revision = log->status.revision + 1,
-				.capacity = rows, .columns = columns, .active = rows != 0};
-		}
-	}
+	if (!err) err = start_motor_log(log, owner, generation, duration_ms, down_sample, columns);
 	k_spin_unlock(&lock, key);
 	return err;
 #endif
@@ -2581,12 +2752,7 @@ int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
 	int err = motor_log_access(p, log, owner, generation);
-	if (!err) err = revision != log->status.revision ? -ECANCELED :
-		row >= log->status.rows ? -ENOENT : 0;
-	if (!err) {
-		*value = (struct bp_motor_log_row){0};
-		memcpy(value->values, log->data + row * log->status.columns, log->status.columns * sizeof(int32_t));
-	}
+	if (!err) err = read_motor_log(log, revision, row, value);
 	k_spin_unlock(&lock, key);
 	return err;
 #endif

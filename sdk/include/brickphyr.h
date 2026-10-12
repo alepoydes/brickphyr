@@ -263,6 +263,11 @@ __syscall int bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value
 __syscall int bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request);
 __syscall int bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request);
 __syscall int bp_drivebase_close(uint32_t handle);
+__syscall int bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value);
+__syscall int bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group, const struct bp_servo_settings *value, uint32_t *request);
+__syscall int bp_drivebase_log_start(uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample);
+__syscall int bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value);
+__syscall int bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value);
 
 
 /* Acquire the free speaker and queue a square tone: 20..24000 Hz, 0..100 volume.

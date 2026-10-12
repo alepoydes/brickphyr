@@ -7,7 +7,6 @@
 #include <brickphyr.h>
 #include <errno.h>
 #include <math.h>
-#include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/tools.h>
 #include <pybricks/tools/pb_type_async.h>
@@ -17,7 +16,7 @@
 
 typedef struct {
 	mp_obj_base_t base;
-	mp_obj_t motors[2];
+	mp_obj_t motors[2], controls[BP_DRIVEBASE_AXES];
 	uint32_t handle, motion_request;
 	pb_type_async_t *iter;
 } drivebase_obj_t;
@@ -316,6 +315,18 @@ static mp_obj_t use_gyro(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(use_gyro_obj, 1, use_gyro);
 
+static void drivebase_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
+{
+	if (dest[0] != MP_OBJ_NULL) return;
+	drivebase_obj_t *self = MP_OBJ_TO_PTR(object);
+	uint32_t axis;
+	if (name == MP_QSTR_distance_control) axis = BP_DRIVEBASE_DISTANCE;
+	else if (name == MP_QSTR_heading_control) axis = BP_DRIVEBASE_HEADING;
+	else { dest[1] = MP_OBJ_SENTINEL; return; }
+	if (self->controls[axis] == MP_OBJ_NULL) self->controls[axis] = python_drivebase_control_new(object, self->handle, axis);
+	dest[0] = self->controls[axis];
+}
+
 static const mp_rom_map_elem_t drivebase_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_straight), MP_ROM_PTR(&straight_obj)},
 	{MP_ROM_QSTR(MP_QSTR_move_by), MP_ROM_PTR(&move_by_obj)},
@@ -337,7 +348,7 @@ static const mp_rom_map_elem_t drivebase_methods[] = {
 };
 static MP_DEFINE_CONST_DICT(drivebase_dict, drivebase_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(drivebase_type, MP_QSTR_DriveBase, MP_TYPE_FLAG_NONE,
-	make_new, drivebase_new, locals_dict, &drivebase_dict);
+	make_new, drivebase_new, attr, drivebase_attr, locals_dict, &drivebase_dict);
 
 static mp_obj_t spike_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
@@ -423,11 +434,13 @@ static mp_obj_t steering_forever(size_t n_args, const mp_obj_t *args, mp_map_t *
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(steering_forever_obj, 1, steering_forever);
 
-static const pb_attr_dict_entry_t spike_attributes[] = {
-	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_left, drivebase_obj_t, motors[0]),
-	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_right, drivebase_obj_t, motors[1]),
-	PB_ATTR_DICT_SENTINEL
-};
+static void spike_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
+{
+	if (dest[0] != MP_OBJ_NULL) return;
+	drivebase_obj_t *self = MP_OBJ_TO_PTR(object);
+	if (name == MP_QSTR_left || name == MP_QSTR_right) dest[0] = self->motors[name == MP_QSTR_right];
+	else drivebase_attr(object, name, dest);
+}
 static const mp_rom_map_elem_t spike_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_tank_move_for_degrees), MP_ROM_PTR(&tank_degrees_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tank_move_for_time), MP_ROM_PTR(&tank_time_obj)},
@@ -439,7 +452,7 @@ static const mp_rom_map_elem_t spike_methods[] = {
 };
 static MP_DEFINE_CONST_DICT(spike_dict, spike_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(spike_type, MP_QSTR_SpikeBase, MP_TYPE_FLAG_NONE,
-	make_new, spike_new, attr, pb_attribute_handler, protocol, spike_attributes, locals_dict, &spike_dict);
+	make_new, spike_new, attr, spike_attr, locals_dict, &spike_dict);
 
 static const mp_rom_map_elem_t robotics_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_robotics)},

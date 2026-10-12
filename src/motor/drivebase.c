@@ -270,7 +270,7 @@ int drivebase_control_command(struct drivebase_control *db, uint32_t ticks,
 }
 
 int drivebase_control_step(struct drivebase_control *db, uint32_t ticks,
-    const struct drivebase_state *state, struct drivebase_reference *value)
+    const struct drivebase_state *state, struct drivebase_reference *value, struct motor_pid_sample *logs[DRIVEBASE_AXES])
 {
     if (db->secondary_pending && pbio_control_is_done(&db->control[0]) && pbio_control_is_done(&db->control[1])) {
         struct drivebase_command straight = {.motion = DRIVEBASE_RELATIVE,
@@ -296,8 +296,10 @@ int drivebase_control_step(struct drivebase_control *db, uint32_t ticks,
     pbio_dcmotor_actuation_t actuation[DRIVEBASE_AXES];
     for (size_t i = 0; i < DRIVEBASE_AXES; i++) {
         bool external_pause = db->paused;
+        controller_log_begin(&db->control[i], &state->axis[i], &out.axis[i], logs ? logs[i] : NULL);
         pbio_control_update(&db->control[i], ticks, &state->axis[i], &out.axis[i],
             &actuation[i], &out.torque[i], &external_pause);
+        controller_log_end(&db->control[i]);
         paused |= external_pause;
         out.stalled |= (db->control[i].status & PBIO_CONTROL_STATUS_STALLED) != 0;
     }

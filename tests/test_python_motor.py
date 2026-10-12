@@ -261,6 +261,11 @@ print('log memory reclaimed')
             try:
                 await shell(port, captured, b"pup_peer encoded_motor")
                 await port_matches(client, phase=6)
+                # Direct duty needs the completed power-on battery sample.
+                # Reading its status does not warm up the Motor constructor.
+                async with asyncio.timeout(3):
+                    while (await snapshot(client, "battery")).error == -119:
+                        await asyncio.sleep(0.005)
                 await upload(client, port, source, Format.PYTHON)
                 await checked(client, Start())
                 text = await until(client, b"ready\r\n")

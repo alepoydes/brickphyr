@@ -55,7 +55,7 @@ bool drivebase_control_done(const struct drivebase_control *db);
 int drivebase_control_command(struct drivebase_control *db, uint32_t ticks,
 	const struct drivebase_state *state, const struct drivebase_command *command);
 int drivebase_control_step(struct drivebase_control *db, uint32_t ticks,
-	const struct drivebase_state *state, struct drivebase_reference *value);
+	const struct drivebase_state *state, struct drivebase_reference *value, struct motor_pid_sample *logs[DRIVEBASE_AXES]);
 /* Mix distance/heading feedback and reference feed-forward into one directed
  * wheel's shaft voltage. Direction is applied by the port boundary afterwards. */
 void drivebase_control_output(const struct drivebase_reference *value,

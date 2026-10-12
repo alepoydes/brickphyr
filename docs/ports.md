@@ -741,7 +741,26 @@ dedicated `*_forever` methods for continuous motion. Finite methods default to
 `then=Stop.HOLD` and `wait=True`; waiting blocks even inside `run_task`.
 `SpikeBase.stop()` coasts the pair, and `.left` and `.right` reference its motors.
 
-Native applications use `bp_drivebase_open/get/command/settings_set/close`.
+Both classes expose persistent, read-only `.distance_control` and
+`.heading_control` objects with the same `Control` methods as `Motor.control`:
+`limits`, `pid`, target and stall tolerances, `trajectory`, `done`, `load` and
+`stalled`. Each controls its own paired axis. `DriveBase.settings()` shares their
+default speed and acceleration settings; the speed returned by `Control.limits()`
+is the maximum, not that default. Per-axis `done/load/stalled` describe one
+controller, while `DriveBase.done()` describes the entire maneuver, including
+both phases of `move_by`. `trajectory()` uses Motor's raw PBIO diagnostic units
+rather than millimetres or heading degrees.
+
+Each control's `.log` supports the same `start(duration, down_sample=1)`,
+`stop()` and `save(path)` CSV methods as Motor. Its 13 columns include measured
+and reference position/speed in millimetres for distance and degrees for
+heading; SpikeBase uses shaft-angle units on both axes. Logging pauses with
+passive control without discarding rows. Pair retirement stops collection and
+retains rows until application cleanup or reuse of the bounded pair slot; an
+old handle cannot access a new pair's log.
+
+Native applications use `bp_drivebase_open/get/command/settings_set/close`,
+`bp_drivebase_axis_get/set` and `bp_drivebase_log_start/status/read`.
 Setup contains both port generations and dimensions in micrometres. Open and
 queued commands expose request/completion tokens; completion acknowledges
 application of the command, while `done` reports maneuver completion separately.
@@ -754,8 +773,9 @@ replacement, gyro configuration/reset, cancellation, hotplug, output failure and
 application cleanup with synthetic devices. Numerical checks cover `move_by`'s
 two phases and cancellation; protected ARM checks cover its wait/await behavior
 and SpikeBase's wheel directions, timed completion and interruption. Physical
-paired motion and gyro accuracy remain unverified. Shared `heading_control`,
-`distance_control` and `Car` remain required work.
+paired motion and gyro accuracy remain unverified. Protected ARM checks also
+cover shared control settings, trajectory preservation, CSV units, retained rows
+and log-memory cleanup. `Car` remains required work.
 
 ## Speed and position control
 

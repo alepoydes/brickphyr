@@ -50,7 +50,7 @@ static void advance(struct drive_fixture *f, uint32_t ticks,
 {
 	struct drivebase_state state;
 	state_get(f, &state);
-	zassert_ok(drivebase_control_step(&f->db, ticks, &state, reference));
+	zassert_ok(drivebase_control_step(&f->db, ticks, &state, reference, NULL));
 	for (size_t i = 0; i < 2; i++) {
 		drivebase_control_output(reference, &f->motor[i], i == 1, &output[i]);
 		zassert_true(abs(output[i].voltage_mv) <= f->motor[i].max_voltage);

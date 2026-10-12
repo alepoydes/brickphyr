@@ -15,6 +15,11 @@ int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
 int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
 	const struct bp_drivebase_settings *settings, uint32_t *request);
 int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle);
+int hub_drivebase_axis_get(enum bp_port_owner owner, uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value);
+int hub_drivebase_axis_set(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t group, const struct bp_servo_settings *value, uint32_t *request);
+int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample);
+int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value);
+int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value);
 bool hub_drivebase_uses_gyro(void);
 int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation);
 int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud);
@@ -89,6 +94,11 @@ static inline int hub_drivebase_command(enum bp_port_owner owner, uint32_t handl
 static inline int hub_drivebase_settings_set(enum bp_port_owner owner, uint32_t handle,
 	const struct bp_drivebase_settings *settings, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_drivebase_close(enum bp_port_owner owner, uint32_t handle) { return -ENOTSUP; }
+static inline int hub_drivebase_axis_get(enum bp_port_owner owner, uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value) { return -ENOTSUP; }
+static inline int hub_drivebase_axis_set(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t group, const struct bp_servo_settings *value, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample) { return -ENOTSUP; }
+static inline int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value) { return -ENOTSUP; }
+static inline int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row, struct bp_motor_log_row *value) { return -ENOTSUP; }
 static inline int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32_t *generation) { return -ENOTSUP; }
 static inline int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t baud) { return -ENOTSUP; }
 static inline int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint8_t *data, uint32_t size) { return -ENOTSUP; }

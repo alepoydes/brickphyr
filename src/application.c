@@ -1191,6 +1191,71 @@ static inline int z_vrfy_bp_drivebase_close(uint32_t handle)
 }
 #include <zephyr/syscalls/bp_drivebase_close_mrsh.c>
 
+int z_impl_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
+{
+	return hub_drivebase_axis_get(BP_PORT_APPLICATION, handle, axis, value);
+}
+static inline int z_vrfy_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_drivebase_axis_get(handle, axis, value);
+}
+#include <zephyr/syscalls/bp_drivebase_axis_get_mrsh.c>
+
+int z_impl_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *request)
+{
+	return hub_drivebase_axis_set(BP_PORT_APPLICATION, handle, axis, group, value, request);
+}
+static inline int z_vrfy_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
+	const struct bp_servo_settings *value, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(value, sizeof(*value)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_servo_settings copy;
+	memcpy(&copy, value, sizeof(copy));
+	return z_impl_bp_drivebase_axis_set(handle, axis, group, &copy, request);
+}
+#include <zephyr/syscalls/bp_drivebase_axis_set_mrsh.c>
+
+int z_impl_bp_drivebase_log_start(uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample)
+{
+	return hub_drivebase_log_start(BP_PORT_APPLICATION, handle, axis, duration_ms, down_sample);
+}
+static inline int z_vrfy_bp_drivebase_log_start(uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample)
+{
+	return z_impl_bp_drivebase_log_start(handle, axis, duration_ms, down_sample);
+}
+#include <zephyr/syscalls/bp_drivebase_log_start_mrsh.c>
+
+int z_impl_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
+{
+	return hub_drivebase_log_status(BP_PORT_APPLICATION, handle, axis, stop, value);
+}
+static inline int z_vrfy_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_drivebase_log_status(handle, axis, stop, value);
+}
+#include <zephyr/syscalls/bp_drivebase_log_status_mrsh.c>
+
+int z_impl_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
+	struct bp_motor_log_row *value)
+{
+	return hub_drivebase_log_read(BP_PORT_APPLICATION, handle, axis, revision, row, value);
+}
+static inline int z_vrfy_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
+	struct bp_motor_log_row *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_drivebase_log_read(handle, axis, revision, row, value);
+}
+#include <zephyr/syscalls/bp_drivebase_log_read_mrsh.c>
+
 int z_impl_bp_sound_tone(uint32_t frequency, uint32_t duration_ms, uint32_t volume)
 {
 	return hub_sound_tone(BP_SOUND_APPLICATION, frequency, duration_ms, volume);

@@ -375,13 +375,20 @@ MP_DEFINE_CONST_OBJ_TYPE(python_dc_motor_type, MP_QSTR_DCMotor, MP_TYPE_FLAG_NON
 typedef struct {
 	mp_obj_base_t base;
 	motor_obj_t *motor;
-	uint32_t log_kind;
+	mp_obj_t parent, log;
+	uint32_t handle, axis, log_kind;
 } motor_child_t;
 
 static mp_obj_t motor_logger(motor_obj_t *motor, uint32_t kind);
+static mp_obj_t pair_logger(motor_child_t *self);
 
 static struct bp_servo_settings control_settings(motor_child_t *self)
 {
+	if (!self->motor) {
+		struct bp_drivebase_axis_state value;
+		check(bp_drivebase_axis_get(self->handle, self->axis, &value));
+		return value.settings;
+	}
 	motor_obj_t *m = self->motor;
 	if (m->closed) check(-ENODEV);
 	struct bp_servo_settings value;
@@ -391,6 +398,22 @@ static struct bp_servo_settings control_settings(motor_child_t *self)
 
 static mp_obj_t control_set(motor_child_t *self, uint32_t group, struct bp_servo_settings *value)
 {
+	if (!self->motor) {
+		uint32_t request;
+		check(bp_drivebase_axis_set(self->handle, self->axis, group, value, &request));
+		for (;;) {
+			struct bp_drivebase_state state;
+			check(bp_drivebase_get(self->handle, &state));
+			check(state.error);
+			check(state.cleanup_error);
+			if (state.request != request) check(-ECANCELED);
+			if (!state.pending && state.completed == request) {
+				check(state.command_error);
+				return mp_const_none;
+			}
+			mp_hal_delay_ms(2);
+		}
+	}
 	motor_obj_t *m = self->motor;
 	uint32_t revision;
 	check(bp_servo_settings_set(m->port, m->generation, group, value, &revision));
@@ -483,7 +506,13 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(control_stall_tolerances_obj, 1, control_stall
 
 static struct bp_servo_trajectory control_snapshot(mp_obj_t object)
 {
-	motor_obj_t *m = ((motor_child_t *)MP_OBJ_TO_PTR(object))->motor;
+	motor_child_t *self = MP_OBJ_TO_PTR(object);
+	if (!self->motor) {
+		struct bp_drivebase_axis_state value;
+		check(bp_drivebase_axis_get(self->handle, self->axis, &value));
+		return value.trajectory;
+	}
+	motor_obj_t *m = self->motor;
 	if (m->closed) check(-ENODEV);
 	struct bp_servo_trajectory value;
 	check(bp_servo_trajectory_get(m->port, m->generation, &value));
@@ -509,7 +538,10 @@ static MP_DEFINE_CONST_FUN_OBJ_1(control_load_obj, control_load);
 static void control_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
 {
 	if (dest[0] != MP_OBJ_NULL) return;
-	if (name == MP_QSTR_log) dest[0] = motor_logger(((motor_child_t *)MP_OBJ_TO_PTR(object))->motor, BP_CONTROL_LOG);
+	if (name == MP_QSTR_log) {
+		motor_child_t *self = MP_OBJ_TO_PTR(object);
+		dest[0] = self->motor ? motor_logger(self->motor, BP_CONTROL_LOG) : pair_logger(self);
+	}
 	else if (name == MP_QSTR_scale) dest[0] = mp_obj_new_int(control_settings(MP_OBJ_TO_PTR(object)).scale);
 	else dest[1] = MP_OBJ_SENTINEL;
 }
@@ -580,9 +612,10 @@ static mp_obj_t motor_log_start(size_t n_args, const mp_obj_t *args, mp_map_t *k
 	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, motor_child_t, self,
 		PB_ARG_REQUIRED(duration), PB_ARG_DEFAULT_INT(down_sample, 1));
 	motor_obj_t *m = self->motor;
-	if (m->closed) check(-ENODEV);
-	check(bp_motor_log_start(m->port, m->generation, self->log_kind, pb_obj_get_positive_int(duration_in),
-		MAX(pb_obj_get_int(down_sample_in), 1)));
+	uint32_t duration = pb_obj_get_positive_int(duration_in), down_sample = MAX(pb_obj_get_int(down_sample_in), 1);
+	if (m && m->closed) check(-ENODEV);
+	check(m ? bp_motor_log_start(m->port, m->generation, self->log_kind, duration, down_sample) :
+		bp_drivebase_log_start(self->handle, self->axis, duration, down_sample));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(motor_log_start_obj, 1, motor_log_start);
@@ -592,7 +625,8 @@ static mp_obj_t motor_log_stop(mp_obj_t object)
 	motor_child_t *self = MP_OBJ_TO_PTR(object);
 	motor_obj_t *m = self->motor;
 	struct bp_motor_log_status status;
-	check(bp_motor_log_status(m->port, m->generation, self->log_kind, true, &status));
+	check(m ? bp_motor_log_status(m->port, m->generation, self->log_kind, true, &status) :
+		bp_drivebase_log_status(self->handle, self->axis, true, &status));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(motor_log_stop_obj, motor_log_stop);
@@ -604,12 +638,14 @@ static mp_obj_t motor_log_save(size_t n_args, const mp_obj_t *args, mp_map_t *kw
 	if (strchr(path, '\n') || strchr(path, '\r')) check(-EINVAL);
 	motor_obj_t *m = self->motor;
 	struct bp_motor_log_status status;
-	check(bp_motor_log_status(m->port, m->generation, self->log_kind, true, &status));
+	check(m ? bp_motor_log_status(m->port, m->generation, self->log_kind, true, &status) :
+		bp_drivebase_log_status(self->handle, self->axis, true, &status));
 	mp_printf(&mp_plat_print, "PB_OF:%s\n", path);
 	int err = 0;
 	for (uint32_t row = 0; row < status.rows; row++) {
 		struct bp_motor_log_row data;
-		err = bp_motor_log_read(m->port, m->generation, self->log_kind, status.revision, row, &data);
+		err = m ? bp_motor_log_read(m->port, m->generation, self->log_kind, status.revision, row, &data) :
+			bp_drivebase_log_read(self->handle, self->axis, status.revision, row, &data);
 		if (err) break;
 		for (size_t col = 0; col < status.columns; col++) {
 			mp_printf(&mp_plat_print, col + 1 < status.columns ? "%d, " : "%d\n", data.values[col]);
@@ -629,13 +665,30 @@ static const mp_rom_map_elem_t motor_log_methods[] = {
 static MP_DEFINE_CONST_DICT(motor_log_dict, motor_log_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(motor_log_type, MP_QSTR_Logger, MP_TYPE_FLAG_NONE, locals_dict, &motor_log_dict);
 
+mp_obj_t python_drivebase_control_new(mp_obj_t parent, uint32_t handle, uint32_t axis)
+{
+	motor_child_t *child = mp_obj_malloc(motor_child_t, &control_type);
+	*child = (motor_child_t){.base = {.type = &control_type}, .parent = parent, .handle = handle, .axis = axis};
+	return MP_OBJ_FROM_PTR(child);
+}
+
+static mp_obj_t pair_logger(motor_child_t *self)
+{
+	if (self->log == MP_OBJ_NULL) {
+		motor_child_t *child = mp_obj_malloc(motor_child_t, &motor_log_type);
+		*child = (motor_child_t){.base = {.type = &motor_log_type}, .parent = self->parent,
+			.handle = self->handle, .axis = self->axis};
+		self->log = MP_OBJ_FROM_PTR(child);
+	}
+	return self->log;
+}
+
 static mp_obj_t motor_logger(motor_obj_t *motor, uint32_t kind)
 {
 	mp_obj_t *slot = kind == BP_MOTOR_LOG ? &motor->log : &motor->control_log;
 	if (*slot == MP_OBJ_NULL) {
 		motor_child_t *child = mp_obj_malloc(motor_child_t, &motor_log_type);
-		child->motor = motor;
-		child->log_kind = kind;
+		*child = (motor_child_t){.base = {.type = &motor_log_type}, .motor = motor, .log_kind = kind};
 		*slot = MP_OBJ_FROM_PTR(child);
 	}
 	return *slot;
@@ -656,7 +709,7 @@ static void motor_attr(mp_obj_t object, qstr name, mp_obj_t *dest)
 	}
 	if (*slot == MP_OBJ_NULL) {
 		motor_child_t *child = mp_obj_malloc(motor_child_t, type);
-		child->motor = self;
+		*child = (motor_child_t){.base = {.type = type}, .motor = self};
 		*slot = MP_OBJ_FROM_PTR(child);
 	}
 	dest[0] = *slot;

@@ -2,11 +2,13 @@
 """Protected robotics bindings with two synthetic UART motors."""
 
 import asyncio
+import re
 
 from test_native import native_console
 from test_python import completed, output
 from test_python_hub import ready, shell
 from test_python_imu import BUILD
+from test_python_io import until
 from test_python_pupdevice import port_matches
 
 from brickphyrdev import console
@@ -161,6 +163,120 @@ assert False, 'host Stop must release both paired motors'
         asyncio.run(exercise(device))
 
 
+def test_drivebase_shared_controls_logs_and_stop_cleanup():
+    source = b"""
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port
+from pybricks.robotics import DriveBase
+from pybricks.tools import wait
+
+left, right = Motor(Port.A), Motor(Port.B)
+base = DriveBase(left, right, 56, 112)
+d, h = base.distance_control, base.heading_control
+assert d is base.distance_control and h is base.heading_control and d is not h
+assert type(d) is type(h) is type(left.control)
+assert d.scale > 1000 and h.scale == 2000
+assert d.trajectory() is h.trajectory() is None
+assert d.done() and h.done() and d.load() == h.load() == 0
+assert not d.stalled() and not h.stalled()
+
+base.settings(straight_acceleration=(120, 180), turn_acceleration=(60, 90))
+assert d.limits()[1] == base.settings()[1]
+assert h.limits()[1] == base.settings()[3]
+d.limits(acceleration=(140, 180))
+assert base.settings()[1] == d.limits()[1]
+h.target_tolerances(speed=10, position=2)
+h.stall_tolerances(speed=5, time=30)
+assert h.target_tolerances() == (10, 2)
+assert h.stall_tolerances() == (5, 30)
+
+base.drive(80, 0)
+trajectory = d.trajectory()
+assert len(trajectory) == 13 and trajectory[9] > 80, trajectory
+pid = d.pid()
+d.pid(kp=pid[0] + 1)
+assert d.pid()[0] == pid[0] + 1 and d.trajectory() == trajectory
+limits, heading_trajectory = h.limits(), h.trajectory()
+try:
+    h.limits(speed=2147483647)
+except ValueError:
+    pass
+else:
+    assert False, 'invalid limit replaced the active pair'
+assert h.limits() == limits and h.trajectory() == heading_trajectory
+base.stop()
+
+base.reset(12, -7)
+d.log.start(40, down_sample=2)
+h.log.start(40, down_sample=2)
+base.drive(80, 0)
+wait(60)
+base.stop()
+d.log.save('distance.csv')
+h.log.save('heading.csv')
+left.close()
+try:
+    d.limits()
+except OSError:
+    pass
+else:
+    assert False, 'retired controller remained usable'
+d.log.save('retired.csv')
+base = DriveBase(Motor(Port.A), right, 56, 112)
+d, h = base.distance_control, base.heading_control
+
+# Two 480-row, 13-column buffers consume about 50 KiB of the fixture heap.
+# Forced application stop must release them for the next protected app.
+d.log.start(2400)
+h.log.start(2400)
+print('ready'); input()
+"""
+    second = b"""
+from pybricks.pupdevices import Motor
+from pybricks.parameters import Port
+from pybricks.robotics import DriveBase
+left, right = Motor(Port.A), Motor(Port.B)
+base = DriveBase(left, right, 56, 112)
+base.distance_control.log.start(2400)
+base.heading_control.log.start(2400)
+print('drivebase log memory reclaimed')
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                await prepare_motors(client, port, captured)
+                await upload(client, port, source, Format.PYTHON)
+                await checked(client, Start())
+                text = await until(client, b"ready\r\n")
+                logs = re.findall(rb"PB_OF:([^\r\n]+)\r\n(.*?)PB_EOF\r\n", text, re.S)
+                assert [name for name, _ in logs] == [b"distance.csv", b"heading.csv", b"retired.csv"], text
+                for name, data in logs:
+                    rows = [[int(v) for v in row.split(b", ")] for row in data.splitlines()]
+                    assert len(rows) == 4 and all(len(row) == 13 for row in rows), rows
+                    expected = -7 if name == b"heading.csv" else 12
+                    assert all(row[2] == expected and row[3] == 0 for row in rows), rows
+                    assert all(b[0] - a[0] == 10 and b[1] - a[1] == 100
+                               for a, b in zip(rows, rows[1:])), rows
+
+                await checked(client, Stop())
+                result = await completed(client, state=3)
+                assert result.cleanup == 0, result
+                await upload(client, port, second, Format.PYTHON)
+                await checked(client, Start())
+                result = await completed(client)
+                assert result.result == result.fault == result.dropped == 0, result
+                assert await output(client) == b"drivebase log memory reclaimed\r\n"
+            except BaseException as error:
+                error.add_note(f"Python output: {await output(client)!r}")
+                error.add_note(f"Console: {bytes(captured)!r}")
+                raise
+
+    with native_console(BUILD, virtual_clock=True) as device:
+        asyncio.run(exercise(device))
+
+
 def test_spikebase_wheel_units_waits_and_steering():
     source = b"""
 from pybricks.pupdevices import Motor
@@ -172,6 +288,11 @@ left = Motor(Port.A)
 right = Motor(Port.B)
 base = SpikeBase(left, right)
 assert base.left is left and base.right is right
+assert base.distance_control is base.distance_control
+assert base.heading_control is base.heading_control
+assert base.distance_control is not base.heading_control
+assert type(base.distance_control) is type(left.control)
+assert base.distance_control.scale == base.heading_control.scale == 1000
 assert base.tank_move_for_degrees(0, 0, 123) is None
 assert base.steering_move_for_degrees(100, 100, -20, wait=False) is None
 wait(25)

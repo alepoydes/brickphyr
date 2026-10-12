@@ -24,3 +24,5 @@ static inline void python_device_check(int result)
 		mp_raise_OSError(-result);
 	}
 }
+
+mp_obj_t python_drivebase_control_new(mp_obj_t parent, uint32_t handle, uint32_t axis);
