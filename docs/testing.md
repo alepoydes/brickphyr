@@ -5,6 +5,39 @@ simulator, inspect the linked ARM image, and open its firmware package through
 Pybricks. Physical checks and their limits are listed in [hardware](hardware.md).
 Simulation does not exercise the STM32 USB driver, power circuitry, or bootloaders.
 
+## Selecting checks
+
+Follow the [test policy](../CONTRIBUTING.md#checks-and-pull-requests). Build only
+the affected fixture, then run its checks. The commands below are a catalogue,
+not a sequence required after every change. Use an incremental build; a pristine
+build is needed when configuration or a generator requires it, not routinely.
+Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4`.
+
+| Changed boundary | First checks |
+| --- | --- |
+| Driver, acquisition or service | Corresponding `tests/<subsystem>` fixture via `test_bringup.py -k <name>` |
+| Numerical IMU or motor behavior | `tests/imu_processing` or `tests/motor_control`; no Python/transport cycle |
+| Python binding | Its `test_python_<subsystem>.py`; numerical/driver cases stay below the binding |
+| VM, supervisor or loader | `tests/python`, `tests/native`, and the affected lifecycle/import/MPY cases |
+| Host ownership or protocol | `tests/host`, `test_host_protocol.py`, or the affected SMP/Pybricks adapter case |
+| Terminal input or TTY cleanup | `test_terminal.py`; add monitor/REPL cases only for those paths |
+| Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
+| Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
+
+For example, after building the relevant fixture:
+
+```sh
+uv run --locked pytest -q -x tests/test_bringup.py -k battery
+uv run --locked pytest -q -x tests/test_python_imu.py
+uv run --locked pytest -q -x tests/test_terminal.py
+```
+
+`uv run --locked pytest -q -x` is the broader integration run, requiring all
+referenced builds. It is not the default task after a local edit. For an audit,
+add `--durations=10`; keep compilation and test execution timings separate.
+No pytest check connects to a physical hub. Hardware and long load checks remain
+separate, explicitly selected work.
+
 ## Watchdog
 
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a
@@ -46,10 +79,10 @@ and test-buffer partitions. They do not exercise upload, storage, REPL, Pybricks
 bindings or physical hardware.
 
 ```sh
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -p always -b native_sim/native/64 -s tests/python -d build/python-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/python -d build/python-tests
 build/python-tests/zephyr/zephyr.exe
-uv run --locked west build -p always -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
-uv run --locked pytest -q tests/test_native.py -k python
+uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
+uv run --locked pytest -q -x tests/test_native.py -k python-arm
 ```
 
 The build initializes no dependency automatically: populate the manifest's
@@ -100,20 +133,18 @@ checks do not measure acoustic output or physical note timing.
 
 The IMU Python fixture adds a synthetic I2C register peer and GPIO ready edges
 to the protected ARM application build. It runs the production acquisition,
-stationary detection, estimator, snapshots and Python bindings. Six orthogonal
-poses check axes, gravity units, side, tilt and orientation; constant synthetic
-gyro inputs check raw units, learned bias and integrated calibrated/raw rotation.
-Selected frames leave physical telemetry unchanged; heading resets and multiple
-complete turns have separate numerical coverage. Calibration updates validate
-all supplied groups atomically and share the terminal's settings. I2C failures,
-missing edges, invalid axes, forced stop/reuse, REPL reset and a build without
-IMU support check error boundaries. Native ARM checks reject misaligned and
-out-of-range IMU command/snapshot buffers before entering service locks.
+stationary detection, estimator, snapshots and Python bindings. A selected frame
+checks Python units, projection and unchanged physical telemetry. A short synthetic
+rotation checks calibrated/raw binding results; calibration tuple conversion and
+atomic rejection share the terminal's settings. Application return, REPL reset,
+missing edges and a build without IMU support check integration boundaries.
+Six poses, multiple complete turns and invalid numerical inputs are checked
+directly in `tests/imu_processing`; stationary learning and I/O recovery are
+checked in `tests/imu`, without repeating their workload through Python.
 This does not establish physical calibration accuracy or acquisition deadlines.
 This fixture uses paced instruction-count time so laptop scheduling pauses do
 not become synthetic sensor gaps. Its finest clock resolution is for functional
-execution, not a model of STM32 instruction timing. The stationary case allows
-six host seconds to observe its bounded three-second guest wait.
+execution, not a model of STM32 instruction timing.
 
 ```sh
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
@@ -164,7 +195,8 @@ the dependency's expected output for MicroPython-only allocation locks. Cases
 exercise buffers, reverse operators, binary structures, IOBase, GC, JSON and
 random ranges. A focused diagnostic case checks numeric tolerances, exception
 formatting, memory information and module help. No source-text assertions or
-second implementation of these modules is used.
+second implementation of these modules is used. Library cases share a firmware
+process within each test module, but each script starts a fresh application VM.
 
 `test_pybricks_tools.py` runs the dependency's color, multitasking and COBS cases
 unchanged, including its local cancellation regression. Additional cases check
@@ -218,8 +250,8 @@ run/output path, exceeding the application's bounded queue.
 The native case checks capability-based ABI selection, client-compiled native/Viper
 code, precompiled imports with a transitive dependency, a dynamic C module and GC.
 A mismatched native header fails before download; the installed program still runs.
-The client also compiles and executes the reference tools cases and the public
-concurrent-timer example through the same protocol, including repeated fresh VMs.
+The client also compiles and executes the public concurrent-timer example through
+the same protocol. Library reference cases run separately in `test_pybricks_tools.py`.
 The required local client changes are listed in
 [upstream integration](upstream.md#python-client-prerequisites).
 
@@ -304,43 +336,46 @@ the installed pybricksdev library against the production C handler over a PTY.
 USB enumeration/control is simulated. Packaging can be checked with `uv build`;
 the resulting wheel contains the CLI, not firmware sources or development reports.
 
-## Run the bring-up checks
+## Bring-up build catalogue
 
 After [workspace setup](builds.md), including the experimental
-[packaging prerequisite](builds.md#experimental-firmware-package), run from this repository:
+[packaging prerequisite](builds.md#experimental-firmware-package), select the
+needed builds below. Commands run from this repository. Python IMU, BLE/slots,
+user-data and watchdog variants have their own build commands above; this block
+alone does not prepare the full suite.
 
 ```sh
-uv run --locked west build -b spike_prime_f4 -d build/prime &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery -d build/battery-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/lump -d build/lump-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motor_output -d build/motor-output-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motors -d build/motor-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/regulated_motors -d build/regulated-motor-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests &&
-ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests &&
-uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay &&
-uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests &&
-uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests &&
-uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf &&
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y &&
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf &&
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests &&
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk &&
-mkdir -p build/native-smp-sdk &&
-tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk &&
+uv run --locked west build -b spike_prime_f4 -d build/prime
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery -d build/battery-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/lump -d build/lump-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motor_output -d build/motor-output-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/motors -d build/motor-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/regulated_motors -d build/regulated-motor-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests
+uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay
+uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests
+uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests
+uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk
+mkdir -p build/native-smp-sdk
+tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk
 uv run --locked cmake -S examples/native -B build/native-smp-examples -G Ninja \
-  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/llext-edk" &&
-uv run --locked cmake --build build/native-smp-examples &&
-uv run --locked pytest -q
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/llext-edk"
+uv run --locked cmake --build build/native-smp-examples
+uv run --locked pytest -q -x tests/test_bringup.py tests/test_packaging.py
 ```
 
 The simulator compiles the same application and Zephyr shell. The test opens its
@@ -513,8 +548,9 @@ LittleFS store additionally checks standard SMP file transfer, path restrictions
 atomic replacement, partial and incompatible updates, capacity failure, and
 file-loader allocation parity with RAM. The physical F4 uses 224 KiB.
 
-Autonomous ARM checks use Zephyr's `run` build target, including the board's
-configured instruction-count clock. This avoids treating host scheduling or QEMU
+Autonomous ARM checks execute Zephyr's generated `run_qemu` command, obtained
+with Ninja's `commands` tool without rebuilding dependencies. Build the fixture
+first. Its configured instruction-count clock avoids treating host scheduling or QEMU
 translation delays as guest execution time. The interactive SMP fixture instead
 paces guest time against the host, so a transfer cannot expire while Python waits
 to be scheduled. Neither clock supplies physical hub timing measurements.

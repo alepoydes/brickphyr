@@ -60,11 +60,17 @@ def test_reserved_slot_names():
 )
 def test_arm_firmware(suite, success):
     build = Path(__file__).resolve().parents[1] / "build" / suite
-    # Use Zephyr's runner, including the board's instruction-count clock.
-    # A hand-written QEMU command silently ignored CONFIG_QEMU_ICOUNT and made
-    # guest deadlines depend on host scheduling and translation overhead.
+    # Ask Ninja for just Zephyr's generated runner command, without building its
+    # dependencies inside the test timeout. Preserve the board's clock/options.
+    command = subprocess.check_output(
+        ["ninja", "-C", str(build), "-t", "commands", "-s", "zephyr/CMakeFiles/run_qemu"],
+        text=True,
+    ).strip()
+    assert command, f"No QEMU runner in {build}; configure and build the fixture first"
     with subprocess.Popen(
-        ["cmake", "--build", str(build), "--target", "run"],
+        command,
+        shell=True,
+        cwd=build,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -265,7 +271,7 @@ def test_installed_applications():
             # Replacement while counter is running changes only its installed image.
             await install(client, hello, "counter")
             assert (await checked(client, Status())).state == 1
-            for _ in range(3):
+            for _ in range(2):
                 await checked(client, RunStored(name="hello"))
                 async with asyncio.timeout(2):
                     while (status := await checked(client, Status())).state == 1:

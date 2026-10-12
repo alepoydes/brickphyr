@@ -5,27 +5,19 @@ import fcntl
 import os
 import select
 import subprocess
-import sys
 import termios
 import time
-from pathlib import Path
 
 import pytest
 
 
 @pytest.mark.parametrize("resume", [False, True])
-@pytest.mark.parametrize("via_uv", [False, True])
-def test_terminal_backpressure_and_exit(resume, via_uv):
+def test_terminal_backpressure_and_exit(resume):
     keyboard, tty = os.openpty()
     peer, port = os.openpty()
     original = termios.tcgetattr(tty)
-    command = (
-        ["uv", "run", "--no-sync", "brickphyrdev"]
-        if via_uv
-        else [Path(sys.executable).with_name("brickphyrdev")]
-    )
     process = subprocess.Popen(
-        [*command, "terminal", "--port", os.ttyname(port)],
+        ["uv", "run", "--no-sync", "brickphyrdev", "terminal", "--port", os.ttyname(port)],
         stdin=tty,
         stdout=tty,
         stderr=tty,

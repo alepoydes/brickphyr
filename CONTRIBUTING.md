@@ -101,6 +101,23 @@ Use [testing](docs/testing.md) to select checks proportional to the change. Long
 soak tests and hardware tests are explicit jobs. Passing a host simulation is not
 evidence of interrupt latency, USB behavior, or physical motor stopping.
 
+For each test, identify the defect it can catch and use the cheapest production
+boundary that exposes it. Check numerical behavior directly; use runtime/transport
+tests for integration-specific behavior. Do not repeat lower-level coverage in
+every binding, exhaust independent parameter combinations, or test trivial checks
+already clear from inspection. Preserve focused regressions for actual defects
+and consequential boundaries such as data loss, isolation and resource cleanup.
+
+Run affected checks once per coherent change. Broaden only for a changed shared
+contract, unresolved failure or milestone acceptance; passing tests do not need
+another run without new evidence. Build the required fixtures separately and
+incrementally, with at most four compilation jobs in total. Tests must not silently
+rebuild firmware. Reuse a simulator for stateless library cases while starting a
+fresh application; cold-start and persistence checks require fresh firmware.
+Prefer event completion or virtual time to sleeps. Real waits and repetitions
+must exercise a named timing/lifetime property, not compensate for flakiness.
+Measure test costs when choosing or revising coverage; do not optimize test count.
+
 For documentation changes, review local links, terminology, cross-document
 consistency, and whitespace. For firmware changes, run the affected build and
 short behavior checks. Tests must exercise executable behavior or produced

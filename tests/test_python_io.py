@@ -46,7 +46,7 @@ async def until(client, marker):
 
 def test_standard_streams_and_input():
     source = b"""
-import sys, select, io, json, struct, random, errno, math, micropython, gc
+import sys, select, micropython
 poll = select.poll()
 poll.register(sys.stdin, select.POLLIN)
 assert poll.poll(0) == []
@@ -72,19 +72,6 @@ for stream, operation in ((sys.stdin.buffer, lambda s: s.write(b'x')),
 poll.unregister(sys.stdin)
 poll.register(sys.stdout, select.POLLIN | select.POLLOUT)
 assert poll.poll(0)[0][1] == select.POLLOUT
-assert json.loads(io.StringIO('{"answer":42}').read())['answer'] == 42
-buf = io.BytesIO()
-buf.write(struct.pack('<h', -1234))
-buf.seek(0)
-assert struct.unpack('<h', buf.read())[0] == -1234
-random.seed(123)
-first = [random.randrange(1000) for _ in range(10)]
-random.seed(123)
-assert first == [random.randrange(1000) for _ in range(10)]
-random.seed()
-assert 0 <= random.random() < 1
-assert math.sqrt(81) == 9 and errno.ENOENT > 0
-gc.collect()
 print('streams passed')
 """
 

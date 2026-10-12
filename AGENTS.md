@@ -38,6 +38,8 @@ to resume work without access to a previous conversation or a personal rules fil
 - Test meaningful behavior, boundaries, and regressions through the production
   path. Do not test placeholders, file layout, or an implementation's own formula
   against a copied formula. Keep long hardware/soak tests separate from fast checks.
+  Follow the [test selection rules](CONTRIBUTING.md#checks-and-pull-requests):
+  avoid duplicated coverage, hidden rebuilds and repeated broad runs.
   Exercise cold start before diagnostic reads or warm-up commands can establish
   prerequisites that ordinary first use must not need.
 - For performance changes, account for the entire affected path, including

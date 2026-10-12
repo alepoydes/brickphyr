@@ -21,7 +21,7 @@ def test_native_mpy_execution():
         async with connection(port=port) as (client, transport):
             try:
                 # Repeat with fresh VM/module BSS; include a GC between calls.
-                for _ in range(3):
+                for _ in range(2):
                     for image, format, expected in (
                         (
                             (ROOT / "tests/python/native.py").read_bytes(),

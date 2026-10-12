@@ -30,9 +30,6 @@ static const unsigned char light_fault[] = {
 static const unsigned char imu[] = {
 #include <native_imu.inc>
 };
-static const unsigned char imu_fault[] = {
-#include <native_imu_fault.inc>
-};
 static const unsigned char sound[] = {
 #include <native_sound.inc>
 };
@@ -87,7 +84,6 @@ int native_fixture_run(const char *name)
 		{"matrix", matrix, sizeof(matrix)}, {"matrix_fault", matrix_fault, sizeof(matrix_fault)},
 		{"light_fault", light_fault, sizeof(light_fault)},
 		{"imu", imu, sizeof(imu)},
-		{"imu_fault", imu_fault, sizeof(imu_fault)},
 		{"sound", sound, sizeof(sound)}, {"sound_fault", sound_fault, sizeof(sound_fault)},
 		{"battery_fault", battery_fault, sizeof(battery_fault)},
 		{"system_fault", system_fault, sizeof(system_fault)},

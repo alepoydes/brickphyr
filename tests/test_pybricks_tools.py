@@ -36,12 +36,12 @@ UPSTREAM = ROOT.parent / "pybricks-micropython/tests/virtualhub"
         "tools/matrix_print.py",
     ],
 )
-def test_reference_program(name):
+def test_reference_program(name, python_console):
     path = UPSTREAM / name
-    assert execute(path.read_bytes()) == path.with_suffix(".py.exp").read_bytes()
+    assert execute(path.read_bytes(), port=python_console) == path.with_suffix(".py.exp").read_bytes()
 
 
-def test_parameters_geometry_and_gc():
+def test_parameters_geometry_and_gc(python_console):
     assert (
         execute(b"""
 import gc
@@ -83,12 +83,12 @@ try:
 except ValueError:
     pass
 print('geometry passed')
-""")
+""", port=python_console)
         == b"geometry passed\n"
     )
 
 
-def test_clocks_and_parallel_waits():
+def test_clocks_and_parallel_waits(python_console):
     # The reference virtualhub wait case assumes an exact, synthetic clock.
     # Here production time may advance during scheduling, so check deadlines
     # and pause/reset semantics without equating elapsed time to requested time.
@@ -125,7 +125,7 @@ assert not run_task()
 run_task(main())
 assert not run_task()
 print('clocks passed')
-""")
+""", port=python_console)
         == b"clocks passed\n"
     )
 

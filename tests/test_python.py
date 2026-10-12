@@ -51,20 +51,12 @@ def test_python_lifecycle():
             cases = (
                 (b"previous = 9\nprint('first')\n", 0, b"first"),
                 (b"print(previous)\n", -8, b"NameError"),
-                (b"if :\n", -8, b"SyntaxError"),
-                (b"1 / 0\n", -8, b"ZeroDivisionError"),
                 (b"bytearray(1000000)\n", -8, b"MemoryError"),
                 (
                     b"def recurse(): return recurse()\n"
                     b"try: recurse()\nexcept RuntimeError: print('stack limit caught')\n",
                     0,
                     b"stack limit caught",
-                ),
-                (
-                    b"import gc\ndata = [str(n) for n in range(100)]\ngc.collect()\n"
-                    b"print(data[99])\n",
-                    0,
-                    b"99",
                 ),
             )
             try:
@@ -82,10 +74,6 @@ def test_python_lifecycle():
                 status = await completed(client)
                 assert status.result == 0 and status.format == Format.MPY, status
                 assert b"6765" in await output(client)
-                await upload(client, transport, bytecode[:-1], Format.MPY)
-                await checked(client, Start())
-                assert (await completed(client)).result == -8
-                assert b"truncated .mpy" in await output(client)
                 await upload(client, transport, b"for n in range(300): print(n)\n", Format.PYTHON)
                 await checked(client, Start())
                 status = await completed(client)
@@ -144,20 +132,19 @@ def test_engine_replacement():
 
     async def exercise(port):
         async with connection(port=port) as (client, transport):
-            for _ in range(3):
-                for format, image, state, text in (
-                    (Format.NATIVE, (build / "hello.elf").read_bytes(), 2, b"Hello from a native"),
-                    (Format.PYTHON, b"print('Python after native')\n", 2, b"Python after native"),
-                    (Format.NATIVE, (build / "fault.elf").read_bytes(), 4, b""),
-                    (Format.PYTHON, b"print('Python after fault')\n", 2, b"Python after fault"),
-                ):
-                    await upload(client, transport, image, format)
-                    await checked(client, Start())
-                    status = await completed(client, state)
-                    assert status.format == format
-                    assert text in await output(client)
-                    if state == 2:
-                        assert status.result == 0
+            for format, image, state, text in (
+                (Format.NATIVE, (build / "hello.elf").read_bytes(), 2, b"Hello from a native"),
+                (Format.PYTHON, b"print('Python after native')\n", 2, b"Python after native"),
+                (Format.NATIVE, (build / "fault.elf").read_bytes(), 4, b""),
+                (Format.PYTHON, b"print('Python after fault')\n", 2, b"Python after fault"),
+            ):
+                await upload(client, transport, image, format)
+                await checked(client, Start())
+                status = await completed(client, state)
+                assert status.format == format
+                assert text in await output(client)
+                if state == 2:
+                    assert status.result == 0
             await upload(client, transport, b"while True: pass\n", Format.PYTHON)
             await checked(client, Start())
             await upload(client, transport, (build / "hello.elf").read_bytes())

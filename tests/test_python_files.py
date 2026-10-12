@@ -59,14 +59,13 @@ print('imports 42')
         )
         async with connection(port=port) as (client, transport):
             try:
-                for _ in range(3):
-                    await upload(client, transport, image, Format.FILES)
-                    await checked(client, Start())
-                    status = await completed(client)
-                    text = await output(client)
-                    assert status.result == 0, (status, text)
-                    assert b"imports 42" in text and b"missing import caught" in text, text
-                    assert status.format == Format.FILES and status.code_used > 0
+                await upload(client, transport, image, Format.FILES)
+                await checked(client, Start())
+                status = await completed(client)
+                text = await output(client)
+                assert status.result == 0, (status, text)
+                assert b"imports 42" in text and b"missing import caught" in text, text
+                assert status.format == Format.FILES and status.code_used > 0
                 await upload(client, transport, b"import package\n", Format.PYTHON)
                 await checked(client, Start())
                 assert (await completed(client)).result == -8

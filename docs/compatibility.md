@@ -200,9 +200,10 @@ Invalid or stale measurements raise `OSError`; readiness/stationary return false
 while measurements are invalid. A build without IMU support raises
 `OSError(ENOTSUP)` without preventing construction or other hub operations.
 See the [IMU example](../examples/python/imu.py).
-Protected ARM checks use actual acquisition and processing with synthetic I2C/GPIO:
-six poses, selected frames, heading resets, integrated rotation, bias compensation,
-atomic calibration, invalid inputs, missing samples and cleanup on stop/REPL reset.
+Protected ARM checks use actual acquisition and processing with synthetic I2C/GPIO
+for selected frames, heading resets, integrated rotation, atomic calibration,
+missing samples and cleanup on return/REPL reset. Six poses and numerical boundaries
+have direct calculation checks; bias learning has acquisition-service checks.
 On the Inventor F4, native USB/BLE scripts check frame selection, heading reset,
 calibration access and epoch changes; REPL observations and soft reset pass.
 Both actual Pybricks clients run the expanded example in bounded checks.

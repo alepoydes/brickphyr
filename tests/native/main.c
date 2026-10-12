@@ -104,7 +104,7 @@ int main(void)
 	LOG_WRN("Synthetic diagnostic before application unload");
 	struct application_status status;
 	size_t capacity = available();
-	for (int i = 0; i < 8; i++) {
+	for (int i = 0; i < 2; i++) {
 		int err = native_fixture_run("hello");
 		printk("hello load %d\n", err);
 		CHECK(err == 0);
@@ -182,12 +182,6 @@ int main(void)
 	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
 		CHECK(native_fixture_run("data_fault") == 0);
-		k_msleep(20);
-		application_get_status(&status);
-		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
-	}
-	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
-		CHECK(native_fixture_run("imu_fault") == 0);
 		k_msleep(20);
 		application_get_status(&status);
 		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);

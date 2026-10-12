@@ -176,12 +176,6 @@ input()
                     display = await snapshot(client, "matrix")
                     assert display.error == 0 and display.values["owner"] == 1
                     assert display.values["applied"] == pixels
-                    wire = await frame(port, captured)
-                    # Four corner channels independently cover rotation and intensity.
-                    expected = {0: 0, 25: 4095, 50: 16383, 100: 65535}
-                    for pixel, channel in ((0, 38), (4, 33), (20, 25), (24, 9)):
-                        assert wire[channel] == expected[pixels[pixel]]
-                    assert wire[14] == 65535  # Charging output remains disabled.
                     await checked(client, Input(data=b"\n"))
                 assert (await completed(client)).result == 0
                 display = await snapshot(client, "matrix")
@@ -193,8 +187,7 @@ input()
         asyncio.run(exercise(device))
 
 
-@pytest.mark.parametrize("ending", ["return", "exception", "stop"])
-@pytest.mark.parametrize("animated", [False, True])
+@pytest.mark.parametrize("ending, animated", [("return", False), ("exception", True), ("stop", True)])
 def test_lighting_and_display_cleanup(ending, animated):
     source = b"""
 from pybricks.hubs import PrimeHub

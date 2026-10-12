@@ -13,7 +13,7 @@ from tools.package_firmware import package
 
 def test_package_roundtrip_and_rejection(tmp_path, monkeypatch):
     build = Path(__file__).resolve().parents[1] / "build/prime"
-    for name in ("zephyr.elf", "zephyr.bin", "zephyr.map"):
+    for name in ("zephyr.elf", "zephyr.bin", "zephyr.map", ".config"):
         shutil.copyfile(build / "zephyr" / name, tmp_path / name)
     # Use the SDK selected for the compiled artifact, not a workstation default.
     sdk = next(

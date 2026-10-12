@@ -17,7 +17,7 @@ BUILD = ROOT / "build/python-smp-tests"
 UPSTREAM = ROOT.parent / "pybricks-micropython/micropython/tests"
 
 
-def execute(source):
+def execute(source, *, port=None):
     async def exercise(port):
         async with connection(port=port) as (client, transport):
             await upload(client, transport, source, Format.PYTHON)
@@ -27,6 +27,8 @@ def execute(source):
             assert status.result == 0 and status.dropped == 0, (status, text)
             return text.replace(b"\r\n", b"\n")
 
+    if port is not None:
+        return asyncio.run(exercise(port))
     with native_console(BUILD) as port:
         return asyncio.run(exercise(port))
 
@@ -41,7 +43,7 @@ def execute(source):
     "extmod/random_extra.py",
     "micropython/heap_lock.py",
 ])
-def test_upstream_module_case(name):
+def test_upstream_module_case(name, python_console):
     # Execute the pinned dependency's cases unchanged. CPython supplies the
     # portable expected results; MicroPython-only cases keep their upstream oracle.
     path = UPSTREAM / name
@@ -51,10 +53,10 @@ def test_upstream_module_case(name):
     else:
         expected = subprocess.check_output([sys.executable, "-I", str(path)], timeout=3)
     assert b"SKIP" not in expected
-    assert execute(path.read_bytes()) == expected
+    assert execute(path.read_bytes(), port=python_console) == expected
 
 
-def test_runtime_diagnostics_and_numeric_module():
+def test_runtime_diagnostics_and_numeric_module(python_console):
     result = execute(b"""
 import math, micropython, gc, sys, io
 assert abs(math.sin(math.pi / 6) - 0.5) < 1e-6
@@ -82,7 +84,7 @@ except ValueError as error:
 assert 'ValueError: diagnostic exception' in stream.getvalue()
 help('modules')
 print('diagnostics passed')
-""")
+""", port=python_console)
     assert b"stack:" in result and b"GC:" in result and b"qstr pool:" in result
     assert b"micropython" in result and b"select" in result
     assert result.endswith(b"diagnostics passed\n")
