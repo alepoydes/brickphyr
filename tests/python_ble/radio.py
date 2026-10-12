@@ -3,6 +3,7 @@ from pybricks.messaging import BLERadio
 from pybricks.hubs import PrimeHub
 
 radio = BLERadio(observe_channels=(7, 8))
+assert radio.version() == "12_26.24"
 assert radio.observe(7) is None
 assert radio.signal_strength(7) == -128
 print("radio ready")

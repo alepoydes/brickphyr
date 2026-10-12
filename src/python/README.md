@@ -183,7 +183,9 @@ attribution. It validates field lengths before decoding a copied sample. The
 shared Zephyr radio owner replaces the PBIO scan callbacks and retains the
 reference channel format, RSSI filter and one-second expiry. No driver retains
 Python memory; closing or stopping the application retires its observer before
-asynchronous HCI cleanup. Broadcasting and version queries remain unfinished.
+asynchronous HCI cleanup. `version()` reads validated TI service-pack metadata
+cached by the radio owner after initialization, without another HCI command.
+Broadcasting remains unfinished.
 See [observation support](../../docs/bluetooth.md#application-broadcast-observation).
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,

@@ -39,6 +39,8 @@ __syscall uint32_t bp_buttons(void);
  * Close retires the lease immediately and schedules scanner cleanup. */
 __syscall int bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle);
 __syscall int bp_radio_ready(uint32_t handle);
+/* Loaded controller firmware label, NUL-terminated; size includes the NUL. */
+__syscall int bp_radio_version(char *value, uint32_t size);
 __syscall int bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample);
 __syscall int bp_radio_close(uint32_t handle);
 /* Read the calling application's launch identity and current management link.

@@ -107,8 +107,9 @@ physical serial and supply acceptance remain pending.
 `messaging.AppData` and its legacy tools alias share the Pybricks USB/BLE
 dispatcher and protected application mailbox. Transfer and lifetime behavior have
 ARM checks. Passive `BLERadio` observation and legacy hub `observe_channels` use
-the shared radio and protected snapshots; broadcast/version, physical reception,
-AppData clients and remaining wireless bindings are pending.
+the shared radio and protected snapshots; `version()` reads cached TI script
+metadata with an ARM check. Broadcasting, physical reception, AppData clients
+and other wireless bindings remain pending.
 Occasional IMU acquisition failures remain during idle operation and USB/BLE
 application transfers; isolate the scheduling/I/O cause before claiming reliability.
 Account separately for static reservations, stacks, Python heap and peak loading memory

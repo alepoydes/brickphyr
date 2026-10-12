@@ -179,7 +179,9 @@ static MP_DEFINE_CONST_FUN_OBJ_2(radio_broadcast_obj, radio_broadcast);
 
 static mp_obj_t radio_version(mp_obj_t self)
 {
-	mp_raise_NotImplementedError(MP_ERROR_TEXT("radio firmware version"));
+	char value[BP_RADIO_VERSION_MAX];
+	python_device_check(bp_radio_version(value, sizeof(value)));
+	return mp_obj_new_str(value, strlen(value));
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(radio_version_obj, radio_version);
 

@@ -181,10 +181,13 @@ second. `signal_strength()` reports the reference 512 ms filtered RSSI, with
 `-128` for no current sample. Repeated equal packets refresh presence. An explicit
 close, finalizer or supervised application stop retires the observer; radio HCI
 start/stop remains on the existing radio workqueue. This observation does not
-acquire another management connection. Broadcasting and radio firmware-version
-queries are unfinished and raise `NotImplementedError`. Protected ARM checks
-cover values, expiry and lifecycle through a synthetic scan callback; physical
-reception and coexistence remain to be checked.
+acquire another management connection. `BLERadio.version()` returns the loaded TI
+service pack's `# Version` value (`12_26.24` in the pinned artifact), cached during
+validated controller setup. It requires the radio to be on and sends no new HCI
+command. Broadcasting remains unfinished and raises `NotImplementedError`.
+Protected ARM checks cover observation values, expiry and lifecycle through a
+synthetic scan callback, and check the version against the actual embedded script.
+Physical reception, coexistence and the version query remain to be checked.
 
 For a peer broadcasting on channel 7, run this through either application
 transport; reception itself does not require a connection to that peer:

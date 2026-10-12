@@ -822,6 +822,15 @@ int z_impl_bp_radio_ready(uint32_t handle) { return hub_radio_ready(handle); }
 static inline int z_vrfy_bp_radio_ready(uint32_t handle) { return z_impl_bp_radio_ready(handle); }
 #include <zephyr/syscalls/bp_radio_ready_mrsh.c>
 
+int z_impl_bp_radio_version(char *value, uint32_t size) { return hub_radio_version(value, size); }
+static inline int z_vrfy_bp_radio_version(char *value, uint32_t size)
+{
+	if (!size || size > BP_RADIO_VERSION_MAX) return -EINVAL;
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, size));
+	return z_impl_bp_radio_version(value, size);
+}
+#include <zephyr/syscalls/bp_radio_version_mrsh.c>
+
 int z_impl_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
 {
 	return hub_radio_get(handle, channel, sample);

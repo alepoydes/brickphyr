@@ -279,10 +279,12 @@ more-than-one-second-old sample returns `None`; `signal_strength(channel)` retur
 the filtered RSSI or `-128` for an absent sample. Repeated advertisements refresh
 both sample age and RSSI. The service copies bounded snapshots for the protected
 application, and close, finalization and application stop release its observer.
-Protected ARM checks cover decoding, expiry, reopening and forced-stop cleanup;
-physical reception, coexistence with a management connection and radio timing
-remain unverified. Broadcast selection and
-`broadcast()` are explicitly unfinished, as is `version()`; these raise
+Protected ARM checks cover decoding, expiry, reopening and forced-stop cleanup.
+`version()` returns the loaded TI service pack's cached version string
+(`12_26.24` in the pinned artifact), without another HCI command; a protected
+ARM check uses the actual script metadata. Physical reception, coexistence with
+a management connection, radio timing and the version query remain unverified.
+Broadcast selection and `broadcast()` are explicitly unfinished and raise
 `NotImplementedError` before starting transmission. `HubNetwork` and the
 remaining peripheral wireless bindings are still required.
 

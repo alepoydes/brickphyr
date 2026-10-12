@@ -358,6 +358,9 @@ an empty tuple, malformed and truncated data, repeated-packet refresh, RSSI,
 one-second expiry, legacy `hub.ble` reopening and observer release on forced
 application stop. Controller scan calls are wrapped by the fixture; this case
 cannot establish reception or coexistence on physical BLE hardware.
+The same fixture runs the real TI service-pack loader against synthetic HCI
+replies and reads its embedded version through the protected Python binding.
+It does not verify physical controller initialization.
 
 The slot variant uses that same fixture with the existing 64 KiB simulated
 LittleFS store. It checks multiple slots, selected-slot admission, interrupted

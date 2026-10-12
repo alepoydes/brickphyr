@@ -9,6 +9,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/drivers/bluetooth.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
 #include <zephyr/sys/byteorder.h>
@@ -59,7 +61,28 @@ extern const struct bt_gatt_service_static brickphyr_terminal;
 int hub_bluetooth_power_off(void) { return 0; }
 uint32_t hub_buttons(void) { return 0; }
 int storage_status(void) { return -ENOTSUP; }
-int __wrap_bt_enable(bt_ready_cb_t cb) { return 0; }
+/* Execute the real service-pack loader against a synthetic CC2564C. This
+ * checks the actual embedded metadata through BLERadio.version(), with no
+ * controller I/O and without a separate copy of the parser in the fixture. */
+int bt_h4_vnd_setup(const struct device *uart, const struct bt_hci_setup_params *params);
+NET_BUF_POOL_FIXED_DEFINE(version_replies, 1,
+	sizeof(struct bt_hci_rp_read_local_version_info), 0, NULL);
+int __wrap_bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *command, struct net_buf **reply)
+{
+	if (opcode == BT_HCI_OP_READ_LOCAL_VERSION_INFO) {
+		*reply = net_buf_alloc(&version_replies, K_NO_WAIT);
+		zassert_not_null(*reply);
+		struct bt_hci_rp_read_local_version_info version = {
+			.manufacturer = sys_cpu_to_le16(0x000d),
+			.lmp_subversion = sys_cpu_to_le16(0x9a1a),
+		};
+		net_buf_add_mem(*reply, &version, sizeof(version));
+	}
+	if (opcode == 0xfd0c) zassert_equal(command->data[1], 0, "eHCILL must stay disabled");
+	if (command) net_buf_unref(command);
+	return 0;
+}
+int __wrap_bt_enable(bt_ready_cb_t cb) { return bt_h4_vnd_setup(NULL, NULL); }
 int __wrap_bt_disable(void) { return 0; }
 int __wrap_bt_le_adv_start(const struct bt_le_adv_param *p, const struct bt_data *a,
 	size_t n, const struct bt_data *s, size_t m) { return 0; }

@@ -10,11 +10,16 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/pbio.cmake)
 include(${BRICKPHYR_ROOT}/sdk/native.cmake)
 target_sources_ifdef(CONFIG_BRICKPHYR_APP_STORAGE app PRIVATE ${BRICKPHYR_ROOT}/src/storage_mount.c)
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_transport.c
+	${BRICKPHYR_ROOT}/drivers/ti_cc2564c.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c ${BRICKPHYR_ROOT}/src/host_ble.c
   ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
+generate_inc_file_for_target(app
+  ${WEST_TOPDIR}/modules/lib/ti-bt-service-packs/initscripts/TIInit_6.12.26.bts
+  ${ZEPHYR_BINARY_DIR}/include/generated/ti_cc2564c_bts.inc)
 zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
+  -Wl,--wrap=bt_hci_cmd_send_sync
   -Wl,--wrap=bt_le_adv_start -Wl,--wrap=bt_le_adv_stop
   -Wl,--wrap=bt_le_scan_start -Wl,--wrap=bt_le_scan_stop
   -Wl,--wrap=bt_conn_ref -Wl,--wrap=bt_conn_unref -Wl,--wrap=bt_conn_disconnect

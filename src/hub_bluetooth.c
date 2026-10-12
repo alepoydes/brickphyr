@@ -6,6 +6,8 @@
 #include "hub.h"
 
 LOG_MODULE_REGISTER(hub_bluetooth);
+BUILD_ASSERT(DT_PROP(DT_PARENT(DT_CHOSEN(zephyr_bt_hci)), current_speed) == 115200,
+	     "The initial TI script and UART must agree on baud rate");
 
 int hub_bluetooth_power_off(void)
 {

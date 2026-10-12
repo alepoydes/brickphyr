@@ -169,6 +169,15 @@ int hub_radio_ready(uint32_t handle)
 	return err;
 }
 
+int hub_radio_version(char *value, size_t size)
+{
+	if (atomic_get(&shutting_down)) return -ESHUTDOWN;
+	if (atomic_get(&radio_state) != RADIO_ON) return -EHOSTDOWN;
+	/* The provider publishes immutable artifact metadata before RADIO_ON.
+	 * No HCI request or system lock is needed from an application thread. */
+	return hub_bluetooth_version(value, size);
+}
+
 int hub_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
 {
 	k_spinlock_key_t key = k_spin_lock(&observe_lock);

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /* CC2564C vendor setup over Zephyr's existing H:4 transport and HCI host. */
+#include "hub.h"
+
+#include <errno.h>
 #include <string.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_types.h>
@@ -10,14 +13,25 @@
 LOG_MODULE_REGISTER(ti_cc2564c, LOG_LEVEL_INF);
 
 BUILD_ASSERT(CONFIG_BT_BUF_CMD_TX_SIZE >= 255, "TI service pack uses full-size HCI commands");
-BUILD_ASSERT(DT_PROP(DT_PARENT(DT_CHOSEN(zephyr_bt_hci)), current_speed) == 115200,
-             "The initial TI script and UART must agree on baud rate");
 
 /* The unmodified official TI artifact is included at build time. Its license
  * and provenance are supplied by the pinned service-packs repository. */
 static const uint8_t service_pack[] = {
 #include <ti_cc2564c_bts.inc>
 };
+static const char *firmware_version;
+static size_t firmware_version_length;
+static bool version_scanned;
+
+int hub_bluetooth_version(char *value, size_t size)
+{
+	if (!firmware_version) return -ENODATA;
+	if (size <= firmware_version_length) return -ENOSPC;
+	if (!value) return -EINVAL;
+	memcpy(value, firmware_version, firmware_version_length);
+	value[firmware_version_length] = '\0';
+	return 0;
+}
 
 static int send_command(uint16_t opcode, const uint8_t *data, size_t length)
 {
@@ -47,6 +61,8 @@ static int load_service_pack(bool apply)
 	}
 	uint16_t pending = 0;
 	size_t offset = 32;
+	const char *version = NULL;
+	size_t version_length = 0;
 	while (offset < sizeof(service_pack)) {
 		if (sizeof(service_pack) - offset < 4) {
 			return -EINVAL;
@@ -96,14 +112,30 @@ static int load_service_pack(bool apply)
 				return -ENOTSUP;
 			}
 			break;
-		case 6: /* Comment. */
+		case 6: { /* Comment. */
+			static const char prefix[] = "# Version     : ";
+			if (!apply && !version_scanned && !version && length > sizeof(prefix) - 1 &&
+			    !memcmp(data, prefix, sizeof(prefix) - 1)) {
+				const char *start = (const char *)data + sizeof(prefix) - 1;
+				size_t available = length - (sizeof(prefix) - 1);
+				const char *end = memchr(start, '\0', available);
+				version_length = end ? (size_t)(end - start) : available;
+				if (version_length) version = start;
+			}
 			break;
+		}
 		default:
 			return -ENOTSUP;
 		}
 		offset += length;
 	}
-	return pending ? -EINVAL : 0;
+	if (pending) return -EINVAL;
+	if (!apply && !version_scanned) {
+		firmware_version = version;
+		firmware_version_length = version_length;
+		version_scanned = true;
+	}
+	return 0;
 }
 
 int bt_h4_vnd_setup(const struct device *uart, const struct bt_hci_setup_params *params)
