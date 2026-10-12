@@ -8,3 +8,8 @@
 #define PBDRV_CONFIG_HAS_PORT_D (1)
 #define PBDRV_CONFIG_HAS_PORT_E (1)
 #define PBDRV_CONFIG_HAS_PORT_F (1)
+
+/* Only the Python button getter is bridged to the protected native SDK. */
+#ifdef CONFIG_BRICKPHYR_NATIVE
+#define PBDRV_CONFIG_BUTTON (1)
+#endif

@@ -385,3 +385,26 @@ mp_obj_t python_matrix_new(void)
 }
 
 MP_REGISTER_ROOT_POINTER(mp_obj_t python_hub_matrix);
+
+/* The upstream menu passes a PBIO handle to these two rendering functions.
+ * Our binding always uses the same rooted matrix as PrimeHub.display; there
+ * is no PBIO matrix or second device owner behind this unused handle. */
+pbio_light_matrix_t *pbsys_hub_light_matrix;
+
+static mp_obj_t menu_matrix(void)
+{
+	return MP_STATE_PORT(python_hub_matrix) == MP_OBJ_NULL ?
+		python_matrix_new() : MP_STATE_PORT(python_hub_matrix);
+}
+
+void pb_type_LightMatrix_display_char(pbio_light_matrix_t *unused, mp_obj_t symbol)
+{
+	(void)unused;
+	mp_call_function_2(MP_OBJ_FROM_PTR(&matrix_char_obj), menu_matrix(), symbol);
+}
+
+void pb_type_LightMatrix_display_number(pbio_light_matrix_t *unused, mp_obj_t symbol)
+{
+	(void)unused;
+	mp_call_function_2(MP_OBJ_FROM_PTR(&matrix_number_obj), menu_matrix(), symbol);
+}

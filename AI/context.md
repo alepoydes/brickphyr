@@ -40,6 +40,9 @@ motor drive/hold and release with two suspended ID-75 motors. Python hub,
 speaker, system, battery chemistry/temperature, REPL and explicit user-data save/reboot workflows also have
 F4 USB/BLE checks. These checks do not establish perceived display/audio quality,
 sensor accuracy, sustained combined load or full device compatibility.
+`hub_menu` reuses the reference selection loop with the shared buttons/matrix.
+Navigation and stop restoration have ARM checks; F4 USB/BLE checks cover initial
+rendering and host interruption/stop, with physical selection still pending.
 
 Native simulator and protected ARM/QEMU checks cover additional driver, motor,
 storage, VM, binding, REPL and host boundaries using synthetic devices and

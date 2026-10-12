@@ -37,6 +37,8 @@ __syscall int bp_system_get(struct bp_system_info *info);
  * New presses are required. Python receives SystemExit; native apps are stopped.
  * This never disables long-center-press power-off or host-forced stop. */
 __syscall int bp_set_stop_buttons(uint32_t buttons);
+/* Read the current combination, for temporary changes followed by restoration. */
+__syscall uint32_t bp_get_stop_buttons(void);
 /* Request the ordinary shutdown/cleanup path; this call does not return. */
 __syscall void bp_shutdown(void);
 /* Shared user bytes, copied in RAM. Persist at orderly shutdown or with the

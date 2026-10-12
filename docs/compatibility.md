@@ -123,6 +123,7 @@ subpackages and application modules.
 | `tools` geometry and `geometry` alias | Matrix/vector arithmetic, transpose, cross product, norms, incompatible dimensions and GC |
 | `StopWatch`, `wait` | Monotonic milliseconds, pause/reset/resume, blocking and asynchronous waits, zero-duration yields and interrupt delivery |
 | `run_task`, `multitask` | Results, concurrent waits, racing, exception propagation, cancellation despite cleanup errors and forced-stop recovery |
+| `hub_menu` | Reference selection loop over the shared buttons and matrix; wraparound, release before return and restoration of the prior stop-button combination |
 | Input and COBS | Shared stdin, byte/character reads, and the reference framing example |
 | `PrimeHub`, `InventorHub`, `ThisHub` | Shared hub type, read-only button state, battery chemistry and voltage/current/temperature snapshots |
 | Hub lighting | `on`, `off`, `blink` and `animate` through the common button-light service; copied sequences and background execution without Python yielding |
@@ -171,6 +172,19 @@ on the Inventor F4. Both actual Pybricks clients execute the example with the
 correct slot and connection fields. Stop-button combinations and Python-requested
 shutdown have protected ARM checks; their physical acceptance remains pending.
 
+`hub_menu(*symbols)` displays at least two entries, each a printable ASCII
+character or a number. Left/right cycle through entries; center confirms after
+release, returning the original selected object. It works without constructing
+a hub first and uses the same matrix and orientation as `hub.display`.
+The prior stop-button combination is temporarily disabled (except Bluetooth
+alone), then restored on return or exception. Host interruption and forced stop
+remain available. Call it before starting `run_task`; it is a blocking menu,
+not an awaitable. See the [menu example](../examples/python/menu.py).
+Navigation, argument errors, interruption and stop restoration have protected ARM
+checks with synthetic buttons. On the Inventor F4, USB/BLE checks verify the
+initial controller frame and release/blanking after USB interruption and BLE
+forced stop. Physical selection and perceived output remain to be verified.
+
 `hub.imu` reads the common IMU service: `acceleration`, `angular_velocity`,
 `tilt`, `up`, `orientation`, `ready`, `stationary`, `heading`, `reset_heading`,
 `rotation` and `settings`. Acceleration is in mm/s²
@@ -212,10 +226,10 @@ the known acquisition gaps under radio load. Subsequent reads recover, but susta
 error-free combined operation and physical calibration accuracy remain unverified.
 
 Radio constructor arguments, charger,
-system `reset_storage`, `hub_menu` and messaging remain
-unfinished required work. Battery
-voltage/current use the common observation service and report acquisition errors;
-temperature/type and the remaining device bindings are not yet exposed.
+system `reset_storage` and messaging remain unfinished required work.
+Battery chemistry, voltage/current and temperature use the common observation
+service; voltage/current and temperature retain independent acquisition errors.
+The remaining device bindings are not yet exposed.
 `hub.bluetooth_light` is a Brickphyr extension with the same color-light interface;
 system connection-menu indication takes priority over an application color.
 Light sequences have 1–256 entries; frame durations must be positive and fit a

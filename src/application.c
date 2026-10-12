@@ -76,6 +76,7 @@ static atomic_val_t upload_generation;
 static bool shutting_down;
 static struct k_spinlock button_lock;
 static uint32_t stop_buttons;
+static uint32_t observed_buttons;
 static bool stop_pressed;
 
 /* Native logging never waits. Python may leave an unwritten suffix with the VM
@@ -780,6 +781,16 @@ int z_impl_bp_set_stop_buttons(uint32_t buttons)
 static inline int z_vrfy_bp_set_stop_buttons(uint32_t buttons) { return z_impl_bp_set_stop_buttons(buttons); }
 #include <zephyr/syscalls/bp_set_stop_buttons_mrsh.c>
 
+uint32_t z_impl_bp_get_stop_buttons(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&button_lock);
+	uint32_t buttons = stop_buttons;
+	k_spin_unlock(&button_lock, key);
+	return buttons;
+}
+static inline uint32_t z_vrfy_bp_get_stop_buttons(void) { return z_impl_bp_get_stop_buttons(); }
+#include <zephyr/syscalls/bp_get_stop_buttons_mrsh.c>
+
 void z_impl_bp_shutdown(void)
 {
 	hub_power_request_shutdown();
@@ -1057,10 +1068,15 @@ void application_buttons(uint32_t buttons)
 {
 	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return;
 	k_spinlock_key_t key = k_spin_lock(&button_lock);
+	bool changed = buttons != observed_buttons;
+	observed_buttons = buttons;
 	bool pressed = stop_buttons && (buttons & stop_buttons) == stop_buttons;
 	bool trigger = pressed && !stop_pressed;
 	stop_pressed = pressed;
 	k_spin_unlock(&button_lock, key);
+	/* Menu waits use the VM event semaphore, including releases and buttons
+	 * that do not stop the application. Unchanged polls must not wake the VM. */
+	if (changed) k_sem_give(&io_ready);
 	if (trigger && atomic_get(&active)) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (status.format != APPLICATION_NATIVE) {

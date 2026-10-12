@@ -79,6 +79,7 @@ void python_event_wait(int64_t timeout_ms);
 #define PYBRICKS_PY_TOOLS_COBS 1
 #define PYBRICKS_OPT_COMPILER 1
 #ifdef CONFIG_BRICKPHYR_NATIVE
+#define PYBRICKS_PY_TOOLS_HUB_MENU 1
 #define PYBRICKS_PY_HUBS 1
 #define PYBRICKS_HUB_PRIMEHUB 1
 #define PYBRICKS_HUB_CLASS_NAME MP_QSTR_PrimeHub

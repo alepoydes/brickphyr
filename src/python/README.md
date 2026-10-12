@@ -95,6 +95,11 @@ MicroPython's builtin-subpackage support keeps application imports on the same
 standard importer; no Pybricks firmware scheduler or driver is linked. The PBIO
 clock hook delegates to the VM clock, while `mp_hal_delay_ms` waits interruptibly
 on the application's existing event channel against a monotonic deadline.
+The unchanged tools `hub_menu` calls small button/stop-mask and matrix bridges.
+Its legacy PBIO matrix handle is unused: rendering goes through the same rooted
+`PrimeHub.display` object and protected matrix service. Button changes wake the
+existing VM event channel; unchanged hardware polls do not. No second input loop
+or matrix renderer is linked.
 Each fresh VM resets Color's GC-rooted dictionary and the tools' async state.
 Portable integer, error, time-comparison and COBS helpers are compiled once for
 both firmware services and bindings. Current [library coverage](../../docs/compatibility.md#implemented-library-subset)
