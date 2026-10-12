@@ -146,7 +146,7 @@ static K_WORK_DELAYABLE_DEFINE(work, scan);
 static struct k_work_q port_queue;
 /* ARM static call depth reaches about 2 KiB for a paired command, before
  * exception/FPU context. Leave room for shared IMU snapshot conversion. */
-K_THREAD_STACK_DEFINE(port_stack, 3072);
+K_KERNEL_STACK_DEFINE(port_stack, 3072);
 #define PORT_QUEUE (&port_queue)
 #define CONTROL_MS PBIO_CONFIG_CONTROL_LOOP_TIME_MS
 BUILD_ASSERT(CONFIG_SYS_CLOCK_TICKS_PER_SEC % (1000 / CONTROL_MS) == 0);
@@ -1531,7 +1531,7 @@ static void scan(struct k_work *item)
 static int initialize(void)
 {
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-	k_work_queue_start(PORT_QUEUE, port_stack, K_THREAD_STACK_SIZEOF(port_stack), 6, NULL);
+	k_work_queue_start(PORT_QUEUE, port_stack, K_KERNEL_STACK_SIZEOF(port_stack), 6, NULL);
 #endif
 	int err = gpio_is_ready_dt(&supply) ?
 		gpio_pin_configure_dt(&supply, GPIO_OUTPUT_INACTIVE) : -ENODEV;

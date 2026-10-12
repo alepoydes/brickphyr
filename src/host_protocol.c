@@ -25,7 +25,7 @@ static bool slot_busy;
  * The existing filesystem management path uses 4 KiB; an ARM check exhausted
  * a 2 KiB worker during LittleFS access. Keep this independent of Shell size. */
 static struct k_work_q slot_queue;
-static K_THREAD_STACK_DEFINE(slot_stack, 4096);
+static K_KERNEL_STACK_DEFINE(slot_stack, 4096);
 static K_SEM_DEFINE(slot_done, 0, 1);
 static bool slot_install;
 static uint8_t slot_target;
@@ -119,7 +119,7 @@ SHELL_CMD_ARG_REGISTER(pybricks_slot, NULL, "Read or select a Pybricks program s
 static int slots_init(void)
 {
 	const struct k_work_queue_config config = {.name = "pybricks_store"};
-	k_work_queue_start(&slot_queue, slot_stack, K_THREAD_STACK_SIZEOF(slot_stack),
+	k_work_queue_start(&slot_queue, slot_stack, K_KERNEL_STACK_SIZEOF(slot_stack),
 		CONFIG_SHELL_THREAD_PRIORITY, &config);
 	return 0;
 }

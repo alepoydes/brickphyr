@@ -370,6 +370,14 @@ same order. ARM checks cover stack metadata and access, and Brickphyr's protecte
 native-Python execution, fault recovery and forced stop. Publication and manifest
 integration remain pending.
 
+Local Zephyr commit `1cc7b549` on `topic/kernel-worker-stacks` uses kernel-only
+stacks for the MCUmgr, Bluetooth long/TX and STM32 UDC workers. These services
+never enter user mode, so they need neither user-stack alignment nor a separate
+privileged syscall stack. Configured stack budgets and guards are retained.
+F4 compilation, ARM application/transport checks and the standalone MCUmgr
+request-lifetime fixture cover the change; physical stack high-water measurements
+remain pending. Publication and manifest integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in

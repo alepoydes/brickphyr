@@ -49,8 +49,8 @@ static atomic_t shutting_down;
 static int radio_error;
 static const char *failed_operation;
 static struct k_work_q radio_queue;
-/* F4 startup/re-advertising measured 548 bytes; 1 KiB leaves 960 usable with MPU. */
-static K_THREAD_STACK_DEFINE(radio_stack, 1024);
+/* F4 startup/re-advertising measured 548 bytes; reserve 1 KiB plus the kernel guard. */
+static K_KERNEL_STACK_DEFINE(radio_stack, 1024);
 
 #ifdef CONFIG_BRICKPHYR_RADIO
 /* Observation/filter equations are adapted from Pybricks pb_type_ble_radio.c
@@ -826,7 +826,7 @@ static int setup(void)
 	/* Keep shutdown available even when profile registration fails. Radio waits
 	 * stay below USB/UI priority, outside the system device workqueue. */
 	const struct k_work_queue_config config = {.name = "host_ble"};
-	k_work_queue_start(&radio_queue, radio_stack, K_THREAD_STACK_SIZEOF(radio_stack),
+	k_work_queue_start(&radio_queue, radio_stack, K_KERNEL_STACK_SIZEOF(radio_stack),
 		K_LOWEST_APPLICATION_THREAD_PRIO - IS_ENABLED(CONFIG_BRICKPHYR_NATIVE), &config);
 #if defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	int err = smp_bt_register_request_callbacks(&request_callbacks);

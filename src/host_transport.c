@@ -598,7 +598,7 @@ static void host_thread(void *a, void *b, void *c)
 	}
 }
 
-K_THREAD_STACK_DEFINE(host_stack, 2048);
+K_KERNEL_STACK_DEFINE(host_stack, 2048);
 static struct k_thread host_worker;
 
 int host_transport_init(const struct device *device, uint16_t hub_variant)
@@ -620,7 +620,7 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 #ifdef CONFIG_MCUMGR_GRP_OS_RESET_HOOK
 	mgmt_callback_register(&reset_access);
 #endif
-	k_thread_create(&host_worker, host_stack, K_THREAD_STACK_SIZEOF(host_stack),
+	k_thread_create(&host_worker, host_stack, K_KERNEL_STACK_SIZEOF(host_stack),
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&host_worker, "host_stream");
 	uart_irq_rx_enable(uart);

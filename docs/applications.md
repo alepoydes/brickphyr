@@ -158,6 +158,12 @@ MicroPython margin. These are admission limits, not guarantees that every image
 within them has enough compiler memory or stack. Status reports an execution error
 or protection fault when applicable.
 
+Brickphyr's dedicated service threads use kernel-only stacks with their configured
+byte budgets. They do not reserve a second privileged stack for a user-mode transition.
+The application retains its MPU-aligned user stack and privileged syscall stack.
+Linker RAM totals also include alignment gaps and kernel-object metadata; they
+are not a measure of free system heap or Python GC capacity.
+
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports
 current free/allocated system-heap bytes and the allocation high-water mark since

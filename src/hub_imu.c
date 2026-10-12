@@ -258,7 +258,7 @@ finish:
  * queue. Its 1.2 ms acquisition deadline precedes the 5 ms motor frame and
  * host processing. Cooperative supervisor/system work remains above it.
  * The actual interrupt latency and CPU share still require a physical board. */
-K_THREAD_DEFINE(imu_thread, 1536, worker, NULL, NULL, NULL, 5, 0, 0);
+K_KERNEL_THREAD_DEFINE(imu_thread, 1536, worker, NULL, NULL, NULL, 5, 0, 0);
 
 int hub_imu_get(struct bp_imu_sample *value)
 {
