@@ -15,6 +15,7 @@ LOG_MODULE_REGISTER(hub_watchdog);
 static int hub_channel = -1;
 static int work_channel = -1;
 static int status = -EAGAIN;
+static k_tid_t hub_thread;
 
 static void work_progress(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(progress, work_progress);
@@ -27,7 +28,7 @@ static void work_progress(struct k_work *work)
 
 void hub_watchdog_feed(void)
 {
-	if (!status) {
+	if (!status && k_current_get() == hub_thread) {
 		task_wdt_feed(hub_channel);
 	}
 }
@@ -37,6 +38,7 @@ int hub_watchdog_run(void)
 	if (status) {
 		return status;
 	}
+	hub_thread = k_current_get();
 	/* Initialization can include filesystem recovery; normal progress has a
 	 * shorter deadline. No hardware watchdog is stopped during this handover. */
 	task_wdt_delete(hub_channel);

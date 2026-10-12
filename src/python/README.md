@@ -134,6 +134,12 @@ to the detected connection generation. Matrix HSV-to-wire conversion belongs to
 the native service, so it is also available without Python. The normal port
 cleanup owns release; Python has no driver handles or output buffers in flight.
 
+`pupsensors.c` also adapts `pb_type_pupdevices_pfmotor.c`. Each PF object retains
+its ColorDistanceSensor and reuses that sensor's awaitable. The native service
+encodes and queues IR commands, then sends coast to remembered outputs during
+application cleanup. Transmission and receiver acknowledgement are different;
+see [the port contract](../../docs/ports.md#power-functions-infrared-motors).
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, internal color-light, light-matrix, speaker, system and IMU bindings from Pybricks
 v4.1.0b6 (`a7b1b04ae`). They retain the upstream

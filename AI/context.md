@@ -74,8 +74,9 @@ work. Generic `PUPDevice.info/read/reset` has ARM and idle-encoder F4 USB/BLE ch
 Writes and Force/Tilt/Infrared and Color/Ultrasonic/ColorDistance Python classes
 have protected ARM and synthetic UART checks, including shared palettes, sensor
 lights and port cleanup. `Light` and `ColorLightMatrix` additionally have protected
-ARM checks for shared PWM/UART output, stale commands and cleanup. Physical output
-and sensor acceptance, infrared features and motor bindings remain pending.
+ARM checks for shared PWM/UART output, stale commands and cleanup. `PFMotor`
+has synthetic UART coverage for IR commands, cleanup and reconnect errors;
+physical PF output, other sensor acceptance and wired motor bindings remain pending.
 Repeated BLE application transfers still cause occasional IMU acquisition
 failures; isolate the cause before claiming combined-load reliability. Account
 separately for static reservations, stacks, Python heap and peak loading memory

@@ -117,7 +117,8 @@ the returned token against `bp_port_get().reset.request` and `.completed`.
 `reset.error` is `-EAGAIN` while pending; successful completion records the exact
 new generation in `reset.generation`. A later reconnection cannot change that
 result. Negotiation errors, a different device type or release terminate the
-request explicitly. Pending output or active motor control prevents reset.
+request explicitly. Pending output, unreleased PF outputs or active motor control
+prevent reset.
 Electrical detection can temporarily report an empty/passive port while the
 device leaves its old UART session. Reset retains ownership and waits for the
 new handshake within the existing detection/negotiation deadline. The protocol
@@ -218,8 +219,7 @@ Selection uses `bp_sensor_select(port, generation, measurement)` so a stale
 object cannot change the mode of a replacement device. The existing native
 `bp_sensor_configure` selects on the current connection without that generation
 constraint. Protected ARM checks use synthetic UART devices; these Python sensor
-classes still require physical acceptance. Accessories, infrared transmission
-and motor bindings remain pending.
+classes still require physical acceptance. Wired motor bindings remain pending.
 
 Encoders report `angle_mdeg` in thousandths of a degree, in the device's direction
 without gear ratios or an application zero offset. BOOST uses its signed POS
@@ -320,6 +320,59 @@ ColorLightMatrix classes. No second PWM driver or UART implementation is linked.
 Protected ARM checks cover PWM levels, stale-object rejection, forced-stop coast,
 matrix output packets and port release using synthetic devices. Physical light
 and matrix output remain unverified.
+
+## Power Functions infrared motors
+
+`PFMotor` sends single-output IR commands through a BOOST `ColorDistanceSensor`
+(ID 37). Construction names a receiver channel (1–4), red or blue output, and
+optional positive direction; it does not send a motor command.
+
+```python
+from pybricks.pupdevices import ColorDistanceSensor, PFMotor
+from pybricks.parameters import Port, Color, Direction
+from pybricks.tools import wait
+
+transmitter = ColorDistanceSensor(Port.C)  # Choose its actual port.
+motor = PFMotor(transmitter, 1, Color.RED, Direction.CLOCKWISE)
+motor.dc(45)
+wait(500)
+motor.stop()
+```
+
+`dc(duty)` clips signed percentages to −100…100 and uses the reference seven
+speed steps: magnitudes below 15 coast, 15–99 truncate to multiples of 15, and
+100 selects step 7. `stop()` coasts; `brake()` brakes. These calls block or can
+be awaited inside `run_task`. They share the sensor's existing UART writer and
+awaitable; measurements and IR commands cannot overlap on that sensor. A later
+measurement selects its ordinary sensing mode again.
+
+Native `bp_port_pf_write(port, generation, &command, &request)` copies a
+`bp_pf_command`: channel 1–4, `blue` 0/1, duty −1000…1000 permille and `brake`
+0/1. Braking requires zero duty. The native service owns quantization and wire
+encoding; completion uses `bp_port_get().write`, after transmission and the
+reference 250 ms settling interval. No receiver acknowledgement exists, so
+successful completion does **not** confirm physical motion or stopping.
+
+The service remembers each addressed channel/output until release. Application
+return, forced stop and REPL reset cancel/drain the pending write, then send
+coast to those outputs using the same queue. Eight outputs require at least
+2 seconds of settling, plus mode selection and transmission. Ports proceed
+independently, retaining transmitter power while their commands finish.
+Normal host disconnection leaves an autonomous program running.
+
+A failed transmission retains the claim and reports a cleanup error. A later
+cleanup attempt can use a reconnected ColorDistanceSensor on the same port to
+retry only the remembered coast commands; old device objects still reject the
+new connection. The application's first cleanup error remains visible even if
+retry succeeds. Generic raw UART writes do not register remote outputs for this
+typed cleanup. IR range, alignment and receiver power remain outside the hub's
+observations; this mechanism cannot guarantee a remote motor has stopped.
+
+The MIT-licensed encoding and Python argument semantics are ported from
+`pybricks/pupdevices/pb_type_pupdevices_pfmotor.c` at the pinned revision linked
+above. Protected ARM checks use a synthetic transmitter for command bytes,
+spacing, sensor-mode reuse, eight-output release, unplug errors, stale objects
+and coast-only recovery. Physical PF receiver/motor acceptance remains pending.
 
 ## Direct motor drive
 

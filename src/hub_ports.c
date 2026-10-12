@@ -8,6 +8,7 @@
 #include "ports/output.h"
 #include "ports/sensor.h"
 #include "hub_battery.h"
+#include "hub_watchdog.h"
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 #include "motor/control.h"
 #endif
@@ -53,6 +54,10 @@ static struct port {
 	struct bp_sensor_palette palette;
 	struct bp_motor_state motor;
 	struct port_uart_write write;
+	/* One bit per remote channel/output; no application memory is retained. */
+	uint8_t pf_used, pf_coasting;
+	int pf_error;
+	uint32_t pf_generation;
 	uint16_t reset_type;
 	bool reset_start;
 	int64_t reset_deadline;
@@ -92,6 +97,7 @@ BUILD_ASSERT(CONFIG_SYS_CLOCK_TICKS_PER_SEC % (1000 / CONTROL_MS) == 0);
 
 static void motor_activity(uint32_t port, bool active)
 {
+	active |= ports[port].pf_used != 0;
 	bool before = active_ports != 0;
 	WRITE_BIT(active_ports, port, active);
 	if (before != (active_ports != 0)) atomic_inc(&activity);
@@ -126,7 +132,64 @@ static void finish_write(struct port *p, int error)
 	if (write_pending(p)) {
 		p->value.write.completed = p->value.write.request;
 		p->value.write.error = error;
+		if (p->pf_coasting) {
+			if (error) {
+				if (!p->pf_error) p->pf_error = error;
+			} else {
+				p->pf_used &= ~p->pf_coasting;
+			}
+			p->pf_coasting = 0;
+		}
 	}
+}
+
+/* All request state is copied while holding lock. The worker is its only
+ * consumer; callers cannot overwrite it before completion. */
+static uint32_t queue_write(struct port *p, uint8_t mode, const uint8_t *data, uint32_t size)
+{
+	uint32_t selection = PORT_RAW_MODE | mode;
+	if (p->measurement != selection) {
+		p->measurement = selection;
+		p->command++;
+		p->value.selected_mode = mode;
+		p->value.mode_error = -EAGAIN;
+		p->sensor.error = -ENOTSUP;
+		p->sensor.fields = 0;
+	}
+	if (!data) return 0;
+	uint32_t token = p->value.write.request + 1;
+	if (!token) token++;
+	p->write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
+	memcpy(p->write.data, data, size);
+	p->value.write.request = token;
+	p->value.write.error = -EAGAIN;
+	return token;
+}
+
+/* Pybricks PFMotor single-output encoding, a7b1b04ae. Address bit zero
+ * selects red/blue; the remaining two bits select one of four channels. */
+static void pf_data(uint8_t output, uint8_t pwm, uint8_t data[2])
+{
+	data[0] = 0x40 | (output & 1) << 4 | pwm;
+	data[1] = output >> 1;
+}
+
+/* Called by the port worker with lock held. A previous application write
+ * is first cancelled/drained through the same UART state machine. */
+static void pf_release(struct port *p)
+{
+	if (!p->motor.releasing || !p->pf_used || p->pf_error || write_pending(p)) return;
+	if (p->pf_generation != p->value.generation || p->value.phase != BP_PORT_READY ||
+	    p->value.type_id != LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR) {
+		p->pf_error = -ENODEV;
+		return;
+	}
+	uint8_t output = 0;
+	while (!(p->pf_used & BIT(output))) output++;
+	uint8_t data[2];
+	pf_data(output, 0, data);
+	p->pf_coasting = BIT(output);
+	queue_write(p, LEGO_DEVICE_MODE_PUP_COLOR_DISTANCE_SENSOR__IR_TX, data, sizeof(data));
 }
 
 /* Caller holds lock. One port claim covers measurement selection and drive. */
@@ -139,12 +202,14 @@ static void drop_claim(struct port *p)
 	p->command++;
 	p->sensor.error = -EAGAIN;
 	p->sensor.fields = 0;
+	motor_activity(p - ports, false);
 }
 
 static void invalidate_motor(uint32_t port, int reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	finish_write(&ports[port], reason);
+	if (ports[port].pf_used && !ports[port].pf_error) ports[port].pf_error = reason;
 	struct bp_motor_state *m = &ports[port].motor;
 	m->request++;
 	m->pending = false;
@@ -163,12 +228,12 @@ static void finish_reset(uint32_t port, int cleanup)
 	p->motor.pending = false;
 	p->motor.completed = p->motor.request;
 	p->motor.cleanup_error = cleanup;
-	p->motor.releasing = cleanup != 0;
+	p->motor.releasing = cleanup != 0 || p->pf_used;
 	if (cleanup) {
 		p->motor.valid = false;
 		if (!p->motor.error) p->motor.error = cleanup;
 		motor_activity(port, true);
-	} else if (!reset_pending(p)) {
+	} else if (!reset_pending(p) && !p->pf_used) {
 		drop_claim(p);
 	}
 	k_spin_unlock(&lock, key);
@@ -331,9 +396,10 @@ static int advance(uint32_t port)
 		struct bp_port_state uart = {0};
 		struct bp_sensor_sample sensor;
 		k_spinlock_key_t key = k_spin_lock(&lock);
+		pf_release(p);
 		uint32_t measurement = p->measurement, command = p->command;
 		const struct port_uart_write *write = write_pending(p) ? &p->write : NULL;
-		bool cancel = p->motor.releasing;
+		bool cancel = p->motor.releasing && !p->pf_coasting;
 		k_spin_unlock(&lock, key);
 		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement, write, cancel));
 		TRY_IO(sensor_supply(port, uart.supply));
@@ -586,7 +652,7 @@ static int64_t apply_motor(uint32_t port)
 	}
 #endif
 	if (!command_pending && !m->control.active) {
-		if (m->releasing && m->valid && m->mode == BP_MOTOR_COAST && !write_pending(p)) {
+		if (m->releasing && m->valid && m->mode == BP_MOTOR_COAST && !write_pending(p) && !p->pf_used) {
 			m->releasing = false;
 			drop_claim(p);
 		}
@@ -667,7 +733,7 @@ static int64_t apply_motor(uint32_t port)
 		p->supply = 0;
 	}
 	motor_activity(port, !m->valid || m->control.active || (m->mode != BP_MOTOR_COAST && m->duty));
-	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST && !write_pending(p)) {
+	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST && !write_pending(p) && !p->pf_used) {
 		m->releasing = false;
 		drop_claim(p);
 	}
@@ -757,6 +823,7 @@ int hub_port_get(uint32_t port, struct bp_port_state *value)
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*value = ports[port].value;
+	if (!value->cleanup_error) value->cleanup_error = ports[port].pf_error;
 	k_spin_unlock(&lock, key);
 	/* Longest probe: ten settling intervals. Include tick rounding at
 	 * each wait; longer service starvation must not look like fresh identity. */
@@ -785,7 +852,7 @@ int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 }
 
 static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
-	const uint8_t *data, uint32_t size, uint32_t *request)
+	const uint8_t *data, uint32_t size, uint32_t *request, uint8_t pf_output)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
@@ -796,6 +863,7 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
 		p->value.generation != generation ? -ESTALE :
 		p->value.phase != BP_PORT_READY ? -ENODEV :
+		pf_output && p->value.type_id != LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR ? -ENOTSUP :
 		p->value.error && p->value.error != -EAGAIN ? p->value.error :
 		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
 		mode >= p->value.num_modes ? -EINVAL :
@@ -814,22 +882,11 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	uint32_t token = 0;
 	if (!err) {
 		p->owner = p->sensor.owner = owner;
-		uint32_t selection = PORT_RAW_MODE | mode;
-		if (p->measurement != selection) {
-			p->measurement = selection;
-			p->command++;
-			p->value.selected_mode = mode;
-			p->value.mode_error = -EAGAIN;
-			p->sensor.error = -ENOTSUP;
-			p->sensor.fields = 0;
-		}
-		if (data) {
-			token = p->value.write.request + 1;
-			if (!token) token++;
-			p->write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
-			memcpy(p->write.data, data, size);
-			p->value.write.request = token;
-			p->value.write.error = -EAGAIN;
+		token = queue_write(p, mode, data, size);
+		if (pf_output) {
+			p->pf_used |= pf_output;
+			p->pf_generation = generation;
+			motor_activity(port, true);
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -839,14 +896,32 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 
 int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode)
 {
-	return raw_request(owner, port, generation, mode, NULL, 0, NULL);
+	return raw_request(owner, port, generation, mode, NULL, 0, NULL, 0);
 }
 
 int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!data || !request || !size || size > sizeof(ports[0].write.data)) return -EINVAL;
-	return raw_request(owner, port, generation, mode, data, size, request);
+	return raw_request(owner, port, generation, mode, data, size, request, 0);
+}
+
+int hub_port_pf_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request)
+{
+	if (!command || !request || command->channel < 1 || command->channel > 4 ||
+	    command->blue > 1 || command->brake > 1 || command->duty_permille < -1000 ||
+	    command->duty_permille > 1000 || (command->brake && command->duty_permille)) return -EINVAL;
+	int32_t duty = command->duty_permille;
+	uint32_t magnitude = duty < 0 ? -duty : duty;
+	/* Reference has seven speed steps: 15..99 percent truncate, 100 is 7. */
+	uint8_t pwm = magnitude >= 1000 ? 7 : magnitude / 150;
+	if (pwm && duty < 0) pwm = 16 - pwm;
+	if (command->brake) pwm = 8;
+	uint8_t output = (command->channel - 1) * 2 + command->blue, data[2];
+	pf_data(output, pwm, data);
+	return raw_request(owner, port, generation, LEGO_DEVICE_MODE_PUP_COLOR_DISTANCE_SENSOR__IR_TX,
+		data, sizeof(data), request, BIT(output));
 }
 
 int hub_sensor_light_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
@@ -890,7 +965,7 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
 		p->value.generation != generation ? -ESTALE :
-		reset_pending(p) ? -EBUSY : p->value.phase != BP_PORT_READY ? -ENODEV :
+		reset_pending(p) || p->pf_used ? -EBUSY : p->value.phase != BP_PORT_READY ? -ENODEV :
 		p->value.error && p->value.error != -EAGAIN ? p->value.error :
 		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
 		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing || write_pending(p) ||
@@ -1046,17 +1121,34 @@ int hub_port_release(enum bp_port_owner owner, uint32_t port)
 	int err = p->owner && p->owner != owner ? -EBUSY : 0;
 	if (!err && p->owner) {
 		finish_resync(p, -ECANCELED, 0);
+		/* A later cleanup attempt may use a reconnected transmitter solely
+		 * to coast the remembered remote addresses. Old Python/native device
+		 * objects remain bound to their original generation. Return the first
+		 * failure even if this retry succeeds. */
+		int pf_error = p->pf_error;
+		if (p->pf_used && pf_error && p->value.phase == BP_PORT_READY &&
+		    p->value.type_id == LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR &&
+		    (!p->value.error || p->value.error == -EAGAIN) && !write_pending(p)) {
+			p->pf_generation = p->value.generation;
+			p->pf_error = 0;
+		}
 		if (p->motor.pending || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
-		    p->motor.releasing || write_pending(p)) {
+		    p->motor.releasing || write_pending(p) || p->pf_used) {
 			p->motor.releasing = true;
-			err = atomic_get(&stopping) ? -ESHUTDOWN : request_motor(p, BP_MOTOR_COAST, 0, 0);
+			/* A sensor may need its existing DC supply to transmit IR. Local
+			 * motor outputs are already passive; do not pulse sensor power. */
+			bool passive = p->pf_used && p->motor.valid && !p->motor.pending &&
+				p->motor.mode == BP_MOTOR_COAST;
+			err = atomic_get(&stopping) ? -ESHUTDOWN : passive ? 0 : request_motor(p, BP_MOTOR_COAST, 0, 0);
 			if (err) {
 				p->motor.cleanup_error = err;
 				if (!p->motor.error) p->motor.error = err;
+				if (p->pf_used && !p->pf_error) p->pf_error = err;
 			}
 		} else {
 			drop_claim(p);
 		}
+		if (pf_error) err = pf_error;
 	}
 	k_spin_unlock(&lock, key);
 	return err;
@@ -1073,9 +1165,11 @@ int hub_ports_release(enum bp_port_owner owner)
 {
 	if (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) return -EINVAL;
 	int result = 0;
+	uint32_t previous_pf = 0;
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool owned = ports[i].owner == owner;
+		if (owned) previous_pf += POPCOUNT(ports[i].pf_used);
 		k_spin_unlock(&lock, key);
 		int err = owned ? hub_port_release(owner, i) : 0;
 		if (!result) result = err;
@@ -1083,14 +1177,23 @@ int hub_ports_release(enum bp_port_owner owner)
 	struct k_work_sync sync;
 	for (;;) {
 		bool pending = false, uart_pending = false;
+		uint32_t remaining_pf = 0;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 			if (ports[i].owner != owner) continue;
+			remaining_pf += POPCOUNT(ports[i].pf_used);
 			pending |= ports[i].motor.pending;
 			uart_pending |= write_pending(&ports[i]);
+			uart_pending |= ports[i].motor.releasing && ports[i].pf_used && !ports[i].pf_error;
+			if (!result) result = ports[i].pf_error;
 			if (!ports[i].motor.pending && !result) result = ports[i].motor.cleanup_error;
 		}
 		k_spin_unlock(&lock, key);
+		/* Eight outputs already need 2 s of settling, before selection and
+		 * bounded UART waits. Feed only for a completed coast, never for a
+		 * polling iteration. The watchdog accepts this only on the hub thread. */
+		if (remaining_pf < previous_pf) hub_watchdog_feed();
+		previous_pf = remaining_pf;
 		if (!pending && !uart_pending) return result;
 		k_work_flush_delayable(&work, &sync);
 		/* Flushing can apply coast immediately, but cannot advance UART or

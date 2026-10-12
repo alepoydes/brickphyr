@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <math.h>
 #include <lego/device.h>
+#include <pbio/dcmotor.h>
 #include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/tools.h>
@@ -342,6 +343,66 @@ static const mp_rom_map_elem_t color_distance_methods[] = {
 static MP_DEFINE_CONST_DICT(color_distance_dict, color_distance_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(color_distance_type, MP_QSTR_ColorDistanceSensor, MP_TYPE_FLAG_NONE,
 	make_new, sensor_new, attr, pb_attribute_handler, protocol, light_attributes, locals_dict, &color_distance_dict);
+
+/* PFMotor from the pinned Pybricks binding. The sensor remains a GC root and
+ * owns the existing awaitable: IR and measurements cannot overlap on its UART. */
+typedef struct {
+	mp_obj_base_t base;
+	mp_obj_t sensor;
+	uint8_t channel, blue;
+	bool reverse;
+} pf_obj_t;
+
+static mp_obj_t pf_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
+{
+	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(sensor), PB_ARG_REQUIRED(channel),
+		PB_ARG_REQUIRED(color), PB_ARG_DEFAULT_OBJ(positive_direction, pb_Direction_CLOCKWISE_obj));
+	mp_int_t channel = mp_obj_get_int(channel_in);
+	uint16_t hue = pbio_color_get_h(pb_type_Color_get_hsv(color_in));
+	if (channel < 1 || channel > 4 || (hue != PBIO_COLOR_HUE_RED && hue != PBIO_COLOR_HUE_BLUE)) {
+		mp_raise_ValueError(MP_ERROR_TEXT("expected channel 1..4 and red/blue output"));
+	}
+	pbio_direction_t direction = pb_type_enum_get_value(positive_direction_in, &pb_enum_type_Direction);
+	if (!mp_obj_is_type(sensor_in, &color_distance_type)) {
+		mp_raise_TypeError(MP_ERROR_TEXT("expected ColorDistanceSensor"));
+	}
+	pf_obj_t *self = mp_obj_malloc(pf_obj_t, type);
+	*self = (pf_obj_t){.base = {.type = type}, .sensor = sensor_in, .channel = channel,
+		.blue = hue == PBIO_COLOR_HUE_BLUE, .reverse = direction == PBIO_DIRECTION_COUNTERCLOCKWISE};
+	return MP_OBJ_FROM_PTR(self);
+}
+
+static mp_obj_t pf_write(pf_obj_t *self, int32_t duty, bool brake)
+{
+	sensor_obj_t *sensor = MP_OBJ_TO_PTR(self->sensor);
+	idle(sensor);
+	struct bp_pf_command command = {.channel = self->channel, .blue = self->blue, .brake = brake,
+		.duty_permille = self->reverse ? -duty : duty};
+	check_connection(bp_port_pf_write(sensor->port, sensor->generation, &command, &sensor->write_request));
+	sensor->reading = WRITE;
+	return wait_or_await(self->sensor);
+}
+
+static mp_obj_t pf_dc(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, pf_obj_t, self, PB_ARG_REQUIRED(duty));
+	/* Clamp before reversing/scaling, including the most negative mp_int_t. */
+	mp_int_t duty = pb_obj_get_int(duty_in);
+	return pf_write(self, MAX(-100, MIN(100, duty)) * 10, false);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(pf_dc_obj, 1, pf_dc);
+static mp_obj_t pf_stop(mp_obj_t self) { return pf_write(MP_OBJ_TO_PTR(self), 0, false); }
+static MP_DEFINE_CONST_FUN_OBJ_1(pf_stop_obj, pf_stop);
+static mp_obj_t pf_brake(mp_obj_t self) { return pf_write(MP_OBJ_TO_PTR(self), 0, true); }
+static MP_DEFINE_CONST_FUN_OBJ_1(pf_brake_obj, pf_brake);
+static const mp_rom_map_elem_t pf_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR_dc), MP_ROM_PTR(&pf_dc_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&pf_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_brake), MP_ROM_PTR(&pf_brake_obj)},
+};
+static MP_DEFINE_CONST_DICT(pf_dict, pf_methods);
+static MP_DEFINE_CONST_OBJ_TYPE(pf_type, MP_QSTR_PFMotor, MP_TYPE_FLAG_NONE,
+	make_new, pf_new, locals_dict, &pf_dict);
 static const mp_rom_map_elem_t pupdevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_pupdevices)},
 	{MP_ROM_QSTR(MP_QSTR_ForceSensor), MP_ROM_PTR(&force_type)},
@@ -352,6 +413,7 @@ static const mp_rom_map_elem_t pupdevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR_ColorDistanceSensor), MP_ROM_PTR(&color_distance_type)},
 	{MP_ROM_QSTR(MP_QSTR_Light), MP_ROM_PTR(&python_pup_light_type)},
 	{MP_ROM_QSTR(MP_QSTR_ColorLightMatrix), MP_ROM_PTR(&python_pup_matrix_type)},
+	{MP_ROM_QSTR(MP_QSTR_PFMotor), MP_ROM_PTR(&pf_type)},
 };
 static MP_DEFINE_CONST_DICT(pupdevices_dict, pupdevices_globals);
 const mp_obj_module_t pb_module_pupdevices = {{&mp_type_module}, (mp_obj_dict_t *)&pupdevices_dict};

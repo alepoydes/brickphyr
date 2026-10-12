@@ -18,6 +18,14 @@ enum bp_port_phase {
 
 #define BP_PORT_COUNT 6
 
+/* Power Functions single-output command through ColorDistanceSensor IR_TX.
+ * channel: 1..4; blue: 0 red / 1 blue; duty_permille: -1000..1000.
+ * brake: 0 normal duty (zero coasts), 1 brake (requires zero duty). */
+struct bp_pf_command {
+	int32_t duty_permille;
+	uint8_t channel, blue, brake;
+};
+
 enum bp_port_mode_fields {
 	BP_PORT_MODE_FLAGS = 1 << 0,
 	BP_PORT_MODE_RAW = 1 << 1,

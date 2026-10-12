@@ -26,6 +26,8 @@ int hub_port_light_write(enum bp_port_owner owner, uint32_t port, uint32_t gener
 	uint32_t brightness, uint32_t *request);
 int hub_port_matrix_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	const uint32_t *colors, uint32_t *request);
+int hub_port_pf_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request);
 int hub_port_release(enum bp_port_owner owner, uint32_t port);
 void hub_ports_session_closed(enum bp_port_owner owner);
 int hub_ports_release(enum bp_port_owner owner);
@@ -65,6 +67,8 @@ static inline int hub_port_light_write(enum bp_port_owner owner, uint32_t port, 
 	uint32_t brightness, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_port_matrix_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	const uint32_t *colors, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_port_pf_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request) { return -ENOTSUP; }
 static inline int hub_port_release(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }
 static inline void hub_ports_session_closed(enum bp_port_owner owner) { }
 static inline int hub_ports_release(enum bp_port_owner owner) { return 0; }

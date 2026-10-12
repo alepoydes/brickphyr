@@ -175,8 +175,12 @@ IWDG device is ready at POST_KERNEL priority 51. Bootloader, clock and earlier
 device initialization precede this protection. On entry to the hub loop, the
 budget becomes 3 seconds. The loop normally runs at intervals of at most 20 ms;
 system-queue progress is checked every 750 ms. These are recovery deadlines, not
-measured worst-case execution guarantees. A long legitimate operation must keep
-its work outside those control paths or provide a justified revised budget.
+measured worst-case execution guarantees. During synchronous PF cleanup, a
+completed coast transmission counts as hub-loop progress; merely polling or
+waiting does not. Only the thread that runs the hub loop may refresh its watchdog,
+so progress in a management/device thread cannot hide a stalled hub loop. Other
+long operations must stay outside those paths, expose actual progress, or provide
+a justified revised budget.
 
 The hardware fallback is configured for 2 seconds at nominal LSI frequency and
 is refreshed at least every second while software supervision works. The F413

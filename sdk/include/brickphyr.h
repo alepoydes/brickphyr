@@ -149,6 +149,11 @@ __syscall int bp_port_light_write(uint32_t port, uint32_t generation, uint32_t b
 /* 3x3 ColorLightMatrix: nine copied packed HSV colors, or NULL for off.
  * Completion follows the ordinary UART port write contract. */
 __syscall int bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request);
+/* Queues a copied Power Functions command; completion means UART transmission
+ * plus 250 ms settling, never receiver acknowledgement. Release sends coast
+ * to every addressed output before relinquishing the port claim. */
+__syscall int bp_port_pf_write(uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request);
 /* Release the port claim: coast its motor and restore automatic measurement.
  * Accepted asynchronously; ownership remains until coast succeeds and pending
  * UART output is cancelled or finishes transmission and settling.

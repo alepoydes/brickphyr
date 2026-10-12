@@ -26,6 +26,15 @@ void __wrap_sys_reboot(int type)
 #ifdef STALL_WORKQUEUE
 static void stall(struct k_work *work) { k_sleep(K_FOREVER); }
 static K_WORK_DEFINE(block, stall);
+#else
+static void foreign_feed(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(foreign, foreign_feed);
+static void foreign_feed(struct k_work *work)
+{
+	/* Device work must not disguise a stalled hub loop as healthy. */
+	hub_watchdog_feed();
+	k_work_schedule(&foreign, K_MSEC(10));
+}
 #endif
 
 ZTEST(watchdog, test_progress_and_expiry)
@@ -56,6 +65,7 @@ ZTEST(watchdog, test_progress_and_expiry)
 		k_msleep(10);
 	}
 #else
+	k_work_schedule(&foreign, K_NO_WAIT);
 	k_msleep(200);
 #endif
 	zassert_unreachable("Missing system progress did not reset the board");

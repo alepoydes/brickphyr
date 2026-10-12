@@ -751,6 +751,23 @@ static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation
 }
 #include <zephyr/syscalls/bp_port_matrix_write_mrsh.c>
 
+int z_impl_bp_port_pf_write(uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request)
+{
+	return hub_port_pf_write(BP_PORT_APPLICATION, port, generation, command, request);
+}
+static inline int z_vrfy_bp_port_pf_write(uint32_t port, uint32_t generation,
+	const struct bp_pf_command *command, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	struct bp_pf_command copy;
+	memcpy(&copy, command, sizeof(copy));
+	return z_impl_bp_port_pf_write(port, generation, &copy, request);
+}
+#include <zephyr/syscalls/bp_port_pf_write_mrsh.c>
+
 int z_impl_bp_sensor_release(uint32_t port)
 {
 	return hub_port_release(BP_PORT_APPLICATION, port);

@@ -145,6 +145,10 @@ and checksums. Run this case for those bindings; it uses the same ARM fixture.
 connection rejection and forced-stop coast, followed by ColorLightMatrix UART
 frames, rejected short input and port release. It observes the PWM driver and
 transmitted bytes separately from the firmware status snapshots.
+`tests/test_python_pfmotor.py` covers IR command encoding, 250 ms spacing,
+sensor-mode reuse, eight-output coast on stop and cleanup failure/reconnection.
+Its long asynchronous command sequence uses QEMU's normal paced clock; the
+hotplug case uses instruction time. Neither establishes physical IR reception.
 The fixture's 1 kHz tick resolves the driver's 2 ms steps and 10 ms fast-baud
 negotiation window; this is functional simulation, not hardware timing evidence.
 

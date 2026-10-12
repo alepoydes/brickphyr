@@ -51,6 +51,10 @@ static bool has_written[4], extension_valid;
 static uint8_t extension, extension_packet[3];
 static uint8_t output_wire[37], output_mode, output_length;
 static bool has_output;
+#define PF_HISTORY_CAPACITY 24
+static struct pf_record { int64_t ms; uint16_t message; } pf_history[PF_HISTORY_CAPACITY];
+static uint8_t pf_count;
+static uint32_t pf_dropped;
 static K_MUTEX_DEFINE(peer_lock);
 static bool installed, connected, hold_mode, hold_reset;
 static uint8_t command[34], used, needed;
@@ -84,6 +88,7 @@ static int output_size(uint8_t mode)
 		peer_kind == COLOR && mode == 3 ? 3 :
 		peer_kind == ULTRASONIC && mode == 5 ? 4 :
 		peer_kind == COLOR_DISTANCE && mode == 5 ? 1 :
+		peer_kind == COLOR_DISTANCE && mode == 7 ? 2 :
 		peer_kind == MATRIX && mode == 2 ? 9 : 0;
 }
 
@@ -291,6 +296,16 @@ static void transmitted(const struct device *dev, size_t size, void *user_data)
 				memcpy(output_wire, extension_packet, sizeof(extension_packet));
 				memcpy(output_wire + sizeof(extension_packet), command, needed);
 				has_output = true;
+				if (peer_kind == COLOR_DISTANCE && mode == 7) {
+					if (pf_count < ARRAY_SIZE(pf_history)) {
+						pf_history[pf_count++] = (struct pf_record){
+							.ms = k_uptime_get(),
+							.message = command[1] | (command[2] << 8),
+						};
+					} else {
+						pf_dropped++;
+					}
+				}
 				if (peer_kind == GENERIC) {
 					memcpy(written[mode], command + 1, size);
 					has_written[mode] = true;
@@ -328,6 +343,20 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 			fake_pwm_set_cycles_fake.arg3_val);
 		return 0;
 	}
+	if (!strcmp(argv[1], "pf")) {
+		struct pf_record records[PF_HISTORY_CAPACITY];
+		k_mutex_lock(&peer_lock, K_FOREVER);
+		uint8_t count = pf_count;
+		uint32_t dropped = pf_dropped;
+		memcpy(records, pf_history, count * sizeof(records[0]));
+		k_mutex_unlock(&peer_lock);
+		shell_print(shell, "pf count=%u dropped=%u", count, dropped);
+		for (uint8_t i = 0; i < count; i++) {
+			shell_print(shell, "pf t=%lld value=%04x", (long long)records[i].ms,
+				records[i].message);
+		}
+		return 0;
+	}
 	if (!strcmp(argv[1], "hold") || !strcmp(argv[1], "resume")) {
 		k_mutex_lock(&peer_lock, K_FOREVER);
 		hold_mode = !strcmp(argv[1], "hold");
@@ -350,7 +379,7 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	    strcmp(argv[1], "light") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, unplug, touch, press, hold, resume, hold_reset, resume_reset, output or pwm");
+		shell_error(shell, "Expected a peer kind, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -379,6 +408,8 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	memset(has_written, 0, sizeof(has_written));
 	extension_valid = false;
 	has_output = false;
+	pf_count = 0;
+	pf_dropped = 0;
 	pup_test_circuits[0].kind = !strcmp(argv[1], "light") ? LIGHT :
 		!strcmp(argv[1], "connect") || peer_kind != GENERIC ? UART_DEVICE :
 		!strcmp(argv[1], "unplug") ? UNPLUGGED : TOUCH_SWITCH;
@@ -388,5 +419,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A: connect|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm.",
+	"Synthetic port A: connect|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
 	pup_peer, 2, 0);
