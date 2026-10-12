@@ -29,32 +29,51 @@ record their [runtime](applications.md#experimental-python-profile),
 | --- | --- | --- |
 | 0 | Task and hardware watchdogs; USB recovery checks on F4 | Physical shutdown/button restart and battery-only recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
-| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction checks | Combined interactive flow-control acceptance |
+| 5 | Common streams/resources, standard modules and REPL with interactive output flow control; ARM/CLI and Inventor F4 USB/BLE interaction checks | Combined interactive flow-control acceptance and exit usability verification |
 | 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks and an F4 hub example through both actual clients | Unchanged Pybricks Code, power-cycle slot retention and combined client acceptance |
 | 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage, battery and IMU observations/frame/heading/calibration controls; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Existing build profiles and application tooling | Combined acceptance, reproducible dependencies and delivery |
 
-Continue from this implementation in the following order:
+The remaining delivery order groups related APIs into usable increments. The
+detailed steps below remain the acceptance contract; their implemented parts
+are not work to start again.
 
-1. Preserve steps 0–4. Before an unattended hardware fault experiment, verify the
-   installed image's watchdog recovery for the power state under test. Pending
-   operator checks do not prevent software work.
-2. Preserve step 5's checked interactive workflows and output flow control;
-   accept them on USB/BLE when hardware is available. Keep interruption and
-   forced stop usable while a consumer is slow or disconnected.
-3. Finish step 6 with hardware-independent Python programs first: harden RAM
-   transfer, execution and persistent client slots through the common store,
-   preserve the checked compiler/native-ABI negotiation, then check both
-   transports and unchanged Pybricks Code. This proves the execution adapter
-   before device bindings obscure protocol failures.
-4. Deliver steps 7–8 as small working examples: tools and hub functions, wired
-   devices, single motors, then coordinated robotics. Add missing behavior in the
-   shared device services before binding it to Python.
-5. Close the remaining reference surface in step 9, then accept the combined
-   user workflows and reproducible build in step 10. Outstanding physical checks
-   remain explicit; they do not block independent software work.
+The [workspace summary](builds.md#setup-and-board-bring-up), short
+[project orientation](../AI/context.md) and
+[incremental check commands](testing.md#selecting-checks) provide the development
+workflow for these blocks. Plain and managed REPL exit/reset have ARM/PTY and
+Inventor F4 BLE checks; current USB acceptance remains open.
 
-Steps 0–4 remain regression and acceptance obligations, not work to start again.
+| Delivery block | Remaining work | Usable result |
+| --- | --- | --- |
+| Interactive use | Finish current USB exit/reset acceptance for plain Shell `python` and `brickphyrdev terminal --repl`, then combined interactive flow control; retain visible exit/reset hints | Ctrl-X returns to the same usable Shell with REPL stopped and resources released; Ctrl-D still soft-resets Python |
+| Pybricks clients | Complete unchanged Pybricks Code execution, profile negotiation, slot power-cycle retention and combined input/output acceptance | A program with imports and input uploads, runs and stops through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
+| Hub APIs and observations | Complete charger and battery observations, `hub_menu` and storage reset; isolate and fix IMU acquisition gaps under BLE transfers | Reference hub examples share the existing hardware services, with valid observations or explicit errors and reliable cleanup |
+| Wired devices | Bind universal `PUPDevice` and applicable `UARTDevice` operations, wired sensors and accessories, including light/matrix and infrared features | Reference programs use device modes and measurements; generic access and the existing terminal inventory expose unknown compatible devices |
+| Motors | Complete direction, gearing, units, control limits, stall, stop/hold and blocking/awaitable operations over the existing controller | Reference motor programs complete or cancel without stranding port ownership or active outputs |
+| Robotics | Implement `DriveBase`, `SpikeBase` and `Car`, coordinated motion, gyro use and multi-port ownership | Reference robot programs use the shared controllers; partial acquisition or cancellation releases all affected outputs |
+| Wireless devices and messaging | Complete hub radio arguments, remote/controller bindings, `LWP3Device`, `AppData`, `BLERadio`, `HubNetwork` and required aliases | Reference communication programs connect, exchange data and release peripheral links while preserving one management owner |
+| Integrated delivery | Accept the full and reduced profiles, combined user workflows and physical behavior; publish and pin required dependency commits, then add CI for clean builds, focused checks and artifacts | Reproducible firmware with usable instructions and explicit hardware evidence and limitations |
+
+Before expanding the F4 profile, account for static reservations, stacks, Python
+heap and peak loading memory separately. Preserve the checked VM, native module,
+store and REPL paths. Reuse configured builds and select checks using the
+[incremental validation policy](../CONTRIBUTING.md#checks-and-pull-requests);
+full integration belongs to acceptance of a large milestone.
+
+Storage-reset semantics remain a decision before that API is implemented: specify
+whether Pybricks slots, shared user data, named applications and Brickphyr settings
+are cleared or preserved. Do not infer permission to erase existing user data
+from permission to install firmware.
+
+Group pending physical checks into bounded sessions: interactive flow control,
+slot retention and automatic user-data saving across shutdown, watchdog recovery
+on battery power, button restart, and sensor/actuator observations. Before an
+unattended fault experiment, verify watchdog recovery for the power state under
+test. Missing hardware or operator observations delay that acceptance, not
+independent software work. Ordinary development can proceed with the existing
+watchdog; independent hardware reset equipment is not a prerequisite. Watchdog
+recovery limits still apply.
 
 ## Target behavior
 
@@ -126,8 +145,8 @@ are outside this milestone.
 
 Every step ends with usable behavior and focused checks through its production
 path. Native simulation, ARM emulation, an F4 build and physical verification are
-distinct evidence. Later service/API steps can be divided into smaller changes
-that each deliver an executable example.
+distinct evidence. Group related methods and their shared service work into one
+increment with an executable example, source review and build/check cycle.
 
 The runtime and common user operations in steps 1–5 are the foundation for the
 Pybricks execution adapter and hardware bindings in steps 6–9. Reuse that
@@ -294,7 +313,11 @@ it does not create another interpreter or replay unfinished input.
 Distinguish MicroPython soft reset from hub reboot: a soft reset releases the
 session's application resources and initializes a fresh interpreter while keeping
 management and essential device services running. Keep explicit Shell return
-separate from the standard REPL reset action.
+separate from the standard REPL reset action. Show Ctrl-X exit and Ctrl-D soft
+reset hints on entry. Verify and, if needed, fix Ctrl-X return through both plain
+Shell `python` and `brickphyrdev terminal --repl` over USB and BLE; acceptance
+requires the same Shell to remain usable after REPL stops and releases its
+resources, while Ctrl-D continues to reset Python.
 
 Deliver this in three usable increments: interpreter entry and interruption over
 the existing application operations; interactive Shell/CLI attachment over USB
@@ -374,16 +397,16 @@ Add the distinguishable Brickphyr hardware extensions needed by the native Pytho
 workflow, such as Bluetooth-button lighting, with explicit resource ownership.
 Python hardware operations and diagnostics must share the existing services.
 
-Use separate increments for tools/parameters and cancellation, buttons/lights and
-matrix, sound and system/storage, then IMU/calibration. Each increment includes a
-working script using the public API, including a failure or cancellation path.
-Port missing service behavior at its existing owner before exposing the binding;
-do not reproduce that behavior in Python-specific drivers.
+Preserve the implemented tools, light, display, sound, system/storage and IMU
+bindings while completing the remaining hub surface. Group related operations
+with a working script using the public API and its relevant failure or
+cancellation path. Port missing service behavior at its existing owner before
+exposing the binding; do not reproduce it in Python-specific drivers.
 
 Acceptance: reference hub/tools examples run unchanged with checked values,
 timing semantics and cleanup. Device I/O is simulated where physical observation
-is unavailable. Canceled or failed programs release owned devices. Build these as
-small increments, each ending with a usable script rather than empty module types.
+is unavailable. Canceled or failed programs release owned devices. Each increment
+ends with a usable script rather than empty module types.
 
 ### 8. Integrate sensors, motors and DriveBase
 

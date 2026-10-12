@@ -30,6 +30,12 @@ to resume work without access to a previous conversation or a personal rules fil
   must state its hypothesis, limitations, and the evidence needed to accept it.
 - Do not add fallback behavior that silently changes semantics, hides corrupted
   state, or blocks useful work without a justified invariant.
+- Delegate bounded tasks that need little shared context to at most one subagent
+  at a time, using `gpt-6-sol` with `high` reasoning; do not delegate recursively.
+  Give a short task-specific briefing and request concise findings. The main
+  agent owns architecture, cross-subsystem contracts, error-prone implementation
+  and integration review. Delegate when the combined work reduces total cost;
+  avoid duplicating exploration or passing the whole conversation to a helper.
 
 ## Evidence and validation
 
@@ -65,9 +71,10 @@ to resume work without access to a previous conversation or a personal rules fil
   out of Git. Small curated regression fixtures need provenance and a purpose.
 - Agents must not invent human authorship or add human DCO sign-offs. Follow the
   destination project's current AI attribution rules for upstream submissions.
-- At handoff, print an English commit-message draft in chat, without committing
-  or saving the draft to files or Git metadata. Use a short list: `+` for additions,
-  `-` for removals, and `*` for changes, with a few words per item.
+- Commit completed, verified increments; leave unfinished experiments uncommitted.
+  At handoff, print the English commit description in chat. Use a short list:
+  `+` for additions, `-` for removals, and `*` for changes, with a few words per
+  item. Routine tests and documentation do not need separate description items.
 
 ## Hardware and handoff
 

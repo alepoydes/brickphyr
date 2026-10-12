@@ -108,15 +108,24 @@ every binding, exhaust independent parameter combinations, or test trivial check
 already clear from inspection. Preserve focused regressions for actual defects
 and consequential boundaries such as data loss, isolation and resource cleanup.
 
-Run affected checks once per coherent change. Broaden only for a changed shared
-contract, unresolved failure or milestone acceptance; passing tests do not need
-another run without new evidence. Build the required fixtures separately and
-incrementally, with at most four compilation jobs in total. Tests must not silently
-rebuild firmware. Reuse a simulator for stateless library cases while starting a
-fresh application; cold-start and persistence checks require fresh firmware.
-Prefer event completion or virtual time to sleeps. Real waits and repetitions
-must exercise a named timing/lifetime property, not compensate for flakiness.
-Measure test costs when choosing or revising coverage; do not optimize test count.
+During debugging, run the failing case. After the fix, run the affected set once;
+do not rerun unchanged successes. Broaden for a changed shared contract or an
+unresolved failure. Reserve the full integration collection for acceptance of a
+large milestone, not each small change or commit. Aim for an affected set that
+executes in 5–10 seconds and keep total local automated test execution for a
+usual feature sprint within 30 seconds, including retries, fixture startup and
+cleanup. A real defect may justify a larger check; explain the overrun. Never
+skip a meaningful failure or terminate a check and report success to meet the
+target. Select physical checks separately and make their elapsed time visible.
+
+Build the required fixtures separately and incrementally, with at most four
+compilation jobs in total; time compilation separately from test execution.
+Tests must not silently rebuild firmware. Reuse a simulator for stateless library
+cases while starting a fresh application; cold-start and persistence checks
+require fresh firmware. Prefer event completion or virtual time to sleeps. Real
+waits and repetitions must exercise a named timing/lifetime property, not
+compensate for flakiness. Measure test costs when choosing or revising coverage;
+do not optimize test count.
 
 For documentation changes, review local links, terminology, cross-document
 consistency, and whitespace. For firmware changes, run the affected build and

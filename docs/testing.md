@@ -38,6 +38,21 @@ add `--durations=10`; keep compilation and test execution timings separate.
 No pytest check connects to a physical hub. Hardware and long load checks remain
 separate, explicitly selected work.
 
+Reuse the configured build directory for an affected check. For example, after
+configuring the [plain REPL fixture](#python-application-integration), an edit to
+its shared host dispatcher can be checked with:
+
+```sh
+export CMAKE_BUILD_PARALLEL_LEVEL=4
+time uv run --locked west build -d build/python-host-tests
+time uv run --locked pytest -q -x tests/test_python_shell.py::test_plain_shell_repl_and_return
+```
+
+The two timings separate compilation from test execution. Select additional
+cases only for other affected behavior; do not rebuild every fixture or rerun
+the full collection. Use the [workspace summary](builds.md#setup-and-board-bring-up)
+to inspect local dependency revisions before an update or a release build.
+
 ## Watchdog
 
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a

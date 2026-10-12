@@ -91,8 +91,14 @@ pybricksdev dependency. The published 0.1.1 pins include that release's coordina
 [dependency changes](upstream.md#current-downstream-delta). The current hardware
 and native-application increments additionally require the local prerequisites
 listed in [upstream integration](upstream.md); publication and updated manifest
-pins are still pending. Build the Prime F4 target and check the
-resulting image:
+pins are still pending.
+
+For a read-only summary of active manifest pins, checkout HEADs, branches and
+dirty or missing projects (including Pybricks' MicroPython submodule), run
+`uv run --locked python tools/workspace_status.py` from Brickphyr. The utility
+reads local manifest and Git state; it does not fetch or change checkouts.
+
+Build the Prime F4 target and check the resulting image:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/prime &&
