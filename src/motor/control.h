@@ -23,6 +23,11 @@ struct motor_reference {
 	bool coast, active, done, stalled;
 };
 
+struct motor_observation {
+	int32_t estimated_speed, load_mnm;
+	bool stalled;
+};
+
 int motor_control_init(struct motor_control *motor, uint16_t id, int64_t angle_mdeg);
 int motor_control_check(uint16_t id, int64_t angle, const struct bp_motor_command *command);
 int motor_control_run(struct motor_control *motor, uint32_t time_ticks, int64_t angle_mdeg,
@@ -37,3 +42,6 @@ int motor_control_step(struct motor_control *motor, uint32_t time_ticks, int64_t
  * This is separate from requesting voltage: a failed PWM write is not applied. */
 int motor_control_predict(struct motor_control *motor, uint32_t time_ticks,
 	int64_t angle_mdeg, bool coast, int32_t voltage_mv);
+/* Read the already predicted observer state. Does not advance it again. */
+int motor_control_observe(struct motor_control *motor, uint32_t time_ticks,
+	int64_t angle_mdeg, bool coast, struct motor_observation *result);

@@ -542,10 +542,15 @@ learning during drive.
 `tests/motor_control` runs the PBIO computation on ARM with a deliberately simple
 independent synthetic plant. It checks motion in both directions, long encoder
 origins, position hold, timed completion, time wrapping and rejected requests.
+Passive-observer checks cover numerical speed, signed load, stall and coast
+without active regulation; the same suite also runs on `native_sim`.
 `tests/regulated_motors` runs the production UART/ADC/controller/PWM path with
 synthetic peers: command ownership, stall, Shell/SMP observations, completion,
 missing encoder input, battery failure, lost frames before/during I/O and release
-during an unfinished PWM operation. Neither fixture measures physical tuning,
+during an unfinished PWM operation. It also checks cold observer startup,
+externally moved shaft samples, no idle PWM writes, direct-drive stall and
+observation errors when a coasting encoder stops reporting. Neither fixture
+measures physical tuning,
 motor stopping or service jitter on the hub.
 
 An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:

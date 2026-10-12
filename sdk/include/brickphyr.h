@@ -203,6 +203,14 @@ __syscall int bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t m
 /* Connection-bound asynchronous coast/release. Stale objects cannot release
  * a replacement device. Completion is unowned + valid coast, or cleanup_error. */
 __syscall int bp_motor_close(uint32_t port, uint32_t generation);
+/* Claim a negotiated encoder motor, coast and start continuous observation.
+ * A regulated command also starts observation. Coast/brake/DC retain it;
+ * release, disconnect or observation failure stop it. Match request completion. */
+__syscall int bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request);
+/* Snapshot only, no I/O. window_ms rounds to the nearest 5 ms (3..302 ms).
+ * Inspect error; stale/absent observations never masquerade as zero speed. */
+__syscall int bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value);
 /* Queue a regulated speed/position command; does not wait for motion. The
  * command is copied. bp_motor_get reports driver completion separately from
  * trajectory completion. Coast or release cancels regulation. */

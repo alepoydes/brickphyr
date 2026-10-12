@@ -584,6 +584,47 @@ counts are visible in `observe control.A` through `control.F`; voltage/reference
 fields describe the last successful control frame, with `active` distinguishing
 ongoing regulation from historical values.
 
+### Continuous motor observation
+
+`motor A observe` claims a negotiated encoder motor, coasts it and starts the
+same PBIO observer used by regulation. `observe control.A` then includes
+`observing`, `observation_ms`, `speed_mdps`, `load_mnm` and `dc_stalled`, alongside the existing
+trajectory fields. A regulated command starts observation automatically.
+Subsequent duty, brake and coast commands retain it; release ends it.
+Monitoring without a claim does not start the model or change an output.
+
+Native applications use `bp_motor_observe(port, generation, &request)` and wait
+for driver completion through `bp_motor_get`. Read
+`bp_motor_observation_get(port, generation, window_ms, &sample)` for timestamped
+shaft angle, numerical/estimated speed, model load, applied-voltage estimate,
+stall state and frame count. Inspect `sample.error` before using values.
+Coordinates are physical shaft millidegrees, speeds are millidegrees/second,
+load is signed millinewton-metres, and voltage is millivolts. These are estimates,
+not torque or winding-voltage measurements. No Python gearing or direction is
+applied at this boundary.
+
+The numerical speed window rounds to the nearest 5 ms, accepting 3..302 ms;
+100 ms is the default in telemetry. Large values are rejected before the PBIO
+sample-count conversion. Coasting reports zero load and no stall. During active
+regulation, load/stall come from the controller; during direct drive they come
+from the observer. Its stall persistence gate starts when the model detects
+stall conditions, not when the drive command was issued.
+
+One 5 ms cadence updates the model through all these modes. Idle observations do
+not rewrite GPIO/PWM. Driver calls and PBIO computation remain outside the service
+spinlock; a bounded publication copy makes reads independent of model mutation.
+Only claimed motors with observation enabled incur this work. Release, hotplug,
+invalid/stale measurements and a missed frame stop observation; an error is
+reported instead of a stale zero-speed result. Restart requires an explicit new
+observation or regulated command. Coast and brake observation need no battery
+reading, while nonzero duty prediction requires a valid cached battery voltage.
+
+Native simulation covers cold observer start, externally moved encoder samples,
+idle PWM inactivity, direct-drive stall, release and feedback loss, alongside
+regulated-command lifetime and driver failures. These checks do not establish
+physical sensor accuracy or multi-motor scheduling margins. The Python `Motor`
+binding still needs its direction/gearing, operations and settings integration.
+
 The [computation adapter](../src/motor/README.md) records source provenance and
 numerical boundaries. PBIO computation is reused without its device scheduler;
 Zephyr port ownership, driver errors and cleanup remain authoritative.

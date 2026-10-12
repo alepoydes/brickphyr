@@ -19,6 +19,10 @@ and measured angle and returns a voltage request; a separate prediction call use
 the voltage corresponding to the successful output operation. Instances stay at
 fixed addresses because PBIO integrators reference their containing settings.
 No application buffer, hardware access, allocation or service lock belongs here.
+`motor_control_observe` adapts load/stall selection from PBIO `servo.c` at the
+same revision. It reads the observer after prediction, without advancing it
+again. Controller status uses the public stall bit; the PBIO convenience getter
+also calculates duration from its global clock, which this adapter does not use.
 
 Long encoder origins stay in rotation-plus-millidegree form. In particular, timed
 completion with HOLD starts a zero-relative position hold, avoiding PBIO's

@@ -223,6 +223,16 @@ static void capture(enum source source, struct observation *out)
 			field(out, "estimated_mdps", value.control.estimated_speed);
 			field(out, "requested_mv", value.control.requested_mv);
 			field(out, "applied_mv", value.control.applied_mv);
+			field(out, "observing", value.control.observing);
+			struct bp_motor_observation sample;
+			int err = hub_motor_observation_get(source - CONTROL_A, value.generation, 100, &sample);
+			if (!out->error && value.control.observing) out->error = err ? err : sample.error;
+			if (!err && !sample.error) {
+				field(out, "observation_ms", sample.sample_ms);
+				field(out, "speed_mdps", sample.speed_mdeg_s);
+				field(out, "load_mnm", sample.load_mnm);
+				field(out, "dc_stalled", sample.stalled);
+			}
 		}
 	} else if (source >= MOTOR_A && source <= MOTOR_F) {
 		struct bp_motor_state value;
@@ -655,6 +665,12 @@ static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 	uint32_t port = argv[1][0] - 'A';
 	if (argc == 3 && !strcmp(argv[2], "release")) return hub_port_release(BP_PORT_TERMINAL, port);
 	if (argc == 3 && !strcmp(argv[2], "coast")) return hub_motor_coast(BP_PORT_TERMINAL, port);
+	if (argc == 3 && !strcmp(argv[2], "observe")) {
+		struct bp_port_state value;
+		int err = hub_port_get(port, &value);
+		uint32_t request;
+		return err ? err : hub_motor_observe(BP_PORT_TERMINAL, port, value.generation, &request);
+	}
 	if (!strcmp(argv[2], "run") || !strcmp(argv[2], "target")) {
 		if (argc != 6) return -EINVAL;
 		bool target = !strcmp(argv[2], "target");
@@ -691,7 +707,7 @@ static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 	if (err || duration > INT32_MAX || (argc > duration_index && argv[duration_index][0] == '-')) return -EINVAL;
 	return hub_motor_drive(BP_PORT_TERMINAL, port, duty, duration);
 }
-SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release | "
+SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release | observe | "
 	"run MDEG/S MS FINISH | target MDEG MDEG/S FINISH (coast/brake/hold/continue).",
 	cmd_motor, 3, 3);
 

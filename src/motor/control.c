@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <lego/device.h>
+#include <pbio/control_settings.h>
 #include <pbio/int_math.h>
 
 _Static_assert(PBIO_CONFIG_CONTROL_LOOP_TIME_MS == 5, "PUP models use a 5ms step");
@@ -436,5 +437,32 @@ int motor_control_predict(struct motor_control *motor, uint32_t ticks,
     if (err) return err;
     pbio_observer_update(&motor->observer, ticks, &state.position,
         coast ? PBIO_DCMOTOR_ACTUATION_COAST : PBIO_DCMOTOR_ACTUATION_VOLTAGE, voltage);
+    return 0;
+}
+
+int motor_control_observe(struct motor_control *motor, uint32_t ticks,
+    int64_t measured, bool coast, struct motor_observation *out)
+{
+    if (!out) return -EINVAL;
+    pbio_control_state_t state;
+    int err = state_get(motor, measured, &state);
+    if (err) return err;
+    struct motor_observation value = {.estimated_speed = state.speed_estimate};
+    if (!coast) {
+        uint32_t duration;
+        if (pbio_control_is_active(&motor->control)) {
+            value.load_mnm = pbio_control_settings_actuation_ctl_to_app(-motor->control.pid_average);
+            /* The boolean is already published by control_update. Its getter
+             * also computes duration from a global PBIO clock; this adapter
+             * receives time explicitly and needs no scheduler clock hook. */
+            value.stalled = (motor->control.status & PBIO_CONTROL_STATUS_STALLED) != 0;
+        } else {
+            int32_t feedback = pbio_observer_get_feedback_voltage(&motor->observer, &state.position);
+            int32_t torque = pbio_observer_voltage_to_torque(motor->observer.model, feedback);
+            value.load_mnm = pbio_control_settings_actuation_ctl_to_app(torque);
+            value.stalled = pbio_observer_is_stalled(&motor->observer, ticks, &duration);
+        }
+    }
+    *out = value;
     return 0;
 }

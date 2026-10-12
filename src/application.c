@@ -924,6 +924,32 @@ static inline int z_vrfy_bp_motor_close(uint32_t port, uint32_t generation)
 }
 #include <zephyr/syscalls/bp_motor_close_mrsh.c>
 
+int z_impl_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
+{
+	return hub_motor_observe(BP_PORT_APPLICATION, port, generation, request);
+}
+static inline int z_vrfy_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	return z_impl_bp_motor_observe(port, generation, request);
+}
+#include <zephyr/syscalls/bp_motor_observe_mrsh.c>
+
+int z_impl_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value)
+{
+	return hub_motor_observation_get(port, generation, window_ms, value);
+}
+static inline int z_vrfy_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	return z_impl_bp_motor_observation_get(port, generation, window_ms, value);
+}
+#include <zephyr/syscalls/bp_motor_observation_get_mrsh.c>
+
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
 	return hub_motor_control(BP_PORT_APPLICATION, port, command);

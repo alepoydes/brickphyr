@@ -19,7 +19,17 @@ struct bp_motor_control_state {
 	int32_t reference_speed, estimated_speed; /* millidegrees/second */
 	int32_t requested_mv, applied_mv;
 	uint32_t frames, overruns;
-	uint8_t active, done, stalled;
+	uint8_t active, done, stalled, observing;
+};
+
+/* Shaft units, without direction/gearing. Load is a model estimate, not a
+ * torque measurement. Speed uses the requested numerical derivative window. */
+struct bp_motor_observation {
+	int64_t sample_ms, angle_mdeg;
+	int32_t speed_mdeg_s, estimated_speed, load_mnm, applied_mv;
+	uint32_t generation, frames;
+	int32_t error;
+	uint8_t stalled;
 };
 struct bp_motor_state {
 	/* Acceptance and completion times, monotonic ms. Completion is a driver

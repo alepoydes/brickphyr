@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pbio/differentiator.h>
 #include <zephyr/ztest.h>
 
 ZTEST(motor_control, test_models_and_rejection)
@@ -118,6 +119,42 @@ ZTEST(motor_control, test_subresolution_position_speed)
 	zassert_ok(motor_control_init(&motor, 48, 0));
 	zassert_equal(motor_control_target(&motor, 0, 0, 360000, 1,
 		PBIO_CONTROL_ON_COMPLETION_HOLD), -ERANGE);
+}
+
+ZTEST(motor_control, test_passive_observation)
+{
+	struct motor_control motor;
+	struct motor_observation observation;
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	/* Independent shaft movement: 1 degree per 5 ms gives 200 deg/s. Reading
+	 * the observation each tick must not advance the differentiator twice. */
+	for (uint32_t sample = 1; sample <= 30; sample++) {
+		uint32_t ticks = sample * 50;
+		int64_t angle = sample * 1000;
+		zassert_ok(motor_control_predict(&motor, ticks, angle, true, 0));
+		zassert_ok(motor_control_observe(&motor, ticks, angle, true, &observation));
+		zassert_equal(observation.load_mnm, 0);
+		zassert_false(observation.stalled);
+	}
+	int32_t speed;
+	zassert_ok(pbio_differentiator_get_speed(&motor.observer.differentiator, 100, &speed));
+	zassert_equal(speed, 200000);
+	zassert_true(observation.estimated_speed > 0);
+
+	/* Voltage on a fixed shaft produces opposing load and sustained stall.
+	 * Coast then clears both, without a second observer update per frame. */
+	zassert_ok(motor_control_init(&motor, 48, 0));
+	for (uint32_t sample = 0; sample <= 200; sample++) {
+		uint32_t ticks = sample * 50;
+		zassert_ok(motor_control_predict(&motor, ticks, 0, false, 9000));
+		zassert_ok(motor_control_observe(&motor, ticks, 0, false, &observation));
+	}
+	zassert_true(observation.load_mnm < 0);
+	zassert_true(observation.stalled);
+	zassert_ok(motor_control_predict(&motor, 10050, 0, true, 0));
+	zassert_ok(motor_control_observe(&motor, 10050, 0, true, &observation));
+	zassert_equal(observation.load_mnm, 0);
+	zassert_false(observation.stalled);
 }
 
 ZTEST_SUITE(motor_control, NULL, NULL, NULL, NULL, NULL);

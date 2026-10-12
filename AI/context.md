@@ -79,6 +79,8 @@ has synthetic UART coverage for IR commands, cleanup and reconnect errors;
 physical PF output and other sensor acceptance remain pending. `DCMotor` has
 ARM checks for the shared native direction/voltage configuration, PWM, hotplug
 and cleanup. Physical Python motor acceptance and regulated `Motor` remain pending.
+The native motor observer now continues through DC/brake/coast while claimed;
+synthetic service checks cover speed, model load/stall and feedback loss.
 `UARTDevice` uses the shared UART service with ARM echo/cleanup coverage;
 custom P1/P2 supply and physical serial acceptance remain pending.
 Repeated BLE application transfers still cause occasional IMU acquisition

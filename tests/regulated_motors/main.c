@@ -21,6 +21,7 @@ DEFINE_FFF_GLOBALS;
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(lump_uart));
 static const struct device *const adc = DEVICE_DT_GET(DT_NODELABEL(adc0));
 static bool report_angle;
+static int16_t shaft_angle, shaft_increment;
 static int battery_error;
 static uint32_t battery_raw = 3100;
 static uint32_t pwm_delay;
@@ -37,8 +38,12 @@ static void sent(const struct device *dev, size_t size, void *arg)
 static void angle_frame(struct k_timer *timer)
 {
 	if (!report_angle) return;
-	/* Technic CALIB mode 4: ignored calibration word, absolute shaft 0. */
+	/* Technic CALIB mode 4: ignored calibration word, shaft in decidegrees. */
+	shaft_angle = (shaft_angle + shaft_increment) % 3600;
 	uint8_t data[] = {0xd4, 0, 0, 0, 0, 0x2b};
+	data[3] = shaft_angle;
+	data[4] = shaft_angle >> 8;
+	data[5] ^= data[3] ^ data[4];
 	zassert_equal(uart_emul_put_rx_data(uart, data, sizeof(data)), sizeof(data));
 }
 K_TIMER_DEFINE(encoder, angle_frame, NULL);
@@ -186,6 +191,72 @@ static void observe_control(void)
 ZTEST(regulated_motors, test_control_lifetime)
 {
 	connect_motor();
+	/* Ordinary first use: observe without first starting a trajectory. Idle
+	 * frames must not repeatedly write PWM or reset the derivative history. */
+	struct bp_port_state port;
+	zassert_ok(hub_port_get(0, &port));
+	uint32_t observe_request;
+	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request));
+	zassert_ok(completed().error);
+	struct bp_motor_observation observation;
+	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
+	zassert_ok(observation.error);
+	zassert_equal(observation.speed_mdeg_s, 0);
+	unsigned int writes = fake_pwm_set_cycles_fake.call_count;
+	uint32_t frames = observation.frames;
+	shaft_increment = 10; /* 1 degree per 5 ms; independent synthetic motion. */
+	k_msleep(130);
+	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
+	zassert_ok(observation.error);
+	zassert_true(observation.frames >= frames + 24);
+	zassert_within(observation.speed_mdeg_s, 200000, 20000);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, writes, "Idle observation rewrote PWM");
+	zassert_equal(observation.load_mnm, 0);
+	zassert_false(observation.stalled);
+	zassert_equal(hub_motor_observation_get(0, port.generation, UINT32_MAX, &observation), -EINVAL);
+	shaft_increment = 0;
+	zassert_ok(hub_motor_drive(BP_PORT_APPLICATION, 0, 800, 0));
+	zassert_ok(completed().error);
+	/* Wait for the model to lose its previous motion, then satisfy the 200 ms
+	 * stall gate; that gate is not a deadline measured from the DC command. */
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(5);
+		zassert_ok(hub_motor_observation_get(0, port.generation, 20, &observation));
+		zassert_ok(observation.error);
+		zassert_true(k_uptime_get() < deadline, "Model did not settle into stall");
+	} while (!observation.stalled);
+	zassert_equal(observation.speed_mdeg_s, 0);
+	zassert_true(observation.stalled && observation.load_mnm < 0,
+		"stalled=%u load=%d estimated=%d voltage=%d frames=%u", observation.stalled,
+		observation.load_mnm, observation.estimated_speed, observation.applied_mv, observation.frames);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_false(state().control.observing);
+	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
+	zassert_equal(observation.error, -ENODEV);
+	zassert_ok(hub_motor_observation_get(0, port.generation + 1, 100, &observation));
+	zassert_equal(observation.error, -ESTALE);
+	/* Missing measurements must stop even a coasting observer; otherwise its
+	 * stale zero derivative could appear to be a live, stationary shaft. */
+	ready(); /* Release restores automatic mode selection before a new claim. */
+	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request));
+	zassert_ok(completed().error);
+	report_angle = false;
+	k_msleep(110);
+	zassert_false(state().control.observing);
+	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
+	zassert_equal(observation.error, -ETIMEDOUT);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	report_angle = true;
+	shaft_angle = 0;
+	deadline = k_uptime_get() + 100;
+	for (;;) {
+		struct bp_sensor_sample sample;
+		zassert_ok(hub_sensor_get(0, &sample));
+		if (!sample.error && sample.angle_mdeg == 0) break;
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
 	struct bp_motor_command command = run(800, BP_MOTOR_FINISH_HOLD);
 	zassert_ok(hub_motor_control(BP_PORT_APPLICATION, 0, &command));
 	struct bp_motor_state value = completed();

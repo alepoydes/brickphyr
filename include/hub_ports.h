@@ -41,6 +41,9 @@ int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request);
 int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t max_voltage);
 int hub_motor_close(enum bp_port_owner owner, uint32_t port, uint32_t generation);
+int hub_motor_observe(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t *request);
+int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value);
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms);
 int hub_motor_coast(enum bp_port_owner owner, uint32_t port);
 int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_motor_command *command);
@@ -94,6 +97,10 @@ static inline int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t
 static inline int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	int32_t max_voltage) { return -ENOTSUP; }
 static inline int hub_motor_close(enum bp_port_owner owner, uint32_t port, uint32_t generation) { return -ENOTSUP; }
+static inline int hub_motor_observe(enum bp_port_owner owner, uint32_t port, uint32_t generation,
+	uint32_t *request) { return -ENOTSUP; }
+static inline int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
+	struct bp_motor_observation *value) { return -ENOTSUP; }
 static inline int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty,
 	uint32_t duration_ms) { return -ENOTSUP; }
 static inline int hub_motor_coast(enum bp_port_owner owner, uint32_t port) { return -ENOTSUP; }
