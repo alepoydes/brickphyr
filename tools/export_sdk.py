@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Extend Zephyr's EDK with the matching Python compiler and native module tools."""
+"""Extend Zephyr's EDK with optional DSP and matching Python development tools."""
 
 import argparse
 import shutil
@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 import yaml
 
 
-def export(build: Path, micropython: Path | None):
+def export(build: Path, micropython: Path | None, dsp: list[Path] | None):
     info = yaml.safe_load((build / "build_info.yml").read_text())
     edk = Path(info["cmake"]["llext-edk"]["file"])
     output = build / "zephyr/brickphyr-sdk.tar.xz"
@@ -22,6 +22,11 @@ def export(build: Path, micropython: Path | None):
         if len(roots) != 1 or not roots[0].is_dir():
             raise ValueError("Expected one directory in the Zephyr EDK")
         sdk = roots[0]
+        if dsp:
+            (sdk / "lib").mkdir(exist_ok=True)
+            shutil.copy2(dsp[0], sdk / "lib/libcmsis-dsp.a")
+            (sdk / "LICENSES").mkdir(exist_ok=True)
+            shutil.copy2(dsp[1], sdk / "LICENSES/CMSIS-DSP.txt")
         if micropython:
             python = sdk / "python"
             python.mkdir()
@@ -53,5 +58,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path)
     parser.add_argument("--micropython", type=Path)
+    parser.add_argument("--dsp", type=Path, nargs=2, metavar=("ARCHIVE", "LICENSE"))
     args = parser.parse_args()
-    print(export(args.build, args.micropython))
+    print(export(args.build, args.micropython, args.dsp))

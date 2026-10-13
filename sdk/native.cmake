@@ -74,8 +74,11 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
   if(CONFIG_FPU)
     list(APPEND native_examples fpu)
   endif()
+  if(CONFIG_CMSIS_DSP_FILTERING)
+    list(APPEND native_examples dsp)
+  endif()
   foreach(example ${native_examples})
-    if(example MATCHES "_fault$" OR example STREQUAL "motor" OR example STREQUAL "fpu")
+    if(example MATCHES "_fault$" OR example MATCHES "^(motor|fpu|dsp)$")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
       set(example_source ${BRICKPHYR_ROOT}/examples/native/${example}.c)
@@ -90,6 +93,11 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
     llext_link_options(native_${example} -nostdlib
       -Wl,-T,${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h)
     get_target_property(example_target native_${example} lib_target)
+    if(example STREQUAL "dsp")
+      # Use the archive without inheriting Zephyr's firmware link interface.
+      target_link_libraries(${example_target} PRIVATE $<TARGET_FILE:modules__cmsis-dsp>)
+      add_dependencies(${example_target} modules__cmsis-dsp)
+    endif()
     target_link_libraries(${example_target} PRIVATE c gcc)
     set_property(TARGET native_${example}_llext_lib APPEND PROPERTY LINK_DEPENDS
       ${BRICKPHYR_ROOT}/sdk/include/brickphyr.ld.h)
@@ -113,12 +121,20 @@ if(CONFIG_LLEXT_EDK)
   if(CONFIG_BRICKPHYR_PYTHON)
     list(APPEND sdk_python_args --micropython ${WEST_TOPDIR}/pybricks-micropython/micropython)
   endif()
+  set(sdk_dsp_args)
+  if(CONFIG_CMSIS_DSP)
+    list(APPEND sdk_dsp_args --dsp $<TARGET_FILE:modules__cmsis-dsp>
+      ${ZEPHYR_CMSIS_DSP_MODULE_DIR}/LICENSE)
+  endif()
   add_custom_target(brickphyr-sdk
     COMMAND ${PYTHON_EXECUTABLE} ${BRICKPHYR_ROOT}/tools/export_sdk.py
-      ${CMAKE_BINARY_DIR} ${sdk_python_args}
+      ${CMAKE_BINARY_DIR} ${sdk_python_args} ${sdk_dsp_args}
     DEPENDS llext-edk
     VERBATIM)
   if(CONFIG_BRICKPHYR_PYTHON)
     add_dependencies(brickphyr-sdk mpy_cross)
+  endif()
+  if(CONFIG_CMSIS_DSP)
+    add_dependencies(brickphyr-sdk modules__cmsis-dsp)
   endif()
 endif()

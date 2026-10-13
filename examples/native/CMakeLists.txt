@@ -19,15 +19,23 @@ add_custom_command(OUTPUT application.ld
   DEPFILE application.ld.d
   VERBATIM COMMAND_EXPAND_LISTS)
 add_custom_target(application_layout DEPENDS application.ld)
-foreach(example hello counter spin fault matrix imu sound motor)
+set(native_examples hello counter spin fault matrix imu sound motor)
+set(dsp_library ${LLEXT_EDK_INSTALL_DIR}/lib/libcmsis-dsp.a)
+if(EXISTS ${dsp_library})
+  list(APPEND native_examples imu_filter)
+endif()
+foreach(example ${native_examples})
   add_executable(${example} ${example}.c)
   set_target_properties(${example} PROPERTIES SUFFIX .elf
     LINK_DEPENDS ${PROJECT_BINARY_DIR}/application.ld)
   target_compile_options(${example} PRIVATE ${LLEXT_CFLAGS} -O2 -g0)
   target_link_options(${example} PRIVATE ${application_link_flags} -nostdlib
-    -r -T${PROJECT_BINARY_DIR}/application.ld)
+    -r -Wl,--strip-debug -T${PROJECT_BINARY_DIR}/application.ld)
   # Compiler-emitted memory operations execute in the application's domain.
   # Resolve them from the SDK's static C library, never privileged imports.
+  if(example STREQUAL "imu_filter")
+    target_link_libraries(${example} PRIVATE ${dsp_library})
+  endif()
   target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
 endforeach()

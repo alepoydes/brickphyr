@@ -12,4 +12,7 @@ SECTIONS
 	.fini_array 0 : { *(.fini_array .fini_array.*) }
 	.brickphyr.abi 0 (INFO) : { KEEP(*(.brickphyr.abi)) }
 	.ARM.attributes 0 : { *(.ARM.attributes) }
+	/* The native C profile has no stack unwinder. Static libc objects may
+	 * carry EHABI tables even when the application disables their generation. */
+	/DISCARD/ : { *(.ARM.exidx* .ARM.extab*) }
 }

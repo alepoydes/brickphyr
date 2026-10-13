@@ -6,10 +6,16 @@
 #include <zephyr/shell/shell.h>
 #include <brickphyr_abi.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/llext/elf.h>
 
 #ifdef CONFIG_FPU
 static const unsigned char fpu[] = {
 #include <native_fpu.inc>
+};
+#endif
+#ifdef CONFIG_CMSIS_DSP_FILTERING
+static const unsigned char dsp[] = {
+#include <native_dsp.inc>
 };
 #endif
 static const unsigned char hello[] = {
@@ -63,16 +69,27 @@ const void *native_fixture_hello(size_t *length)
 
 int native_fixture_run(const char *name)
 {
-	if (!strcmp(name, "badfloat")) {
+	if (!strcmp(name, "badfloat") || !strcmp(name, "unwind")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) {
 			return -ENOMEM;
 		}
 		memcpy(changed, hello, sizeof(hello));
-		/* ELF32 e_flags: keep EABI version, invert the explicit float ABI. */
-		uint32_t flags = sys_get_le32(changed + 36) & ~0x600U;
-		flags |= IS_ENABLED(CONFIG_FP_HARDABI) ? 0x200U : 0x400U;
-		sys_put_le32(flags, changed + 36);
+		if (!strcmp(name, "badfloat")) {
+			/* ELF32 e_flags: keep EABI version, invert the explicit float ABI. */
+			uint32_t flags = sys_get_le32(changed + 36) & ~0x600U;
+			flags |= IS_ENABLED(CONFIG_FP_HARDABI) ? 0x200U : 0x400U;
+			sys_put_le32(flags, changed + 36);
+		} else {
+			elf_ehdr_t *header = (void *)changed;
+			elf_shdr_t *sections = (void *)(changed + header->e_shoff);
+			for (size_t i = 0; i < header->e_shnum; i++) {
+				if (sections[i].sh_flags & SHF_ALLOC) {
+					sections[i].sh_type = 0x70000001; /* SHT_ARM_EXIDX */
+					break;
+				}
+			}
+		}
 		int err = application_run_native(changed, sizeof(hello));
 		k_free(changed);
 		return err;
@@ -101,6 +118,9 @@ int native_fixture_run(const char *name)
 	} images[] = {
 #ifdef CONFIG_FPU
 		{"fpu", fpu, sizeof(fpu)},
+#endif
+#ifdef CONFIG_CMSIS_DSP_FILTERING
+		{"dsp", dsp, sizeof(dsp)},
 #endif
 		{"hello", hello, sizeof(hello)}, {"counter", counter, sizeof(counter)},
 		{"spin", spin, sizeof(spin)}, {"fault", fault, sizeof(fault)},

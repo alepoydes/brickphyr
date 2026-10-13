@@ -501,6 +501,43 @@ reservation and loaded allocation in `app status`. During RAM loading, the recei
 the receive buffer is then released. File loading reserves no ELF receive buffer
 and reports the same loader/loaded allocation for the same image.
 
+### Optional CMSIS-DSP native SDK
+
+Append `boards/spike_prime_f4_dsp.conf` to the F4 native configuration to enable
+Zephyr's upstream `CONFIG_CMSIS_DSP` and `CONFIG_CMSIS_DSP_FILTERING`. Build the
+firmware and export its matching SDK from the same configured directory:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/native-dsp-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_dsp.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+uv run --locked west build -d build/native-dsp-apps -t brickphyr-sdk
+mkdir -p build/native-dsp-sdk
+tar -xf build/native-dsp-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-dsp-sdk
+uv run --locked cmake -S examples/native -B build/native-dsp-examples -G Ninja \
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-dsp-sdk/brickphyr-sdk"
+uv run --locked cmake --build build/native-dsp-examples --target imu_filter
+```
+
+The SDK adds `lib/libcmsis-dsp.a` and `LICENSES/CMSIS-DSP.txt` to Zephyr's EDK;
+the EDK supplies the CMSIS-DSP headers and matching F4 hard-float flags. The
+example links the archive normally, so only referenced objects enter its ELF.
+Other upstream `CONFIG_CMSIS_DSP_*` categories can be selected when an application
+needs their routines. The full Python F4 profile takes the same optional file
+after its Python configuration:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/python-dsp-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_dsp.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+uv run --locked west build -d build/python-dsp-apps -t brickphyr-sdk
+```
+
+The `imu_filter.elf` example reads calibrated hub-axis Z angular velocity; its
+sampling and output limits are described in [applications](applications.md#experimental-native-profile).
+The full F4 DSP firmware and matching SDK, and the example built separately from
+that SDK, compile. Physical RAM and stored execution over USB/BLE remain pending.
+
 ## Experimental Python profile
 
 Add Python to the same Bluetooth/native configuration:

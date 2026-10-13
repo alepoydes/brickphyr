@@ -133,6 +133,15 @@ int main(void)
 #ifdef CONFIG_FPU
 	CHECK(check_fp_context() == 0 && available() == capacity);
 #endif
+#ifdef CONFIG_CMSIS_DSP_FILTERING
+	int dsp_error = native_fixture_run("dsp");
+	printk("DSP load %d\n", dsp_error);
+	CHECK(dsp_error == 0);
+	k_msleep(20);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
+	CHECK(!status.fault && !status.cleanup_error && available() == capacity);
+#endif
 	for (int i = 0; i < 2; i++) {
 		int err = native_fixture_run("hello");
 		printk("hello load %d\n", err);
@@ -295,6 +304,7 @@ int main(void)
 	CHECK(native_fixture_run("truncated") == -ENOEXEC);
 	CHECK(native_fixture_run("badabi") == -EPROTONOSUPPORT);
 	CHECK(native_fixture_run("badfloat") == -ENOTSUP);
+	CHECK(native_fixture_run("unwind") == -ENOTSUP);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING);
 	k_sem_give(&stop_requested);

@@ -116,6 +116,13 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 			abi = true;
 		}
 		if (sh.sh_flags & SHF_ALLOC) {
+			/* LLEXT cannot map other allocated section types, including ARM
+			 * unwind tables. Reject before stopping the previous program. */
+			if (sh.sh_type != SHT_PROGBITS && sh.sh_type != SHT_NOBITS &&
+			    sh.sh_type != SHT_PREINIT_ARRAY && sh.sh_type != SHT_INIT_ARRAY &&
+			    sh.sh_type != SHT_FINI_ARRAY) {
+				return -ENOTSUP;
+			}
 			if ((sh.sh_flags & (SHF_WRITE | SHF_EXECINSTR)) == (SHF_WRITE | SHF_EXECINSTR)) {
 				return -ENOTSUP;
 			}

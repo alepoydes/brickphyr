@@ -25,9 +25,9 @@ allocator reserves, so it is not the firmware's live working set.
    and SDK together; compatibility with earlier experimental native binaries is
    not required. Check FP context across preemption, system calls and application
    termination, including native/Viper/C `.mpy`, and measure stack and memory costs.
-3. Make CMSIS-DSP an optional SDK library, also usable by firmware. Include only
-   required routines and tables. Deliver a small sensor-processing application
-   through RAM and stored-program workflows over USB/BLE. CMSIS-NN remains a
+3. Keep upstream CMSIS-DSP optional in firmware and the matching native SDK,
+   linking only required routines and tables. Accept the sensor-processing
+   example through RAM and stored-program workflows over USB/BLE. CMSIS-NN remains a
    later optional library for a concrete model, not a mandatory firmware payload.
 4. Remove unnecessary image contents, dependencies and allocations; size buffers
    and stacks from contracts and measurements. Review loading copies, inactive
@@ -71,6 +71,23 @@ the matching SDK's static C library for operations such as compiler-generated
 imports are exposed. This does not supply POSIX or host I/O functions.
 `app_main`, constructors and normal-return destructors run in user mode.
 Explicit stop and faults do not depend on user cleanup executing.
+
+With the optional DSP configuration, the same upstream CMSIS-DSP static archive
+is available to firmware and exported as `lib/libcmsis-dsp.a` in the matching
+native SDK. The [IMU filter example](../examples/native/imu_filter.c) averages four
+*distinct observed* calibrated hub-axis Z gyro samples. It polls snapshots every
+10 ms, but acquisition can skip samples, so its window has no fixed time span.
+It resets on an IMU epoch change or unavailable sample and logs one line per 20
+observed samples after the window fills. A missing or slow output reader can drop
+log bytes; application status counts drops. This example does not establish a
+fixed-rate filter or physical IMU performance. The full F4 firmware and matching
+SDK, plus the separately built example, compile with DSP enabled; a focused M4
+QEMU fixture passes through the production native loader. Physical RAM and stored
+execution over USB/BLE remain to be checked.
+
+Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
+allocated sections left outside the accepted image format fail admission before
+an application replaces the running one.
 
 On the current ARMv7-M targets, the shared execution arena occupies aligned RAM
 without a flash initialization image. Native loading and Python GC initialize

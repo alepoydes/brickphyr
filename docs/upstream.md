@@ -110,6 +110,16 @@ changes with a concrete benefit and validation.
 Manifest imports own transitive versions. Overrides need a reason; do not maintain
 the same revision in west, a shell script, and a prose installation command.
 
+The optional DSP profile uses Zephyr's manifest-imported CMSIS-DSP module and
+its `CONFIG_CMSIS_DSP`/`CONFIG_CMSIS_DSP_FILTERING` selections. Zephyr builds the
+upstream static archive once; Brickphyr uses that archive for native fixtures and
+exports it with the matching EDK as `lib/libcmsis-dsp.a`, alongside the upstream
+license. The EDK carries its public headers and target flags. Further upstream
+`CONFIG_CMSIS_DSP_*` categories can be enabled for a specific need without a
+separate source list or new dependency fetch in Brickphyr. Keep the archive and
+EDK from the same firmware configuration so their architecture and float ABI
+agree.
+
 ## Current downstream delta
 
 The [manifest](../west.yml) pins published Zephyr, Pybricks and pybricksdev

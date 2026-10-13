@@ -765,6 +765,22 @@ also uploads the sound image through SMP and reads its completed sample count
 through the production observations handler. These fixtures
 do not execute STM32 DAC registers or measure sound quality or interrupt budgets.
 
+The optional CMSIS-DSP fixture uses the M4 hard-float native loader and Zephyr's
+selected filtering archive. Build it separately, then run the existing focused
+ARM fixture selection without an implicit rebuild:
+
+```sh
+uv run --locked west build -b mps2/an386 -s tests/native -d build/native-fpu-tests -- \
+  -DDTC_OVERLAY_FILE=app.overlay \
+  '-DEXTRA_CONF_FILE=fpu.conf;../../boards/spike_prime_f4_dsp.conf'
+uv run --locked pytest -q -x tests/test_native.py -k native-fpu-tests
+```
+
+The focused M4 QEMU check passes. Its DSP fixture checks a four-tap FIR impulse
+response, the linked native SDK archive and `snprintf` through the production
+loader. This is ARM emulation, not a physical IMU, USB or BLE check. Physical RAM
+and stored USB/BLE acceptance for the optional F4 DSP profile remain pending.
+
 `tests/native` executes the production loader on an ARM MPU model, checking
 matrix syscalls, repeated invalid calls, invalid result buffers and release after
 stop/fault. Its synthetic SPI peer can delay a write until the test allows it to
