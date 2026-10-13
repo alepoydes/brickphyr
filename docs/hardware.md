@@ -378,6 +378,11 @@ has already completed the read. The latter can cause conservative rejection
 of an intact frame; the synchronous API does not report the interrupt's
 completion timestamp. Cooperative work and interrupt processing still need
 bounded scheduling; thread priorities alone do not establish acquisition reliability.
+Native Python code preparation has its own preemptible worker: initializing its
+16 KiB arena must not delay acquisition on the cooperative system workqueue.
+Bounded Inventor F4 checks cover a 32 KiB RAM upload, dynamic C module import,
+idle HubNetwork construction and subsequent BLE output without IMU gaps.
+This does not close sustained-load acceptance or the separate port UART overruns.
 
 ## Hub sound
 

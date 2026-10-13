@@ -154,6 +154,7 @@ static struct {
 	intptr_t result;
 } code_request;
 static atomic_t code_pending;
+static K_SEM_DEFINE(code_ready, 0, 1);
 K_SEM_DEFINE(code_done, 0, 1);
 
 static intptr_t reserve_code(size_t length)
@@ -187,36 +188,42 @@ static intptr_t reserve_code(size_t length)
 	return (intptr_t)((uint8_t *)code_memory + code_used);
 }
 
-static void code_work_run(struct k_work *work)
+static void code_worker(void *a, void *b, void *c)
 {
-	ARG_UNUSED(work);
 	/* The application is blocked. This privileged worker has its own MPU map:
 	 * it can fill new code while the application's region stays read/execute.
 	 * Serializing with stop prevents copying from an unloaded application. */
-	k_mutex_lock(&lifecycle, K_FOREVER);
-	if (atomic_get(&code_pending)) {
-		intptr_t result = -EINVAL;
-		if (code_request.reserve) {
-			result = reserve_code(code_request.length);
-		} else if (!code_request.data && !code_request.length) {
-			code_reserved = 0;
-			result = 0;
-		} else if (code_reserved && code_request.length == code_reserved) {
-			memcpy((uint8_t *)code_memory + code_used, code_request.data, code_reserved);
-			barrier_dsync_fence_full();
-			barrier_isync_fence_full();
-			code_used += ROUND_UP(code_reserved, 4);
-			status.code_used = code_used;
-			code_reserved = 0;
-			result = 0;
+	for (;;) {
+		k_sem_take(&code_ready, K_FOREVER);
+		k_mutex_lock(&lifecycle, K_FOREVER);
+		if (atomic_get(&code_pending)) {
+			intptr_t result = -EINVAL;
+			if (code_request.reserve) {
+				result = reserve_code(code_request.length);
+			} else if (!code_request.data && !code_request.length) {
+				code_reserved = 0;
+				result = 0;
+			} else if (code_reserved && code_request.length == code_reserved) {
+				memcpy((uint8_t *)code_memory + code_used, code_request.data, code_reserved);
+				barrier_dsync_fence_full();
+				barrier_isync_fence_full();
+				code_used += ROUND_UP(code_reserved, 4);
+				status.code_used = code_used;
+				code_reserved = 0;
+				result = 0;
+			}
+			code_request.result = result;
+			atomic_clear(&code_pending);
+			k_sem_give(&code_done);
 		}
-		code_request.result = result;
-		atomic_clear(&code_pending);
-		k_sem_give(&code_done);
+		k_mutex_unlock(&lifecycle);
 	}
-	k_mutex_unlock(&lifecycle);
 }
-static K_WORK_DEFINE(code_work, code_work_run);
+/* Initializing the 16 KiB arena exceeds one IMU period on F4. Keep it
+ * preemptible below hardware and management, with the blocked application's
+ * priority. */
+K_KERNEL_THREAD_DEFINE(code_thread, 1024, code_worker, NULL, NULL, NULL,
+	K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
 
 static intptr_t code_exchange(bool reserve, const void *data, size_t length)
 {
@@ -224,11 +231,7 @@ static intptr_t code_exchange(bool reserve, const void *data, size_t length)
 	code_request.data = data;
 	code_request.length = length;
 	atomic_set(&code_pending, 1);
-	int err = k_work_submit(&code_work);
-	if (err < 0) {
-		atomic_clear(&code_pending);
-		return err;
-	}
+	k_sem_give(&code_ready);
 	k_sem_take(&code_done, K_FOREVER);
 	return code_request.result;
 }

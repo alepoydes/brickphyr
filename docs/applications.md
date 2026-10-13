@@ -145,7 +145,10 @@ software floating point, single-precision MicroPython objects; incompatible nati
 architectures/sub-versions are rejected. A separate 16 KiB code region is allocated
 from the system heap on first use, with up to 32 KiB transient allocator space
 needed for MPU alignment. This region is read/execute for the application; its
-ordinary data remains non-executable. Committed code stays allocated until the
+ordinary data remains non-executable. A privileged, preemptible worker with a
+1 KiB stack initializes and publishes code below hardware-service priorities;
+large memory operations do not occupy the cooperative system workqueue.
+Committed code stays allocated until the
 application ends, including functions no longer referenced by Python. Exhaustion
 raises `MemoryError`. Status reports its reservation as `code` and usage as
 `code_used`, separately from the execution arena.

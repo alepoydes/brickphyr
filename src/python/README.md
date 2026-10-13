@@ -35,9 +35,11 @@ thread supplies the actual stack lower bound for MicroPython's stack checks.
 
 The maintained `MP_PLAT_COMMIT_EXEC` hook publishes native code through a bounded
 supervisor operation. The application relocates a temporary GC buffer, then blocks
-while the system workqueue copies it into a reserved code region. That worker has
-its own MPU mapping; the application always sees native code as read/execute and
-its GC arena as non-executable. The lifecycle lock serializes publication with
+while a privileged worker initializes and copies the reserved code region. This
+worker has a 1 KiB kernel stack and the application's preemptible priority, so
+hardware and management threads can interrupt allocation, zeroing and copying.
+Its own MPU mapping lets the application always see native code as read/execute
+and its GC arena as non-executable. The lifecycle lock serializes publication with
 stop/unload. Code is retained until application exit; upstream root tracking keeps
 native BSS/rodata alive across GC. Current targets have no instruction/data caches;
 a cache-enabled target requires explicit integration.
