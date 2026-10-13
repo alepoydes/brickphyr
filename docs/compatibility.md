@@ -306,7 +306,8 @@ report layouts are implemented; physical acceptance remains open. See
 `messaging.HubNetwork` ports the reference typed codec, per-sender inboxes and
 Classic star routing to the shared native service. Protected ARM checks cover
 connect/send, both network roles, forwarding, snapshots and lifetime cleanup.
-Physical pairing, interoperability and coexistence remain unverified; see
+F4 leaf pairing, maximum frames and BLE coexistence have a synthetic Linux peer
+check; physical coordinator routing and Pybricks interoperability remain open. See
 [HubNetwork](bluetooth.md#application-hub-network). The legacy hub, geometry,
 `LUMPDevice` and `tools.AppData` aliases are present.
 

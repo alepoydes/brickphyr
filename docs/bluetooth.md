@@ -48,6 +48,9 @@ before opening the other transport. The 31-byte legacy advertising limit puts on
 service UUID in advertising and the other beside the name in scan response. PnP
 identity remains available through the Device Information GATT service.
 
+Host management, including MCUmgr, does not require pairing. Enabling pairing
+for application peripherals does not change access to the management services.
+
 The Bluetooth button [indicates the BLE connection](hardware.md#f4-buttons-lighting-and-power),
 independently of the USB selection shown by the center button. A connection starts
 without a selected profile. Successful Pybricks capability reads, notification
@@ -297,8 +300,9 @@ access an unloaded interpreter. A new claim is rejected as busy until pending
 disconnection cleanup finishes, preventing early reuse of its buffers.
 
 The F4 profile enables optional pairing, including LE legacy pairing for older
-LEGO devices. Bond keys stay in RAM; two records accommodate both live links,
-and unused records can be replaced when full. Pairing without a passkey does not
+LEGO devices. Bond keys stay in RAM; the base BLE profile reserves two records,
+and the full Python profile reserves five for its additional Classic links.
+Unused records can be replaced when full. Pairing without a passkey does not
 authenticate the operator. Builds without the required central/GATT service
 return an unsupported error before starting device work.
 
@@ -415,11 +419,16 @@ until actual release and cannot complete a new lease's operation.
 Protected ARM checks exercise both network roles, typed and maximum-size frames,
 queue overflow/snapshots, forwarding, awaitable operations and late callbacks
 through the real service and Python binding with synthetic Bluetooth endpoints.
-They do not establish over-the-air interoperability.
+They do not establish over-the-air interoperability. On one Inventor F4, a
+synthetic Linux Classic peer also exercises incoming connection/pairing,
+bidirectional 520-byte frames and retained links across Python stop/reload.
+These checks pass with either USB or concurrent BLE management. They cover the
+hub's leaf role, not physical coordinator routing or another Pybricks hub.
 
 Classic channels require Zephyr security level 2. Pairing uses Just Works and
-RAM-only link keys; reboot loses those keys. Physical interoperability, concurrent
-radio load and peak memory use remain acceptance work. The additional Classic
+RAM-only link keys; reboot loses those keys. Pybricks interoperability, physical
+coordinator/multi-peer behavior, sustained radio load and peak memory use remain
+acceptance work. The additional Classic
 Zephyr fixes are listed under [dependency prerequisites](upstream.md#classic-network-prerequisites).
 
 ## Boundaries

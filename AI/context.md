@@ -122,7 +122,8 @@ protected ARM checks for operations, reconnects and lifetime cleanup.
 standard/Elite input, rumble and pending-read cleanup have protected ARM checks.
 Physical controller behavior remains unverified. `HubNetwork` uses shared native
 Classic routing/inboxes with protected ARM checks for both roles, the Python
-codec, forwarding and cleanup. Physical network interoperability, broadcasting,
+codec, forwarding and cleanup. F4 leaf exchange with a synthetic Linux peer
+also passes alongside BLE management. Physical Pybricks interoperability, broadcasting,
 reception/device connection/pairing and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
 Occasional IMU acquisition failures remain during idle operation and USB/BLE
 application transfers; isolate the scheduling/I/O cause before claiming reliability.
