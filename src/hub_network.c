@@ -367,7 +367,9 @@ int hub_network_open(uint32_t size, uint32_t *handle)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (lease) error = -EBUSY;
 	else {
-		uint8_t *data = k_calloc(BP_NETWORK_PEERS, size);
+		/* Empty ring metadata hides unused storage. Do not zero user-sized
+		 * buffers here while the spinlock masks the port UART interrupts. */
+		uint8_t *data = k_malloc(BP_NETWORK_PEERS * size);
 		if (!data) error = -ENOMEM;
 		else if (live(true) && !(relay.data = k_malloc(size))) {
 			k_free(data);

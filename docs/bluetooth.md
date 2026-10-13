@@ -415,6 +415,8 @@ only the newest message per sender. Each sender gets `inbox_size` bytes, default
 sender cannot consume another sender's queue. The coordinator allocates one
 additional relay queue of the same size. Queues live in the kernel; the native
 `bp_network_*` calls copy data and validate application buffers.
+Creating inboxes initializes their metadata without clearing the entire backing
+allocation under the interrupt lock; readers access only published messages.
 
 Stopping Python or closing its network object cancels pending connection/send
 requests and frees its queues. Established network links survive until remote

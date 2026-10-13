@@ -382,7 +382,11 @@ Native Python code preparation has its own preemptible worker: initializing its
 16 KiB arena must not delay acquisition on the cooperative system workqueue.
 Bounded Inventor F4 checks cover a 32 KiB RAM upload, dynamic C module import,
 idle HubNetwork construction and subsequent BLE output without IMU gaps.
-This does not close sustained-load acceptance or the separate port UART overruns.
+HubNetwork inbox allocation avoids clearing user-sized buffers with interrupts
+masked. Inventor F4 creation/stop checks with 1 KiB and 8 KiB per sender preserve
+IMU counters and both idle motor UART links. Sustained-load acceptance remains open.
+F4 can still report a UART overrun during startup and reconnect the device;
+eliminating these startup overruns remains pending.
 
 ## Hub sound
 
