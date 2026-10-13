@@ -433,6 +433,21 @@ queue at a preemptible priority below IMU and motor service. Bluetooth retains
 its required cooperative system queue. F4 compilation and physical USB telemetry
 checks cover this integration.
 
+The USB core additionally requires local Zephyr commit `10165429` on
+`topic/usbd-thread-scheduling`. It makes the core thread's scheduling class and
+priority configurable while preserving the cooperative default. Event processing
+uses the existing context mutex to serialize with configuration and teardown;
+the context macro now initializes that mutex's wait queue. Without initialization,
+the first contending caller could crash. Queued completion buffers are released
+without dispatching callbacks after shutdown.
+
+Brickphyr selects preemptible priority 8 on F4. Zephyr's virtual USB fixture checks
+control transfers and concurrent disable in both scheduling modes, and reproduces
+the race when event serialization is removed. The Inventor F4 checks cover USB
+telemetry, Pybricks USB STOP with a stalled reader, finite Python BLE output and
+return to Shell. Full shutdown/reinitialization with pending class transfers is
+outside those checks. Publication and manifest integration remain pending.
+
 ## CMSDK UART test prerequisite
 
 The ARM QEMU fixture for the shared host dispatcher additionally requires the

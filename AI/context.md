@@ -126,8 +126,8 @@ Classic routing/inboxes with protected ARM checks for both roles, the Python
 codec, forwarding and cleanup. F4 leaf exchange with a synthetic Linux peer
 also passes alongside BLE management. Physical Pybricks/peripheral interoperability,
 broadcasting and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
-Occasional IMU acquisition failures remain during idle operation and USB/BLE
-application transfers; isolate the scheduling/I/O cause before claiming reliability.
+Bounded IMU USB/BLE checks pass with preemptible USB processing; sustained combined
+load and acquisition latency remain open. See [hardware](../docs/hardware.md).
 Account separately for static reservations, stacks, Python heap and peak loading memory
 before expanding the F4 profile; no capacity figure is established here.
 

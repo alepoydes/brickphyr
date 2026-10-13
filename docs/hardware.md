@@ -349,10 +349,10 @@ sensors. The F4 acquisition thread precedes the 5 ms motor service and host
 processing. The main UI/power loop targets a 20 ms cadence and has lower
 priority than acquisition and port service, allowing them to preempt normal UI
 work after I/O completion.
-CDC uses Zephyr's dedicated preemptible queue, with the
-[upstream prerequisite](upstream.md#usb-acquisition-scheduling-prerequisite),
-so acquisition can preempt its CDC callbacks. The core USB thread remains
-cooperative.
+The USB core and dedicated CDC queue are preemptible at priority 8, with the
+[upstream prerequisites](upstream.md#usb-acquisition-scheduling-prerequisite),
+so acquisition can preempt both control requests and CDC callbacks. USB event
+processing shares the context mutex with configuration and teardown operations.
 
 Native simulation uses the actual worker and register library with a synthetic
 I²C/GPIO peer. It checks cold initialization, signed limits and mounting axes,
@@ -362,20 +362,22 @@ It also checks calibration persistence, stationary learning, synthetic rotation,
 reference discontinuities and actual SMP observations. ARM numerical checks cover
 gravity poses, complete and tilted rotations, heading, calibration and rejected
 settings without mutation. Physical raw/calibrated observations and the native
-IMU example run over USB/BLE on the Inventor F4. A bounded USB check recorded no
-new missing samples in five quiet seconds and five seconds with 717 telemetry
-requests. This does not establish a worst-case latency guarantee: startup/session
+IMU example run over USB/BLE on the Inventor F4. With preemptible USB processing,
+a bounded ten-second check returned 255 valid telemetry snapshots without missing
+samples or acquisition failures. Both counters remained zero after a finite
+Python BLE output stream and a USB reader-pause/STOP check, at 154 seconds uptime.
+This does not establish a worst-case latency guarantee: startup/session
 transitions and all peripheral combinations still require characterization.
 Mounting verification, calibrated accuracy, CPU use, stack margin and residual
 current remain open.
 
-Occasional acquisition overruns remain during idle operation and USB/BLE
-application transfers on the Inventor F4. Diagnostic phase timing distinguishes
-late acquisition starts from delayed worker wakeups after the I²C interrupt
+Acquisition reliability under sustained combined load remains unverified.
+Diagnostic phase timing distinguishes late acquisition starts from delayed
+worker wakeups after the I²C interrupt
 has already completed the read. The latter can cause conservative rejection
 of an intact frame; the synchronous API does not report the interrupt's
-completion timestamp. USB and cooperative work still need bounded scheduling;
-changing the main loop's priority alone does not establish acquisition reliability.
+completion timestamp. Cooperative work and interrupt processing still need
+bounded scheduling; thread priorities alone do not establish acquisition reliability.
 
 ## Hub sound
 
