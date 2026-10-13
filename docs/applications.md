@@ -189,6 +189,29 @@ RAM and stored starts and verify system-heap reclamation. Its fixture has the
 same heap/arena sizes, but does not establish F4 USB/BLE driver overhead or the
 compiler requirements of other programs.
 
+On one Robot Inventor F4 (PCB revision unknown), the full Python profile with
+Zephyr's optional memory counters also runs a synthetic 32,768-byte file map
+from RAM and LittleFS over USB. Most of the image is an unused resource; the
+program imports a dynamic C module and creates default HubNetwork inboxes without
+connecting peers. With Zephyr 4.4.2 and Zephyr SDK 1.0.1, the observed budgets are:
+
+| Allocation | Observed bytes |
+| --- | ---: |
+| System heap with the complete RAM upload | 32,772 |
+| System heap with native code and HubNetwork inboxes active | 19,464 |
+| Python GC allocated/free after imports and collection | 1,872 / 30,128 |
+| Application stack used/reserved after return | 1,968 / 16,384 |
+| Native code used/reserved | 352 / 16,384 |
+| Peak system-heap allocation through a separate 31,728-byte Pybricks upload | 48,728 |
+
+The system-heap allocation counter returns to zero after cleanup. The Pybricks
+upload's normalized file is read back exactly; it is not executed in this workload.
+Allocator counters include rounding and differ from payload sizes. These figures
+cover this workload and build, not arbitrary source compilation, fragmentation,
+simultaneous active peer traffic or the largest possible allocation. Normal
+firmware omits the diagnostic commands. Other workloads still need their own
+GC, stack and system-heap budget.
+
 Output uses the shared [bounded queue](#python-input-and-output), with flow control
 for subscribed Pybricks output and counted overflow for detached logging.
 Upload admission checks the format envelope; Python parsing and full

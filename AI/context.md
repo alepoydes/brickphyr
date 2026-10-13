@@ -78,7 +78,8 @@ bindings. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
 The [full and reduced F4 profiles](../docs/builds.md#experimental-python-profile)
 have package builds. Python's library and client adapter are independently
 selectable; native Python interaction and adapter isolation have ARM checks,
-with physical reduced-profile acceptance still pending.
+plus bounded Inventor F4 USB/BLE checks. Reduced profiles preserve stored files;
+see [profile coverage](../docs/builds.md#experimental-python-profile).
 Both plain Shell `python` and `brickphyrdev terminal --repl` show entry hints and
 have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Native SMP output
 backpressure and combined REPL/application-monitor operation have F4 USB/BLE
@@ -130,7 +131,9 @@ broadcasting remain pending. See [Bluetooth](../docs/bluetooth.md).
 Bounded IMU USB/BLE checks pass with preemptible USB processing; sustained combined
 load and acquisition latency remain open. See [hardware](../docs/hardware.md).
 Account separately for static reservations, stacks, Python heap and peak loading memory
-before expanding the F4 profile; no capacity figure is established here.
+before expanding the F4 profile. Bounded F4 USB measurements cover a maximum-size
+synthetic package, native import and idle HubNetwork inboxes; they do not establish
+general program capacity. See [memory limits](../docs/applications.md#experimental-python-profile).
 
 Define `reset_storage` scope before implementing it: decide what happens to
 Pybricks slots, shared user data, named applications and Brickphyr settings.

@@ -463,6 +463,16 @@ another control request in both scheduling modes. The old path fails this check.
 F4 verification covers enumeration, USB file readback and finite BLE output after
 installation; it does not establish sustained multi-controller behavior.
 
+Local Zephyr commit `87a6a458` on `topic/cdc-rx-recovery` clears CDC RX's busy
+state when allocation or endpoint enqueue fails, allowing a later UART trigger
+to rearm reception. A redundant RX work request while a transfer is active now
+uses debug severity, matching TX; FIFO draining and completion can both request
+that work. The virtual CDC fixture injects each failure, rearms through the
+public UART API and receives another host packet. F4 USB checks cover a 32 KiB
+upload and execution without the previous warning flood; allocation/enqueue
+faults are exercised in simulation. Publication and manifest integration remain
+pending.
+
 ## CMSDK UART test prerequisite
 
 The ARM QEMU fixture for the shared host dispatcher additionally requires the

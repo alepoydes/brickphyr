@@ -544,7 +544,13 @@ uv run --locked west build -b spike_prime_f4 -d build/native-profile-apps -t fir
   -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
 ```
 
-All three F4 profiles have compilation/package checks. The reduced Python
-profile also has protected ARM checks for named execution with imports, Shell
-REPL reset/exit and disabled-adapter behavior; reduced-profile physical
-acceptance remains pending. They share the application supervisor and drivers.
+All three F4 profiles have compilation/package checks and bounded checks on one
+Robot Inventor F4 (PCB revision unknown). Reduced Python checks cover USB/BLE
+REPL reset/exit, named execution with imports, Shell launch and a temporary BLE
+script. Rejected Pybricks commands preserve the running native Python program
+and its output. The native-only profile runs a matching-SDK C example over USB
+and BLE and rejects Python operations. Switching through these profiles and back
+preserves stored programs; the named Python program runs again in the full image.
+Native ELF applications still require the matching firmware SDK/ABI. These checks
+do not establish every peripheral's behavior or peak-load capacity. The profiles
+share the application supervisor and drivers.
