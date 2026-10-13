@@ -456,7 +456,7 @@ static void host_thread(void *a, void *b, void *c)
 	bool shell_initialized = false;
 
 	for (;;) {
-		k_sem_take(&wake, protocol.subscribed ? K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ?
+		k_sem_take(&wake, protocol.subscribed ? K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYBRICKS_EXECUTION) ?
 			20 : HOST_PROTOCOL_STATUS_INTERVAL_MS) : K_FOREVER);
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool changed = session_generation != generation;

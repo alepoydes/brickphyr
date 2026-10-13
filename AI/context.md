@@ -75,6 +75,10 @@ Follow the [Python implementation plan](../docs/python.md) for the full required
 surface and delivery order. Use the workspace summary and incremental checks
 linked there. The next blocks complete Pybricks client execution and the remaining
 bindings. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
+The [full and reduced F4 profiles](../docs/builds.md#experimental-python-profile)
+have package builds. Python's library and client adapter are independently
+selectable; native Python interaction and adapter isolation have ARM checks,
+with physical reduced-profile acceptance still pending.
 Both plain Shell `python` and `brickphyrdev terminal --repl` show entry hints and
 have ARM/PTY and Inventor F4 USB/BLE exit/reset checks. Native SMP output
 backpressure and combined REPL/application-monitor operation have F4 USB/BLE

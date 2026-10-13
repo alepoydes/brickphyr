@@ -415,6 +415,7 @@ static void connected(bool open)
 	cfg->cfg_changed(ccc, BT_GATT_CCC_NOTIFY);
 }
 
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 static ssize_t transfer(const uint8_t *module, size_t length)
 {
 	uint8_t packet[20] = {PBIO_PYBRICKS_COMMAND_WRITE_USER_PROGRAM_META};
@@ -445,6 +446,7 @@ static void download(const uint8_t *module, size_t length)
 {
 	zassert_equal(transfer(module, length), 5);
 }
+#endif
 
 static char output[4608];
 static size_t output_size;
@@ -479,6 +481,7 @@ static void event(void)
 	record_event(event.data, event.length, true);
 }
 
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 static void start(const char *ready)
 {
 	output_size = 0;
@@ -504,6 +507,7 @@ static const uint8_t flood[] = {
 static const uint8_t native[] = {
 #include <native.inc>
 };
+#endif
 
 static void *setup(void)
 {
@@ -522,6 +526,7 @@ static void *setup(void)
 	return NULL;
 }
 
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 ZTEST(python_ble, test_execution_reconnect_and_backpressure)
 {
 	notifications_retried = 0;
@@ -1573,6 +1578,50 @@ ZTEST(python_ble, test_slots_preserve_installed_programs)
 	zassert_ok(app_store_remove("@2"));
 	zassert_equal(app_store_run("@2"), -ENOENT);
 	zassert_ok(host_protocol_select_slot(0));
+}
+#endif
+
+#else
+ZTEST(python_ble, test_disabled_adapter_preserves_native_output)
+{
+	connected(true);
+	event();
+	const uint8_t source[] = "print('x' * 4096)\ninput()\n";
+	size_t next;
+	zassert_ok(application_upload(APPLICATION_PYTHON, 0, sizeof(source) - 1,
+		source, sizeof(source) - 1, &next));
+	/* This is the same attachment used by native SMP output reads. */
+	application_output_stream(true);
+	zassert_ok(application_run_uploaded(false));
+	struct application_status status;
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		k_msleep(1);
+		application_get_status(&status);
+		zassert_equal(status.state, APPLICATION_RUNNING);
+		zassert_true(k_uptime_get() < deadline);
+	} while (status.output_bytes < 1024);
+
+	uint8_t caps[11];
+	const struct bt_gatt_attr *attr = &pybricks_service.attrs[5];
+	zassert_equal(attr->read(peer, attr, caps, sizeof(caps), 0), sizeof(caps));
+	zassert_equal(sys_get_le32(caps + 2), 0);
+	zassert_equal(sys_get_le32(caps + 6), 0);
+	zassert_equal(caps[10], 0);
+	const struct bt_gatt_attr *ccc = &pybricks_service.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	cfg->cfg_changed(ccc, BT_GATT_CCC_NOTIFY);
+	const uint8_t stop = PBIO_PYBRICKS_COMMAND_STOP_USER_PROGRAM;
+	zassert_equal(command(&stop, 1), BT_GATT_ERR(PBIO_PYBRICKS_ERROR_INVALID_COMMAND));
+	event();
+	/* Let a wrongly detached writer run: it would consume/drop the rest. */
+	k_msleep(1);
+	application_get_status(&status);
+	zassert_equal(status.state, APPLICATION_RUNNING);
+	zassert_equal(status.output_bytes, 1024);
+	zassert_equal(status.output_dropped, 0);
+	zassert_ok(application_stop());
+	connected(false);
 }
 #endif
 

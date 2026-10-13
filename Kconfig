@@ -247,6 +247,15 @@ config BRICKPHYR_PYBRICKS
 	  Reuse the reference Python bindings over the shared runtime and
 	  device services. Current coverage is listed in docs/compatibility.md.
 
+config BRICKPHYR_PYBRICKS_EXECUTION
+	bool "Pybricks client execution adapter"
+	depends on BRICKPHYR_PYTHON && BRICKPHYR_NATIVE
+	default y if BRICKPHYR_PYBRICKS
+	help
+	  Upload, run, interrupt and exchange application data through the
+	  Pybricks USB/BLE protocol. Native SMP, Shell and REPL do not require
+	  this adapter. Without it the protocol reports no execution capabilities.
+
 config BRICKPHYR_APP_STORAGE
 	bool "Installed native applications in LittleFS"
 	depends on BRICKPHYR_NATIVE && FILE_SYSTEM_LITTLEFS && FLASH_MAP
@@ -273,7 +282,7 @@ config BRICKPHYR_BLE_PEER
 
 config BRICKPHYR_PYBRICKS_SLOTS
 	int "Persistent Pybricks program slots"
-	depends on BRICKPHYR_PYTHON && BRICKPHYR_APP_STORAGE && SHELL
+	depends on BRICKPHYR_PYBRICKS_EXECUTION && BRICKPHYR_APP_STORAGE && SHELL
 	range 0 128
 	default 5 if BOARD_SPIKE_PRIME_F4
 	default 0

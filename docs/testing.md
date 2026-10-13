@@ -325,6 +325,24 @@ pybricksdev serial client also identifies and reconnects through this dispatcher
 that case detects drivers invoking TX callbacks synchronously under a caller's
 lock. Program transfer and execution use the separate cases below.
 
+The reduced Python profile uses the same fixture with the optional library and
+client execution adapter off:
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-core-host-tests -- \
+  -DCONFIG_BRICKPHYR_PYTHON=y -DCONFIG_BRICKPHYR_PYBRICKS=n -DEXTRA_CONF_FILE=host.conf
+uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-core-ble-tests -- \
+  -DCONFIG_BRICKPHYR_PYBRICKS=n
+uv run --locked pytest -q -x tests/test_python_profiles.py tests/test_native.py -k 'without_compatibility or python-core-ble'
+```
+
+The host case enters plain REPL from cold start, soft-resets and exits, installs
+a named program with an import, runs it from Shell, and checks that the actual
+pybricksdev client sees no execution capabilities and gets command errors.
+The BLE case holds a native Python producer behind a full output queue; GATT
+capability reads, subscription changes and rejected stop commands must neither
+drain output nor detach its native consumer. Radio calls are synthetic.
+
 ### Pybricks execution adapter
 
 `test_pybricks_execution.py` uses the same dispatcher build and the actual

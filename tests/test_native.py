@@ -54,6 +54,7 @@ def test_reserved_slot_names():
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-core-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-slots-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),
     ],

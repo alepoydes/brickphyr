@@ -303,7 +303,8 @@ service, standard/Elite input, raw state, rumble and lifetime cleanup. Its codec
 uses SDL/Bluepad32, excluding the non-free reference binding. Known BLE 5.x
 report layouts are implemented; physical acceptance remains open. See
 [Xbox limits and usage](bluetooth.md#application-xbox-controller).
-`HubNetwork` and required aliases remain unfinished work.
+`HubNetwork` remains unfinished work. The legacy hub, geometry, `LUMPDevice`
+and `tools.AppData` aliases are present.
 
 System `reset_storage` remains unfinished required work.
 Charger `connected()` returns the shared native source code: 0 none, 1

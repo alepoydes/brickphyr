@@ -515,5 +515,33 @@ including imports, through Brickphyr management. REPL and the Pybricks execution
 adapter have software and bounded Inventor F4 USB/BLE checks; remaining acceptance
 is listed in the [plan](python.md).
 The experimental [Pybricks library](compatibility.md#implemented-library-subset)
-is enabled by default. Set `CONFIG_BRICKPHYR_PYBRICKS=n` for Python without that
-library; native Python execution and REPL retain the same lifecycle and transports.
+is enabled by default. `CONFIG_BRICKPHYR_PYBRICKS` selects that library;
+`CONFIG_BRICKPHYR_PYBRICKS_EXECUTION` independently selects the USB/BLE client
+execution adapter and defaults on with the library. Persistent client slots
+require the adapter. Disabling it removes their worker and stack, reports zero
+Pybricks execution capabilities, and rejects its application commands without
+touching a native application's execution or output. Protocol identity and
+connection-status queries remain available.
+
+For native Python without either compatibility component, use:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/python-core-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python_core.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+```
+
+This profile retains source/bytecode execution, imports, named applications and
+REPL through native USB/BLE management. `import pybricks` raises `ImportError`.
+For native applications without the Python engine, omit the Python fragment:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/native-profile-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+```
+
+All three F4 profiles have compilation/package checks. The reduced Python
+profile also has protected ARM checks for named execution with imports, Shell
+REPL reset/exit and disabled-adapter behavior; reduced-profile physical
+acceptance remains pending. They share the application supervisor and drivers.

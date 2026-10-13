@@ -2019,15 +2019,19 @@ void application_buttons(uint32_t buttons)
 {
 	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return;
 	k_spinlock_key_t key = k_spin_lock(&button_lock);
+#ifdef CONFIG_BRICKPHYR_PYTHON
 	bool changed = buttons != observed_buttons;
+#endif
 	observed_buttons = buttons;
 	bool pressed = stop_buttons && (buttons & stop_buttons) == stop_buttons;
 	bool trigger = pressed && !stop_pressed;
 	stop_pressed = pressed;
 	k_spin_unlock(&button_lock, key);
+#ifdef CONFIG_BRICKPHYR_PYTHON
 	/* Menu waits use the VM event semaphore, including releases and buttons
 	 * that do not stop the application. Unchanged polls must not wake the VM. */
 	if (changed) k_sem_give(&io_ready);
+#endif
 	if (trigger && atomic_get(&active)) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (status.format != APPLICATION_NATIVE) {

@@ -6,7 +6,7 @@
 #include <pbio/protocol.h>
 #include <pbio/util.h>
 #include <zephyr/app_version.h>
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 #include "application.h"
 #include "python_runtime.h"
 #include <errno.h>
@@ -157,7 +157,7 @@ size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 			return PBIO_PYBRICKS_PNP_ID_SIZE;
 		}
 	} else if (service == PBIO_PYBRICKS_READ_SERVICE_PYBRICKS && id == 0x0003) {
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 		/* Leave room for file-map headers when normalizing up to 64 modules. */
 		pbio_pybricks_hub_capabilities(value, max_write,
 			PBIO_PYBRICKS_FEATURE_FLAG_USER_PROG_FORMAT_MULTI_MPY_V6 |
@@ -206,7 +206,7 @@ uint8_t host_protocol_command(struct host_protocol *protocol, const uint8_t *com
 		protocol->exit_compatibility = true;
 		return PBIO_PYBRICKS_ERROR_OK;
 	}
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 	struct application_status status;
 	application_get_status(&status);
 	int err;
@@ -353,7 +353,7 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 	}
 	k_spin_unlock(&slot_lock, key);
 #endif
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 	struct application_status status;
 	if (application_observe(&status)) {
 		return 0;
@@ -381,7 +381,7 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 		protocol->last_slot = slot;
 		return pbio_pybricks_event_status_report(output, flags, protocol->program_id, slot);
 	}
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 	size_t length = application_message_event(output + 1, capacity - 1, &protocol->message_request);
 	if (length) {
 		output[0] = PBIO_PYBRICKS_EVENT_WRITE_APP_DATA;
@@ -393,7 +393,7 @@ size_t host_protocol_event(struct host_protocol *protocol, bool ble,
 
 bool host_protocol_event_valid(struct host_protocol *protocol)
 {
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 	return !protocol->message_request || application_message_pending(protocol->message_request);
 #else
 	return true;
@@ -402,7 +402,7 @@ bool host_protocol_event_valid(struct host_protocol *protocol)
 
 void host_protocol_event_sent(struct host_protocol *protocol)
 {
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 	if (protocol->message_request) application_message_sent(protocol->message_request);
 #endif
 	protocol->message_request = 0;
@@ -449,7 +449,7 @@ size_t host_protocol_receive(struct host_protocol *protocol, uint8_t byte,
 	}
 	if (type == PBIO_PYBRICKS_OUT_EP_MSG_SUBSCRIBE && length == 1 && message[0] <= 1) {
 		protocol->subscribed = message[0];
-#ifdef CONFIG_BRICKPHYR_PYTHON
+#ifdef CONFIG_BRICKPHYR_PYBRICKS_EXECUTION
 		application_output_stream(protocol->subscribed);
 		application_message_attach(protocol->subscribed ? HOST_PROTOCOL_PAYLOAD_MAX - 1 : 0);
 #endif
