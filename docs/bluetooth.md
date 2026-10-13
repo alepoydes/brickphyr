@@ -172,7 +172,7 @@ advertising only when no management owner and no active advertisement remain.
 Pending disconnects retain each distinct connection separately, so a slow HCI
 command cannot discard another rejected client's cleanup. These boundaries have
 synthetic checks with multiple connection slots. The F4 profile reserves two
-slots: one management connection and one application LEGO device. Simultaneous
+slots: one management connection and one application peripheral. Simultaneous
 physical links remain an acceptance item.
 
 The local H:4 close-path correction discards partial framing and releases pending
@@ -216,8 +216,9 @@ while True:
 
 ### Application LEGO devices
 
-`CONFIG_BRICKPHYR_LWP3` adds one LEGO Wireless Protocol v3 peer through Zephyr's
-central role and GATT client. The native `bp_lwp3_*` API and Python
+`CONFIG_BRICKPHYR_BLE_PEER` enables one application peripheral through Zephyr's
+central role and GATT client. LEGO Wireless Protocol v3 and Xbox HID share this
+connection owner. The native `bp_ble_peer_*` lifecycle, `bp_lwp3_*` operations and Python
 LEGO device classes share this service, including device setup, command packets
 and sensor conversion. Application
 loading and terminal commands remain available through either USB or BLE;
@@ -257,8 +258,12 @@ The same service provides these `pupdevices` profiles:
 Constructors accept the same `name`, `timeout` and `connect` options as `Remote`.
 Mario/Technic Move and the newer blue train request pairing; the older black
 train and Remote do not. Native callers select the corresponding
-`bp_lwp3_config.profile`; raw mode instead uses the caller's `kind` and pairing
-flag. `bp_lwp3_command()` uses the same command encoding as Python.
+`bp_ble_peer_config.lwp3.profile` with protocol `BP_BLE_LWP3`; raw mode instead
+uses the caller's `kind` and pairing flag. `bp_lwp3_command()` uses the same
+command encoding as Python. `bp_ble_peer_get()` returns connection status and
+the protocol's typed snapshot. This replaces the earlier experimental
+`bp_lwp3_open/connect/disconnect/get/close` SDK calls; rebuild native applications
+against the matching SDK.
 
 Sensor reads raise `OSError(EAGAIN)` until a valid notification arrives after
 connection. Native snapshots expose validity flags and monotonic receipt times;
@@ -304,8 +309,67 @@ Python stop. Additional cases exercise Technic Move commands and retry suppressi
 Mario/Luigi/Peach matching and palettes, both train formats, invalid samples and
 reconnection. These establish software behavior only. Physical LEGO device
 connection, pairing, sensor/output behavior, radio timing and coexistence with
-management and broadcasts remain unverified. Xbox controller and `HubNetwork`
-support remain unfinished.
+management and broadcasts remain unverified. `HubNetwork` remains unfinished.
+
+### Application Xbox controller
+
+`iodevices.XboxController` uses the same protected BLE peer and radio worker as
+LEGO devices. A program can own one of these peripherals while the computer
+retains its USB or BLE management connection. Native callers select
+`BP_BLE_XBOX`, set `xbox_deadzone`, read `bp_ble_peer_get().xbox` and send
+`bp_xbox_rumble()` through that same service.
+
+The Python interface provides `buttons.pressed()`, both joysticks, triggers,
+direction pad, Elite profile, raw `state()`, name, connect/disconnect and rumble.
+For a controller in pairing mode:
+
+```python
+import errno
+from pybricks.iodevices import XboxController
+from pybricks.tools import wait
+
+controller = XboxController(joystick_deadzone=10)
+print(controller.name())
+while True:
+    try:
+        print(controller.joystick_left(), controller.buttons.pressed())
+    except OSError as error:
+        if error.args[0] != errno.EAGAIN:
+            raise
+    wait(100)
+```
+
+The current codec accepts BLE firmware-5.x input report 1 with 16-byte payloads,
+or 19-byte Elite extensions. It does not implement Classic Bluetooth or older
+report layouts. HID Report characteristics are selected by their Report Reference
+descriptors, not fixed handles or discovery order; a service with more than eight
+Report characteristics is unsupported. The input must support notifications and
+the output must support acknowledged writes. The HID Report Map is not parsed;
+other layouts require a reviewed codec extension. Pairing uses Zephyr security
+and can reuse a RAM bond during the same boot. Persistent bonds remain absent.
+
+Reads raise `OSError(EAGAIN)` until a complete input report arrives, and
+`OSError(EPROTO)` after a malformed or unsupported report, until valid data
+resumes. Reconnection invalidates earlier input. Snapshots carry monotonic receipt
+time. Joysticks use percentages with positive X right and Y up and a square
+deadzone; triggers use 0–100%. `state()` retains the reference diagnostic tuple
+of twelve integers, with axes centered by subtracting 32767 and no Y inversion.
+`profile()` requires the Elite extension and otherwise reports unsupported.
+
+Rumble accepts the reference scalar or four-power tuple, with powers/count clamped
+to 0–100 and duration/delay to 0–2500 ms. Zero duration, count or all-zero powers
+send nothing. The protocol uses 10 ms ticks; positive durations below one tick
+round up to one, other durations and delays round down. Completion acknowledges
+the GATT write; the controller executes the effect in the background. Explicit
+disconnect and application stop end the link; losing computer management does
+not stop an autonomous application.
+
+Protected ARM checks cover synthetic HID discovery, input and rumble through
+Python and the native service, including malformed reports, bond reuse and stop
+during a pending descriptor read. Physical controller connection, activation,
+pairing/reconnection, input and rumble remain unverified. The wire codec uses
+licensed SDL/Bluepad32 sources; Pybricks' non-free Xbox source is excluded. See
+[licensing](licensing.md#xbox-controller-codec).
 
 ## Boundaries
 

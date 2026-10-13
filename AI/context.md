@@ -114,7 +114,9 @@ the shared radio and protected snapshots; `version()` reads cached TI script
 metadata with an ARM check. `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub`
 and `DuploTrain` share native LEGO BLE setup, commands and snapshots, with
 protected ARM checks for operations, reconnects and lifetime cleanup.
-Broadcasting, physical reception/device connection/pairing, AppData clients
+`XboxController` uses the same peer owner with a licensed SDL/Bluepad32 codec;
+standard/Elite input, rumble and pending-read cleanup have protected ARM checks.
+Physical controller behavior remains unverified. Broadcasting, physical reception/device connection/pairing, AppData clients
 and remaining wireless bindings are pending. See [Bluetooth](../docs/bluetooth.md).
 Occasional IMU acquisition failures remain during idle operation and USB/BLE
 application transfers; isolate the scheduling/I/O cause before claiming reliability.

@@ -44,7 +44,7 @@ if(CONFIG_BRICKPHYR_PYBRICKS)
       ${CMAKE_CURRENT_SOURCE_DIR}/car.c
       ${CMAKE_CURRENT_SOURCE_DIR}/messaging.c
       ${CMAKE_CURRENT_SOURCE_DIR}/ble_radio.c
-      ${CMAKE_CURRENT_SOURCE_DIR}/lwp3device.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/bledevice.c
       ${pybricks}/pybricks/hubs/pb_module_hubs.c
       ${pybricks}/pybricks/common/pb_type_keypad.c
       ${pybricks}/pybricks/common/pb_type_colorlight_external.c

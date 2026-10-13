@@ -15,7 +15,7 @@
 #include "hub_matrix.h"
 #include "hub_light.h"
 #include "hub_radio.h"
-#include "hub_lwp3.h"
+#include "hub_ble_peer.h"
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
@@ -848,40 +848,52 @@ int z_impl_bp_radio_close(uint32_t handle) { return hub_radio_close(handle); }
 static inline int z_vrfy_bp_radio_close(uint32_t handle) { return z_impl_bp_radio_close(handle); }
 #include <zephyr/syscalls/bp_radio_close_mrsh.c>
 
-int z_impl_bp_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
+int z_impl_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle)
 {
-	return hub_lwp3_open(config, handle);
+	return hub_ble_peer_open(config, handle);
 }
-static inline int z_vrfy_bp_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
+static inline int z_vrfy_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle)
 {
 	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(config, __alignof__(*config))));
 	K_OOPS(K_SYSCALL_MEMORY_READ(config, sizeof(*config)));
 	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
-	return z_impl_bp_lwp3_open(config, handle);
+	return z_impl_bp_ble_peer_open(config, handle);
 }
-#include <zephyr/syscalls/bp_lwp3_open_mrsh.c>
+#include <zephyr/syscalls/bp_ble_peer_open_mrsh.c>
 
-int z_impl_bp_lwp3_connect(uint32_t handle) { return hub_lwp3_connect(handle); }
-static inline int z_vrfy_bp_lwp3_connect(uint32_t handle) { return z_impl_bp_lwp3_connect(handle); }
-#include <zephyr/syscalls/bp_lwp3_connect_mrsh.c>
+int z_impl_bp_ble_peer_connect(uint32_t handle) { return hub_ble_peer_connect(handle); }
+static inline int z_vrfy_bp_ble_peer_connect(uint32_t handle) { return z_impl_bp_ble_peer_connect(handle); }
+#include <zephyr/syscalls/bp_ble_peer_connect_mrsh.c>
 
-int z_impl_bp_lwp3_disconnect(uint32_t handle) { return hub_lwp3_disconnect(handle); }
-static inline int z_vrfy_bp_lwp3_disconnect(uint32_t handle) { return z_impl_bp_lwp3_disconnect(handle); }
-#include <zephyr/syscalls/bp_lwp3_disconnect_mrsh.c>
+int z_impl_bp_ble_peer_disconnect(uint32_t handle) { return hub_ble_peer_disconnect(handle); }
+static inline int z_vrfy_bp_ble_peer_disconnect(uint32_t handle) { return z_impl_bp_ble_peer_disconnect(handle); }
+#include <zephyr/syscalls/bp_ble_peer_disconnect_mrsh.c>
 
-int z_impl_bp_lwp3_close(uint32_t handle) { return hub_lwp3_close(handle); }
-static inline int z_vrfy_bp_lwp3_close(uint32_t handle) { return z_impl_bp_lwp3_close(handle); }
-#include <zephyr/syscalls/bp_lwp3_close_mrsh.c>
+int z_impl_bp_ble_peer_close(uint32_t handle) { return hub_ble_peer_close(handle); }
+static inline int z_vrfy_bp_ble_peer_close(uint32_t handle) { return z_impl_bp_ble_peer_close(handle); }
+#include <zephyr/syscalls/bp_ble_peer_close_mrsh.c>
 
-int z_impl_bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state) { return hub_lwp3_get(handle, state); }
-static inline int z_vrfy_bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state)
+int z_impl_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state) { return hub_ble_peer_get(handle, state); }
+static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state)
 {
 	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
 	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
-	return z_impl_bp_lwp3_get(handle, state);
+	return z_impl_bp_ble_peer_get(handle, state);
 }
-#include <zephyr/syscalls/bp_lwp3_get_mrsh.c>
+#include <zephyr/syscalls/bp_ble_peer_get_mrsh.c>
+
+int z_impl_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
+{
+	return hub_xbox_rumble(handle, rumble);
+}
+static inline int z_vrfy_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(rumble, __alignof__(*rumble))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(rumble, sizeof(*rumble)));
+	return z_impl_bp_xbox_rumble(handle, rumble);
+}
+#include <zephyr/syscalls/bp_xbox_rumble_mrsh.c>
 
 int z_impl_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
 {
@@ -1819,8 +1831,8 @@ static int release(void)
 	int err = hub_ports_release(BP_PORT_APPLICATION);
 	int radio_error = hub_radio_release();
 	if (!err) err = radio_error;
-	int lwp3_error = hub_lwp3_release();
-	if (!err) err = lwp3_error;
+	int peer_error = hub_ble_peer_release();
+	if (!err) err = peer_error;
 	hub_imu_release();
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */

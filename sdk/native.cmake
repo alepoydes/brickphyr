@@ -13,6 +13,8 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_lwp3.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_ble_peer.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_xbox.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
@@ -31,6 +33,8 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_light.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_lwp3.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_ble_peer.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_xbox.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_battery.h
@@ -49,8 +53,9 @@ add_dependencies(app brickphyr_abi)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application.c ${BRICKPHYR_ROOT}/src/native_image.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include)
-if(CONFIG_BRICKPHYR_LWP3)
-  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_lwp3.c ${BRICKPHYR_ROOT}/src/lwp3_devices.c)
+if(CONFIG_BRICKPHYR_BLE_PEER)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_ble_peer.c ${BRICKPHYR_ROOT}/src/lwp3_devices.c
+    ${BRICKPHYR_ROOT}/src/xbox_device.c)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
   include(${BRICKPHYR_ROOT}/cmake/pbio.cmake)
 endif()

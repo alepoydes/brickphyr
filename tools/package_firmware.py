@@ -27,7 +27,10 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         ("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"),
         ("LEGO PBIO motor computation", root / "LICENSES/LEGO-BSD-3-Clause.txt"),
     ]
-    if "CONFIG_BRICKPHYR_PYTHON=y" in (build / ".config").read_text().splitlines():
+    config = (build / ".config").read_text().splitlines()
+    if "CONFIG_BRICKPHYR_BLE_PEER=y" in config:
+        notices.append(("SDL Xbox report codec", root / "LICENSES/SDL-Zlib.txt"))
+    if "CONFIG_BRICKPHYR_PYTHON=y" in config:
         notices.append(("MicroPython core", root / "LICENSES/MicroPython-MIT.txt"))
     for project_name, license_path in (
         ("zephyr", "LICENSE"),

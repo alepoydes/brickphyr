@@ -398,6 +398,15 @@ cannot establish a valid sample, and reconnects cannot reuse stale measurements.
 All motor commands target synthetic peers, not physical motors.
 This does not exercise over-the-air pairing or physical simultaneous roles.
 
+The Xbox case uses that peer service with a synthetic HID service containing
+several same-UUID Report characteristics in a different order from their input
+and output roles. Reference descriptors select the notification and rumble
+handles. The protected Python API checks standard/Elite reports, signs, square
+deadzone, buttons, raw state, malformed-input rejection and rumble packets. Stop
+while a descriptor read is pending must preserve kernel parameters until the
+late callback and disconnection. Bond reuse may complete before the worker runs.
+No physical controller or force-feedback actuator is involved.
+
 The slot variant uses that same fixture with the existing 64 KiB simulated
 LittleFS store. It checks multiple slots, selected-slot admission, interrupted
 and malformed replacement, reserved-name protection, and start across BLE/USB.

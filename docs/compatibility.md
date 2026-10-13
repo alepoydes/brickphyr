@@ -298,7 +298,12 @@ train sounds raise `ValueError`; the newer train retains the reference's single
 known sound packet. Physical device connection, pairing, sensor/output behavior
 and radio coexistence remain unverified. See
 [LEGO device usage and limits](bluetooth.md#application-lego-devices).
-`HubNetwork`, Xbox controller support and required aliases remain unfinished work.
+`iodevices.XboxController` has protected ARM checks for the shared BLE HID
+service, standard/Elite input, raw state, rumble and lifetime cleanup. Its codec
+uses SDL/Bluepad32, excluding the non-free reference binding. Known BLE 5.x
+report layouts are implemented; physical acceptance remains open. See
+[Xbox limits and usage](bluetooth.md#application-xbox-controller).
+`HubNetwork` and required aliases remain unfinished work.
 
 System `reset_storage` remains unfinished required work.
 Charger `connected()` returns the shared native source code: 0 none, 1

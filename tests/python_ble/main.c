@@ -5,7 +5,7 @@
 #endif
 #include "host_protocol.h"
 #include "host_transport.h"
-#include "hub_lwp3.h"
+#include "hub_ble_peer.h"
 #include <pbio/protocol.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -37,6 +37,8 @@ static atomic_t lego_refs, lego_creates, lego_pairs;
 static atomic_t lego_write_error;
 static uint8_t lego_kind = 0x42;
 static bool offer_lego = true, hold_lego_write, hold_lego_disconnect;
+static bool offer_xbox, hold_hid_read;
+static struct bt_gatt_read_params *held_read;
 static atomic_t active_scan;
 static struct bt_gatt_write_params *held_write;
 static struct bt_gatt_subscribe_params *lego_subscription;
@@ -62,6 +64,17 @@ static void lego_disconnected(void)
 
 static void lego_advertise(bt_le_scan_cb_t cb)
 {
+	if (offer_xbox) {
+		uint8_t adv[] = {3, 0x19, 0xc4, 3, 2, 1, 6, 4, 0xff, 6, 0, 0};
+		uint8_t name[] = {25, 9, 'X', 'b', 'o', 'x', ' ', 'W', 'i', 'r', 'e', 'l', 'e', 's', 's',
+			' ', 'C', 'o', 'n', 't', 'r', 'o', 'l', 'l', 'e', 'r'};
+		struct net_buf_simple packet;
+		net_buf_simple_init_with_data(&packet, adv, sizeof(adv));
+		cb(&lego_address, -40, BT_GAP_ADV_TYPE_ADV_IND, &packet);
+		net_buf_simple_init_with_data(&packet, name, sizeof(name));
+		cb(&lego_address, -40, BT_GAP_ADV_TYPE_SCAN_RSP, &packet);
+		return;
+	}
 	/* Literal LEGO advertisement and scan response. The unrelated response
 	 * between them must not supply the name for the selected address. */
 	uint8_t data[] = {2, 1, 6, 17, 7, 0x23, 0xd1, 0xbc, 0xea, 0x5f, 0x78, 0x23, 0x16,
@@ -216,7 +229,7 @@ int __wrap_bt_conn_le_create(const bt_addr_le_t *address,
 int __wrap_bt_conn_set_security(struct bt_conn *conn, bt_security_t security)
 {
 	zassert_equal(conn, lego);
-	zassert_equal(security, BT_SECURITY_L2 | BT_SECURITY_FORCE_PAIR);
+	zassert_equal(security, BT_SECURITY_L2 | (offer_xbox ? 0 : BT_SECURITY_FORCE_PAIR));
 	atomic_inc(&lego_pairs);
 	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
 		if (cb->security_changed) cb->security_changed(conn, BT_SECURITY_L2, BT_SECURITY_ERR_SUCCESS);
@@ -224,9 +237,55 @@ int __wrap_bt_conn_set_security(struct bt_conn *conn, bt_security_t security)
 	return 0;
 }
 
+bt_security_t __wrap_bt_conn_get_security(const struct bt_conn *conn)
+{
+	zassert_equal(conn, lego);
+	/* The reconnection already reused its bond before the worker executes. */
+	return hold_hid_read ? BT_SECURITY_L2 : BT_SECURITY_L1;
+}
+
 int __wrap_bt_gatt_discover(struct bt_conn *conn, struct bt_gatt_discover_params *params)
 {
 	zassert_equal(conn, lego);
+	if (offer_xbox) {
+		struct bt_gatt_attr attr = {0};
+		if (params->type == BT_GATT_DISCOVER_PRIMARY) {
+			zassert_equal(bt_uuid_cmp(params->uuid, BT_UUID_HIDS), 0);
+			struct bt_gatt_service_val service = {.uuid = BT_UUID_HIDS, .end_handle = 30};
+			attr.handle = 1;
+			attr.user_data = &service;
+			zassert_equal(params->func(conn, &attr, params), BT_GATT_ITER_STOP);
+			return 0;
+		}
+		if (params->type == BT_GATT_DISCOVER_CHARACTERISTIC) {
+			/* Same UUID, three different report IDs/types, output before input. */
+			const uint16_t handles[] = {2, 10, 20};
+			const uint8_t properties[] = {BT_GATT_CHRC_READ, BT_GATT_CHRC_WRITE, BT_GATT_CHRC_NOTIFY};
+			zassert_is_null(params->uuid);
+			for (size_t i = 0; i < ARRAY_SIZE(handles); i++) {
+				struct bt_gatt_chrc chrc = {.uuid = BT_UUID_HIDS_REPORT,
+					.value_handle = handles[i] + 1, .properties = properties[i]};
+				attr.handle = handles[i];
+				attr.user_data = &chrc;
+				zassert_equal(params->func(conn, &attr, params), BT_GATT_ITER_CONTINUE);
+			}
+		} else {
+			zassert_equal(params->type, BT_GATT_DISCOVER_DESCRIPTOR);
+			uint16_t start = params->start_handle;
+			zassert_true(start == 4 || start == 12 || start == 22);
+			zassert_equal(params->end_handle, start == 4 ? 9 : start == 12 ? 19 : 30);
+			attr.handle = start;
+			if (start == 22) {
+				attr.uuid = BT_UUID_GATT_CCC;
+				zassert_equal(params->func(conn, &attr, params), BT_GATT_ITER_CONTINUE);
+				attr.handle++;
+			}
+			attr.uuid = BT_UUID_HIDS_REPORT_REF;
+			zassert_equal(params->func(conn, &attr, params), BT_GATT_ITER_CONTINUE);
+		}
+		zassert_equal(params->func(conn, NULL, params), BT_GATT_ITER_STOP);
+		return 0;
+	}
 	struct bt_gatt_service_val service = {.uuid = params->uuid, .end_handle = 9};
 	struct bt_gatt_chrc characteristic = {.uuid = params->uuid, .value_handle = 3, .properties = 0x1c};
 	struct bt_gatt_attr attr = {.uuid = params->uuid};
@@ -247,11 +306,26 @@ int __wrap_bt_gatt_discover(struct bt_conn *conn, struct bt_gatt_discover_params
 	return 0;
 }
 
+int __wrap_bt_gatt_read(struct bt_conn *conn, struct bt_gatt_read_params *params)
+{
+	zassert_equal(conn, lego);
+	zassert_true(offer_xbox);
+	zassert_equal(params->handle_count, 1);
+	zassert_equal(params->single.offset, 0);
+	if (hold_hid_read) { held_read = params; return 0; }
+	uint16_t handle = params->single.handle;
+	zassert_true(handle == 4 || handle == 12 || handle == 23);
+	const uint8_t reference[] = {handle == 4 ? 5 : handle == 12 ? 3 : 1,
+		handle == 4 ? 3 : handle == 12 ? 2 : 1};
+	zassert_equal(params->func(conn, 0, params, reference, sizeof(reference)), BT_GATT_ITER_STOP);
+	return 0;
+}
+
 int __wrap_bt_gatt_subscribe(struct bt_conn *conn, struct bt_gatt_subscribe_params *params)
 {
 	zassert_equal(conn, lego);
-	zassert_equal(params->value_handle, 3);
-	zassert_equal(params->ccc_handle, 4);
+	zassert_equal(params->value_handle, offer_xbox ? 21 : 3);
+	zassert_equal(params->ccc_handle, offer_xbox ? 22 : 4);
 	zassert_true(atomic_test_bit(params->flags, BT_GATT_SUBSCRIBE_FLAG_VOLATILE));
 	lego_subscription = params;
 	params->subscribe(conn, 0, params);
@@ -261,7 +335,7 @@ int __wrap_bt_gatt_subscribe(struct bt_conn *conn, struct bt_gatt_subscribe_para
 int __wrap_bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *params)
 {
 	zassert_equal(conn, lego);
-	zassert_equal(params->handle, 3);
+	zassert_equal(params->handle, offer_xbox ? 11 : 3);
 	zassert_true(params->length <= BP_LWP3_MESSAGE_MAX);
 	struct bp_lwp3_message message = {.size = params->length};
 	memcpy(message.data, params->data, params->length);
@@ -1015,8 +1089,8 @@ ZTEST(python_ble, test_lwp3_remote_and_cleanup)
 	/* Stop joins/unloads Python before a delayed ATT write callback. Params
 	 * and bytes must still be kernel-owned; a new lease cannot reuse them. */
 	uint32_t handle;
-	const struct bp_lwp3_config config = {.kind = 0x42};
-	zassert_equal(hub_lwp3_open(&config, &handle), -EBUSY);
+	const struct bp_ble_peer_config config = {.lwp3 = {.kind = 0x42}};
+	zassert_equal(hub_ble_peer_open(&config, &handle), -EBUSY);
 	zassert_equal(held_write->length, 10);
 	zassert_equal(((const uint8_t *)held_write->data)[2], 0x81);
 	held_write->func(lego, BT_ATT_ERR_UNLIKELY, held_write);
@@ -1116,6 +1190,57 @@ ZTEST(python_ble, test_lwp3_device_profiles)
 	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
 	zassert_ok(application_stop());
 	lego_kind = 0x42;
+	connected(false);
+}
+
+ZTEST(python_ble, test_xbox_hid_and_cleanup)
+{
+	static const uint8_t program[] = {
+#include <xbox.inc>
+	};
+	k_msgq_purge(&events);
+	k_msgq_purge(&lego_writes);
+	offer_xbox = true;
+	atomic_set(&lego_pairs, 0);
+	connected(true);
+	download(program, sizeof(program));
+	start("xbox ready");
+	zassert_equal(atomic_get(&lego_pairs), 1);
+	const uint8_t standard[] = {255, 255, 0, 0, 0, 128, 0, 128, 0, 2, 255, 3, 2, 0x49, 0x14, 1};
+	lego_notify(standard, sizeof(standard));
+	radio_action("", "xbox standard");
+	zassert_equal(k_msgq_num_used_get(&lego_writes), 0);
+	lego_notify(standard, sizeof(standard) - 1);
+	radio_action("", "xbox rejected");
+	const uint8_t elite[] = {0, 128, 0, 128, 0x20, 128, 0xf8, 127, 0, 0, 0, 0, 8, 2, 8, 0, 2, 0x21, 5};
+	lego_notify(elite, sizeof(elite));
+	radio_action("", "xbox disconnected");
+	expect_lego_write((uint8_t[]){15, 20, 30, 100, 0, 250, 10, 2}, 8);
+	expect_lego_write((uint8_t[]){15, 0, 0, 100, 100, 1, 0, 0}, 8);
+	zassert_equal(atomic_get(&lego_refs), 0);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	hold_hid_read = hold_lego_disconnect = true;
+	const uint8_t input[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN, '\n'};
+	message_command(false, input, sizeof(input));
+	int64_t deadline = k_uptime_get() + 1000;
+	while (!held_read) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	zassert_ok(application_stop());
+	uint32_t handle;
+	const struct bp_ble_peer_config config = {.protocol = BP_BLE_XBOX, .xbox_deadzone = 10};
+	zassert_equal(hub_ble_peer_open(&config, &handle), -EBUSY);
+	zassert_equal(held_read->single.handle, 4);
+	const uint8_t reference[] = {5, 3};
+	zassert_equal(held_read->func(lego, 0, held_read, reference, sizeof(reference)), BT_GATT_ITER_STOP);
+	held_read = NULL;
+	lego_disconnected();
+	while (atomic_get(&lego_refs)) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	hold_hid_read = hold_lego_disconnect = offer_xbox = false;
 	connected(false);
 }
 

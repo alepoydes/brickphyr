@@ -73,6 +73,21 @@ included dependencies. Ship required license texts under `LICENSES/` and any
 required attribution notices with the artifacts. Add `NOTICE` when there are
 applicable notices to carry, not a fabricated list of copyright owners.
 
+## Xbox controller codec
+
+The Pybricks Xbox binding at the selected revision is explicitly non-free and
+is not copied or compiled. The Python interface is implemented over Brickphyr's
+shared native BLE service. `src/xbox_device.c` instead adapts selected input-report
+handling from [SDL 3.2.28](https://github.com/libsdl-org/SDL/blob/7f3ae3d57459e59943a4ecfefc8f6277ec6bf540/src/joystick/hidapi/SDL_hidapi_xboxone.c),
+under the [zlib notice](../LICENSES/SDL-Zlib.txt), and force-feedback report fields
+from [Bluepad32](https://github.com/ricardoquesada/bluepad32/blob/80d6314e46f871719fbb4b721a2cc02227c4f369/src/components/bluepad32/parser/uni_hid_parser_xboxone.c),
+under Apache-2.0, Copyright 2019 Ricardo Quesada. The port preserves attribution
+and marks its changes: copied snapshots, explicit report validation, percentages
+and bounded rumble requests replace upstream host callbacks and timers. Neither
+library's transport nor BTstack is included. BLE-peer firmware packages include
+the SDL notice alongside the existing Apache-2.0 license text.
+
+
 ## Primary references
 
 - [Apache-2.0 terms](https://www.apache.org/licenses/LICENSE-2.0)

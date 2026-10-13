@@ -188,7 +188,7 @@ cached by the radio owner after initialization, without another HCI command.
 Broadcasting remains unfinished.
 See [observation support](../../docs/bluetooth.md#application-broadcast-observation).
 
-`lwp3device.c` adapts `pybricks/iodevices/pb_type_iodevices_lwp3device.c`
+`bledevice.c` adapts `pybricks/iodevices/pb_type_iodevices_lwp3device.c`
 at that revision for `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub` and
 `DuploTrain`, retaining its MIT attribution. Python keeps the reference
 constructors, keypad/light wrappers, palettes and raw message shape. A protected
@@ -198,6 +198,10 @@ queues. `src/lwp3_devices.c` ports the same reference's device packets and train
 color classification, reusing PBIO color math for native and Python callers.
 The binding translates Python values and awaitables; finalizers release leases,
 while supervised application cleanup disconnects the peer.
+The same lifecycle and awaitables serve `XboxController`. That binding follows
+the documented Python interface without incorporating Pybricks' non-free Xbox
+source. Native `src/xbox_device.c` provides the licensed SDL/Bluepad32 report
+codec described in [licensing](../../docs/licensing.md#xbox-controller-codec).
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, charger observations, internal color-light, light-matrix, speaker, system

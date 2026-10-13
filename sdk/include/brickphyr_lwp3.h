@@ -14,21 +14,16 @@ enum bp_lwp3_fields { BP_LWP3_HAS_RGB = 1, BP_LWP3_HAS_TAG = 2, BP_LWP3_HAS_SPEE
 	BP_LWP3_HAS_MATCHED_COLOR = 8 };
 
 struct bp_lwp3_config {
-	/* Scan timeout in ms, 0 means indefinite. Connection timeout is 5 s. */
-	uint32_t timeout_ms;
 	uint8_t kind, notifications, flags;
 	/* RAW uses kind/flags. Named profiles select their supported hub kinds,
 	 * pairing and post-connect setup; kind/flags must then be zero. */
 	uint8_t profile;
-	char name[BP_LWP3_NAME_MAX + 1];
 };
 
 struct bp_lwp3_state {
-	int32_t error;
-	uint8_t connected, busy, kind;
+	uint8_t kind;
 	/* Remote: left +, center, -; right +, center, -; green center. */
 	uint8_t buttons;
-	char name[BP_LWP3_NAME_MAX + 1];
 	/* Fields describe accepted notifications on this link. Receipt times are
 	 * monotonic ms; a new claim/connect invalidates previous sensor values. */
 	uint8_t fields;

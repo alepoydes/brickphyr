@@ -276,6 +276,7 @@ static const mp_rom_map_elem_t iodevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR_LUMPDevice), MP_ROM_PTR(&pup_type)},
 	{MP_ROM_QSTR(MP_QSTR_UARTDevice), MP_ROM_PTR(&python_uart_type)},
 	{MP_ROM_QSTR(MP_QSTR_LWP3Device), MP_ROM_PTR(&python_lwp3device_type)},
+	{MP_ROM_QSTR(MP_QSTR_XboxController), MP_ROM_PTR(&python_xbox_type)},
 	{MP_ROM_QSTR(MP_QSTR_DCMotor), MP_ROM_PTR(&python_dc_motor_type)},
 };
 static MP_DEFINE_CONST_DICT(iodevices_dict, iodevices_globals);

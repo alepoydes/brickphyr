@@ -4,7 +4,7 @@
 #include "application.h"
 #include "hub.h"
 #include "hub_radio.h"
-#include "hub_lwp3.h"
+#include "hub_ble_peer.h"
 #include "host_radio.h"
 
 #include <string.h>
@@ -92,8 +92,8 @@ int host_radio_error(void)
 static void receive_broadcast(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	struct net_buf_simple *buffer)
 {
-#ifdef CONFIG_BRICKPHYR_LWP3
-	hub_lwp3_receive(addr, type, buffer->data, buffer->len);
+#ifdef CONFIG_BRICKPHYR_BLE_PEER
+	hub_ble_peer_receive(addr, type, buffer->data, buffer->len);
 #endif
 	/* Accept every legacy advertising type, as the reference does for City
 	 * firmware. Walk AD elements instead of assuming manufacturer data is first. */
@@ -131,7 +131,7 @@ static void update_scan(struct k_work *work)
 	bool desired = observe_handle && observed_count && !atomic_get(&shutting_down);
 	uint32_t handle = observe_handle;
 	k_spin_unlock(&observe_lock, key);
-	int peer_mode = hub_lwp3_scan_mode();
+	int peer_mode = hub_ble_peer_scan_mode();
 	int wanted = peer_mode == 1 ? 2 : peer_mode == 2 ? 0 : desired ? 1 : 0;
 	int err = host_radio_error();
 	if (!err && wanted != scanning) {
@@ -142,7 +142,7 @@ static void update_scan(struct k_work *work)
 		}
 		/* Reference passive scan: 70 ms interval / 35 ms window, leaving
 		 * radio time for existing connections and advertising. No duplicate
-		 * filter: repeated values still refresh age/RSSI. LWP3 temporarily
+		 * filter: repeated values still refresh age/RSSI. Peripheral discovery temporarily
 		 * uses the reference active 30/30 ms scan to obtain device names. */
 		if (!err && wanted) {
 			err = bt_le_scan_start(BT_LE_SCAN_PARAM(wanted == 2 ? BT_LE_SCAN_TYPE_ACTIVE :
@@ -154,8 +154,8 @@ static void update_scan(struct k_work *work)
 	}
 	/* Explicit scanning is stopped before CREATE. All GATT/HCI work shares
 	 * this queue and lifecycle mutex; RX only publishes copied peer state. */
-	hub_lwp3_process(err, !scanning);
-	if (hub_lwp3_scan_mode() != peer_mode) host_radio_schedule(K_NO_WAIT);
+	hub_ble_peer_process(err, !scanning);
+	if (hub_ble_peer_scan_mode() != peer_mode) host_radio_schedule(K_NO_WAIT);
 	key = k_spin_lock(&observe_lock);
 	if (handle == observe_handle) observe_error = err > 0 ? -EIO : err;
 	k_spin_unlock(&observe_lock, key);

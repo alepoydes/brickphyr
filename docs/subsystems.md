@@ -20,7 +20,7 @@ This is not a claim that every chip has a Zephyr driver.
 | IMU acquisition | Zephyr driver if suitable; otherwise reusable Pybricks driver | Verify chip, range, sample timing, filters and units |
 | IMU calibration and orientation / Python semantics | Pybricks | Preserve coordinate, calibration, and persistence contracts |
 | Bluetooth host, connections, GATT | Zephyr | Hub radio transport/init, service integration; see [Bluetooth](bluetooth.md) |
-| Xbox and other input devices | Existing suitable stack support + Pybricks device-specific behavior | Map input consistently; retain connection/error semantics |
+| Xbox input and feedback | SDL/Bluepad32 report handling over Zephyr GATT | Shared native snapshots and commands; Pybricks Python interface without its non-free implementation |
 | Flash and storage primitives | Zephyr | Board partitioning and application/settings lifecycle; storage format undecided |
 | User settings and inactivity shutdown | Zephyr Settings + board power support | Shared validation/application, explicit save, and [power policy](settings.md) |
 | Native execution | Zephyr LLEXT + user mode | SDK boundary, manifest checks, loading, resource cleanup |
