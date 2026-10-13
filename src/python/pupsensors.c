@@ -417,6 +417,9 @@ static const mp_rom_map_elem_t pupdevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR_DCMotor), MP_ROM_PTR(&python_dc_motor_type)},
 	{MP_ROM_QSTR(MP_QSTR_Motor), MP_ROM_PTR(&python_motor_type)},
 	{MP_ROM_QSTR(MP_QSTR_Remote), MP_ROM_PTR(&python_remote_type)},
+	{MP_ROM_QSTR(MP_QSTR_TechnicMoveHub), MP_ROM_PTR(&python_technic_move_type)},
+	{MP_ROM_QSTR(MP_QSTR_MarioHub), MP_ROM_PTR(&python_mario_type)},
+	{MP_ROM_QSTR(MP_QSTR_DuploTrain), MP_ROM_PTR(&python_duplo_type)},
 };
 static MP_DEFINE_CONST_DICT(pupdevices_dict, pupdevices_globals);
 const mp_obj_module_t pb_module_pupdevices = {{&mp_type_module}, (mp_obj_dict_t *)&pupdevices_dict};

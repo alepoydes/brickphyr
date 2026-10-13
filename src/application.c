@@ -906,6 +906,40 @@ static inline int z_vrfy_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *m
 }
 #include <zephyr/syscalls/bp_lwp3_read_mrsh.c>
 
+int z_impl_bp_lwp3_command(uint32_t handle, uint32_t command, int32_t value, int32_t auxiliary)
+{
+	return hub_lwp3_command(handle, command, value, auxiliary);
+}
+static inline int z_vrfy_bp_lwp3_command(uint32_t handle, uint32_t command, int32_t value, int32_t auxiliary)
+{
+	return z_impl_bp_lwp3_command(handle, command, value, auxiliary);
+}
+#include <zephyr/syscalls/bp_lwp3_command_mrsh.c>
+
+int z_impl_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette)
+{
+	return hub_lwp3_palette_get(handle, palette);
+}
+static inline int z_vrfy_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(palette, sizeof(*palette)));
+	return z_impl_bp_lwp3_palette_get(handle, palette);
+}
+#include <zephyr/syscalls/bp_lwp3_palette_get_mrsh.c>
+
+int z_impl_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette)
+{
+	return hub_lwp3_palette_set(handle, palette);
+}
+static inline int z_vrfy_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(palette, sizeof(*palette)));
+	return z_impl_bp_lwp3_palette_set(handle, palette);
+}
+#include <zephyr/syscalls/bp_lwp3_palette_set_mrsh.c>
+
 int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value)
 {

@@ -189,12 +189,14 @@ Broadcasting remains unfinished.
 See [observation support](../../docs/bluetooth.md#application-broadcast-observation).
 
 `lwp3device.c` adapts `pybricks/iodevices/pb_type_iodevices_lwp3device.c`
-at that revision for `Remote` and `LWP3Device`, retaining its MIT attribution.
-Python keeps the reference constructors, keypad/light wrappers and raw message
-shape. A protected numeric lease replaces PBIO's pointer-owning connection
-callbacks; the native radio peer copies filters and messages, caches Remote
-buttons and owns notification queues. The binding sequences Remote setup writes
-through that peer. Finalizers release leases,
+at that revision for `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub` and
+`DuploTrain`, retaining its MIT attribution. Python keeps the reference
+constructors, keypad/light wrappers, palettes and raw message shape. A protected
+numeric lease replaces PBIO's pointer-owning connection callbacks. The native
+radio peer copies filters/messages and owns setup, snapshots and notification
+queues. `src/lwp3_devices.c` ports the same reference's device packets and train
+color classification, reusing PBIO color math for native and Python callers.
+The binding translates Python values and awaitables; finalizers release leases,
 while supervised application cleanup disconnects the peer.
 
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <lego/lwp3.h>
 #include <pbio/color.h>
+#include <pbio/color_map.h>
 #include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/parameters/pb_type_button.h>
@@ -28,15 +29,13 @@ typedef struct {
 	uint32_t handle;
 	struct bp_lwp3_config config;
 	mp_obj_t buttons, light;
-	uint8_t setup_step;
-	bool remote, setup_done;
+	struct bp_sensor_palette palette;
 } lwp3_obj_t;
 
 static void release_handle(lwp3_obj_t *self)
 {
 	uint32_t handle = self->handle;
 	self->handle = 0;
-	self->setup_done = false;
 	if (handle) (void)bp_lwp3_close(handle);
 }
 
@@ -64,42 +63,6 @@ static void get_state(lwp3_obj_t *self, struct bp_lwp3_state *state)
 	python_device_check(bp_lwp3_get(self->handle, state));
 }
 
-static void remote_light_message(uint8_t message[10], pbio_color_t hsv)
-{
-	pbio_color_rgb_t rgb;
-	pbio_color_to_rgb(hsv, &rgb);
-	/* LEGO handset green/blue are brighter than red. */
-	const uint8_t value[] = {10, 0, LWP3_MSG_TYPE_OUT_PORT_CMD, 52, 0,
-		LWP3_OUTPUT_CMD_WRITE_DIRECT_MODE_DATA, 1,
-		rgb.r, rgb.g * 3 / 8, rgb.b * 3 / 8};
-	memcpy(message, value, sizeof(value));
-}
-
-static void remote_setup_write(lwp3_obj_t *self)
-{
-	uint8_t message[10];
-	if (self->setup_step < 3) {
-		/* KEYSD is mode 4 for both button ports; light uses RGB mode 1. */
-		const uint8_t port[] = {0, 1, 52};
-		message[0] = 10;
-		message[1] = 0;
-		message[2] = LWP3_MSG_TYPE_PORT_MODE_SETUP;
-		message[3] = port[self->setup_step];
-		message[4] = self->setup_step == 2 ? 1 : 4;
-		message[5] = 1;
-		message[6] = message[7] = message[8] = 0;
-		message[9] = self->setup_step == 2 ? 0 : 1;
-	} else {
-		remote_light_message(message, PBIO_COLOR_BLUE);
-	}
-	int err = bp_lwp3_write(self->handle, message, sizeof(message));
-	if (err) {
-		release_handle(self);
-		python_device_check(err);
-	}
-	self->setup_step++;
-}
-
 static pbio_error_t operation_ready(pbio_os_state_t *operation, mp_obj_t self_in)
 {
 	lwp3_obj_t *self = MP_OBJ_TO_PTR(self_in);
@@ -113,16 +76,9 @@ static pbio_error_t operation_ready(pbio_os_state_t *operation, mp_obj_t self_in
 	err = state.error;
 	if (*operation == DISCONNECT || (*operation == CONNECT && err)) release_handle(self);
 	python_device_check(err);
-	if (*operation == CONNECT) {
-		if (!state.connected) {
-			release_handle(self);
-			python_device_check(-ENOTCONN);
-		}
-		if (self->remote && self->setup_step < 4) {
-			remote_setup_write(self);
-			return PBIO_ERROR_AGAIN;
-		}
-		self->setup_done = true;
+	if (*operation == CONNECT && !state.connected) {
+		release_handle(self);
+		python_device_check(-ENOTCONN);
 	}
 	if (*operation != DISCONNECT) memcpy(self->config.name, state.name, sizeof(self->config.name));
 	return PBIO_SUCCESS;
@@ -153,8 +109,11 @@ static mp_obj_t await_operation(lwp3_obj_t *self, enum lwp3_operation operation)
 		nlr_pop();
 		return result;
 	}
-	/* A synchronous interruption must not leave an owned scan or write behind. */
-	retire(self);
+	/* Retain a completed write's connection after an ATT error, so the caller
+	 * can retry. Interruption of pending work must still cancel its ownership. */
+	struct bp_lwp3_state state;
+	if (operation != WRITE || !self->handle || bp_lwp3_get(self->handle, &state) ||
+	    state.busy || !state.connected) retire(self);
 	nlr_jump(nlr.ret_val);
 }
 
@@ -179,14 +138,13 @@ static mp_obj_t lwp3_connect(mp_obj_t self_in)
 		if (opened) retire(self);
 		python_device_check(err ? err : -EBUSY);
 	}
-	if (state.connected && (!self->remote || self->setup_done)) return already_done(self);
-	self->setup_step = 0;
-	if (!state.connected) {
-		err = bp_lwp3_connect(self->handle);
-		if (err) {
-			retire(self);
-			python_device_check(err);
-		}
+	if (self->config.profile == BP_LWP3_MARIO) {
+		err = bp_lwp3_palette_set(self->handle, &self->palette);
+	}
+	if (!err) err = bp_lwp3_connect(self->handle);
+	if (err) {
+		retire(self);
+		python_device_check(err);
 	}
 	return await_operation(self, CONNECT);
 }
@@ -259,12 +217,16 @@ static mp_obj_t remote_pressed(mp_obj_t self_in)
 	#endif
 }
 
+static mp_obj_t device_command(lwp3_obj_t *self, uint32_t command, int32_t value, int32_t auxiliary)
+{
+	require_handle(self);
+	python_device_check(bp_lwp3_command(self->handle, command, value, auxiliary));
+	return await_operation(self, WRITE);
+}
+
 static mp_obj_t remote_light_on(mp_obj_t self_in, pbio_color_t hsv)
 {
-	lwp3_obj_t *self = MP_OBJ_TO_PTR(self_in);
-	uint8_t message[10];
-	remote_light_message(message, hsv);
-	return write_message(self, message, sizeof(message));
+	return device_command(MP_OBJ_TO_PTR(self_in), BP_LWP3_LIGHT, hsv, 0);
 }
 
 static void set_config(lwp3_obj_t *self, mp_obj_t name_in, mp_obj_t timeout_in,
@@ -297,21 +259,25 @@ static void set_config(lwp3_obj_t *self, mp_obj_t name_in, mp_obj_t timeout_in,
 
 static mp_obj_t make_device(const mp_obj_type_t *type, mp_obj_t name_in,
 	mp_obj_t timeout_in, mp_obj_t connect_in, mp_int_t kind, mp_int_t notifications, bool pair,
-	bool remote)
+	uint8_t profile)
 {
 	pb_module_tools_assert_blocking();
 	lwp3_obj_t *self = mp_obj_malloc_with_finaliser(lwp3_obj_t, type);
 	self->iter = NULL;
 	self->handle = 0;
-	self->remote = remote;
-	self->setup_step = 0;
-	self->setup_done = false;
 	memset(&self->config, 0, sizeof(self->config));
 	self->buttons = self->light = mp_const_none;
 	set_config(self, name_in, timeout_in, kind, notifications, pair);
-	if (remote) {
+	self->config.profile = profile;
+	if (profile == BP_LWP3_REMOTE) {
 		self->buttons = pb_type_Keypad_obj_new(MP_OBJ_FROM_PTR(self), remote_pressed);
 		self->light = pb_type_ColorLight_external_obj_new(MP_OBJ_FROM_PTR(self), remote_light_on);
+	}
+	if (profile == BP_LWP3_MARIO) {
+		pbio_color_map_t map;
+		pbio_color_map_set_default(&map);
+		self->palette = (struct bp_sensor_palette){.count = map.num_colors};
+		for (size_t i = 0; i < map.num_colors; i++) self->palette.colors[i] = map.colors[i];
 	}
 	bool connect = mp_obj_is_true(connect_in);
 	uint32_t handle = 0;
@@ -340,13 +306,15 @@ static mp_obj_t make_device(const mp_obj_type_t *type, mp_obj_t name_in,
 	nlr_jump(nlr.ret_val);
 }
 
-static mp_obj_t remote_new(const mp_obj_type_t *type, size_t n_args,
+static mp_obj_t profile_new(const mp_obj_type_t *type, size_t n_args,
 	size_t n_kw, const mp_obj_t *args)
 {
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_DEFAULT_NONE(name),
 		PB_ARG_DEFAULT_INT(timeout, 10000), PB_ARG_DEFAULT_TRUE(connect));
-	return make_device(type, name_in, timeout_in, connect_in,
-		LWP3_HUB_KIND_HANDSET, 0, false, true);
+	uint8_t profile = type == &python_remote_type ? BP_LWP3_REMOTE :
+		type == &python_technic_move_type ? BP_LWP3_TECHNIC_MOVE :
+		type == &python_mario_type ? BP_LWP3_MARIO : BP_LWP3_DUPLO;
+	return make_device(type, name_in, timeout_in, connect_in, 0, 0, false, profile);
 }
 
 static mp_obj_t lwp3_new(const mp_obj_type_t *type, size_t n_args,
@@ -361,7 +329,7 @@ static mp_obj_t lwp3_new(const mp_obj_type_t *type, size_t n_args,
 		mp_raise_ValueError(MP_ERROR_TEXT("invalid notification count"));
 	}
 	return make_device(type, name_in, timeout_in, connect_in,
-		mp_obj_get_int(hub_kind_in), count ? count : 1, mp_obj_is_true(pair_in), false);
+		mp_obj_get_int(hub_kind_in), count ? count : 1, mp_obj_is_true(pair_in), BP_LWP3_RAW);
 }
 
 static mp_obj_t lwp3_write(mp_obj_t self_in, mp_obj_t data_in)
@@ -393,6 +361,96 @@ static mp_obj_t lwp3_read(mp_obj_t self_in)
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(lwp3_read_obj, lwp3_read);
 
+static void sensor_state(lwp3_obj_t *self, struct bp_lwp3_state *state, uint8_t fields)
+{
+	get_state(self, state);
+	if (!state->connected) python_device_check(-ENODEV);
+	if (!(state->fields & fields)) python_device_check(-EAGAIN);
+}
+
+static mp_obj_t device_color(mp_obj_t self_in)
+{
+	struct bp_lwp3_state state;
+	sensor_state(MP_OBJ_TO_PTR(self_in), &state, BP_LWP3_HAS_RGB | BP_LWP3_HAS_TAG);
+	return state.fields & BP_LWP3_HAS_MATCHED_COLOR ? pb_type_Color_from_hsv(state.matched_color) : mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(device_color_obj, device_color);
+
+static mp_obj_t mario_hsv(mp_obj_t self_in)
+{
+	struct bp_lwp3_state state;
+	sensor_state(MP_OBJ_TO_PTR(self_in), &state, BP_LWP3_HAS_RGB);
+	return pb_type_Color_new(state.hsv);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(mario_hsv_obj, mario_hsv);
+
+static mp_obj_t mario_colors(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, lwp3_obj_t, self, PB_ARG_DEFAULT_NONE(colors));
+	if (colors_in == mp_const_none) {
+		if (self->handle) python_device_check(bp_lwp3_palette_get(self->handle, &self->palette));
+		mp_obj_t colors[BP_SENSOR_PALETTE_SIZE];
+		for (size_t i = 0; i < self->palette.count; i++) colors[i] = pb_type_Color_from_hsv(self->palette.colors[i]);
+		return mp_obj_new_tuple(self->palette.count, colors);
+	}
+	size_t count;
+	mp_obj_t *colors;
+	mp_obj_get_array(colors_in, &count, &colors);
+	if (count > BP_SENSOR_PALETTE_SIZE) mp_raise_ValueError(MP_ERROR_TEXT("too many colors"));
+	struct bp_sensor_palette palette = {.count = count};
+	for (size_t i = 0; i < count; i++) palette.colors[i] = pb_type_Color_get_hsv(colors[i]);
+	if (self->handle) python_device_check(bp_lwp3_palette_set(self->handle, &palette));
+	self->palette = palette;
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(mario_colors_obj, 1, mario_colors);
+
+static mp_obj_t technic_drive(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, lwp3_obj_t, self,
+		PB_ARG_REQUIRED(speed), PB_ARG_REQUIRED(steering));
+	return device_command(self, BP_LWP3_DRIVE, pb_obj_get_int(speed_in), pb_obj_get_int(steering_in));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(technic_drive_obj, 1, technic_drive);
+
+static mp_obj_t duplo_drive(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, lwp3_obj_t, self, PB_ARG_REQUIRED(power));
+	return device_command(self, BP_LWP3_DRIVE, pb_obj_get_int(power_in), 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(duplo_drive_obj, 1, duplo_drive);
+
+static mp_obj_t duplo_headlights(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, lwp3_obj_t, self, PB_ARG_REQUIRED(color));
+	return device_command(self, BP_LWP3_LIGHT, pb_type_Color_get_hsv(color_in), 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(duplo_headlights_obj, 1, duplo_headlights);
+
+static mp_obj_t duplo_sound(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, lwp3_obj_t, self, PB_ARG_REQUIRED(sound));
+	uint32_t sound;
+	switch (mp_obj_str_get_qstr(sound_in)) {
+	case MP_QSTR_brake: sound = BP_LWP3_BRAKE; break;
+	case MP_QSTR_depart: sound = BP_LWP3_DEPART; break;
+	case MP_QSTR_water: sound = BP_LWP3_WATER; break;
+	case MP_QSTR_horn: sound = BP_LWP3_HORN; break;
+	case MP_QSTR_steam: sound = BP_LWP3_STEAM; break;
+	default: mp_raise_ValueError(MP_ERROR_TEXT("unknown train sound"));
+	}
+	return device_command(self, BP_LWP3_SOUND, sound, 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(duplo_sound_obj, 1, duplo_sound);
+
+static mp_obj_t duplo_speed(mp_obj_t self_in)
+{
+	struct bp_lwp3_state state;
+	sensor_state(MP_OBJ_TO_PTR(self_in), &state, BP_LWP3_HAS_SPEED);
+	return mp_obj_new_int(state.speed);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(duplo_speed_obj, duplo_speed);
+
 static const pb_attr_dict_entry_t remote_attrs[] = {
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_buttons, lwp3_obj_t, buttons),
 	PB_DEFINE_CONST_ATTR_RO(MP_QSTR_light, lwp3_obj_t, light),
@@ -408,7 +466,7 @@ static const mp_rom_map_elem_t remote_methods[] = {
 static MP_DEFINE_CONST_DICT(remote_dict, remote_methods);
 
 MP_DEFINE_CONST_OBJ_TYPE(python_remote_type, MP_QSTR_Remote, MP_TYPE_FLAG_NONE,
-	make_new, remote_new, attr, pb_attribute_handler, protocol, remote_attrs,
+	make_new, profile_new, attr, pb_attribute_handler, protocol, remote_attrs,
 	locals_dict, &remote_dict);
 
 static const mp_rom_map_elem_t lwp3_methods[] = {
@@ -423,3 +481,39 @@ static MP_DEFINE_CONST_DICT(lwp3_dict, lwp3_methods);
 
 MP_DEFINE_CONST_OBJ_TYPE(python_lwp3device_type, MP_QSTR_LWP3Device, MP_TYPE_FLAG_NONE,
 	make_new, lwp3_new, locals_dict, &lwp3_dict);
+
+static const mp_rom_map_elem_t technic_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR___del__), MP_ROM_PTR(&lwp3_close_obj)},
+	{MP_ROM_QSTR(MP_QSTR_connect), MP_ROM_PTR(&lwp3_connect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_disconnect), MP_ROM_PTR(&lwp3_disconnect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_drive), MP_ROM_PTR(&technic_drive_obj)},
+};
+static MP_DEFINE_CONST_DICT(technic_dict, technic_methods);
+MP_DEFINE_CONST_OBJ_TYPE(python_technic_move_type, MP_QSTR_TechnicMoveHub, MP_TYPE_FLAG_NONE,
+	make_new, profile_new, locals_dict, &technic_dict);
+
+static const mp_rom_map_elem_t mario_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR___del__), MP_ROM_PTR(&lwp3_close_obj)},
+	{MP_ROM_QSTR(MP_QSTR_connect), MP_ROM_PTR(&lwp3_connect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_disconnect), MP_ROM_PTR(&lwp3_disconnect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_color), MP_ROM_PTR(&device_color_obj)},
+	{MP_ROM_QSTR(MP_QSTR_hsv), MP_ROM_PTR(&mario_hsv_obj)},
+	{MP_ROM_QSTR(MP_QSTR_detectable_colors), MP_ROM_PTR(&mario_colors_obj)},
+};
+static MP_DEFINE_CONST_DICT(mario_dict, mario_methods);
+MP_DEFINE_CONST_OBJ_TYPE(python_mario_type, MP_QSTR_MarioHub, MP_TYPE_FLAG_NONE,
+	make_new, profile_new, locals_dict, &mario_dict);
+
+static const mp_rom_map_elem_t duplo_methods[] = {
+	{MP_ROM_QSTR(MP_QSTR___del__), MP_ROM_PTR(&lwp3_close_obj)},
+	{MP_ROM_QSTR(MP_QSTR_connect), MP_ROM_PTR(&lwp3_connect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_disconnect), MP_ROM_PTR(&lwp3_disconnect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_drive), MP_ROM_PTR(&duplo_drive_obj)},
+	{MP_ROM_QSTR(MP_QSTR_headlights), MP_ROM_PTR(&duplo_headlights_obj)},
+	{MP_ROM_QSTR(MP_QSTR_sound), MP_ROM_PTR(&duplo_sound_obj)},
+	{MP_ROM_QSTR(MP_QSTR_speed), MP_ROM_PTR(&duplo_speed_obj)},
+	{MP_ROM_QSTR(MP_QSTR_color), MP_ROM_PTR(&device_color_obj)},
+};
+static MP_DEFINE_CONST_DICT(duplo_dict, duplo_methods);
+MP_DEFINE_CONST_OBJ_TYPE(python_duplo_type, MP_QSTR_DuploTrain, MP_TYPE_FLAG_NONE,
+	make_new, profile_new, locals_dict, &duplo_dict);

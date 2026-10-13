@@ -390,6 +390,12 @@ blocking/awaitable operations. Scan-start and connection callbacks deliberately
 complete before their API calls return. Forced stop during a delayed write
 checks that kernel-owned parameters survive interpreter unload and cannot be
 reused before disconnection. A management link remains independent throughout.
+The device-profile case adds Technic Move command saturation, ACK-aware repeat
+suppression and retry after ATT rejection; Mario-family discovery, RGB conversion,
+empty/custom palettes and reconnect retention; and both train generations'
+commands, signed speed and RGB/tag decoding. Wrong-generation notifications
+cannot establish a valid sample, and reconnects cannot reuse stale measurements.
+All motor commands target synthetic peers, not physical motors.
 This does not exercise over-the-air pairing or physical simultaneous roles.
 
 The slot variant uses that same fixture with the existing 64 KiB simulated

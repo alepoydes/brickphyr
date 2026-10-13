@@ -27,7 +27,7 @@ zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_conn_le_create -Wl,--wrap=bt_conn_set_security
   -Wl,--wrap=bt_gatt_discover -Wl,--wrap=bt_gatt_subscribe -Wl,--wrap=bt_gatt_write
   -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb -Wl,--wrap=bt_gatt_get_mtu)
-set(programs echo spin flood native messaging radio lwp3)
+set(programs echo spin flood native messaging radio lwp3 wireless)
 if(CONFIG_BRICKPHYR_PYBRICKS_SLOTS GREATER 0)
   # A compiler-produced large constant fills the synthetic 64 KiB store.
   string(REPEAT x 24576 padding)

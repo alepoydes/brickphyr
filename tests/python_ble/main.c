@@ -34,6 +34,8 @@ static bool peer_connected;
 static uintptr_t lego_token;
 static struct bt_conn *const lego = (void *)&lego_token;
 static atomic_t lego_refs, lego_creates, lego_pairs;
+static atomic_t lego_write_error;
+static uint8_t lego_kind = 0x42;
 static bool offer_lego = true, hold_lego_write, hold_lego_disconnect;
 static atomic_t active_scan;
 static struct bt_gatt_write_params *held_write;
@@ -64,6 +66,7 @@ static void lego_advertise(bt_le_scan_cb_t cb)
 	 * between them must not supply the name for the selected address. */
 	uint8_t data[] = {2, 1, 6, 17, 7, 0x23, 0xd1, 0xbc, 0xea, 0x5f, 0x78, 0x23, 0x16,
 		0xde, 0xef, 0x12, 0x12, 0x23, 0x16, 0, 0, 9, 0xff, 0x97, 3, 0, 0x42, 0, 0, 0, 0};
+	data[26] = lego_kind;
 	uint8_t name[] = {7, 9, 'R', 'e', 'm', 'o', 't', 'e'};
 	uint8_t unrelated[] = {6, 9, 'W', 'r', 'o', 'n', 'g'};
 	struct net_buf_simple packet;
@@ -264,7 +267,7 @@ int __wrap_bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *para
 	memcpy(message.data, params->data, params->length);
 	zassert_ok(k_msgq_put(&lego_writes, &message, K_NO_WAIT));
 	if (hold_lego_write) held_write = params;
-	else params->func(conn, 0, params);
+	else params->func(conn, atomic_set(&lego_write_error, 0), params);
 	return 0;
 }
 bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
@@ -968,6 +971,8 @@ ZTEST(python_ble, test_lwp3_remote_and_cleanup)
 	};
 	k_msgq_purge(&events);
 	k_msgq_purge(&lego_writes);
+	atomic_set(&lego_creates, 0);
+	atomic_set(&lego_pairs, 0);
 	connected(true);
 	download(program, sizeof(program));
 	start("remote ready");
@@ -1036,6 +1041,81 @@ ZTEST(python_ble, test_lwp3_remote_and_cleanup)
 	}
 	offer_lego = true;
 	zassert_equal(atomic_get(&lego_refs), 0);
+	connected(false);
+}
+
+ZTEST(python_ble, test_lwp3_device_profiles)
+{
+	static const uint8_t program[] = {
+#include <wireless.inc>
+	};
+	k_msgq_purge(&events);
+	k_msgq_purge(&lego_writes);
+	atomic_set(&lego_pairs, 0);
+	lego_kind = 0x84;
+	connected(true);
+	download(program, sizeof(program));
+	start("move ready");
+	expect_lego_write((uint8_t[]){13, 0, 0x81, 0x36, 0x11, 0x51, 0, 3, 0, 0, 0, 0x10, 0}, 13);
+	expect_lego_write((uint8_t[]){13, 0, 0x81, 0x36, 0x11, 0x51, 0, 3, 0, 0, 0, 8, 0}, 13);
+	zassert_equal(atomic_get(&lego_pairs), 1);
+	atomic_set(&lego_write_error, BT_ATT_ERR_UNLIKELY);
+	radio_action("", "move sent");
+	/* A rejected ATT write cannot count as a successfully delivered repeat. */
+	for (size_t i = 0; i < 3; i++) {
+		expect_lego_write((uint8_t[]){13, 0, 0x81, 0x36, 0x11, 0x51, 0, 3, 0, 100, 159, 0, 0}, 13);
+	}
+	zassert_equal(k_msgq_num_used_get(&lego_writes), 0);
+	radio_action("", "move done");
+	expect_lego_write((uint8_t[]){13, 0, 0x81, 0x36, 0x11, 0x51, 0, 3, 0, 100, 159, 0, 0}, 13);
+	expect_lego_write((uint8_t[]){13, 0, 0x81, 0x36, 0x11, 0x51, 0, 3, 0, 219, 14, 0, 0}, 13);
+	lego_kind = 0x44; /* Luigi belongs to the MarioHub family. */
+	radio_action("", "mario ready");
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 1, 1, 1, 0, 0, 0, 1}, 10);
+	zassert_equal(atomic_get(&lego_pairs), 2);
+	lego_notify((uint8_t[]){7, 0, 0x45, 1, 255, 0, 0}, 7);
+	radio_action("", "mario disconnected");
+	lego_kind = 0x45; /* Reconnection can select Peach, preserving the palette. */
+	radio_action("", "mario again");
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 1, 1, 1, 0, 0, 0, 1}, 10);
+	lego_notify((uint8_t[]){7, 0, 0x45, 1, 0, 255, 0}, 7);
+	radio_action("", "mario done");
+	lego_kind = 0x20;
+	radio_action("", "old ready");
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 1, 1, 1, 0, 0, 0, 1}, 10);
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 0x12, 3, 1, 0, 0, 0, 1}, 10);
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 0x13, 0, 1, 0, 0, 0, 1}, 10);
+	zassert_equal(atomic_get(&lego_pairs), 3, "Old train does not pair");
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x36, 1, 0}, 6);
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x33, 1, 0}, 6);
+	radio_action("", "old empty");
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x13, 0x85, 0xff}, 6);
+	lego_notify((uint8_t[]){10, 0, 0x45, 0x12, 0xff, 0xff, 0, 0, 0, 0}, 10);
+	radio_action("", "old sent");
+	expect_lego_write((uint8_t[]){8, 0, 0x81, 0, 1, 0x51, 0, 156}, 8);
+	expect_lego_write((uint8_t[]){8, 0, 0x81, 0x11, 0x11, 0x51, 0, 9}, 8);
+	expect_lego_write((uint8_t[]){8, 0, 0x81, 1, 0x11, 0x51, 1, 9}, 8);
+	lego_notify((uint8_t[]){10, 0, 0x45, 0x12, 0x6c, 7, 0x6c, 7, 0x6c, 7}, 10);
+	radio_action("", "old done");
+	lego_kind = 0x21;
+	radio_action("", "blue ready");
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 1, 1, 1, 0, 0, 0, 1}, 10);
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 0x33, 0, 1, 0, 0, 0, 1}, 10);
+	expect_lego_write((uint8_t[]){10, 0, 0x41, 0x36, 2, 1, 0, 0, 0, 1}, 10);
+	zassert_equal(atomic_get(&lego_pairs), 4);
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x36, 42, 0}, 6);
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x33, 0x44, 1}, 6);
+	radio_action("", "blue sent");
+	expect_lego_write((uint8_t[]){8, 0, 0x81, 0x32, 1, 0x51, 0, 100}, 8);
+	expect_lego_write((uint8_t[]){10, 0, 0x81, 0x34, 0x11, 0x51, 1, 4, 1, 15}, 10);
+	for (size_t i = 0; i < 2; i++) expect_lego_write((uint8_t[]){9, 0, 0x81, 0x34, 0x11, 0x51, 1, 7, 1}, 9);
+	lego_notify((uint8_t[]){6, 0, 0x45, 0x33, 0xff, 0xff}, 6);
+	radio_action("", "wireless done");
+	zassert_equal(k_msgq_num_used_get(&lego_writes), 0);
+	zassert_equal(atomic_get(&lego_refs), 0);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	zassert_ok(application_stop());
+	lego_kind = 0x42;
 	connected(false);
 }
 

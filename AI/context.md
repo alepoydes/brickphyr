@@ -111,8 +111,9 @@ physical serial and supply acceptance remain pending.
 dispatcher and protected application mailbox. Transfer and lifetime behavior have
 ARM checks. Passive `BLERadio` observation and legacy hub `observe_channels` use
 the shared radio and protected snapshots; `version()` reads cached TI script
-metadata with an ARM check. `Remote` and `LWP3Device` share a native LEGO BLE
-peer service with protected ARM checks for operations and lifetime cleanup.
+metadata with an ARM check. `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub`
+and `DuploTrain` share native LEGO BLE setup, commands and snapshots, with
+protected ARM checks for operations, reconnects and lifetime cleanup.
 Broadcasting, physical reception/device connection/pairing, AppData clients
 and remaining wireless bindings are pending. See [Bluetooth](../docs/bluetooth.md).
 Occasional IMU acquisition failures remain during idle operation and USB/BLE

@@ -218,7 +218,8 @@ while True:
 
 `CONFIG_BRICKPHYR_LWP3` adds one LEGO Wireless Protocol v3 peer through Zephyr's
 central role and GATT client. The native `bp_lwp3_*` API and Python
-`pupdevices.Remote` / `iodevices.LWP3Device` share this service. Application
+LEGO device classes share this service, including device setup, command packets
+and sensor conversion. Application
 loading and terminal commands remain available through either USB or BLE;
 an outgoing LEGO link does not acquire computer management or change its profile.
 
@@ -245,6 +246,37 @@ independent of this queue. Names and name filters are limited to 14 UTF-8 bytes.
 Writes, name changes, connection and disconnection work synchronously or through
 the reference awaitable interface; construction is blocking.
 
+The same service provides these `pupdevices` profiles:
+
+| Class | Implemented operations |
+| --- | --- |
+| `TechnicMoveHub` | `drive(speed, steering)`, connection and disconnection |
+| `MarioHub` | Mario/Luigi/Peach discovery, `hsv()`, `color()`, `detectable_colors()`, connection and disconnection |
+| `DuploTrain` | Both train generations: `drive(power)`, `headlights(color)`, `sound(sound)`, `speed()`, `color()`, connection and disconnection |
+
+Constructors accept the same `name`, `timeout` and `connect` options as `Remote`.
+Mario/Technic Move and the newer blue train request pairing; the older black
+train and Remote do not. Native callers select the corresponding
+`bp_lwp3_config.profile`; raw mode instead uses the caller's `kind` and pairing
+flag. `bp_lwp3_command()` uses the same command encoding as Python.
+
+Sensor reads raise `OSError(EAGAIN)` until a valid notification arrives after
+connection. Native snapshots expose validity flags and monotonic receipt times;
+raw mode leaves interpretation to the caller. Reconnection invalidates old
+samples. Mario's palette survives reconnection, including an empty palette for
+which `color()` returns `None`. The older train uses the reference RGB classifier;
+the newer train maps color tags and returns `Color.NONE` for an unknown tag.
+Train speed preserves the signed protocol value without conversion to a physical
+distance unit.
+
+Technic Move retains the reference suppression of redundant commands: at most
+two acknowledged copies of an unchanged drive command within 500 ms of the last
+acknowledgment. Failed writes do not count; an ordinary ATT rejection preserves
+the connection so the application can retry. Train sound names are `brake`,
+`depart`, `water`, `horn` and `steam`; other names raise `ValueError` before sending.
+The reference implementation has only one known sound packet for the newer blue
+train, so its five names currently produce that same sound.
+
 Discovery shares the existing radio worker and scanner. It temporarily requests
 active scanning for the LEGO service, hub kind and name, matching scan responses
 by address. Explicit scanning pauses during connection creation; passive broadcast
@@ -268,9 +300,12 @@ return an unsupported error before starting device work.
 Protected ARM checks use synthetic BLE peers to exercise reference Remote
 messages, cached buttons, raw queue overflow, name changes, link reuse,
 blocking/awaitable operations, scan cancellation and delayed-write cleanup after
-Python stop. These establish software behavior only. Physical Remote/LWP3
-connection, pairing, radio timing and coexistence with management and broadcasts
-remain unverified; other controller and wireless hub classes remain unfinished.
+Python stop. Additional cases exercise Technic Move commands and retry suppression,
+Mario/Luigi/Peach matching and palettes, both train formats, invalid samples and
+reconnection. These establish software behavior only. Physical LEGO device
+connection, pairing, sensor/output behavior, radio timing and coexistence with
+management and broadcasts remain unverified. Xbox controller and `HubNetwork`
+support remain unfinished.
 
 ## Boundaries
 

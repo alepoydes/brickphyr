@@ -58,6 +58,13 @@ __syscall int bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state);
 __syscall int bp_lwp3_write(uint32_t handle, const void *data, uint32_t size);
 __syscall int bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message);
 __syscall int bp_lwp3_close(uint32_t handle);
+/* Named profiles share native command encoding and setup. LIGHT takes packed
+ * HSV; DRIVE takes power/speed and steering percentages; SOUND takes a
+ * bp_lwp3_sound. Unused auxiliary values must be zero. Like write, commands
+ * complete through get(). Unsupported profile/command pairs have no effects. */
+__syscall int bp_lwp3_command(uint32_t handle, uint32_t command, int32_t value, int32_t auxiliary);
+__syscall int bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette);
+__syscall int bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette);
 /* Read the calling application's launch identity and current management link.
  * No I/O or wait; name and boot cause share the firmware's existing providers. */
 __syscall int bp_system_get(struct bp_system_info *info);

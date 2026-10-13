@@ -5,8 +5,10 @@
  * Zephyr owns connections/ATT; the shared radio worker owns all commands. */
 #include "hub_lwp3.h"
 #include "host_radio.h"
+#include "lwp3_devices.h"
 #include <string.h>
 #include <lego/lwp3.h>
+#include <pbio/color_map.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -17,7 +19,7 @@ static struct bt_uuid_128 service_uuid = BT_UUID_INIT_128(
 static struct bt_uuid_128 characteristic_uuid = BT_UUID_INIT_128(
 	BT_UUID_128_ENCODE(0x00001624, 0x1212, 0xefde, 0x1623, 0x785feabcd123));
 
-enum phase { IDLE, SCAN, CREATE, SECURITY, SERVICE, CHARACTERISTIC, CCC, SUBSCRIBE, READY, WRITE, CLOSING };
+enum phase { IDLE, SCAN, CREATE, SECURITY, SERVICE, CHARACTERISTIC, CCC, SUBSCRIBE, SETUP, READY, WRITE, CLOSING };
 static struct k_spinlock lock;
 static uint32_t sequence;
 static struct {
@@ -27,6 +29,11 @@ static struct {
 	struct bt_conn *conn;
 	enum phase phase;
 	bool pending, cancel, ended, candidate, opening;
+	bool paired, configured, drive_request;
+	uint8_t setup_step, drive_repeats;
+	int64_t drive_ms;
+	uint8_t drive[2];
+	struct bp_sensor_palette palette;
 	bt_addr_le_t address;
 	int64_t deadline;
 	uint16_t service_start, service_end, value_handle, ccc_handle;
@@ -53,13 +60,16 @@ static void fail(int error)
 int hub_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
 {
 	if (config->timeout_ms > INT32_MAX || !memchr(config->name, 0, sizeof(config->name)) ||
-	    config->flags & ~BP_LWP3_PAIR) return -EINVAL;
-	if ((config->flags & BP_LWP3_PAIR) && !IS_ENABLED(CONFIG_BT_SMP)) return -ENOTSUP;
+	    config->flags & ~BP_LWP3_PAIR || config->profile > BP_LWP3_DUPLO ||
+	    (config->profile && (config->kind || config->flags))) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BT_SMP) && ((config->flags & BP_LWP3_PAIR) ||
+	    config->profile == BP_LWP3_MARIO || config->profile == BP_LWP3_TECHNIC_MOVE)) return -ENOTSUP;
 	int error = host_radio_error();
 	if (error) return error;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	bool reuse = peer.phase == READY && !peer.cancel && peer.state.connected &&
-		peer.config.kind == config->kind && peer.config.flags == config->flags &&
+		lwp3_device_matches(config, peer.state.kind) &&
+		(!lwp3_device_pair(config, peer.state.kind) || peer.paired) &&
 		!strncmp(peer.state.name, config->name, strlen(config->name));
 	if (peer.handle || (peer.phase != IDLE && !reuse) || (peer.conn && !reuse)) error = -EBUSY;
 	else {
@@ -73,7 +83,14 @@ int hub_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
 			peer.messages = messages;
 			peer.first = peer.count = 0;
 			peer.state.buttons = 0;
+			peer.state.fields = 0;
 			peer.state.error = 0;
+			peer.configured = false;
+			peer.drive_repeats = 0;
+			pbio_color_map_t map;
+			pbio_color_map_set_default(&map);
+			peer.palette = (struct bp_sensor_palette){.count = map.num_colors};
+			for (size_t i = 0; i < map.num_colors; i++) peer.palette.colors[i] = map.colors[i];
 			if (!reuse) {
 				memset(&peer.state, 0, sizeof(peer.state));
 				peer.cancel = false;
@@ -95,10 +112,18 @@ int hub_lwp3_connect(uint32_t handle)
 	if (!error && (peer.cancel || (peer.phase != IDLE && peer.phase != READY))) error = -EBUSY;
 	if (!error) {
 		peer.state.error = 0;
-		if (peer.phase != READY) {
+		if (peer.phase == READY && !peer.configured) {
+			peer.phase = SETUP;
+			peer.setup_step = 0;
+			peer.state.busy = 1;
+			wake();
+		} else if (peer.phase != READY) {
 			peer.phase = SCAN;
 			peer.state.busy = 1;
 			peer.state.buttons = 0;
+			peer.state.fields = 0;
+			peer.paired = peer.configured = false;
+			peer.drive_repeats = 0;
 			peer.state.name[0] = 0;
 			peer.first = peer.count = 0;
 			peer.candidate = false;
@@ -127,11 +152,28 @@ int hub_lwp3_disconnect(uint32_t handle)
 
 int hub_lwp3_get(uint32_t handle, struct bp_lwp3_state *state)
 {
+	struct bp_sensor_palette palette;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int error = lease(handle);
-	if (!error) *state = peer.state;
+	if (!error) {
+		*state = peer.state;
+		palette = peer.palette;
+	}
 	k_spin_unlock(&lock, key);
+	if (!error) lwp3_device_color(state, &palette);
 	return error;
+}
+
+/* Called with lock held, after readiness and data validation. */
+static void queue_write(const void *data, size_t size)
+{
+	memcpy(peer.tx.data, data, size);
+	peer.tx.size = size;
+	peer.state.error = 0;
+	peer.state.busy = 1;
+	peer.phase = WRITE;
+	peer.drive_request = false;
+	wake();
 }
 
 int hub_lwp3_write(uint32_t handle, const void *data, size_t size)
@@ -141,14 +183,60 @@ int hub_lwp3_write(uint32_t handle, const void *data, size_t size)
 	int error = lease(handle);
 	if (!error && !peer.state.connected) error = -ENODEV;
 	if (!error && peer.phase != READY) error = -EBUSY;
+	if (!error) queue_write(data, size);
+	k_spin_unlock(&lock, key);
+	return error;
+}
+
+int hub_lwp3_command(uint32_t handle, uint32_t command, int32_t value, int32_t auxiliary)
+{
+	uint8_t data[BP_LWP3_MESSAGE_MAX];
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int error = lease(handle);
+	if (!error && !peer.state.connected) error = -ENODEV;
+	if (!error && peer.phase != READY) error = -EBUSY;
 	if (!error) {
-		memcpy(peer.tx.data, data, size);
-		peer.tx.size = size;
-		peer.state.error = 0;
-		peer.state.busy = 1;
-		peer.phase = WRITE;
-		wake();
+		int size = lwp3_device_command(peer.config.profile, peer.state.kind,
+			command, value, auxiliary, data);
+		if (size < 0) error = size;
+		else {
+			bool drive = peer.config.profile == BP_LWP3_TECHNIC_MOVE && command == BP_LWP3_DRIVE;
+			bool repeat = drive && peer.drive_repeats && data[9] == peer.drive[0] &&
+				data[10] == peer.drive[1] && k_uptime_get() - peer.drive_ms < 500;
+			if (repeat && peer.drive_repeats == 2) peer.state.error = 0;
+			else {
+				queue_write(data, size);
+				peer.drive_request = drive;
+				if (drive && !repeat) peer.drive_repeats = 0;
+			}
+		}
 	}
+	k_spin_unlock(&lock, key);
+	return error;
+}
+
+int hub_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int error = lease(handle);
+	if (!error && peer.config.profile != BP_LWP3_MARIO) error = -ENOTSUP;
+	if (!error) *palette = peer.palette;
+	k_spin_unlock(&lock, key);
+	return error;
+}
+
+int hub_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette)
+{
+	if (palette->count > BP_SENSOR_PALETTE_SIZE) return -EINVAL;
+	for (size_t i = 0; i < palette->count; i++) {
+		pbio_color_t color = palette->colors[i];
+		if (pbio_color_get_h(color) >= 360 || pbio_color_get_s(color) > 100 ||
+		    pbio_color_get_v(color) < -100 || pbio_color_get_v(color) > 100) return -EINVAL;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int error = lease(handle);
+	if (!error && peer.config.profile != BP_LWP3_MARIO) error = -ENOTSUP;
+	if (!error) peer.palette = *palette;
 	k_spin_unlock(&lock, key);
 	return error;
 }
@@ -201,6 +289,7 @@ void hub_lwp3_receive(const bt_addr_le_t *address, uint8_t type, const uint8_t *
 {
 	if (!address || (type != BT_GAP_ADV_TYPE_ADV_IND && type != BT_GAP_ADV_TYPE_SCAN_RSP)) return;
 	bool service = false, kind = false;
+	uint8_t selected_kind = 0;
 	const uint8_t *name = NULL;
 	size_t name_size = 0;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -217,8 +306,10 @@ void hub_lwp3_receive(const bt_addr_le_t *address, uint8_t type, const uint8_t *
 				if (!memcmp(value + i, service_uuid.val, 16)) service = true;
 			}
 		} else if (data[1] == BT_DATA_MANUFACTURER_DATA && count == 8 &&
-			   sys_get_le16(value) == LWP3_LEGO_COMPANY_ID && value[3] == peer.config.kind) kind = true;
-		else if (data[1] == BT_DATA_NAME_COMPLETE || data[1] == BT_DATA_NAME_SHORTENED) {
+			   sys_get_le16(value) == LWP3_LEGO_COMPANY_ID && lwp3_device_matches(&peer.config, value[3])) {
+			kind = true;
+			selected_kind = value[3];
+		} else if (data[1] == BT_DATA_NAME_COMPLETE || data[1] == BT_DATA_NAME_SHORTENED) {
 			name = value;
 			name_size = count;
 		}
@@ -228,12 +319,17 @@ void hub_lwp3_receive(const bt_addr_le_t *address, uint8_t type, const uint8_t *
 	if (type == BT_GAP_ADV_TYPE_ADV_IND) {
 		if (!service || !kind) goto out;
 		peer.address = *address;
+		peer.state.kind = selected_kind;
 		peer.candidate = true;
 	} else if (!peer.candidate || bt_addr_le_cmp(address, &peer.address)) goto out;
 	if (!name) goto out;
 	size_t filter = strlen(peer.config.name);
 	if (name_size < filter || memcmp(name, peer.config.name, filter)) {
 		peer.candidate = false;
+		goto out;
+	}
+	if (!IS_ENABLED(CONFIG_BT_SMP) && lwp3_device_pair(&peer.config, peer.state.kind)) {
+		fail(-ENOTSUP);
 		goto out;
 	}
 	name_size = MIN(name_size, BP_LWP3_NAME_MAX);
@@ -291,15 +387,7 @@ static uint8_t notified(struct bt_conn *conn, struct bt_gatt_subscribe_params *p
 	}
 	const uint8_t *value = data;
 	if (!peer.handle || size < 3 || size > BP_LWP3_MESSAGE_MAX || value[0] != size) goto done;
-	if (peer.config.kind == LWP3_HUB_KIND_HANDSET) {
-		if (size == 5 && value[2] == LWP3_MSG_TYPE_HW_NET_CMDS && value[3] == LWP3_HW_NET_CMD_CONNECTION_REQ) {
-			peer.state.buttons = (peer.state.buttons & 0x3f) | (value[4] ? 0x40 : 0);
-		} else if (size == 7 && value[2] == LWP3_MSG_TYPE_PORT_VALUE && value[3] < 2) {
-			unsigned int shift = value[3] * 3;
-			uint8_t buttons = (!!value[4]) | (!!value[5] << 1) | (!!value[6] << 2);
-			peer.state.buttons = (peer.state.buttons & ~(7 << shift)) | (buttons << shift);
-		}
-	}
+	if (peer.config.profile != BP_LWP3_RAW) lwp3_device_notify(&peer.state, data, size, k_uptime_get());
 	if (peer.config.notifications) {
 		unsigned int index = (peer.first + peer.count) % peer.config.notifications;
 		peer.messages[index].size = size;
@@ -320,9 +408,10 @@ static void subscribed(struct bt_conn *conn, uint8_t error, struct bt_gatt_subsc
 		peer.deadline = 0;
 		if (error) fail(-EIO);
 		else {
-			peer.phase = READY;
+			peer.phase = SETUP;
+			peer.setup_step = 0;
 			peer.state.connected = 1;
-			peer.state.busy = 0;
+			peer.state.busy = 1;
 		}
 		wake();
 	}
@@ -332,12 +421,27 @@ static void subscribed(struct bt_conn *conn, uint8_t error, struct bt_gatt_subsc
 static void written(struct bt_conn *conn, uint8_t error, struct bt_gatt_write_params *params)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (conn == peer.conn && peer.phase == WRITE && !peer.cancel) {
+	if (conn == peer.conn && (peer.phase == WRITE || peer.phase == SETUP) && !peer.cancel) {
 		peer.pending = false;
 		peer.deadline = 0;
+		if (peer.phase == SETUP) {
+			if (error) fail(-EIO);
+			else peer.setup_step++;
+			wake();
+			goto done;
+		}
 		peer.state.error = error ? -EIO : 0;
 		peer.state.busy = 0;
 		peer.phase = READY;
+		if (peer.drive_request) {
+			if (error) peer.drive_repeats = 0;
+			else {
+				peer.drive[0] = peer.tx.data[9];
+				peer.drive[1] = peer.tx.data[10];
+				peer.drive_repeats++;
+				peer.drive_ms = k_uptime_get();
+			}
+		}
 		const uint8_t *value = peer.tx.data;
 		if (!error && peer.tx.size > 5 && peer.tx.size <= 5 + BP_LWP3_NAME_MAX &&
 		    value[2] == LWP3_MSG_TYPE_HUB_PROPERTIES && value[3] == LWP3_HUB_PROPERTY_NAME &&
@@ -348,6 +452,7 @@ static void written(struct bt_conn *conn, uint8_t error, struct bt_gatt_write_pa
 		}
 		wake();
 	}
+done:
 	k_spin_unlock(&lock, key);
 }
 
@@ -372,7 +477,7 @@ static void connected(struct bt_conn *conn, uint8_t error)
 		if (error) {
 			peer.ended = true;
 			if (!peer.cancel) fail(error == BT_HCI_ERR_UNKNOWN_CONN_ID ? -ETIMEDOUT : -ECONNREFUSED);
-		} else peer.phase = peer.config.flags & BP_LWP3_PAIR ? SECURITY : SERVICE;
+		} else peer.phase = lwp3_device_pair(&peer.config, peer.state.kind) ? SECURITY : SERVICE;
 		wake();
 	}
 	k_spin_unlock(&lock, key);
@@ -397,7 +502,10 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 		peer.pending = false;
 		peer.deadline = 0;
 		if (error || level < BT_SECURITY_L2) fail(-EACCES);
-		else peer.phase = SERVICE;
+		else {
+			peer.paired = true;
+			peer.phase = SERVICE;
+		}
 		wake();
 	}
 	k_spin_unlock(&lock, key);
@@ -439,9 +547,19 @@ void hub_lwp3_process(int radio_error, bool scan_stopped)
 			peer.deadline = 0;
 		}
 	}
+	if (peer.phase == SETUP && !peer.pending && !peer.cancel) {
+		int size = lwp3_device_setup(peer.config.profile, peer.state.kind, peer.setup_step, peer.tx.data);
+		if (size < 0) fail(size);
+		else if (!size) {
+			peer.configured = true;
+			peer.phase = READY;
+			peer.state.busy = 0;
+		} else peer.tx.size = size;
+	}
 	enum phase phase = peer.phase;
 	struct bt_conn *conn = peer.conn;
-	bool issue = !radio_error && !peer.pending && phase != IDLE && phase != SCAN && phase != READY;
+	bool issue = !radio_error && !peer.pending && (!peer.cancel || phase == CLOSING) &&
+		phase != IDLE && phase != SCAN && phase != READY;
 	if (issue && phase == CREATE && !scan_stopped) {
 		/* RX may find a candidate while scan_start itself is completing. */
 		issue = false;
@@ -506,6 +624,7 @@ void hub_lwp3_process(int radio_error, bool scan_stopped)
 		error = bt_gatt_subscribe(conn, &peer.subscription);
 		break;
 	case WRITE:
+	case SETUP:
 		peer.write = (struct bt_gatt_write_params){.func = written,
 			.handle = peer.value_handle, .data = peer.tx.data, .length = peer.tx.size};
 		error = bt_gatt_write(conn, &peer.write);
@@ -524,6 +643,7 @@ void hub_lwp3_process(int radio_error, bool scan_stopped)
 		key = k_spin_lock(&lock);
 		if (phase != CLOSING) peer.pending = false;
 		if (phase == WRITE && peer.phase == WRITE && !peer.cancel) {
+			if (peer.drive_request) peer.drive_repeats = 0;
 			peer.phase = READY;
 			peer.state.error = error;
 			peer.state.busy = 0;

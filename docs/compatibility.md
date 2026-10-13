@@ -287,13 +287,18 @@ a management connection, radio timing and the version query remain unverified.
 Broadcast selection and `broadcast()` are explicitly unfinished and raise
 `NotImplementedError` before starting transmission.
 
-`pupdevices.Remote` and `iodevices.LWP3Device` use the shared native LEGO BLE
-service. Protected ARM checks cover reference Remote setup, buttons/light/name,
-raw notifications, link reuse, blocking/awaitable operations and forced-stop
-cleanup with late ATT callbacks. Physical device connection, pairing and radio
-coexistence remain unverified. See [LEGO device usage and limits](bluetooth.md#application-lego-devices).
-`HubNetwork`, other wireless hub/controller classes and required aliases remain
-unfinished work.
+`pupdevices.Remote`, `TechnicMoveHub`, `MarioHub`, `DuploTrain` and
+`iodevices.LWP3Device` use the shared native LEGO BLE service. Protected ARM checks
+cover reference setup/commands, snapshots, raw notifications, link reuse,
+blocking/awaitable operations and forced-stop cleanup with late ATT callbacks.
+New connections invalidate old samples; sensor reads raise `OSError(EAGAIN)`
+until data arrives. Mario palettes survive reconnects. Technic Move repeat
+suppression counts acknowledged writes; ATT rejection permits retry. Unknown
+train sounds raise `ValueError`; the newer train retains the reference's single
+known sound packet. Physical device connection, pairing, sensor/output behavior
+and radio coexistence remain unverified. See
+[LEGO device usage and limits](bluetooth.md#application-lego-devices).
+`HubNetwork`, Xbox controller support and required aliases remain unfinished work.
 
 System `reset_storage` remains unfinished required work.
 Charger `connected()` returns the shared native source code: 0 none, 1
