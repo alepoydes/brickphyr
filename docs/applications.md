@@ -4,8 +4,34 @@ This document distinguishes the experimental native and Python implementations
 from the remaining application model. The ABI is not stable. Keep SDK definitions shared
 with the firmware; do not copy an API description into multiple runtimes.
 
-The [Python implementation plan](python.md) describes the next runtime milestone,
-including REPL, named programs, native `.mpy` and Pybricks client integration.
+The [Python implementation plan](python.md) describes Python support and remaining
+acceptance, including REPL, named programs, native `.mpy` and Pybricks clients.
+
+## Native portability and resource efficiency plan
+
+The next platform milestone reduces firmware memory and execution costs while
+maximizing the memory available to user applications. Preserve MPU isolation,
+service responsiveness, supervised cleanup and stored data. Measure the native
+and full Python profiles separately: linked RAM includes application arenas and
+allocator reserves, so it is not the firmware's live working set.
+
+1. Establish comparable flash, RAM, stack, peak loading and execution budgets.
+   Remove unnecessary image contents and allocations; size buffers and stacks
+   from their contracts and measured workloads. Return the recovered capacity to
+   applications where the board's alignment and loading constraints allow it.
+2. Optimize measured execution bottlenecks, including interrupt work, copies,
+   queues and service waits. Preserve behavior and report memory, throughput and
+   latency changes together rather than trading one for another silently.
+3. Decouple the native application ABI from firmware configuration and Zephyr's
+   generated syscall numbering. Version the public interface and check required
+   capabilities and memory before execution. Target the same application binary
+   on SPIKE/Inventor F4 and the four-port Technic Hub when both builds provide its
+   instruction set, calling convention and required services. Keep adaptation
+   costs small and measure them; do not introduce a VM for this compatibility.
+
+This is planned work. The current native SDK still requires the matching firmware
+configuration, and Technic firmware support is not implemented. Existing Python
+acceptance work remains tracked in its owning plan; WASM is outside this milestone.
 
 ## Experimental native profile
 

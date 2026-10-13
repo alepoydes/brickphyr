@@ -70,7 +70,17 @@ see [host coverage](../docs/host.md#implemented-pybricks-subset).
 The F4 watchdog has USB-powered fault-recovery checks; battery-only recovery
 remains pending.
 
-## Active Python milestone
+## Next platform milestone
+
+Prioritize [resource efficiency and native ABI portability](../docs/applications.md#native-portability-and-resource-efficiency-plan):
+reduce firmware memory and execution costs, maximize application capacity, and
+allow a common native binary on compatible SPIKE F4 and Technic builds without
+binding it to Zephyr's internal configuration. Preserve isolation, cleanup and
+service responsiveness; measure adapter costs and both native/Python profiles.
+This direction is not implemented and does not establish Technic support. The
+remaining Python acceptance scope below is retained.
+
+## Python implementation and remaining acceptance
 
 Follow the [Python implementation plan](../docs/python.md) for the full required
 surface and delivery order. Use the workspace summary and incremental checks
