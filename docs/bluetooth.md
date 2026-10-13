@@ -134,7 +134,9 @@ Controller waits therefore do not occupy the button/power loop, Bluetooth RX
 callbacks, or system workqueue. A disconnect request retains its connection
 reference until completion; only the actual disconnection event releases the
 management session. A failed disconnect retains the first lifecycle error and
-requires reboot. Explicit on/off commands wait for their
+requires reboot. After terminal output failure, its subscription cannot reopen
+on the closing link; reconnect before starting another terminal session.
+Explicit on/off commands wait for their
 operation to finish and supersede pending boot work. The first lifecycle failure
 retains its operation and error until reboot; later commands do not repeat a
 partially completed initialization. The optional profile does not expose Zephyr's

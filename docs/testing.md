@@ -390,6 +390,11 @@ with its transmit FIFO unread. The normal lifecycle poll runs independently of
 status reads; UART0 carries test results. This does not emulate USB hardware or
 the complete HCI/ATT receive stack and radio.
 
+A separate terminal case exhausts the send-retry deadline, delays the synthetic
+disconnect event and rejects a new subscription on that closing link. After the
+event it checks owner/reference release and REPL entry/exit on a fresh connection.
+This verifies recovery logic, not sustained failure on physical BLE hardware.
+
 The `tests/python_ble` observation case injects literal Pybricks-format
 advertisements through the production BLE scan callback. It checks typed values,
 an empty tuple, malformed and truncated data, repeated-packet refresh, RSSI,

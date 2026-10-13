@@ -579,6 +579,7 @@ static void shell_output(struct k_work *work)
 	} else if (current) {
 		host_ble_shell_close(session);
 		shell_session = 0;
+		shell_retired = true;
 	}
 	k_spin_unlock(&session_lock, key);
 	if (current && !retry) {

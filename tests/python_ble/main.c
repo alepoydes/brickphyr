@@ -28,6 +28,8 @@ static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static uintptr_t peer_token;
 static struct bt_conn *const peer = (void *)&peer_token;
 static atomic_t refs, reject_notifications;
+static atomic_t reject_terminal_notifications, hold_terminal_disconnect;
+K_SEM_DEFINE(terminal_disconnect_requested, 0, 1);
 static atomic_t reject_app_notifications;
 static bt_le_scan_cb_t *scan_callback;
 static atomic_t scan_starts, scan_stops;
@@ -330,6 +332,11 @@ int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 		if (!hold_lego_disconnect) lego_disconnected();
 		return 0;
 	}
+	if (conn == peer && atomic_get(&hold_terminal_disconnect)) {
+		/* HCI accepted the request; the controller event arrives later. */
+		k_sem_give(&terminal_disconnect_requested);
+		return 0;
+	}
 	zassert_unreachable("Unexpected adapter disconnect");
 	return -EIO;
 }
@@ -506,7 +513,10 @@ int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params 
 	zassert_true(params->len <= sizeof(((struct event *)0)->data));
 	bool app_message = params->attr == &pybricks_service.attrs[2] &&
 		((const uint8_t *)params->data)[0] == PBIO_PYBRICKS_EVENT_WRITE_APP_DATA;
-	if (atomic_get(&reject_notifications) || (app_message && atomic_get(&reject_app_notifications))) {
+	bool terminal_blocked = params->attr == &brickphyr_terminal.attrs[2] &&
+		atomic_get(&reject_terminal_notifications);
+	if (terminal_blocked || atomic_get(&reject_notifications) ||
+	    (app_message && atomic_get(&reject_app_notifications))) {
 		if (atomic_get(&reject_notifications)) atomic_dec(&reject_notifications);
 		notifications_retried++;
 		if (app_message) app_notifications_retried++;
@@ -1065,6 +1075,68 @@ ZTEST(python_ble, test_native_terminal_output)
 		host_interface_status(state);
 		zassert_true(k_uptime_get() < deadline);
 	} while (state[2] || !state[3]);
+}
+
+ZTEST(python_ble_terminal_failure, test_native_terminal_failed_notify_retires_link)
+{
+	/* Synthetic controller: notifications cannot be queued for the full native
+	 * terminal retry budget, but disconnect completion is deliberately delayed. */
+	atomic_set(&negotiated_mtu, 23);
+	atomic_set(&reject_notifications, 0);
+	atomic_set(&reject_terminal_notifications, 1);
+	atomic_set(&hold_terminal_disconnect, 1);
+	k_sem_reset(&terminal_disconnect_requested);
+	k_msgq_purge(&events);
+	unsigned int retried_before = notifications_retried;
+	connected(true);
+	event();
+	const struct bt_gatt_attr *ccc = &brickphyr_terminal.attrs[3];
+	struct bt_gatt_ccc_managed_user_data *cfg = ccc->user_data;
+	int64_t started = k_uptime_get();
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	zassert_ok(k_sem_take(&terminal_disconnect_requested, K_MSEC(4500)),
+		   "terminal notification retries did not exhaust their deadline");
+	zassert_true(k_uptime_get() - started >= 3000);
+	zassert_true(notifications_retried > retried_before);
+	zassert_true(atomic_get(&refs) > 0, "owner released before disconnect event");
+	int64_t deadline = k_uptime_get() + 1000;
+	ssize_t result;
+	do {
+		result = cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY);
+		if (result != BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES)) break;
+		zassert_true(k_uptime_get() < deadline, "previous terminal did not drain");
+		k_msleep(1);
+	} while (true);
+	zassert_equal(result, BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION),
+		      "retired terminal reopened on the same link");
+
+	atomic_clear(&reject_terminal_notifications);
+	connected(false);
+	atomic_clear(&hold_terminal_disconnect);
+	uint8_t state[8];
+	deadline = k_uptime_get() + 1000;
+	do {
+		host_interface_status(state);
+		zassert_true(k_uptime_get() < deadline, "terminal owner did not drain");
+		k_msleep(1);
+	} while (atomic_get(&refs) || state[2] || !state[3]);
+
+	k_msgq_purge(&events);
+	connected(true);
+	event();
+	zassert_equal(cfg->cfg_write(peer, ccc, BT_GATT_CCC_NOTIFY), 2);
+	terminal_until("brickphyr> ");
+	terminal_send("python\r");
+	terminal_until(">>> ");
+	terminal_send("\x18");
+	terminal_until("brickphyr> ");
+	connected(false);
+	deadline = k_uptime_get() + 1000;
+	do {
+		host_interface_status(state);
+		zassert_true(k_uptime_get() < deadline, "reconnected owner did not drain");
+		k_msleep(1);
+	} while (atomic_get(&refs) || state[2] || !state[3]);
 }
 
 static void usb_send(uint8_t type, const void *data, size_t length)
@@ -1965,6 +2037,7 @@ static void teardown(void *unused)
 
 ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_network, NULL, setup, NULL, NULL, NULL);
+ZTEST_SUITE(python_ble_terminal_failure, NULL, setup, NULL, NULL, NULL);
 
 /* This Zephyr ARM ztest port provides weak test_main(), but no case filter.
  * The focused suite has exactly one case; both modes share one fixture. */
@@ -1972,6 +2045,8 @@ void test_main(void)
 {
 #ifdef BRICKPHYR_FOCUSED_NETWORK_TEST
 	ztest_run_test_suite(python_ble_network, false, 1, 1, NULL);
+#elif defined(BRICKPHYR_FOCUSED_TERMINAL_FAILURE_TEST)
+	ztest_run_test_suite(python_ble_terminal_failure, false, 1, 1, NULL);
 #else
 	ztest_run_all(NULL, false, 1, 1);
 	ztest_verify_all_test_suites_ran();
