@@ -99,7 +99,10 @@ the production adapter and the same Shell/SMP path. It checks service and
 characteristic discovery, UUID wire order, handle ranges, read offsets, permission
 errors and subscription state across reconnect. The controller fixture also checks
 complete database registration and rejects an overlapping allocation without
-publishing a partial database.
+publishing a partial database. It also exercises peripheral GAP preparation in
+the reference service order: an intermediate DeviceInit status acknowledgment
+cannot complete initialization, and a failed completion resets the controller
+without exposing the partly registered database.
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_npi -d build/cc2640-npi-tests

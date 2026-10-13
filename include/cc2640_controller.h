@@ -21,7 +21,8 @@ int cc2640_controller_start(const struct device *npi, const uint8_t address[6],
 			    struct cc2640_info *info);
 
 struct cc2640_gatt;
-/* Register the management database once after a successful start. Publish all
- * returned handles together. Failure attempts reset; start must then be repeated.
- * Uses the same controller worker and never enables GAP/advertising by itself. */
-int cc2640_controller_gatt(struct cc2640_gatt *gatt);
+/* Initialize peripheral GAP and register the management database once after a
+ * successful start, preserving the reference service/GAP ordering. Publish all
+ * handles only on success. Failure attempts reset; start must then be repeated.
+ * Uses the same controller worker; does not advertise, pair or erase bonds. */
+int cc2640_controller_peripheral(struct cc2640_gatt *gatt);

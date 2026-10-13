@@ -57,11 +57,12 @@ config BRICKPHYR_CC2640_NPI
 	  This does not enable advertising or a Bluetooth host endpoint.
 
 config BRICKPHYR_CC2640_CONTROL
-	bool "CC2640 controller initialization"
+	bool "CC2640 controller and peripheral initialization"
 	depends on BRICKPHYR_CC2640_NPI
 	help
 	  Use the TI protocol definitions and Pybricks startup sequence through NPI.
-	  GAP/GATT services and host advertising are not yet enabled.
+	  Includes peripheral GAP/GATT preparation and ATT handling. Integration
+	  with boot, advertising and a live host endpoint is not yet enabled.
 
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"

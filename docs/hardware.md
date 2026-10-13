@@ -121,13 +121,16 @@ failure through reset cleanup. Synthetic checks exercise these behaviors through
 the production controller code; the NPI device is simulated.
 The GATT adapter registers Generic Attribute/Access, Device Information, Pybricks,
 legacy NUS and native Shell services. It validates allocated handle ranges and
-publishes the database only after all registrations succeed. Its ATT request
+publishes the database only after all registrations succeed. Peripheral GAP
+initialization follows the reference ordering between Generic Access and Device
+Information registration, with pairing disabled and the validated public factory
+address. It does not erase controller bonds. Its ATT request
 handler supports discovery, reads, subscriptions and shared Pybricks/Shell writes
 at the default MTU of 23 bytes. Synthetic wire checks cover discovery boundaries,
 rejected requests, cold Shell/SMP use and reconnect; SMP here uses the existing
 terminal framing, not a separate CC2640 SMP characteristic.
-The controller still stays in reset at boot. GAP initialization/advertising,
-the live event/notification worker and a usable BLE endpoint remain pending.
+The controller still stays in reset at boot. Advertising, the live
+event/notification worker and a usable BLE endpoint remain pending.
 
 [Builds](builds.md#experimental-technic-base) gives the build command;
 [recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM

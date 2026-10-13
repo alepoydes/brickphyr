@@ -2,7 +2,7 @@
 // Copyright (c) 2018-2023 The Pybricks Authors
 /* Startup order and configuration ported from pybricks-micropython
  * a7b1b04ae4f8449dd46b3dfb97c420334439fd35,
- * lib/pbio/drv/bluetooth/bluetooth_stm32_cc2640.c:hci_init.
+ * lib/pbio/drv/bluetooth/bluetooth_stm32_cc2640.c:hci_init/gap_init.
  * BSD-licensed TI headers supply the protocol constants. Brickphyr encodes
  * these fixed startup commands and correlates completions,
  * validates identity/replies and preserves errors through reset cleanup.
@@ -34,7 +34,7 @@ LOG_MODULE_REGISTER(cc2640_controller, LOG_LEVEL_ERR);
 static K_MUTEX_DEFINE(controller_lock);
 static const struct device *transport;
 static const struct device *initialized;
-static bool gatt_ready;
+static bool peripheral_ready;
 static uint8_t response[CC2640_NPI_MAX_PACKET];
 static size_t response_size;
 static uint32_t unrelated_events;
@@ -51,7 +51,11 @@ static uint16_t completion_event(uint16_t opcode)
 	case HCI_READ_LOCAL_VERSION_INFO: return HCI_EVENT_COMMAND_COMPLETE;
 	case 0xfdfc: /* GATT_AddService */
 	case 0xfdfe: /* GATT_AddAttribute */
+	case 0xfe03: /* GAP_ConfigDeviceAddr */
+	case 0xfe30: /* GAP_SetParamValue */
+	case 0xfe36: /* GAP_BondMgrSetParameter */
 		return HCI_COMMAND_STATUS;
+	case 0xfe00: return 0x0600; /* GAP_DeviceInit / GAP_DeviceInitDone */
 	default: return 0;
 	}
 }
@@ -130,7 +134,7 @@ int cc2640_controller_start(const struct device *npi, const uint8_t address[6],
 	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
 	transport = npi;
 	initialized = NULL;
-	gatt_ready = false;
+	peripheral_ready = false;
 	first_error = cc2640_npi_reset(npi);
 	response_size = unrelated_events = 0;
 	struct cc2640_info observed = {0};
@@ -172,16 +176,47 @@ done:
 	return err;
 }
 
-int cc2640_controller_gatt(struct cc2640_gatt *gatt)
+static int configure_peripheral(void)
+{
+	/* The management endpoint does not pair. Unlike the reference's central
+	 * support, it needs neither bond erasure nor any scanning configuration. */
+	const uint8_t no_pairing[] = {0x00, 0x04, 1, 0};
+	int err = send_command(0xfe36, no_pairing, sizeof(no_pairing));
+	if (err) return err;
+	/* Reference general/connectable advertising min/max: 40 * 0.625 ms.
+	 * Configuration alone does not make the controller discoverable. */
+	for (uint8_t id = 8; id <= 11; id++) {
+		const uint8_t interval[] = {id, 40, 0};
+		err = send_command(0xfe30, interval, sizeof(interval));
+		if (err) return err;
+	}
+	/* Peripheral role only; retain the reference scan-response capacity and
+	 * zero IRK/CSRK/counter. A status ACK is not the DeviceInitDone event. */
+	const uint8_t init[38] = {0x04, 8};
+	err = send_command(0xfe00, init, sizeof(init));
+	if (err) return err;
+	/* Explicit public identity, already set and read back during HCI startup.
+	 * This matches the F4 management endpoint; no replacement address is stored. */
+	const uint8_t address[7] = {0};
+	return send_command(0xfe03, address, sizeof(address));
+}
+
+int cc2640_controller_peripheral(struct cc2640_gatt *gatt)
 {
 	if (!gatt) return -EINVAL;
 	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
-	int err = !initialized ? -ENODEV : gatt_ready ? -EALREADY : 0;
+	int err = !initialized ? -ENODEV : peripheral_ready ? -EALREADY : 0;
 	if (err) goto done;
 	transport = initialized;
 	struct cc2640_gatt registered = {0};
 	uint8_t command[CC2640_GATT_PACKET_MAX];
 	for (unsigned int s = 0; s < CC2640_GATT_SERVICE_COUNT; s++) {
+		/* Preserve the reference order: Generic Attribute/Access before GAP
+		 * initialization, Device Information and application services after it. */
+		if (s == 2) {
+			err = configure_peripheral();
+			if (err) goto failed;
+		}
 		/* The reply to the last attribute (or a one-attribute service itself)
 		 * carries its allocated handle range, as in the reference adapter. */
 		for (unsigned int a = 0; cc2640_gatt_registration(s, a, command); a++) {
@@ -197,12 +232,12 @@ int cc2640_controller_gatt(struct cc2640_gatt *gatt)
 		if (err) goto failed;
 	}
 	*gatt = registered;
-	gatt_ready = true;
+	peripheral_ready = true;
 	goto done;
 failed:
 	if (!first_error) {
 		first_error = err;
-		LOG_ERR("GATT registration: %d", err);
+		LOG_ERR("Peripheral registration: %d", err);
 	}
 	(void)cc2640_npi_off(initialized);
 	initialized = NULL;

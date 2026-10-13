@@ -61,6 +61,7 @@ enum scenario {
 	ADDRESS_MISMATCH,
 	NO_REPLY,
 	TRUNCATED_VERSION,
+	GAP_INIT_FAILURE,
 };
 static struct {
 	enum scenario scenario;
@@ -73,6 +74,7 @@ static struct {
 	bool mismatch;
 	bool registering, corrupt_range;
 	unsigned int service, attribute;
+	size_t gap_step, gap_events;
 	uint16_t pending_opcode;
 } radio;
 
@@ -80,8 +82,70 @@ static struct {
  * synthetic reply fixture, not an expectation derived from the DUT's table. */
 static const uint16_t ranges[][2] = {{1, 1}, {2, 8}, {9, 15}, {16, 21}, {22, 27}, {28, 33}};
 
+/* Peripheral-only GAP setup runs after the core GATT and GAP services, before
+ * DIS/Pybricks/native services. These are complete HCI command wire packets. */
+static const uint8_t no_pairing[] = {1, 0x36, 0xfe, 4, 0, 4, 1, 0};
+static const uint8_t adv_min[] = {1, 0x30, 0xfe, 3, 8, 40, 0};
+static const uint8_t adv_max[] = {1, 0x30, 0xfe, 3, 9, 40, 0};
+static const uint8_t conn_adv_min[] = {1, 0x30, 0xfe, 3, 10, 40, 0};
+static const uint8_t conn_adv_max[] = {1, 0x30, 0xfe, 3, 11, 40, 0};
+static const uint8_t gap_device_init[42] = {1, 0, 0xfe, 38, 4, 8};
+static const uint8_t public_address[] = {1, 3, 0xfe, 7, 0, 0, 0, 0, 0, 0, 0};
+static const uint8_t no_pairing_status[] = {4, 0xff, 6, 0x7f, 6, 0, 0x36, 0xfe, 0};
+static const uint8_t gap_param_status[] = {4, 0xff, 6, 0x7f, 6, 0, 0x30, 0xfe, 0};
+static const uint8_t device_init_status[] = {4, 0xff, 6, 0x7f, 6, 0, 0, 0xfe, 0};
+static const uint8_t device_init_done[] = {4, 0xff, 3, 0, 6, 0};
+static const uint8_t device_init_failed[] = {4, 0xff, 3, 0, 6, 0x0c};
+static const uint8_t public_address_status[] = {4, 0xff, 6, 0x7f, 6, 0, 3, 0xfe, 0};
+static const struct command_fixture gap_setup[] = {
+	{no_pairing, sizeof(no_pairing), no_pairing_status, sizeof(no_pairing_status)},
+	{adv_min, sizeof(adv_min), gap_param_status, sizeof(gap_param_status)},
+	{adv_max, sizeof(adv_max), gap_param_status, sizeof(gap_param_status)},
+	{conn_adv_min, sizeof(conn_adv_min), gap_param_status, sizeof(gap_param_status)},
+	{conn_adv_max, sizeof(conn_adv_max), gap_param_status, sizeof(gap_param_status)},
+	{gap_device_init, sizeof(gap_device_init), device_init_done, sizeof(device_init_done)},
+	{public_address, sizeof(public_address), public_address_status,
+		sizeof(public_address_status)},
+};
+
+static int gap_exchange(const uint8_t *command, size_t length, uint8_t *event)
+{
+	zassert_true(radio.gap_step < ARRAY_SIZE(gap_setup));
+	const struct command_fixture *step = &gap_setup[radio.gap_step];
+	if (length) {
+		zassert_equal(radio.pending_opcode, 0);
+		zassert_not_null(command);
+		zassert_equal(length, step->command_size);
+		zassert_mem_equal(command, step->command, length);
+		radio.pending_opcode = sys_get_le16(command + 1);
+		radio.gap_events = 0;
+		return 0;
+	}
+	zassert_not_equal(radio.pending_opcode, 0);
+	const uint8_t *reply = step->reply;
+	size_t size = step->reply_size;
+	if (radio.gap_step == 5 && !radio.gap_events) {
+		/* FE00's matching status only acknowledges the command. */
+		reply = device_init_status;
+		size = sizeof(device_init_status);
+	} else if (radio.gap_step == 5 && radio.scenario == GAP_INIT_FAILURE) {
+		reply = device_init_failed;
+		size = sizeof(device_init_failed);
+	}
+	memcpy(event, reply, size);
+	radio.gap_events++;
+	if (radio.gap_step != 5 || radio.gap_events == 2) {
+		radio.gap_step++;
+		radio.pending_opcode = 0;
+	}
+	return size;
+}
+
 static int registration_exchange(const uint8_t *command, size_t length, uint8_t *event)
 {
+	if (radio.service == 2 && radio.gap_step < ARRAY_SIZE(gap_setup)) {
+		return gap_exchange(command, length, event);
+	}
 	zassert_true(radio.service < ARRAY_SIZE(ranges));
 	uint16_t first = ranges[radio.service][0], last = ranges[radio.service][1];
 	if (length) {
@@ -269,29 +333,50 @@ ZTEST(cc2640_controller, test_truncated_completion_cannot_publish_info)
 	zassert_equal(radio.commands, 4);
 }
 
-ZTEST(cc2640_controller, test_gatt_registration_publishes_only_a_complete_database)
+ZTEST(cc2640_controller, test_peripheral_setup_publishes_only_a_complete_database)
 {
 	struct cc2640_info info;
 	zassert_ok(cc2640_controller_start(DEVICE_GET(mock_npi), address, &info));
 	struct cc2640_gatt gatt;
 	memset(&gatt, 0xa5, sizeof(gatt));
 	radio.registering = true;
-	zassert_ok(cc2640_controller_gatt(&gatt));
+	zassert_ok(cc2640_controller_peripheral(&gatt));
 	zassert_equal(radio.service, ARRAY_SIZE(ranges));
+	zassert_equal(radio.gap_step, ARRAY_SIZE(gap_setup));
 	for (size_t i = 0; i < ARRAY_SIZE(ranges); i++) zassert_equal(gatt.first[i], ranges[i][0]);
 	for (size_t i = 0; i < ARRAY_SIZE(gatt.subscribed); i++) zassert_equal(gatt.subscribed[i], 0);
-	zassert_equal(cc2640_controller_gatt(&gatt), -EALREADY);
+	zassert_equal(cc2640_controller_peripheral(&gatt), -EALREADY);
 
 	before(NULL);
 	zassert_ok(cc2640_controller_start(DEVICE_GET(mock_npi), address, &info));
 	struct cc2640_gatt previous = gatt;
 	radio.registering = radio.corrupt_range = true;
 	radio.off_error = -EACCES;
-	zassert_equal(cc2640_controller_gatt(&gatt), -EBADMSG);
+	zassert_equal(cc2640_controller_peripheral(&gatt), -EBADMSG);
 	zassert_mem_equal(&gatt, &previous, sizeof(gatt));
 	zassert_equal(radio.offs, 1);
 	zassert_equal(radio.service, 4);
-	zassert_equal(cc2640_controller_gatt(&gatt), -ENODEV);
+	zassert_equal(radio.gap_step, ARRAY_SIZE(gap_setup));
+	zassert_equal(cc2640_controller_peripheral(&gatt), -ENODEV);
+}
+
+ZTEST(cc2640_controller, test_gap_init_done_failure_retains_first_error_and_handles)
+{
+	struct cc2640_info info;
+	zassert_ok(cc2640_controller_start(DEVICE_GET(mock_npi), address, &info));
+	struct cc2640_gatt gatt;
+	memset(&gatt, 0xa5, sizeof(gatt));
+	struct cc2640_gatt previous = gatt;
+	radio.registering = true;
+	radio.scenario = GAP_INIT_FAILURE;
+	radio.off_error = -EACCES;
+	zassert_equal(cc2640_controller_peripheral(&gatt), -EIO);
+	zassert_equal(radio.service, 2);
+	zassert_equal(radio.gap_step, 6);
+	zassert_equal(radio.gap_events, 2);
+	zassert_equal(radio.offs, 1);
+	zassert_mem_equal(&gatt, &previous, sizeof(gatt));
+	zassert_equal(cc2640_controller_peripheral(&gatt), -ENODEV);
 }
 
 ZTEST_SUITE(cc2640_controller, NULL, NULL, before, NULL, NULL);
