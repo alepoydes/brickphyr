@@ -517,6 +517,14 @@ command completion and timeout handling. Waveforms, stopping latency and operati
 under physical hub load remain unverified. See [paired drive control](#paired-drive-control)
 for the shared native and Python DriveBase service.
 
+On one Robot Inventor F4 (PCB revision unknown), an unidentified third-party
+passive motor electrically identified as ID 1 passes a bounded USB Shell check at duties
+of +350 and -350 permille for 450 ms each. The operator observed rotation in both
+directions and subsequent stopping; driver snapshots confirmed timed coast and
+release without errors. This device provides no UART encoder feedback. The check
+does not establish speed, torque, loaded operation, braking or compatibility with
+other motors sold under the same description.
+
 ## Python DC motors
 
 `pybricks.pupdevices.DCMotor` and its `pybricks.iodevices` alias use the same
