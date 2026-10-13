@@ -28,6 +28,12 @@ static int spi_error;
 static uint32_t keys;
 static bool center_down;
 static bool hold_transfer;
+static int charger_source = BP_CHARGER_SOURCE_NONSTANDARD;
+
+int host_usb_source_update(int vbus)
+{
+	return vbus == 1 ? charger_source : vbus;
+}
 K_SEM_DEFINE(transfer_started, 0, 1);
 K_SEM_DEFINE(transfer_continue, 0, 1);
 
@@ -142,23 +148,59 @@ ZTEST(hub, test_charger_usb_budget_and_shared_latch)
 	zassert_ok(adc_emul_const_raw_value_set(adc, 3, 0));
 	/* Cold-start settling must not depend on the button test running first. */
 	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
-	zassert_true(WAIT_FOR(resistor_ladder_get_sample(center).stable, 100000, k_msleep(1)));
+	zassert_true(WAIT_FOR(resistor_ladder_get_sample(center).stable &&
+		resistor_ladder_get_sample(center).raw == 3600, 100000, k_msleep(1)));
 	hub_charger_update(1, k_uptime_get());
 	zassert_equal(duty(14), UINT16_MAX, "VBUS alone grants no charge current");
 	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
 	int64_t start = k_uptime_get();
 	hub_charger_update(1, start);
+	k_msleep(250);
+	hub_charger_update(1, k_uptime_get());
 	zassert_ok(hub_charger_get(&value));
 	zassert_ok(value.error, "charger acquisition failed: %d", value.error);
 	zassert_true(value.enabled && value.configured);
 	zassert_equal(value.current_ma, 0, "Zero-offset subtraction must not wrap");
 	zassert_equal(value.status, BP_CHARGER_CHARGING);
 	zassert_equal(fake_pwm_set_cycles_fake.arg2_val, 1000);
-	zassert_equal(fake_pwm_set_cycles_fake.arg3_val, 20);
+	zassert_equal(fake_pwm_set_cycles_fake.arg3_val, 150);
+	zassert_equal(value.input_budget_ma, 500);
 	zassert_equal(duty(14), 0);
 	const uint8_t rgb[] = {255, 255, 255};
 	zassert_ok(led_set_color(led, 0, 3, rgb));
 	zassert_equal(duty(14), 0, "LED updates must preserve MODE");
+	unsigned int before = writes;
+	charger_source = BP_CHARGER_SOURCE_CDP;
+	hub_charger_update(1, k_uptime_get());
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.input_budget_ma, 1500);
+	zassert_equal(value.iset_percent, 100);
+	zassert_equal(fake_pwm_set_cycles_fake.arg3_val, 1000);
+	zassert_equal(writes, before, "ISET changes do not rewrite MODE");
+	int64_t sampled = value.sample_ms;
+	hub_charger_usb(HUB_CHARGER_USB_SUSPEND);
+	hub_charger_update(1, k_uptime_get());
+	zassert_equal(duty(14), 0, "CDP budget survives USB suspend");
+	charger_source = BP_CHARGER_SOURCE_DCP;
+	hub_charger_usb(HUB_CHARGER_USB_RESET);
+	hub_charger_update(1, k_uptime_get());
+	zassert_equal(duty(14), 0, "DCP needs no enumeration");
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.sample_ms, sampled, "Source events must not resample CHG");
+	charger_source = BP_CHARGER_SOURCE_SDP;
+	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
+	fake_pwm_set_cycles_fake.return_val = -EIO;
+	hub_charger_update(1, k_uptime_get());
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.error, -EIO);
+	zassert_false(value.enabled, "A failed downgrade must disable MODE");
+	zassert_equal(duty(14), UINT16_MAX);
+	fake_pwm_set_cycles_fake.return_val = 0;
+	k_msleep(250);
+	hub_charger_update(1, k_uptime_get());
+	zassert_ok(hub_charger_get(&value));
+	zassert_true(value.enabled);
+	zassert_equal(value.iset_percent, 15);
 	const uint16_t blinking[] = {3600, 3600, 4095, 4095, 3600, 3600, 4095};
 	for (size_t i = 0; i < ARRAY_SIZE(blinking); i++) {
 		zassert_ok(adc_emul_const_raw_value_set(adc, 14, blinking[i]));
@@ -168,6 +210,7 @@ ZTEST(hub, test_charger_usb_budget_and_shared_latch)
 	zassert_ok(hub_charger_get(&value));
 	zassert_ok(value.error);
 	zassert_equal(value.status, BP_CHARGER_FAULT);
+	zassert_equal(value.faults, 1, "Fault episodes: %u", value.faults);
 	zassert_equal(duty(14), 0, "Keep MODE enabled to observe the hardware fault signal");
 	const uint8_t reserved = 14;
 	const uint16_t off = UINT16_MAX;
@@ -187,18 +230,36 @@ ZTEST(hub, test_charger_usb_budget_and_shared_latch)
 	zassert_equal(duty(14), 0);
 	start = k_uptime_get();
 	/* A stale observation must neither rewrite MODE nor restart its timeout. */
-	unsigned int before = writes;
+	before = writes;
 	hub_charger_update(1, start + 1000);
 	zassert_ok(hub_charger_get(&value));
 	zassert_equal(value.error, -ETIMEDOUT);
 	zassert_equal(writes, before);
 	hub_charger_update(1, start + 3600000);
 	zassert_ok(hub_charger_get(&value));
+	zassert_false(value.paused, "Do not periodically reset a known hardware fault");
+	/* A new cable session permits the reference periodic restart again. */
+	hub_charger_update(0, start + 3600001);
+	hub_charger_usb(HUB_CHARGER_USB_CONFIGURED);
+	hub_charger_update(1, start + 3600002);
+	spi_error = -EIO;
+	hub_charger_update(1, start + 7200002);
+	zassert_ok(hub_charger_get(&value));
+	zassert_true(value.paused && value.enabled);
+	zassert_equal(value.error, -EIO);
+	spi_error = 0;
+	hub_charger_update(1, start + 7229002);
+	zassert_ok(hub_charger_get(&value));
 	zassert_true(value.paused && !value.enabled);
 	zassert_equal(duty(14), UINT16_MAX);
-	hub_charger_update(1, start + 3630000);
+	hub_charger_update(1, start + 7230002);
+	zassert_equal(duty(14), UINT16_MAX, "Pause starts after confirmed disable");
+	hub_charger_update(1, start + 7259002);
 	zassert_equal(duty(14), 0);
-	hub_charger_update(0, start + 3630001);
+	zassert_ok(hub_charger_get(&value));
+	zassert_equal(value.iset_percent, 15);
+	zassert_equal(value.restarts, 1);
+	hub_charger_update(0, start + 7259003);
 	zassert_equal(duty(14), UINT16_MAX);
 	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 4095));
 	k_msleep(30);

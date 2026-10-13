@@ -2,8 +2,8 @@
 // Copyright (c) 2021-2022 The Pybricks Authors
 /* MP2639A control/status from lib/pbio/drv/charger/charger_mp2639a.c at
  * a7b1b04ae. Zephyr PWM/ADC and the shared TLC latch replace PBIO processes.
- * A configured host or detected CDP/DCP grants the conservative preset;
- * VBUS alone grants none. */
+ * A configured host grants the standard preset; CDP/DCP grants the charging
+ * preset. VBUS alone grants none. */
 #include "hub_charger.h"
 #include "host_usb_power.h"
 #include "input_resistor_ladder.h"
@@ -14,6 +14,7 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/shell/shell.h>
 
 #define CHARGER DT_NODELABEL(hub_charger)
 #define PERIOD_MS 250
@@ -31,7 +32,8 @@ static struct bp_charger_state state = {.error = -EINPROGRESS, .source = -EINPRO
 static int initialization_error, output_error;
 static uint32_t pwm_cycles;
 static int64_t next_sample, enabled_since, pause_until;
-static bool enabled, requested, samples[7];
+static bool enabled, restart_inhibited, restart_pending, samples[7];
+static unsigned int applied, requested;
 static unsigned int index, count;
 
 void hub_charger_usb(enum hub_charger_usb_event event)
@@ -44,20 +46,28 @@ void hub_charger_usb(enum hub_charger_usb_event event)
 	}
 }
 
-static int set_enabled(bool active)
+static int set_output(unsigned int percent)
 {
 	/* Set ISET before enabling MODE; disable MODE before lowering ISET.
-	 * 2% is the F4 reference's empirical standard USB 100 mA preset.
-	 * The nominal 500 mA preset exceeded that budget in board IB readings;
-	 * leave room for hub consumption until total input current is verified.
-	 * The chip owns the charging phases and its analogue protections. */
+	 * On a failed change, quiesce both outputs: in particular a failed budget
+	 * downgrade must not leave the old higher setting intentionally active.
+	 * Keep the first error even if quiescing also fails. */
 	int err = 0;
-	if (active) err = pwm_set_cycles(iset.dev, iset.channel, pwm_cycles,
-		DIV_ROUND_CLOSEST(pwm_cycles * 2U, 100U), iset.flags);
-	if (!err) err = tlc5955_set_reserved_channel16(mode,
-		DT_PROP(CHARGER, mode_channel), active ? 0 : UINT16_MAX);
-	if (!active || err) {
-		int stopped = pwm_set_cycles(iset.dev, iset.channel, pwm_cycles, 0, iset.flags);
+	if (percent) {
+		err = pwm_set_cycles(iset.dev, iset.channel, pwm_cycles,
+			DIV_ROUND_CLOSEST(pwm_cycles * percent, 100U), iset.flags);
+		if (!err) applied = percent;
+		if (!err && (!enabled || output_error)) {
+			err = tlc5955_set_reserved_channel16(mode, DT_PROP(CHARGER, mode_channel), 0);
+			if (!err) enabled = true;
+		}
+	}
+	if (!percent || err) {
+		int stopped = tlc5955_set_reserved_channel16(mode, DT_PROP(CHARGER, mode_channel), UINT16_MAX);
+		if (!stopped) enabled = false;
+		if (!err) err = stopped;
+		stopped = pwm_set_cycles(iset.dev, iset.channel, pwm_cycles, 0, iset.flags);
+		if (!stopped) applied = 0;
 		if (!err) err = stopped;
 	}
 	return err;
@@ -68,41 +78,64 @@ static int set_enabled(bool active)
 void hub_charger_update(int vbus, int64_t now)
 {
 	int source = host_usb_source_update(vbus);
-	if (vbus == 0) atomic_set(&usb, 0);
+	if (vbus == 0) {
+		atomic_set(&usb, 0);
+		restart_inhibited = false;
+	}
 	atomic_val_t host = atomic_get(&usb);
 	bool allowed = vbus == 1 && (host == USB_CONFIGURED ||
 		source == BP_CHARGER_SOURCE_CDP || source == BP_CHARGER_SOURCE_DCP);
-	if (!allowed) pause_until = 0;
-	bool paused = allowed && now < pause_until;
-	bool active = allowed && !paused;
-	if (active && enabled && now - enabled_since >= CHARGE_MS) {
-		pause_until = now + PAUSE_MS;
-		active = false;
-		paused = true;
+	bool charging_port = source == BP_CHARGER_SOURCE_CDP || source == BP_CHARGER_SOURCE_DCP;
+	/* Reference Prime F4 presets, not a linear conversion to USB milliamps.
+	 * ISET programs charge current; the chip's ILIM/VLIM protections are separate. */
+	unsigned int percent = allowed ? charging_port ? 100 : 15 : 0;
+	if (!allowed) {
+		restart_pending = false;
+		pause_until = 0;
 	}
+	/* Preserve the upstream long-charge workaround, but never restart over a
+	 * known CHG fault. MODE stays on so the chip's fault remains observable. */
+	if (allowed && !restart_pending && enabled && !restart_inhibited &&
+	    now - enabled_since >= CHARGE_MS) {
+		restart_pending = true;
+	}
+	bool paused = restart_pending && (!pause_until || now < pause_until);
+	if (paused) percent = 0;
 	/* Budget loss cancels charging on the next hub turn, not after waiting
 	 * for the slower status acquisition deadline. */
-	if (now < next_sample && active == requested && source == state.source) return;
-	requested = active;
+	if (now < next_sample && percent == requested && source == state.source) return;
+	requested = percent;
 	struct bp_charger_state value = state;
 	value.source = source;
 	value.configured = !!(host & USB_CONFIGURED);
 	value.suspended = !!(host & USB_SUSPENDED);
 	value.paused = paused;
+	value.input_budget_ma = allowed ? charging_port ? 1500 : 500 : 0;
 	int err = initialization_error;
-	if (!err && (active != enabled || output_error)) {
-		output_error = err = set_enabled(active);
-		if (!err) {
-			enabled = active;
+	if (!err && (percent != applied || !!percent != enabled || output_error)) {
+		bool was_enabled = enabled;
+		output_error = err = set_output(percent);
+		if (!err && enabled != was_enabled) {
 			enabled_since = now;
 			count = index = 0;
 			memset(samples, 0, sizeof(samples));
 		}
+		if (!err && restart_pending) {
+			if (!enabled && !pause_until) pause_until = now + PAUSE_MS;
+			else if (enabled) {
+				restart_pending = false;
+				pause_until = 0;
+				value.restarts += value.restarts != UINT32_MAX;
+			}
+		}
 	}
 	value.enabled = enabled;
-	value.limit_ma = enabled ? 100 : 0;
-	value.sample_ms = now;
-	if (!err) {
+	value.iset_percent = applied;
+	/* Policy events apply outputs immediately but must not accelerate the CHG
+	 * sampling clock or turn duplicate observations into a hardware fault. */
+	bool due = now >= next_sample;
+	if (due) value.sample_ms = now;
+	if (due && !err) {
 		uint16_t raw;
 		struct adc_sequence sequence = {.buffer = &raw, .buffer_size = sizeof(raw)};
 		err = adc_sequence_init_dt(&current, &sequence);
@@ -115,12 +148,12 @@ void hub_charger_update(int vbus, int64_t now)
 		}
 	}
 	struct resistor_ladder_sample signal = {0};
-	if (!err) {
+	if (due && !err) {
 		signal = resistor_ladder_get_sample(ladder);
 		err = signal.error ? signal.error : !signal.stable ? -EAGAIN :
 			now - signal.sampled_ms > 4 * DT_PROP(DT_PHANDLE(CHARGER, status_ladder), sample_period_ms) ? -ETIMEDOUT : 0;
 	}
-	if (!err) {
+	if (due && !err) {
 		if (now >= next_sample + PERIOD_MS) {
 			count = index = 0;
 			memset(samples, 0, sizeof(samples));
@@ -130,20 +163,31 @@ void hub_charger_update(int vbus, int64_t now)
 			if (count < ARRAY_SIZE(samples)) count++;
 			unsigned int transitions = samples[0] != samples[ARRAY_SIZE(samples) - 1];
 			for (size_t i = 1; i < ARRAY_SIZE(samples); i++) transitions += samples[i] != samples[i - 1];
-			value.status = transitions > 2 ? BP_CHARGER_FAULT : samples[index] ? BP_CHARGER_CHARGING :
+			/* Unfilled zero entries are not observed CHG transitions. */
+			value.status = count == ARRAY_SIZE(samples) && transitions > 2 ? BP_CHARGER_FAULT : samples[index] ? BP_CHARGER_CHARGING :
 				count > 2 ? BP_CHARGER_COMPLETE : BP_CHARGER_DISCHARGING;
 		} else {
 			value.status = BP_CHARGER_DISCHARGING;
 			count = 0;
 		}
 		index = (index + 1) % ARRAY_SIZE(samples);
-	} else {
+	} else if (due) {
 		count = index = 0;
 		memset(samples, 0, sizeof(samples));
 	}
+	if (!enabled) value.status = BP_CHARGER_DISCHARGING;
+	if (!due && !err) err = state.error;
 	value.error = err ? err : vbus < 0 ? vbus : 0;
 	if (value.error) value.failures += value.failures != UINT32_MAX;
-	next_sample = now + PERIOD_MS;
+	if (!value.error && value.status == BP_CHARGER_FAULT) {
+		restart_inhibited = true;
+		if (state.status != BP_CHARGER_FAULT) value.faults += value.faults != UINT32_MAX;
+	}
+	value.reason = value.error ? BP_CHARGER_IO_ERROR : vbus == 0 ? BP_CHARGER_NO_USB :
+		!allowed ? host & USB_SUSPENDED ? BP_CHARGER_USB_SUSPENDED : BP_CHARGER_WAIT_USB :
+		paused ? BP_CHARGER_RESTART_PAUSE : value.status == BP_CHARGER_FAULT ?
+		BP_CHARGER_HARDWARE_FAULT : BP_CHARGER_ACTIVE;
+	if (due) next_sample = now + PERIOD_MS;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	state = value;
 	k_spin_unlock(&lock, key);
@@ -158,6 +202,7 @@ int hub_charger_get(struct bp_charger_state *value)
 	if (k_uptime_get() - value->sample_ms >= 2 * PERIOD_MS) {
 		if (!value->error) value->error = -ETIMEDOUT;
 		if (value->source >= 0) value->source = -ETIMEDOUT;
+		value->reason = BP_CHARGER_IO_ERROR;
 	}
 	return 0;
 }
@@ -170,8 +215,25 @@ static int initialize(void)
 	if (!initialization_error) initialization_error = pwm_get_cycles_per_sec(iset.dev, iset.channel, &rate);
 	if (!initialization_error) {
 		pwm_cycles = DIV_ROUND_CLOSEST(rate * iset.period, NSEC_PER_SEC);
-		output_error = set_enabled(false);
+		output_error = set_output(0);
 	}
 	return initialization_error ? initialization_error : output_error;
 }
 SYS_INIT(initialize, APPLICATION, 80);
+
+static int cmd_charger(const struct shell *shell, size_t argc, char **argv)
+{
+	struct bp_charger_state value;
+	hub_charger_get(&value);
+	static const char *const sources[] = {"none", "nonstandard", "SDP", "CDP", "DCP"};
+	static const char *const reasons[] = {"no USB", "waiting for USB configuration", "USB suspended",
+		"enabled", "periodic restart pause", "hardware fault", "I/O error"};
+	shell_print(shell, "Source: %s (%d); USB allowance: %u mA",
+		value.source < 0 ? "unavailable" : sources[value.source], value.source, value.input_budget_ma);
+	shell_print(shell, "Charger: %s; ISET: %u%%; chip status: %u; error: %d",
+		reasons[value.reason], value.iset_percent, value.status, value.error);
+	shell_print(shell, "IB estimate: %d mA (raw %u); faults: %u; periodic restarts: %u",
+		value.current_ma, value.current_raw, value.faults, value.restarts);
+	return value.error;
+}
+SHELL_CMD_ARG_REGISTER(charger, NULL, "Charger source, allowance, applied ISET and status (read-only).", cmd_charger, 1, 0);

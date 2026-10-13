@@ -621,15 +621,20 @@ is removed and reinserted. A failed USB detach leaves the PHY state uncertain
 and requires a restart before another detection can begin.
 
 VBUS alone grants no charging budget. An awake, configured USB host permits
-charging; a detected charging downstream port (CDP) or dedicated charging port
-(DCP) also permits the same conservative preset before enumeration and while USB
-is suspended. A standard downstream port (SDP) or unknown/nonstandard source
-requires host configuration and wakefulness.
-The USB descriptor requests 500 mA for the whole device. The current profile uses
-Pybricks' smaller standard-port ISET preset, nominally 100 mA (2% duty), because
-the larger preset's IB readings exceeded 500 mA on the Inventor F4.
-This is an empirical preset, not a calibrated guarantee of total input current.
-Higher BC1.2 current budgets are not used.
+the reference standard-port ISET setting (15% PWM); a detected charging downstream
+port (CDP) or dedicated charging port (DCP) permits the reference charging-port
+setting (100%), including before enumeration and while USB is suspended.
+A standard downstream port (SDP) or unknown/nonstandard source requires host
+configuration and wakefulness. The source allowance is 500 mA for the configured
+USB device or 1500 mA for CDP/DCP; it covers the entire USB input, not just charging.
+
+These are the Prime F4 settings from the reference driver, not a calibrated
+conversion from PWM to USB milliamps. ISET controls charge current; the chip's
+input-current and input-voltage protections are separate. Actual total input
+current and the IB conversion still need instrumented verification. Source
+changes update ISET without toggling MODE or resetting charge/fault history.
+A failed setting change attempts to disable MODE and zero ISET, preserving the
+first error. An output error means the physical outputs cannot be assumed known.
 No open terminal or keep-alive application is required. Charging continues after
 [shutdown](settings.md#inactivity-shutdown) while its host or detected-source
 budget remains valid.
@@ -637,6 +642,7 @@ budget remains valid.
 Read the same cached observations in the terminal or host monitor:
 
 ```text
+charger
 observe charger
 observe battery
 ```
@@ -661,26 +667,49 @@ or raises `OSError` for a detection/USB failure or stale snapshot; an ADC error
 alone does not invalidate its result. Reading any observation does not change
 charging policy.
 
-`enabled` is the last successfully applied charge-enable state; `limit_ma` names
-the selected reference preset. `current_ma` is the empirical IB conversion,
+`charger` prints the source, allowance, applied ISET, policy reason, chip status
+and fault/restart counters. `enabled` and `iset_percent` describe the last
+successfully applied outputs; `input_budget_ma` is the source allowance, including
+during a periodic charge pause. It is neither a measured current nor a calibrated
+hardware limit. `current_ma` is the reference's empirical IB conversion,
 clamped at zero instead of wrapping below its offset. `status` is 0 discharging,
 1 charging, 2 complete/suspended by the chip, or 3 fault. It is not a state-of-charge
 percentage. Inspect the observation error before trusting these fields: an I/O
-failure can leave the actual output unknown. Status is sampled every 250 ms;
-the reused seven-sample CHG transition detector identifies the chip's blinking
-fault indication. Stable output does not cause repeated SPI writes. After one
-hour enabled, charging pauses for 30 seconds and restarts, as in Pybricks.
+failure can leave the actual output unknown. The existing Python status values
+are preserved; in particular, an inactive CHG signal does not alone prove a full
+battery. Status is sampled every 250 ms; a complete seven-sample CHG window
+identifies the chip's blinking fault indication. Stable output does not cause
+repeated SPI writes. After one hour enabled, charging pauses for 30 seconds and
+restarts, as in Pybricks. The full pause starts only after outputs are confirmed
+disabled; failed attempts cannot shorten it. A detected hardware fault inhibits these automatic
+restarts until USB removal; MODE stays enabled so the chip's fault remains
+observable and its own protections control charging. `faults` counts observed
+fault episodes and `restarts` counts completed periodic restarts since boot.
 Removal revokes charging at the next hub-loop update; suspend also revokes an
-ordinary host's budget. A detected CDP/DCP retains the conservative preset.
+ordinary host's budget. CDP/DCP retains its charging-port setting.
+
+`reason` is 0 no USB, 1 waiting for USB configuration, 2 USB suspended,
+3 enabled, 4 periodic restart pause, 5 hardware fault, or 6 I/O error. It explains
+charger policy, not net battery charge: simultaneous hub consumption can exceed
+available input power. The readings do not provide calibrated net battery current
+or a state-of-charge percentage. A suitably powered idle hub should gain charge;
+that property requires physical measurements, not just an enabled flag.
 
 Initial charging and recovery of battery voltage, lighting and the center button
-are checked on the Inventor F4. Python current/status readings through the
+are checked on the Inventor F4. The source-aware charging-port setting also has
+a bounded three-minute USB check on that board with connected peripherals and
+motor outputs off: battery voltage rose, temperature remained stable, and no
+charger acquisition or chip fault was reported. Shutdown then left USB attached
+with the console closed. This is evidence of charging under that load, not a
+measurement of battery capacity, total USB current or a complete charge cycle.
+Python current/status readings through the
 protected SDK are checked with synthetic ADC input on ARM and over USB/BLE on
 that F4. Full-charge termination, all temperature/fault
 conditions, physical BC1.2 classification, adapter charging and instrumented
-current accuracy remain open. Synthetic checks cover detector timing and the
-coordinator's attach/removal/error handling, and the F4 profile compiles; these
-do not establish electrical behavior on a hub.
+current accuracy remain open. Synthetic checks cover detector timing,
+source changes, suspended/detached budgets, failed output changes, fault detection
+and a full restart pause after failed disable. These checks do not establish
+electrical source classification or current accuracy on a hub.
 
 ## A support claim must be reproducible
 

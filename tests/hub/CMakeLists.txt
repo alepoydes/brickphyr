@@ -9,5 +9,8 @@ target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/hub_light.c ${BRICKPHYR_
   ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c ${BRICKPHYR_ROOT}/src/hub_matrix.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/telemetry.c ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_charger.c)
+# Supply synthetic source classifications without instantiating a USB controller.
+set_source_files_properties(${BRICKPHYR_ROOT}/src/hub_charger.c PROPERTIES
+  COMPILE_DEFINITIONS CONFIG_BRICKPHYR_USB_BC12=1)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include ${BRICKPHYR_ROOT}/sdk/include
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)

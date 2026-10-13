@@ -362,7 +362,11 @@ static void capture(enum source source, struct observation *out)
 			field(out, "failures", value.failures);
 			field(out, "current_ma", value.current_ma);
 			field(out, "current_raw", value.current_raw);
-			field(out, "limit_ma", value.limit_ma);
+			field(out, "input_budget_ma", value.input_budget_ma);
+			field(out, "iset_percent", value.iset_percent);
+			field(out, "reason", value.reason);
+			field(out, "faults", value.faults);
+			field(out, "restarts", value.restarts);
 			field(out, "source", value.source);
 			field(out, "status", value.status);
 			field(out, "enabled", value.enabled);

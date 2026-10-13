@@ -287,7 +287,7 @@ Inventor F4, not measurements of residual current or exact physical cutoff timin
 With charger support enabled, shutdown closes existing management sessions and
 stops applications, motors, sensors, Bluetooth and lighting, while keeping the
 USB device attached after detection. This retains an awake computer's current
-budget; a detected CDP or DCP permits the same conservative charging preset even
+budget; a detected CDP or DCP permits the reference charging-port setting even
 before configuration or during suspend. VBUS alone grants no charging budget;
 USB presence after shutdown does not mean a working terminal or running program.
 The off loop continues BC1.2 classification on cable insertion and cancels it on
