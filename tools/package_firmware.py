@@ -45,6 +45,8 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         notices.append(("SDL Xbox report codec", root / "LICENSES/SDL-Zlib.txt"))
     if "CONFIG_BRICKPHYR_PYTHON=y" in config:
         notices.append(("MicroPython core", root / "LICENSES/MicroPython-MIT.txt"))
+    if "CONFIG_BRICKPHYR_CC2640_CONTROL=y" in config:
+        notices.append(("TI CC2640 protocol definitions", root / "LICENSES/TI-BSD-3-Clause.txt"))
     dependencies = [
         ("zephyr", "LICENSE"),
         ("cmsis_6", "LICENSE"),

@@ -158,7 +158,7 @@ that word using its existing Technic checksum algorithm. Use the maintained
 Pybricks BLE installer when hardware acceptance becomes possible; neither the
 factory loader nor the CC2640 firmware is included in this package.
 
-To compile the experimental CC2640 SPI transport as well:
+To compile the experimental CC2640 SPI transport and initialization layer as well:
 
 ```sh
 uv run --locked west build -b technic_hub -d build/technic-npi -- \
@@ -166,10 +166,12 @@ uv run --locked west build -b technic_hub -d build/technic-npi -- \
   -DDTC_OVERLAY_FILE=boards/technic_hub_npi.overlay
 ```
 
-This is a transport development profile. The controller remains in reset until
+This is a controller development profile. The controller remains in reset until
 explicit initialization; advertising and host connections are not provided yet.
 The overlay assigns SPI1 and ready/reset GPIOs to the driver. Its STM32 SPI path
 uses interrupt completion with Zephyr's timeout instead of polling indefinitely.
+Unused initialization routines may be removed by the linker; this profile's size
+is not a full BLE endpoint resource measurement.
 
 ### Diagnostic shell
 

@@ -114,9 +114,15 @@ adds a Zephyr SPI/GPIO port of Pybricks' NPI framing, ready handshake and reset
 sequence. It checks framed event lengths and checksums, bounds handshakes and
 latches the first failure until explicit reset. Synthetic SPI/GPIO checks cover
 full-size packets, a rapid ready-line release/reassertion and fault cleanup.
-The controller still stays in reset at boot: TI initialization, GAP/GATT services
-and a usable BLE endpoint remain pending. The shared Shell/SMP also has a
-UART-free build and synthetic session check, without a second terminal engine.
+The optional initialization layer retains the reference command order, factory
+address, 0 dBm output and 27-byte link-layer packet limit. It checks address
+readback and command replies, bounds missing replies and preserves the first
+failure through reset cleanup. Synthetic checks exercise these behaviors through
+the production controller code; the NPI device is simulated.
+The controller still stays in reset at boot: GAP/GATT services, startup integration
+and a usable BLE endpoint remain pending. The shared BLE session and Shell/SMP
+also have a UART-free build and synthetic cold-start/reconnect check, without a
+second terminal engine.
 
 [Builds](builds.md#experimental-technic-base) gives the build command;
 [recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM

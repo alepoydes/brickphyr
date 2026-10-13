@@ -5,6 +5,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(host_radio)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/pbio.cmake)
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_ble.c
+  ${BRICKPHYR_ROOT}/src/host_ble_session.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include

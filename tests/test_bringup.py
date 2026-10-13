@@ -130,6 +130,7 @@ def test_technic_image():
         "poweroff-tests",
         "technic-tests",
         "cc2640-npi-tests",
+        "cc2640-controller-tests",
         "host-ble-only-tests",
         "radio-tests",
         "imu-tests",

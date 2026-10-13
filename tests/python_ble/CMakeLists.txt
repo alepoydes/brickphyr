@@ -20,6 +20,7 @@ target_sources_ifdef(CONFIG_BRICKPHYR_APP_STORAGE app PRIVATE ${BRICKPHYR_ROOT}/
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/host_transport.c
 	${BRICKPHYR_ROOT}/drivers/ti_cc2564c.c
   ${BRICKPHYR_ROOT}/src/host_protocol.c ${BRICKPHYR_ROOT}/src/host_ble.c
+  ${BRICKPHYR_ROOT}/src/host_ble_session.c
   ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c
   ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/src/protocol/pybricks.c)
 target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)

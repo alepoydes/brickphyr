@@ -8,7 +8,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/pbio.cmake)
 if(CONFIG_SERIAL)
   target_sources(app PRIVATE main.c)
 else()
-  target_sources(app PRIVATE ble_only.c)
+  target_sources(app PRIVATE ble_only.c ${BRICKPHYR_ROOT}/src/host_ble_session.c)
 endif()
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c

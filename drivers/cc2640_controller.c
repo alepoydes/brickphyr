@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2018-2023 The Pybricks Authors
+/* Startup order and configuration ported from pybricks-micropython
+ * a7b1b04ae4f8449dd46b3dfb97c420334439fd35,
+ * lib/pbio/drv/bluetooth/bluetooth_stm32_cc2640.c:hci_init.
+ * BSD-licensed TI headers supply the protocol constants. Brickphyr encodes
+ * these fixed startup commands and correlates completions,
+ * validates identity/replies and preserves errors through reset cleanup.
+ * See LICENSES/Pybricks-MIT.txt and LICENSES/TI-BSD-3-Clause.txt. */
+
+#include "cc2640_controller.h"
+#include "cc2640_npi.h"
+
+#include <errno.h>
+#include <string.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
+
+#include "hci_ext.h"
+#include "hci_tl.h"
+
+LOG_MODULE_REGISTER(cc2640_controller, LOG_LEVEL_ERR);
+
+/* Fail a missing reply within two seconds. NPI separately bounds its SPI and
+ * ready handshake. Startup stops on the first failed command, so this budget
+ * does not multiply by the number of commands when the chip is unavailable. */
+#define COMMAND_TIMEOUT K_SECONDS(2)
+#define HCI_LE_MIN_DATA_OCTETS 27
+#define HCI_LE_MIN_DATA_TIME_US 328
+
+/* One startup operation owns the bounded reply storage. */
+static K_MUTEX_DEFINE(controller_lock);
+static const struct device *transport;
+static uint8_t response[CC2640_NPI_MAX_PACKET];
+static size_t response_size;
+static uint32_t unrelated_events;
+static int first_error;
+
+static uint16_t completion_event(uint16_t opcode)
+{
+	switch (opcode) {
+	case HCI_EXT_SET_BDADDR: return 0x040c;
+	case HCI_EXT_SET_TX_POWER: return 0x0401;
+	case HCI_EXT_SET_MAX_DATA_LENGTH: return 0x0421;
+	case HCI_EXT_SET_LOCAL_SUPPORTED_FEATURES: return 0x0406;
+	case HCI_READ_BDADDR:
+	case HCI_READ_LOCAL_VERSION_INFO: return HCI_EVENT_COMMAND_COMPLETE;
+	default: return 0;
+	}
+}
+
+/* A positive result completes this command; zero is an unrelated event or an
+ * intermediate success status. A negative result is a malformed/error reply.
+ * Startup has no active GAP link; unsolicited events cannot carry user data. */
+static int match_reply(uint16_t opcode, uint16_t expected)
+{
+	if (response_size < 3 || response[0] != HCI_EVENT_PACKET ||
+	    response[2] != response_size - 3) return -EBADMSG;
+	if (response[1] == HCI_EVENT_COMMAND_COMPLETE) {
+		if (response_size < 7) return -EBADMSG;
+		if (sys_get_le16(response + 4) != opcode) return 0;
+		if (response[6]) return -EIO;
+		return expected == HCI_EVENT_COMMAND_COMPLETE ? 1 : 0;
+	}
+	if (response[1] != HCI_EVENT_VENDOR_SPECIFIC) return 0;
+	if (response_size < 6) return -EBADMSG;
+	uint16_t event = sys_get_le16(response + 3);
+	if (event == HCI_COMMAND_STATUS) {
+		if (response_size < 9 || response[8] != response_size - 9) return -EBADMSG;
+		if (sys_get_le16(response + 6) != opcode) return 0;
+		/* Successful status acknowledges receipt, not the requested result. */
+		return response[5] ? -EIO : 0;
+	}
+	if (event != expected) return 0;
+	return response[5] ? -EIO : 1;
+}
+
+static int send_command(uint16_t opcode, const uint8_t *payload, uint8_t length)
+{
+	if (first_error) return first_error;
+	uint16_t expected = completion_event(opcode);
+	int err = !expected ? -ENOTSUP : length > CC2640_NPI_MAX_PACKET - 4 ||
+		(length && !payload) ? -EINVAL : 0;
+	if (err) goto failed;
+	uint8_t command[CC2640_NPI_MAX_PACKET] = {HCI_CMD_PACKET};
+	sys_put_le16(opcode, command + 1);
+	command[3] = length;
+	if (length) memcpy(command + 4, payload, length);
+	k_timepoint_t deadline = sys_timepoint_calc(COMMAND_TIMEOUT);
+	err = cc2640_npi_exchange(transport, command, length + 4, response, K_NO_WAIT);
+	if (err < 0) goto failed;
+	for (;;) {
+		response_size = err > 0 ? err : 0;
+		if (response_size) {
+			err = match_reply(opcode, expected);
+			if (err < 0) goto failed;
+			if (err > 0) return 0;
+			unrelated_events++;
+		}
+		if (sys_timepoint_expired(deadline)) {
+			err = -ETIMEDOUT;
+			goto failed;
+		}
+		err = cc2640_npi_exchange(transport, NULL, 0, response,
+					  sys_timepoint_timeout(deadline));
+		if (err == -EAGAIN) err = -ETIMEDOUT;
+		if (err < 0) goto failed;
+	}
+failed:
+	first_error = err;
+	LOG_ERR("Command 0x%04x: %d", opcode, err);
+	return err;
+}
+
+int cc2640_controller_start(const struct device *npi, const uint8_t address[6],
+			    struct cc2640_info *info)
+{
+	if (!npi || !address || !info) return -EINVAL;
+	/* Erased or missing factory identity must not become a shared address. */
+	static const uint8_t zero[6], erased[6] = {255, 255, 255, 255, 255, 255};
+	if (!memcmp(address, zero, 6) || !memcmp(address, erased, 6)) return -EINVAL;
+	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
+	transport = npi;
+	first_error = cc2640_npi_reset(npi);
+	response_size = unrelated_events = 0;
+	struct cc2640_info observed = {0};
+	if (first_error) goto done;
+	if (send_command(HCI_EXT_SET_BDADDR, address, 6) ||
+	    send_command(HCI_READ_BDADDR, NULL, 0)) goto done;
+	if (response_size != 13 || memcmp(response + 7, address, 6)) {
+		first_error = -EBADMSG;
+		LOG_ERR("Controller address verification: %d", first_error);
+		goto done;
+	}
+	memcpy(observed.address, response + 7, 6);
+	const uint8_t power = HCI_EXT_CC26XX_TX_POWER_0_DBM;
+	if (send_command(HCI_EXT_SET_TX_POWER, &power, sizeof(power)) ||
+	    send_command(HCI_READ_LOCAL_VERSION_INFO, NULL, 0)) goto done;
+	if (response_size != 15) {
+		first_error = -EBADMSG;
+		LOG_ERR("Controller version reply: %d", first_error);
+		goto done;
+	}
+	observed.revision = sys_get_le16(response + 8);
+	observed.manufacturer = sys_get_le16(response + 11);
+	/* Retain the reference order: after setting features the controller can
+	 * refuse the packet limit yet still accept packets too large for its RAM. */
+	uint8_t limit[8], features[8] = {HCI_EXT_LOCAL_FEATURE_ENCRYTION};
+	sys_put_le16(HCI_LE_MIN_DATA_OCTETS, limit);
+	sys_put_le16(HCI_LE_MIN_DATA_TIME_US, limit + 2);
+	memcpy(limit + 4, limit, 4);
+	if (send_command(HCI_EXT_SET_MAX_DATA_LENGTH, limit, sizeof(limit)) ||
+	    send_command(HCI_EXT_SET_LOCAL_SUPPORTED_FEATURES, features, sizeof(features))) goto done;
+	observed.unrelated_events = unrelated_events;
+	*info = observed;
+done:
+	if (first_error) (void)cc2640_npi_off(npi);
+	int err = first_error;
+	transport = NULL;
+	k_mutex_unlock(&controller_lock);
+	return err;
+}

@@ -6,6 +6,13 @@ transport, simultaneous roles, and timing are exercised on identified hardware.
 The existing Pybricks BTstack integration is evidence about the device, not the
 host stack to transplant wholesale.
 
+Management ownership, Pybricks messages and the native Shell stream live in one
+shared BLE session implementation. Controller adapters supply connection
+references, MTU and notification/disconnect operations; they do not duplicate
+the terminal or command dispatcher. F4 uses the Zephyr adapter. Technic's factory
+CC2640 owns GAP/GATT itself, so its [adapter preparation](hardware.md#experimental-technic-base)
+uses the TI network-processor interface; a working endpoint remains pending.
+
 ## Experimental F4 controller
 
 An optional build initializes the Inventor F4 CC2564C through Zephyr's H:4 driver

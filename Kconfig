@@ -56,6 +56,13 @@ config BRICKPHYR_CC2640_NPI
 	  Bounded SPI transport for the factory TI BLE stack on Technic Hub.
 	  This does not enable advertising or a Bluetooth host endpoint.
 
+config BRICKPHYR_CC2640_CONTROL
+	bool "CC2640 controller initialization"
+	depends on BRICKPHYR_CC2640_NPI
+	help
+	  Use the TI protocol definitions and Pybricks startup sequence through NPI.
+	  GAP/GATT services and host advertising are not yet enabled.
+
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"
 	default y if BRICKPHYR_HUB
