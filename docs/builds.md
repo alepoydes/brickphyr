@@ -251,13 +251,16 @@ Release a short center press
 to confirm; Bluetooth cancels. Center hold still switches power off. An occupied
 interface cannot be displaced: confirmation briefly extinguishes the white BT
 light and leaves the menu open. Outside the menu, the Bluetooth build flashes
-this button blue once per second while awaiting a connection. Connected Pybricks
+this button blue once every three seconds while awaiting a connection. Connected Pybricks
 uses the cyan reactor effect; the native terminal and SMP use yellow. A connected
 client that has not yet used either profile shows steady blue. The base build and
 a disabled radio leave the button off. See [connection lighting](hardware.md#f4-buttons-lighting-and-power).
-The 5×5 display is not implemented. An optional
+The shared [5×5 matrix service](hardware.md#hub-matrix) provides terminal and
+application access. An optional
 [Bluetooth controller profile](bluetooth.md#experimental-f4-controller) provides
-Pybricks BLE identification/status and SMP management with shared USB/BLE ownership.
+Pybricks BLE identification/status, SMP management and the same interactive Shell
+with shared USB/BLE ownership. The Python profile adds
+[Pybricks program execution](host.md#implemented-pybricks-subset).
 
 For a short check, press each button briefly, then run:
 
@@ -274,8 +277,9 @@ reboot. A BLE state change also restores automatic Bluetooth indication.
 RGB values pass through the shared correction; `led pwm` sets raw duty instead.
 The base build reports device initialization errors through the shell. The optional
 Bluetooth profile still has the [HCI timeout limitation](bluetooth.md#experimental-f4-controller).
-Charging control is not implemented; the LED controller's charger-enable output
-is held disabled. See [hardware](hardware.md) for physical verification and
+The F4 build enables [charging](hardware.md#hub-charger) when the USB host or
+detected source permits it, including after shutdown. Use `observe charger` and
+`observe battery` to inspect its state. See [hardware](hardware.md) for physical verification and
 [testing](testing.md) for local driver checks.
 
 To update from this build, run `reboot dfu` in the hub terminal and wait for

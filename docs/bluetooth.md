@@ -176,9 +176,10 @@ profile, or consume its advertisement. Recycled connection objects restart
 advertising only when no management owner and no active advertisement remain.
 Pending disconnects retain each distinct connection separately, so a slow HCI
 command cannot discard another rejected client's cleanup. These boundaries have
-synthetic checks with multiple connection slots. The F4 profile reserves two
-slots: one management connection and one application peripheral. Simultaneous
-physical links remain an acceptance item.
+synthetic checks with multiple connection slots. The Bluetooth profile reserves
+two slots: one management connection and one application peripheral. The full
+Python profile reserves five to also accommodate Classic HubNetwork links.
+Simultaneous physical BLE management/peripheral links remain an acceptance item.
 
 The local H:4 close-path correction discards partial framing and releases pending
 buffers even when board teardown reports an error. UART-emulator checks cover

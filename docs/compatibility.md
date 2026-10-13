@@ -322,7 +322,6 @@ The F4 profile and synthetic detector timing are checked, but physical source
 classification and adapter charging remain unverified.
 Battery chemistry, voltage/current and temperature use the common observation
 service; voltage/current and temperature retain independent acquisition errors.
-The remaining device bindings are not yet exposed.
 `hub.bluetooth_light` is a Brickphyr extension with the same color-light interface;
 system connection-menu indication takes priority over an application color.
 Light sequences have 1–256 entries; frame durations must be positive and fit a
