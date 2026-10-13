@@ -322,8 +322,7 @@ static ssize_t shell_input(struct bt_conn *conn, const struct bt_gatt_attr *attr
 		offset, flags & BT_GATT_WRITE_FLAG_PREPARE);
 }
 
-#define SHELL_UUID(id) BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0xf3641400 + (id), \
-	0x00b0, 0x4240, 0xba50, 0x05ca45bf8abc))
+#define SHELL_UUID(id) BT_UUID_DECLARE_128(HOST_BLE_SHELL_UUID(id))
 
 BT_GATT_SERVICE_DEFINE(pybricks_service,
 	BT_GATT_PRIMARY_SERVICE(&service_uuid),
@@ -421,7 +420,7 @@ static int advertise(void)
 #if !defined(CONFIG_MCUMGR_TRANSPORT_BT)
 	uint8_t pnp[2 + PBIO_PYBRICKS_PNP_ID_SIZE];
 	sys_put_le16(PBIO_GATT_PNP_ID_CHAR_UUID, pnp);
-	pbio_pybricks_pnp_id(pnp + 2, PBIO_PYBRICKS_HUB_KIND_PRIME, host_hub_variant());
+	pbio_pybricks_pnp_id(pnp + 2, host_protocol_hub_kind(), host_hub_variant());
 #endif
 	const struct bt_data data[] = {
 		BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR),

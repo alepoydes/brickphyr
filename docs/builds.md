@@ -158,7 +158,7 @@ that word using its existing Technic checksum algorithm. Use the maintained
 Pybricks BLE installer when hardware acceptance becomes possible; neither the
 factory loader nor the CC2640 firmware is included in this package.
 
-To compile the experimental CC2640 SPI transport and initialization layer as well:
+To compile the experimental CC2640 transport, initialization and GATT adapter as well:
 
 ```sh
 uv run --locked west build -b technic_hub -d build/technic-npi -- \

@@ -119,10 +119,15 @@ address, 0 dBm output and 27-byte link-layer packet limit. It checks address
 readback and command replies, bounds missing replies and preserves the first
 failure through reset cleanup. Synthetic checks exercise these behaviors through
 the production controller code; the NPI device is simulated.
-The controller still stays in reset at boot: GAP/GATT services, startup integration
-and a usable BLE endpoint remain pending. The shared BLE session and Shell/SMP
-also have a UART-free build and synthetic cold-start/reconnect check, without a
-second terminal engine.
+The GATT adapter registers Generic Attribute/Access, Device Information, Pybricks,
+legacy NUS and native Shell services. It validates allocated handle ranges and
+publishes the database only after all registrations succeed. Its ATT request
+handler supports discovery, reads, subscriptions and shared Pybricks/Shell writes
+at the default MTU of 23 bytes. Synthetic wire checks cover discovery boundaries,
+rejected requests, cold Shell/SMP use and reconnect; SMP here uses the existing
+terminal framing, not a separate CC2640 SMP characteristic.
+The controller still stays in reset at boot. GAP initialization/advertising,
+the live event/notification worker and a usable BLE endpoint remain pending.
 
 [Builds](builds.md#experimental-technic-base) gives the build command;
 [recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM

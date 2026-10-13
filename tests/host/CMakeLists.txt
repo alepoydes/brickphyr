@@ -9,6 +9,10 @@ if(CONFIG_SERIAL)
   target_sources(app PRIVATE main.c)
 else()
   target_sources(app PRIVATE ble_only.c ${BRICKPHYR_ROOT}/src/host_ble_session.c)
+  if(CC2640_GATT)
+    target_sources(app PRIVATE ${BRICKPHYR_ROOT}/drivers/cc2640_gatt.c)
+    target_compile_definitions(app PRIVATE CC2640_GATT=1)
+  endif()
 endif()
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/host_transport.c
   ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c

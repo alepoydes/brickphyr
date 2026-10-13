@@ -94,11 +94,19 @@ with a simulated NPI device. A separate UART-free host fixture checks cold
 Shell/SMP use and reconnection through the shared BLE session implementation.
 These checks do not establish CC2640 radio behavior or physical BLE connectivity.
 
+The optional GATT variant of the UART-free fixture drives raw TI ATT events into
+the production adapter and the same Shell/SMP path. It checks service and
+characteristic discovery, UUID wire order, handle ranges, read offsets, permission
+errors and subscription state across reconnect. The controller fixture also checks
+complete database registration and rejects an overlapping allocation without
+publishing a partial database.
+
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_npi -d build/cc2640-npi-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_controller -d build/cc2640-controller-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-ble-only-tests -- -DEXTRA_CONF_FILE=ble_only.conf
-uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[cc2640-npi-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-controller-tests]' 'tests/test_bringup.py::test_hub_drivers[host-ble-only-tests]'
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/cc2640-gatt-tests -- -DEXTRA_CONF_FILE=ble_only.conf -DCC2640_GATT=ON
+uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[cc2640-npi-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-controller-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-gatt-tests]'
 ```
 
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a

@@ -35,6 +35,7 @@ struct host_protocol {
 };
 
 void host_protocol_reset(struct host_protocol *protocol);
+uint8_t host_protocol_hub_kind(void);
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 uint8_t host_protocol_selected_slot(void);
 int host_protocol_select_slot(unsigned int slot);

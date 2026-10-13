@@ -3,7 +3,11 @@
 
 #include "host_transport.h"
 #include <sys/types.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/kernel.h>
+
+#define HOST_BLE_SHELL_UUID(id) BT_UUID_128_ENCODE(0xf3641400 + (id), \
+	0x00b0, 0x4240, 0xba50, 0x05ca45bf8abc)
 
 /* Opaque, reference-counted backend connection. A retained object must never
  * refer to a later connection, even if the controller reuses its numeric ID.

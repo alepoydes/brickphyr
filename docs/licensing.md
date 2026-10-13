@@ -71,8 +71,10 @@ The optional CC2640 startup layer uses only the explicitly BSD-licensed
 `lib/ble5stack/central/hci_tl.h` and `hci_ext.h` protocol definitions from Pybricks
 at `a7b1b04ae4f8449dd46b3dfb97c420334439fd35`. Their
 [TI BSD notices](../LICENSES/TI-BSD-3-Clause.txt) accompany the firmware package.
-Startup order and configuration are adapted from the marked MIT Pybricks driver;
-fixed command encoding and reply validation live in Brickphyr. This layer does
+Startup order, service tables and ATT handling are adapted from the marked MIT
+Pybricks driver; fixed command encoding and reply validation live in Brickphyr.
+The GATT adapter uses public Zephyr UUID/error definitions and standard ATT wire
+values rather than the TI SDK's separately restricted ATT headers. This layer does
 not compile the unmarked `hci.c` or `hci_ext.c` implementations or redistribute
 controller firmware. This selection does not establish a license for other
 files in the TI SDK directory.

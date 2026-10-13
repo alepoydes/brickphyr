@@ -9,6 +9,7 @@
  * See LICENSES/Pybricks-MIT.txt and LICENSES/TI-BSD-3-Clause.txt. */
 
 #include "cc2640_controller.h"
+#include "cc2640_gatt.h"
 #include "cc2640_npi.h"
 
 #include <errno.h>
@@ -32,6 +33,8 @@ LOG_MODULE_REGISTER(cc2640_controller, LOG_LEVEL_ERR);
 /* One startup operation owns the bounded reply storage. */
 static K_MUTEX_DEFINE(controller_lock);
 static const struct device *transport;
+static const struct device *initialized;
+static bool gatt_ready;
 static uint8_t response[CC2640_NPI_MAX_PACKET];
 static size_t response_size;
 static uint32_t unrelated_events;
@@ -46,6 +49,9 @@ static uint16_t completion_event(uint16_t opcode)
 	case HCI_EXT_SET_LOCAL_SUPPORTED_FEATURES: return 0x0406;
 	case HCI_READ_BDADDR:
 	case HCI_READ_LOCAL_VERSION_INFO: return HCI_EVENT_COMMAND_COMPLETE;
+	case 0xfdfc: /* GATT_AddService */
+	case 0xfdfe: /* GATT_AddAttribute */
+		return HCI_COMMAND_STATUS;
 	default: return 0;
 	}
 }
@@ -69,8 +75,9 @@ static int match_reply(uint16_t opcode, uint16_t expected)
 	if (event == HCI_COMMAND_STATUS) {
 		if (response_size < 9 || response[8] != response_size - 9) return -EBADMSG;
 		if (sys_get_le16(response + 6) != opcode) return 0;
-		/* Successful status acknowledges receipt, not the requested result. */
-		return response[5] ? -EIO : 0;
+		/* Some commands complete here; others still require their separate
+		 * result event after this receipt acknowledgment. */
+		return response[5] ? -EIO : expected == HCI_COMMAND_STATUS ? 1 : 0;
 	}
 	if (event != expected) return 0;
 	return response[5] ? -EIO : 1;
@@ -122,6 +129,8 @@ int cc2640_controller_start(const struct device *npi, const uint8_t address[6],
 	if (!memcmp(address, zero, 6) || !memcmp(address, erased, 6)) return -EINVAL;
 	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
 	transport = npi;
+	initialized = NULL;
+	gatt_ready = false;
 	first_error = cc2640_npi_reset(npi);
 	response_size = unrelated_events = 0;
 	struct cc2640_info observed = {0};
@@ -154,9 +163,50 @@ int cc2640_controller_start(const struct device *npi, const uint8_t address[6],
 	    send_command(HCI_EXT_SET_LOCAL_SUPPORTED_FEATURES, features, sizeof(features))) goto done;
 	observed.unrelated_events = unrelated_events;
 	*info = observed;
+	initialized = npi;
 done:
 	if (first_error) (void)cc2640_npi_off(npi);
 	int err = first_error;
+	transport = NULL;
+	k_mutex_unlock(&controller_lock);
+	return err;
+}
+
+int cc2640_controller_gatt(struct cc2640_gatt *gatt)
+{
+	if (!gatt) return -EINVAL;
+	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
+	int err = !initialized ? -ENODEV : gatt_ready ? -EALREADY : 0;
+	if (err) goto done;
+	transport = initialized;
+	struct cc2640_gatt registered = {0};
+	uint8_t command[CC2640_GATT_PACKET_MAX];
+	for (unsigned int s = 0; s < CC2640_GATT_SERVICE_COUNT; s++) {
+		/* The reply to the last attribute (or a one-attribute service itself)
+		 * carries its allocated handle range, as in the reference adapter. */
+		for (unsigned int a = 0; cc2640_gatt_registration(s, a, command); a++) {
+			err = send_command(sys_get_le16(command + 1), command + 4, command[3]);
+			if (err) goto failed;
+		}
+		if (response_size != 13 || response[8] != 4) {
+			err = -EBADMSG;
+			goto failed;
+		}
+		err = cc2640_gatt_bind(&registered, s, sys_get_le16(response + 9),
+				       sys_get_le16(response + 11));
+		if (err) goto failed;
+	}
+	*gatt = registered;
+	gatt_ready = true;
+	goto done;
+failed:
+	if (!first_error) {
+		first_error = err;
+		LOG_ERR("GATT registration: %d", err);
+	}
+	(void)cc2640_npi_off(initialized);
+	initialized = NULL;
+done:
 	transport = NULL;
 	k_mutex_unlock(&controller_lock);
 	return err;

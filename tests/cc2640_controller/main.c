@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "cc2640_controller.h"
+#include "cc2640_gatt.h"
 #include "cc2640_npi.h"
 
 #include <errno.h>
 #include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 
 /* Literal startup HCI packets from the pinned controller command definitions. */
@@ -69,7 +71,51 @@ static struct {
 	int offs;
 	int off_error;
 	bool mismatch;
+	bool registering, corrupt_range;
+	unsigned int service, attribute;
+	uint16_t pending_opcode;
 } radio;
+
+/* Controller-allocated database for the six management services. This is a
+ * synthetic reply fixture, not an expectation derived from the DUT's table. */
+static const uint16_t ranges[][2] = {{1, 1}, {2, 8}, {9, 15}, {16, 21}, {22, 27}, {28, 33}};
+
+static int registration_exchange(const uint8_t *command, size_t length, uint8_t *event)
+{
+	zassert_true(radio.service < ARRAY_SIZE(ranges));
+	uint16_t first = ranges[radio.service][0], last = ranges[radio.service][1];
+	if (length) {
+		zassert_equal(radio.pending_opcode, 0);
+		zassert_equal(command[0], 1);
+		zassert_equal(command[3] + 4, length);
+		radio.pending_opcode = sys_get_le16(command + 1);
+		zassert_equal(radio.pending_opcode, radio.attribute ? 0xfdfe : 0xfdfc);
+		if (!radio.attribute) {
+			zassert_equal(sys_get_le16(command + 4), 0x2800);
+			zassert_equal(sys_get_le16(command + 6), last - first + 1);
+		}
+		return 0;
+	}
+	zassert_not_equal(radio.pending_opcode, 0);
+	bool complete = radio.attribute == last - first;
+	uint8_t status[] = {4, 0xff, complete ? 10 : 6, 0x7f, 6, 0,
+		(uint8_t)radio.pending_opcode, 0xfd, complete ? 4 : 0, 0, 0, 0, 0};
+	if (complete) {
+		/* Same-sized, overlapping allocation must still fail admission. */
+		if (radio.corrupt_range && radio.service == 3) {
+			first = 14;
+			last = 19;
+		}
+		sys_put_le16(first, status + 9);
+		sys_put_le16(last, status + 11);
+		radio.service++;
+		radio.attribute = 0;
+	} else radio.attribute++;
+	radio.pending_opcode = 0;
+	size_t size = complete ? sizeof(status) : 9;
+	memcpy(event, status, size);
+	return size;
+}
 
 static int init_mock(const struct device *dev)
 {
@@ -98,6 +144,7 @@ int cc2640_npi_exchange(const struct device *dev, const uint8_t *command,
 {
 	zassert_equal(dev, DEVICE_GET(mock_npi));
 	zassert_not_null(event);
+	if (radio.registering) return registration_exchange(command, length, event);
 	if (length) {
 		if (radio.active >= 0 || radio.commands >= ARRAY_SIZE(startup)) {
 			radio.mismatch = true;
@@ -220,6 +267,31 @@ ZTEST(cc2640_controller, test_truncated_completion_cannot_publish_info)
 {
 	assert_failure(TRUNCATED_VERSION, -EBADMSG);
 	zassert_equal(radio.commands, 4);
+}
+
+ZTEST(cc2640_controller, test_gatt_registration_publishes_only_a_complete_database)
+{
+	struct cc2640_info info;
+	zassert_ok(cc2640_controller_start(DEVICE_GET(mock_npi), address, &info));
+	struct cc2640_gatt gatt;
+	memset(&gatt, 0xa5, sizeof(gatt));
+	radio.registering = true;
+	zassert_ok(cc2640_controller_gatt(&gatt));
+	zassert_equal(radio.service, ARRAY_SIZE(ranges));
+	for (size_t i = 0; i < ARRAY_SIZE(ranges); i++) zassert_equal(gatt.first[i], ranges[i][0]);
+	for (size_t i = 0; i < ARRAY_SIZE(gatt.subscribed); i++) zassert_equal(gatt.subscribed[i], 0);
+	zassert_equal(cc2640_controller_gatt(&gatt), -EALREADY);
+
+	before(NULL);
+	zassert_ok(cc2640_controller_start(DEVICE_GET(mock_npi), address, &info));
+	struct cc2640_gatt previous = gatt;
+	radio.registering = radio.corrupt_range = true;
+	radio.off_error = -EACCES;
+	zassert_equal(cc2640_controller_gatt(&gatt), -EBADMSG);
+	zassert_mem_equal(&gatt, &previous, sizeof(gatt));
+	zassert_equal(radio.offs, 1);
+	zassert_equal(radio.service, 4);
+	zassert_equal(cc2640_controller_gatt(&gatt), -ENODEV);
 }
 
 ZTEST_SUITE(cc2640_controller, NULL, NULL, before, NULL, NULL);

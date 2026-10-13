@@ -83,10 +83,10 @@ Port metadata now allocates only advertised modes, sharing reclaimed heap with
 applications. A versioned native ELF API replaces configuration-specific syscall
 IDs; cross-hub hardware acceptance and further memory optimization remain work.
 Technic has a [build-only power/UI/watchdog base](../docs/hardware.md#experimental-technic-base);
-the CC2640 transport/startup layer and UART-free shared BLE session/Shell have
-synthetic checks. Radio startup integration, BLE services, applications and
-physical acceptance remain pending. The remaining Python acceptance scope below
-is retained.
+the CC2640 transport, startup and GATT handlers have synthetic checks through the
+UART-free shared BLE session/Shell. GAP/advertising, live radio integration,
+applications and physical acceptance remain pending. The remaining Python
+acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance
 

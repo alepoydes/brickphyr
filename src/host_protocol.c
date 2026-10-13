@@ -136,6 +136,15 @@ void host_protocol_reset(struct host_protocol *protocol)
 	*protocol = (struct host_protocol){0};
 }
 
+uint8_t host_protocol_hub_kind(void)
+{
+#ifdef CONFIG_BOARD_TECHNIC_HUB
+	return PBIO_PYBRICKS_HUB_KIND_TECHNIC;
+#else
+	return PBIO_PYBRICKS_HUB_KIND_PRIME;
+#endif
+}
+
 size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 			  uint16_t max_write, uint8_t value[HOST_PROTOCOL_PAYLOAD_MAX - 3])
 {
@@ -153,7 +162,7 @@ size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 			text = PBIO_PROTOCOL_VERSION_STR;
 			break;
 		case PBIO_GATT_PNP_ID_CHAR_UUID:
-			pbio_pybricks_pnp_id(value, PBIO_PYBRICKS_HUB_KIND_PRIME, variant);
+			pbio_pybricks_pnp_id(value, host_protocol_hub_kind(), variant);
 			return PBIO_PYBRICKS_PNP_ID_SIZE;
 		}
 	} else if (service == PBIO_PYBRICKS_READ_SERVICE_PYBRICKS && id == 0x0003) {
