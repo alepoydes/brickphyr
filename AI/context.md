@@ -113,7 +113,8 @@ checks. Custom-power permission uses the common RAM/explicit-save settings path;
 physical serial and supply acceptance remain pending.
 `messaging.AppData` and its legacy tools alias share the Pybricks USB/BLE
 dispatcher and protected application mailbox. Transfer and lifetime behavior have
-ARM checks. Passive `BLERadio` observation and legacy hub `observe_channels` use
+ARM and Inventor F4 pybricksdev USB/BLE checks. Passive `BLERadio` observation and
+legacy hub `observe_channels` use
 the shared radio and protected snapshots; F4 reception and expiry pass with a
 synthetic Linux advertiser. `version()` reads cached TI script metadata.
 `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub`
@@ -125,7 +126,7 @@ Physical controller behavior remains unverified. `HubNetwork` uses shared native
 Classic routing/inboxes with protected ARM checks for both roles, the Python
 codec, forwarding and cleanup. F4 leaf exchange with a synthetic Linux peer
 also passes alongside BLE management. Physical Pybricks/peripheral interoperability,
-broadcasting and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
+broadcasting remain pending. See [Bluetooth](../docs/bluetooth.md).
 Bounded IMU USB/BLE checks pass with preemptible USB processing; sustained combined
 load and acquisition latency remain open. See [hardware](../docs/hardware.md).
 Account separately for static reservations, stacks, Python heap and peak loading memory

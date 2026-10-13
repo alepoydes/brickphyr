@@ -535,7 +535,20 @@ stop and REPL reset release its mailbox. Failed construction also releases it.
 The supervisor copies all exchanged bytes; transport callbacks never retain
 pointers into Python memory. ARM checks cover both transports, mode layout,
 size limits, replacement/cancellation, disconnect and lifetime cleanup using a
-synthetic GATT peer and UART. Physical AppData client acceptance remains pending.
+synthetic GATT peer and UART. Inventor F4 checks with pybricksdev cover binary
+USB/BLE exchange, offsets and rejected out-of-bounds writes, configuration events,
+awaitable sends, USB-to-BLE reconnection and mailbox cleanup after forced stop.
+
+For a connected pybricksdev hub, subscribe before starting the program so its
+mode announcement is received. The application defines the receive-buffer layout:
+
+```python
+with hub.app_data_observable.subscribe(lambda data: print(data.hex())):
+    await hub.write_app_data(b"\x01\x02", offset=0)
+```
+
+`write_app_data` sends one atomic protocol write. It rejects oversized packets
+instead of splitting a write into separately observable updates.
 
 #### Program representation
 

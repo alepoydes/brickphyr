@@ -268,7 +268,8 @@ accuracy remain unverified.
 channel, with protected ARM checks for receive snapshots, blocking/awaitable
 sends and lifecycle cleanup. See [application data](host.md#application-data)
 for limits and the distinction between transport acceptance and remote delivery.
-Physical client acceptance remains pending.
+Binary exchange, reconnection and mailbox cleanup also have Inventor F4
+pybricksdev USB/BLE checks.
 
 `messaging.BLERadio(observe_channels=...)` and the legacy
 `PrimeHub`/`InventorHub` `observe_channels` argument use one shared passive BLE

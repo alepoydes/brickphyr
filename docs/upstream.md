@@ -234,6 +234,12 @@ requests the hub's current selection. Substituting the client's cached selection
 can start the wrong slot before the first status event arrives. This correction
 is local commit `b67efa0` in the pybricksdev fork and applies to all transports.
 
+Local pybricksdev commit `5fc08b5` on `topic/app-data-client` adds the standard
+Profile 1.4 AppData command/event handling to the common client. USB and BLE
+share `app_data_observable` and `write_app_data`; no transport-specific duplicate
+or private client patch is required. Packet routing and admission have focused
+client checks, and binary exchange/reconnection has Inventor F4 USB/BLE checks.
+
 Client tests cover compiler selection, precompiled imports and rejected headers;
 Brickphyr checks execution with the actual serial client on protected ARM
 emulation. Both repositories' uv locks resolve the added compiler package.
