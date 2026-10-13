@@ -38,6 +38,7 @@ struct radio_fixture {
 };
 static struct radio_fixture radio;
 static struct gpio_callback wire;
+static K_SEM_DEFINE(worker_wake, 0, 4);
 
 static void on_mrdy(const struct device *port, struct gpio_callback *cb,
 		    gpio_port_pins_t pins)
@@ -129,6 +130,15 @@ static void before(void *fixture)
 
 ZTEST(cc2640_npi, test_full_duplex_and_fast_srdy_reassert)
 {
+	k_sem_reset(&worker_wake);
+	/* SRDY was asserted before the worker subscribed. Registration must wake
+	 * it without requiring another edge. */
+	zassert_ok(gpio_emul_input_set(GPIO, SRDY, 0));
+	cc2640_npi_set_wake(RADIO, &worker_wake);
+	zassert_ok(k_sem_take(&worker_wake, K_NO_WAIT));
+	zassert_equal(gpio_pin_get_raw(GPIO, SRDY), 0);
+	zassert_ok(gpio_emul_input_set(GPIO, SRDY, 1));
+	k_sem_reset(&worker_wake);
 	uint8_t event[CC2640_NPI_MAX_PACKET] = {0};
 	zassert_equal(cc2640_npi_exchange(RADIO, command, sizeof(command), event,
 					   K_MSEC(1)), 4);
@@ -138,6 +148,8 @@ ZTEST(cc2640_npi, test_full_duplex_and_fast_srdy_reassert)
 	zassert_false(radio.mismatch);
 	/* The SRDY release was observed even though it is asserted again now. */
 	zassert_equal(gpio_pin_get_raw(GPIO, SRDY), 0);
+	zassert_true(k_sem_count_get(&worker_wake) >= 2);
+	cc2640_npi_set_wake(RADIO, NULL);
 }
 
 ZTEST(cc2640_npi, test_maximum_receive_and_transmit)

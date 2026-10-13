@@ -34,7 +34,7 @@ source changes preserve the session and uptime.
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
-| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base build | Power/button, timer RGB, watchdog and factory-loader package compile; shared UI has synthetic GPIO/PWM checks | No board available; boot, recovery and electrical behavior unverified |
+| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base and optional BLE builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management endpoint has synthetic transport, controller and host checks | No board available; boot, BLE, recovery and electrical behavior unverified |
 | City | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
 | Move | Candidate; severe memory constraints require separate evaluation | None yet | Hardware availability unconfirmed |
 
@@ -102,7 +102,7 @@ no separate Bluetooth button/light; requests for that light return `-ENODEV`.
 
 The base reserves the first 1 KiB of SRAM for the factory loader handoff and
 builds in the remaining 63 KiB with the same ARMv7E-M hard-float calling convention
-as F4. Native application loading is not enabled yet. Runtime BLE, IMU, port and
+as F4. Native application loading is not enabled yet. IMU, port and
 motor services, battery observations and persistent storage remain unimplemented
 on this board. The CC2640 is held in reset; no host terminal is available in this
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a
@@ -129,8 +129,13 @@ handler supports discovery, reads, subscriptions and shared Pybricks/Shell write
 at the default MTU of 23 bytes. Synthetic wire checks cover discovery boundaries,
 rejected requests, cold Shell/SMP use and reconnect; SMP here uses the existing
 terminal framing, not a separate CC2640 SMP characteristic.
-The controller still stays in reset at boot. Advertising, the live
-event/notification worker and a usable BLE endpoint remain pending.
+The base and NPI-only builds keep the controller in reset at boot. The optional
+[BLE build](builds.md#experimental-technic-base) initializes it and adds an
+advertising/event worker using the shared Shell, serial SMP and Pybricks identity
+session. Its production-path synthetic fixture covers cold startup, notification
+backpressure, disconnect/reconnect and old-output isolation. There is no separate
+SMP BLE characteristic. This remains build-only support: no physical Technic BLE
+connection, boot or recovery has been checked.
 
 [Builds](builds.md#experimental-technic-base) gives the build command;
 [recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM

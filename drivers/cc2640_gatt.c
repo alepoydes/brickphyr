@@ -369,3 +369,26 @@ int cc2640_gatt_request(struct cc2640_gatt *gatt, struct host_ble_link *link,
 failed:
 	return error_reply(packet, connection, opcode, handle, error);
 }
+
+int cc2640_gatt_notification(const struct cc2640_gatt *gatt, uint16_t connection,
+			     enum host_ble_value value, const uint8_t *data, size_t size,
+			     uint8_t packet[CC2640_GATT_PACKET_MAX])
+{
+	if (size > CC2640_ATT_MTU - 3 || (size && !data)) return -EMSGSIZE;
+	unsigned int service, ccc;
+	if (value == HOST_BLE_VALUE_PYBRICKS) { service = 3; ccc = 0; }
+	else if (value == HOST_BLE_VALUE_SHELL) { service = 5; ccc = 2; }
+	else return -EINVAL;
+	if (!gatt->first[service] || !gatt->subscribed[ccc]) return -ENOTCONN;
+	/* TI ATT_HandleValueNoti adds an authentication flag before the handle.
+	 * This is the reference's ATT command, not GATT_Notification (0xfd9b). */
+	packet[0] = 1;
+	packet[1] = 0x1b;
+	packet[2] = 0xfd;
+	packet[3] = size + 5;
+	sys_put_le16(connection, packet + 4);
+	packet[6] = 0;
+	sys_put_le16(gatt->first[service] + 2, packet + 7);
+	memcpy(packet + 9, data, size);
+	return size + 9;
+}

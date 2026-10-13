@@ -10,8 +10,27 @@ Management ownership, Pybricks messages and the native Shell stream live in one
 shared BLE session implementation. Controller adapters supply connection
 references, MTU and notification/disconnect operations; they do not duplicate
 the terminal or command dispatcher. F4 uses the Zephyr adapter. Technic's factory
-CC2640 owns GAP/GATT itself, so its [adapter preparation](hardware.md#experimental-technic-base)
-uses the TI network-processor interface; a working endpoint remains pending.
+CC2640 owns GAP/GATT itself, so its [adapter](hardware.md#experimental-technic-base)
+uses the TI network-processor interface. Physical endpoint acceptance remains pending.
+
+## Experimental Technic controller
+
+The optional [Technic BLE profile](builds.md#experimental-technic-base) starts the
+factory CC2640, registers the management services and advertises the Pybricks
+identity. Its native Shell and serial-framed SMP reuse the shared transport and
+session owner; they do not require USB. The ATT MTU is fixed at 23 bytes. SMP
+uses the Shell byte stream, with no separate SMP BLE characteristic. The legacy
+NUS notification characteristic remains for client discovery, while NUS stdin
+reports unsupported use.
+
+The `bluetooth` Shell command reports radio state and accepts asynchronous
+`on`/`off` requests; shutdown is terminal until reboot. A connection owns the
+management session until its disconnect and any accepted operation have drained.
+The controller worker bounds command waits and retains the first failure for
+diagnosis. This profile has no native application loading, Python execution,
+program storage or port API. Production-path synthetic checks cover cold startup,
+Shell/SMP, notification backpressure, reconnect and isolation of old output.
+No physical Technic Hub or CC2640 BLE connection has been tested.
 
 ## Experimental F4 controller
 

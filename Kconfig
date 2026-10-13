@@ -61,8 +61,17 @@ config BRICKPHYR_CC2640_CONTROL
 	depends on BRICKPHYR_CC2640_NPI
 	help
 	  Use the TI protocol definitions and Pybricks startup sequence through NPI.
-	  Includes peripheral GAP/GATT preparation and ATT handling. Integration
-	  with boot, advertising and a live host endpoint is not yet enabled.
+	  Includes peripheral GAP/GATT preparation and ATT handling. Enable
+	  BRICKPHYR_CC2640_BLE to start the management endpoint at boot.
+
+config BRICKPHYR_CC2640_BLE
+	bool "CC2640 BLE management endpoint"
+	depends on BRICKPHYR_CC2640_CONTROL && !BT
+	depends on SHELL && MCUMGR_TRANSPORT_SHELL && SETTINGS_RUNTIME
+	help
+	  Run the factory TI peripheral stack on a dedicated worker and expose
+	  the shared Pybricks identity and native Shell/SMP stream. This profile
+	  has synthetic transport checks; physical Technic acceptance is pending.
 
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"

@@ -34,3 +34,9 @@ int cc2640_gatt_bind(struct cc2640_gatt *gatt, unsigned int service,
 int cc2640_gatt_request(struct cc2640_gatt *gatt, struct host_ble_link *link,
 		       uint16_t connection, const uint8_t *event, size_t size,
 		       uint8_t packet[CC2640_GATT_PACKET_MAX]);
+
+/* Encode a subscribed value for the current link. The worker retains these
+ * bytes until its command status confirms controller admission. */
+int cc2640_gatt_notification(const struct cc2640_gatt *gatt, uint16_t connection,
+			     enum host_ble_value value, const uint8_t *data, size_t size,
+			     uint8_t packet[CC2640_GATT_PACKET_MAX]);

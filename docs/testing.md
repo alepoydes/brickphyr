@@ -90,8 +90,11 @@ emulators. It checks literal wire packets, the 255-byte boundary, a ready-line
 release followed immediately by reassertion, malformed input, timeout and first
 error retention. The controller fixture checks literal startup commands and reply
 matching, address readback, malformed responses, timeouts and first-error cleanup
-with a simulated NPI device. A separate UART-free host fixture checks cold
-Shell/SMP use and reconnection through the shared BLE session implementation.
+with a simulated NPI device. The UART-free host fixture checks the shared BLE
+session independently. The full `cc2640_host` fixture runs the production
+controller, GATT, event worker and shared Shell/SMP over a simulated NPI queue.
+It covers cold startup, notification backpressure, disconnect/reconnect and old
+output isolation without an SPI peripheral.
 These checks do not establish CC2640 radio behavior or physical BLE connectivity.
 
 The optional GATT variant of the UART-free fixture drives raw TI ATT events into
@@ -109,7 +112,8 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_controller -d build/cc2640-controller-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-ble-only-tests -- -DEXTRA_CONF_FILE=ble_only.conf
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/cc2640-gatt-tests -- -DEXTRA_CONF_FILE=ble_only.conf -DCC2640_GATT=ON
-uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[cc2640-npi-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-controller-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-gatt-tests]'
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_host -d build/cc2640-host-tests
+uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[cc2640-npi-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-controller-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-gatt-tests]' 'tests/test_bringup.py::test_hub_drivers[cc2640-host-tests]'
 ```
 
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a

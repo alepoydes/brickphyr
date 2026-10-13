@@ -138,8 +138,8 @@ unsupported. Building a package does not verify recovery on hardware.
 ### Experimental Technic base
 
 This builds the initial power/button/RGB/watchdog port for the four-port Technic
-Hub 88012. It does not yet provide a Bluetooth terminal or application loading.
-There is no USB interface on this hub. Read the
+Hub 88012. The base image provides neither a Bluetooth terminal nor application
+loading. There is no USB interface on this hub. Read the
 [hardware scope](hardware.md#experimental-technic-base) and
 [factory-loader boundary](recovery.md#technic-factory-loader-boundary) before
 considering installation; no physical Technic checks have been performed.
@@ -172,6 +172,22 @@ The overlay assigns SPI1 and ready/reset GPIOs to the driver. Its STM32 SPI path
 uses interrupt completion with Zephyr's timeout instead of polling indefinitely.
 Unused initialization routines may be removed by the linker; this profile's size
 is not a full BLE endpoint resource measurement.
+
+The optional BLE profile connects the factory CC2640 to the shared management
+Shell, serial-framed SMP and Pybricks identity endpoint:
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b technic_hub -d build/technic-bluetooth -t firmware_package -- \
+  -DEXTRA_CONF_FILE=boards/technic_hub_bluetooth.conf \
+  -DDTC_OVERLAY_FILE=boards/technic_hub_npi.overlay
+```
+
+Its package path is `build/technic-bluetooth/zephyr/firmware.zip`. This is a
+build-only profile: no Technic board has been available for boot, BLE, installer
+or recovery checks. The base and NPI-only profiles still hold the controller in
+reset at boot; this profile initializes it. It does not enable native applications,
+Python, ports or persistent program storage. See the
+[Technic BLE boundary](bluetooth.md#experimental-technic-controller).
 
 ### Diagnostic shell
 

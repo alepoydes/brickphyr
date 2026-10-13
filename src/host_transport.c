@@ -41,6 +41,7 @@ static bool usb_open;
 static bool ble_occupied;
 static bool ble_closing;
 static bool ble_exit;
+static struct k_sem *ble_idle_wake;
 /* The single stream/Shell can belong to USB or to the native BLE interface. */
 static bool ble_shell;
 static void (*ble_tx_ready)(void);
@@ -62,6 +63,17 @@ static bool managed_shell;
 static const struct shell host_shell;
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
+
+/* Caller holds lock. Old USB output gates a USB switch, not BLE admission. */
+static bool ble_available(void)
+{
+	return !usb_open && !occupied && !ble_occupied && ready && !first_error;
+}
+
+static void notify_ble_available(void)
+{
+	if (ble_idle_wake && ble_available()) k_sem_give(ble_idle_wake);
+}
 
 static bool shell_owner(void)
 {
@@ -525,6 +537,7 @@ static void host_thread(void *a, void *b, void *c)
 				if (!ble_occupied) {
 					hub_power_connection(HUB_DISCONNECTED);
 				}
+				notify_ble_available();
 			}
 			k_spin_unlock(&lock, key);
 			continue;
@@ -702,6 +715,7 @@ void host_connection_changed(bool open)
 	    (!open || (!first_error && hub_power_connection(HUB_USB)))) {
 		stream_changed(open);
 	}
+	notify_ble_available();
 	k_spin_unlock(&lock, key);
 	serial_rx_resume();
 }
@@ -743,12 +757,20 @@ enum host_mode host_interface_current(void)
 	return current;
 }
 
+bool host_ble_available(struct k_sem *changed)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	ble_idle_wake = changed;
+	bool available = ble_available();
+	k_spin_unlock(&lock, key);
+	return available;
+}
+
 int host_ble_acquire(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = 0;
-	/* Old USB output still gates a USB protocol switch, not a BLE session. */
-	if (usb_open || occupied || ble_occupied || !ready || first_error) {
+	if (!ble_available()) {
 		err = -EBUSY;
 	} else if (!hub_power_connection(HUB_BLE)) {
 		err = -ESHUTDOWN;
@@ -773,6 +795,7 @@ static void finish_ble_session(void)
 			mode = HOST_SHELL;
 		}
 		ble_exit = false;
+		notify_ble_available();
 	}
 }
 

@@ -39,6 +39,7 @@ static uint8_t response[CC2640_NPI_MAX_PACKET];
 static size_t response_size;
 static uint32_t unrelated_events;
 static int first_error;
+static cc2640_event_handler_t event_handler;
 
 static uint16_t completion_event(uint16_t opcode)
 {
@@ -54,15 +55,36 @@ static uint16_t completion_event(uint16_t opcode)
 	case 0xfe03: /* GAP_ConfigDeviceAddr */
 	case 0xfe30: /* GAP_SetParamValue */
 	case 0xfe36: /* GAP_BondMgrSetParameter */
+	case 0xfe0a: /* GAP_TerminateLinkReq: completion is the separate link event. */
 		return HCI_COMMAND_STATUS;
 	case 0xfe00: return 0x0600; /* GAP_DeviceInit / GAP_DeviceInitDone */
-	default: return 0;
+	case 0xfe07: return 0x0602; /* GAP_UpdateAdvertisingData */
+	case 0xfe06: return 0x0603; /* GAP_MakeDiscoverable */
+	default:
+		/* ATT response/notification commands have the ATT opcode in the low
+		 * byte. The network processor acknowledges their queue admission. */
+		return (opcode & 0xffe0) == 0xfd00 && (opcode & 1) ? HCI_COMMAND_STATUS : 0;
 	}
+}
+
+static int command_status(uint16_t opcode, uint8_t status)
+{
+	if (!status) return 0;
+	if ((opcode & 0xffe0) == 0xfd00) {
+		if (status == blePending || status == bleMsgBufferNotAvailable ||
+		    status == bleMemAllocError || status == bleNoResources) return -EAGAIN;
+		if (status == bleNotConnected) return -ENOTCONN;
+	}
+	if (opcode == 0xfe0a && (status == bleIncorrectMode || status == bleNotConnected)) {
+		return -ENOTCONN;
+	}
+	LOG_ERR("Command 0x%04x status 0x%02x", opcode, status);
+	return -EIO;
 }
 
 /* A positive result completes this command; zero is an unrelated event or an
  * intermediate success status. A negative result is a malformed/error reply.
- * Startup has no active GAP link; unsolicited events cannot carry user data. */
+ * Runtime callers dispatch non-completing events before receiving more data. */
 static int match_reply(uint16_t opcode, uint16_t expected)
 {
 	if (response_size < 3 || response[0] != HCI_EVENT_PACKET ||
@@ -70,7 +92,8 @@ static int match_reply(uint16_t opcode, uint16_t expected)
 	if (response[1] == HCI_EVENT_COMMAND_COMPLETE) {
 		if (response_size < 7) return -EBADMSG;
 		if (sys_get_le16(response + 4) != opcode) return 0;
-		if (response[6]) return -EIO;
+		int err = command_status(opcode, response[6]);
+		if (err) return err;
 		return expected == HCI_EVENT_COMMAND_COMPLETE ? 1 : 0;
 	}
 	if (response[1] != HCI_EVENT_VENDOR_SPECIFIC) return 0;
@@ -81,10 +104,12 @@ static int match_reply(uint16_t opcode, uint16_t expected)
 		if (sys_get_le16(response + 6) != opcode) return 0;
 		/* Some commands complete here; others still require their separate
 		 * result event after this receipt acknowledgment. */
-		return response[5] ? -EIO : expected == HCI_COMMAND_STATUS ? 1 : 0;
+		int err = command_status(opcode, response[5]);
+		return err ? err : expected == HCI_COMMAND_STATUS ? 1 : 0;
 	}
 	if (event != expected) return 0;
-	return response[5] ? -EIO : 1;
+	int err = command_status(opcode, response[5]);
+	return err ? err : 1;
 }
 
 static int send_command(uint16_t opcode, const uint8_t *payload, uint8_t length)
@@ -108,6 +133,10 @@ static int send_command(uint16_t opcode, const uint8_t *payload, uint8_t length)
 			if (err < 0) goto failed;
 			if (err > 0) return 0;
 			unrelated_events++;
+			if (event_handler) {
+				err = event_handler(response, response_size);
+				if (err) goto failed;
+			}
 		}
 		if (sys_timepoint_expired(deadline)) {
 			err = -ETIMEDOUT;
@@ -119,6 +148,7 @@ static int send_command(uint16_t opcode, const uint8_t *payload, uint8_t length)
 		if (err < 0) goto failed;
 	}
 failed:
+	if (err == -EAGAIN || err == -ENOTCONN) return err;
 	first_error = err;
 	LOG_ERR("Command 0x%04x: %d", opcode, err);
 	return err;
@@ -243,6 +273,54 @@ failed:
 	initialized = NULL;
 done:
 	transport = NULL;
+	k_mutex_unlock(&controller_lock);
+	return err;
+}
+
+int cc2640_controller_command(const uint8_t *packet, size_t size,
+			      cc2640_event_handler_t receive)
+{
+	if (!packet || size < 4 || size > CC2640_NPI_MAX_PACKET || packet[0] != 1 ||
+	    packet[3] != size - 4 || !receive) return -EINVAL;
+	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
+	int err = first_error ? first_error : !peripheral_ready ? -EHOSTDOWN : 0;
+	if (!err) {
+		transport = initialized;
+		event_handler = receive;
+		err = send_command(sys_get_le16(packet + 1), packet + 4, packet[3]);
+		event_handler = NULL;
+		transport = NULL;
+	}
+	k_mutex_unlock(&controller_lock);
+	return err;
+}
+
+int cc2640_controller_poll(cc2640_event_handler_t receive)
+{
+	if (!receive) return -EINVAL;
+	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
+	int err = first_error ? first_error : !peripheral_ready ? -EHOSTDOWN : 0;
+	if (!err) {
+		err = cc2640_npi_exchange(initialized, NULL, 0, response, K_NO_WAIT);
+		if (err == -EAGAIN) err = 0;
+		else if (err > 0) {
+			err = receive(response, err);
+			if (!err) err = 1;
+		}
+		if (err < 0) first_error = err;
+	}
+	k_mutex_unlock(&controller_lock);
+	return err;
+}
+
+int cc2640_controller_stop(void)
+{
+	if (k_mutex_lock(&controller_lock, K_NO_WAIT)) return -EBUSY;
+	int err = initialized ? cc2640_npi_off(initialized) : 0;
+	if (!err) {
+		initialized = NULL;
+		peripheral_ready = false;
+	}
 	k_mutex_unlock(&controller_lock);
 	return err;
 }

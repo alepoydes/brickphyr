@@ -13,6 +13,11 @@
 int cc2640_npi_reset(const struct device *dev);
 int cc2640_npi_off(const struct device *dev);
 
+/* Edge/error wake for the controller worker. The semaphore must have static
+ * lifetime; NULL detaches it. Publishing a non-NULL semaphore gives it once
+ * so a ready level that predates registration cannot strand the worker. */
+void cc2640_npi_set_wake(const struct device *dev, struct k_sem *wake);
+
 /* Exchange an optional HCI command (01, opcode LE, parameter length, parameters)
  * for an optional HCI event (04, event code, parameter length, parameters).
  * event must hold CC2640_NPI_MAX_PACKET bytes. The result is its length or an

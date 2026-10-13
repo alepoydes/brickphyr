@@ -97,7 +97,7 @@ static void shutdown(void)
 		/* The application thread has been joined. A resource cleanup failure
 		 * must not prevent the remaining drivers and power rail from stopping. */
 	}
-#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
 	/* Invalidate input before quiescing outputs. The existing power reservation
 	 * lasts until the Shell and any accepted SMP command have finished cleanup.
 	 * The watchdog still supervises this wait; do not feed a stuck teardown. */
@@ -154,7 +154,7 @@ static void shutdown(void)
 	}
 #endif
 #endif
-#if defined(CONFIG_BT)
+#if defined(CONFIG_BT) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
 	host_ble_shutdown();
 #endif
 	hub_power_release();
@@ -314,7 +314,7 @@ void hub_run(void)
 			if (pressed) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 				bool compatible = current == HOST_PYBRICKS;
-#if defined(CONFIG_BT_HCI_SETUP)
+#if defined(CONFIG_BT_HCI_SETUP) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
 				compatible |= host_ble_status() == HOST_BLE_PYBRICKS;
 #endif
 				if (!menu.open && (i == 1 || i == 2) &&
@@ -365,7 +365,7 @@ void hub_run(void)
 			menu_shown = indicator;
 		}
 		enum host_ble_status bluetooth = HOST_BLE_OFF;
-#if defined(CONFIG_BT_HCI_SETUP)
+#if defined(CONFIG_BT_HCI_SETUP) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
 		bluetooth = host_ble_status();
 #endif
 		int64_t deadline = hub_light_update(now, bluetooth);

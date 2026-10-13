@@ -34,6 +34,7 @@ struct npi_config {
 struct npi_data {
 	struct k_mutex lock;
 	struct k_sem changed;
+	atomic_ptr_t wake;
 	struct gpio_callback callback;
 	const struct device *dev;
 	atomic_t releases;
@@ -59,6 +60,16 @@ static void srdy_changed(const struct device *port, struct gpio_callback *cb,
 		atomic_inc(&data->releases);
 	}
 	k_sem_give(&data->changed);
+	struct k_sem *wake = atomic_ptr_get(&data->wake);
+	if (wake) k_sem_give(wake);
+}
+
+void cc2640_npi_set_wake(const struct device *dev, struct k_sem *wake)
+{
+	struct npi_data *data = dev->data;
+	atomic_ptr_set(&data->wake, wake);
+	/* Wake the new owner even if SRDY was asserted before publication. */
+	if (wake) k_sem_give(wake);
 }
 
 static int hold_reset(const struct device *dev)

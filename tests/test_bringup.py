@@ -132,6 +132,7 @@ def test_technic_image():
         "cc2640-npi-tests",
         "cc2640-controller-tests",
         "cc2640-gatt-tests",
+        "cc2640-host-tests",
         "host-ble-only-tests",
         "radio-tests",
         "imu-tests",

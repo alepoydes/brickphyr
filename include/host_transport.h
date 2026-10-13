@@ -21,6 +21,11 @@ int host_interface_select(uint16_t mode);
  * session. Disconnect defers release until its accepted SMP packet finishes. */
 int host_ble_acquire(void);
 void host_ble_release(bool exit_compatibility);
+/* Observe admission readiness without reserving it. The single backend may
+ * register a static semaphore, signaled when shared command cleanup completes.
+ * Registration and observation are atomic with respect to that completion. */
+struct k_sem;
+bool host_ble_available(struct k_sem *changed);
 uint16_t host_hub_variant(void);
 /* Terminal shutdown: stop asynchronously; no later radio enable until reboot. */
 void host_ble_shutdown(void);
