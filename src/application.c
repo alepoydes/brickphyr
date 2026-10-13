@@ -16,6 +16,7 @@
 #include "hub_light.h"
 #include "hub_radio.h"
 #include "hub_ble_peer.h"
+#include "hub_network.h"
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
@@ -882,6 +883,73 @@ static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_sta
 	return z_impl_bp_ble_peer_get(handle, state);
 }
 #include <zephyr/syscalls/bp_ble_peer_get_mrsh.c>
+
+int z_impl_bp_network_open(uint32_t size, uint32_t *handle) { return hub_network_open(size, handle); }
+static inline int z_vrfy_bp_network_open(uint32_t size, uint32_t *handle)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	return z_impl_bp_network_open(size, handle);
+}
+#include <zephyr/syscalls/bp_network_open_mrsh.c>
+
+int z_impl_bp_network_get(uint32_t handle, struct bp_network_state *state) { return hub_network_get(handle, state); }
+static inline int z_vrfy_bp_network_get(uint32_t handle, struct bp_network_state *state)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
+	return z_impl_bp_network_get(handle, state);
+}
+#include <zephyr/syscalls/bp_network_get_mrsh.c>
+
+int z_impl_bp_network_connect(uint32_t handle, const uint8_t *address) { return hub_network_connect(handle, address); }
+static inline int z_vrfy_bp_network_connect(uint32_t handle, const uint8_t *address)
+{
+	K_OOPS(K_SYSCALL_MEMORY_READ(address, 6));
+	return z_impl_bp_network_connect(handle, address);
+}
+#include <zephyr/syscalls/bp_network_connect_mrsh.c>
+
+int z_impl_bp_network_send(uint32_t handle, const struct bp_network_message *message) { return hub_network_send(handle, message); }
+static inline int z_vrfy_bp_network_send(uint32_t handle, const struct bp_network_message *message)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(message, __alignof__(*message))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(message, sizeof(*message)));
+	return z_impl_bp_network_send(handle, message);
+}
+#include <zephyr/syscalls/bp_network_send_mrsh.c>
+
+int z_impl_bp_network_cancel(uint32_t handle, uint32_t request) { return hub_network_cancel(handle, request); }
+static inline int z_vrfy_bp_network_cancel(uint32_t handle, uint32_t request)
+{
+	return z_impl_bp_network_cancel(handle, request);
+}
+#include <zephyr/syscalls/bp_network_cancel_mrsh.c>
+
+int z_impl_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through) { return hub_network_snapshot(handle, latest, through); }
+static inline int z_vrfy_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(through, __alignof__(*through))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(through, sizeof(*through)));
+	return z_impl_bp_network_snapshot(handle, latest, through);
+}
+#include <zephyr/syscalls/bp_network_snapshot_mrsh.c>
+
+int z_impl_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message) { return hub_network_read(handle, through, message); }
+static inline int z_vrfy_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(message, __alignof__(*message))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(message, sizeof(*message)));
+	return z_impl_bp_network_read(handle, through, message);
+}
+#include <zephyr/syscalls/bp_network_read_mrsh.c>
+
+int z_impl_bp_network_close(uint32_t handle) { return hub_network_close(handle); }
+static inline int z_vrfy_bp_network_close(uint32_t handle)
+{
+	return z_impl_bp_network_close(handle);
+}
+#include <zephyr/syscalls/bp_network_close_mrsh.c>
 
 int z_impl_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
 {
@@ -1833,6 +1901,8 @@ static int release(void)
 	if (!err) err = radio_error;
 	int peer_error = hub_ble_peer_release();
 	if (!err) err = peer_error;
+	int network_error = hub_network_release();
+	if (!err) err = network_error;
 	hub_imu_release();
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */

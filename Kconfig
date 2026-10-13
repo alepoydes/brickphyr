@@ -280,6 +280,14 @@ config BRICKPHYR_BLE_PEER
 	  Discovery and ATT use the existing radio workqueue. Pairing additionally
 	  requires BT_SMP; notification buffers are allocated per application lease.
 
+config BRICKPHYR_HUB_NETWORK
+	bool "Application Classic hub network"
+	depends on BRICKPHYR_RADIO && BT_CLASSIC && BT_MAX_CONN >= 4
+	default y
+	help
+	  Pybricks star networking over Classic L2CAP, alongside BLE management.
+	  Kernel-owned per-source inboxes and relay queues are allocated on demand.
+
 config BRICKPHYR_PYBRICKS_SLOTS
 	int "Persistent Pybricks program slots"
 	depends on BRICKPHYR_PYBRICKS_EXECUTION && BRICKPHYR_APP_STORAGE && SHELL

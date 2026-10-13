@@ -5,6 +5,7 @@
 #include "hub.h"
 #include "hub_radio.h"
 #include "hub_ble_peer.h"
+#include "hub_network.h"
 #include "host_radio.h"
 
 #include <string.h>
@@ -53,6 +54,7 @@ static atomic_t advertising;
 static int radio_error;
 static const char *failed_operation;
 static struct k_work_q radio_queue;
+static struct k_work startup_work;
 /* F4 startup/re-advertising measured 548 bytes; inspected central call chains
  * reach 544 bytes. Reserve 1 KiB plus the guard; central high-water is pending. */
 static K_KERNEL_STACK_DEFINE(radio_stack, 1024);
@@ -79,6 +81,13 @@ void host_radio_schedule(k_timeout_t delay)
 {
 	if (K_TIMEOUT_EQ(delay, K_NO_WAIT)) k_work_reschedule_for_queue(&radio_queue, &scan_work, delay);
 	else k_work_schedule_for_queue(&radio_queue, &scan_work, delay);
+}
+
+bool host_radio_starting(void)
+{
+	int state = atomic_get(&radio_state);
+	return !atomic_get(&shutting_down) && (state == RADIO_STARTING ||
+		(state == RADIO_OFF && k_work_busy_get(&startup_work)));
 }
 
 int host_radio_error(void)
@@ -155,6 +164,7 @@ static void update_scan(struct k_work *work)
 	/* Explicit scanning is stopped before CREATE. All GATT/HCI work shares
 	 * this queue and lifecycle mutex; RX only publishes copied peer state. */
 	hub_ble_peer_process(err, !scanning);
+	hub_network_process(host_radio_error());
 	if (hub_ble_peer_scan_mode() != peer_mode) host_radio_schedule(K_NO_WAIT);
 	key = k_spin_lock(&observe_lock);
 	if (handle == observe_handle) observe_error = err > 0 ? -EIO : err;
@@ -781,6 +791,10 @@ static int set_radio(bool enable)
 			operation = enable ? "initialization" : "advertising stop";
 			err = enable ? bt_enable(NULL) : bt_le_adv_stop();
 			if (!enable && !err) atomic_clear(&advertising);
+		}
+		if (!err && enable) {
+			operation = "network initialization";
+			err = hub_network_start();
 		}
 		if (!err) {
 			operation = enable ? "advertising start" : "controller shutdown";

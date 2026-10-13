@@ -309,7 +309,7 @@ Python stop. Additional cases exercise Technic Move commands and retry suppressi
 Mario/Luigi/Peach matching and palettes, both train formats, invalid samples and
 reconnection. These establish software behavior only. Physical LEGO device
 connection, pairing, sensor/output behavior, radio timing and coexistence with
-management and broadcasts remain unverified. `HubNetwork` remains unfinished.
+management and broadcasts remain unverified.
 
 ### Application Xbox controller
 
@@ -370,6 +370,57 @@ during a pending descriptor read. Physical controller connection, activation,
 pairing/reconnection, input and rumble remain unverified. The wire codec uses
 licensed SDL/Bluepad32 sources; Pybricks' non-free Xbox source is excluded. See
 [licensing](licensing.md#xbox-controller-codec).
+
+### Application hub network
+
+`messaging.HubNetwork` uses Classic BR/EDR L2CAP alongside BLE management.
+The full F4 Python profile enables `CONFIG_BRICKPHYR_HUB_NETWORK`, three network
+peers, one BLE device and one computer connection. Reduced profiles omit Classic;
+constructing `HubNetwork` there reports `OSError(ENOTSUP)`.
+
+The service ports Pybricks' star routing and per-sender queues from
+[`pb_type_hub_network.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/pybricks/messaging/pb_type_hub_network.c)
+and its MIT-licensed Bluetooth adapter. Zephyr supplies the Classic stack;
+BTstack is not linked. Addresses, PSM `0x1001`, the seven-byte routing header and
+513-byte message limit match the reference. One coordinator connects to up to
+three leaves and forwards messages between them; a leaf cannot start another
+star. These are application links, not additional computer management sessions.
+
+```python
+from pybricks.messaging import HubNetwork
+
+network = HubNetwork()
+print(network.address())
+# On the coordinator, substitute the address printed by another brick:
+network.connect("00:16:53:12:34:56")
+network.send((42, 1.5, True, None, b"data", "hello"))
+print(network.inbox())
+```
+
+`connect` and `send` also work with the reference awaitable interface. Sending is
+best effort, bounded to one second; success is not a delivery acknowledgment.
+`inbox(latest=False)` drains a snapshot in receipt order. `latest=True` retains
+only the newest message per sender. Each sender gets `inbox_size` bytes, default
+1024 and minimum 525; overflow discards that sender's oldest messages. A busy
+sender cannot consume another sender's queue. The coordinator allocates one
+additional relay queue of the same size. Queues live in the kernel; the native
+`bp_network_*` calls copy data and validate application buffers.
+
+Stopping Python or closing its network object cancels pending connection/send
+requests and frees its queues. Established network links survive until remote
+closure or radio shutdown; a new object gets empty inboxes. A frame already
+handed to L2CAP cannot be recalled. Old callbacks retain their connection storage
+until actual release and cannot complete a new lease's operation.
+
+Protected ARM checks exercise both network roles, typed and maximum-size frames,
+queue overflow/snapshots, forwarding, awaitable operations and late callbacks
+through the real service and Python binding with synthetic Bluetooth endpoints.
+They do not establish over-the-air interoperability.
+
+Classic channels require Zephyr security level 2. Pairing uses Just Works and
+RAM-only link keys; reboot loses those keys. Physical interoperability, concurrent
+radio load and peak memory use remain acceptance work. The additional Classic
+Zephyr fixes are listed under [dependency prerequisites](upstream.md#classic-network-prerequisites).
 
 ## Boundaries
 

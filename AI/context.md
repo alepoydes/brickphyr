@@ -120,8 +120,10 @@ and `DuploTrain` share native LEGO BLE setup, commands and snapshots, with
 protected ARM checks for operations, reconnects and lifetime cleanup.
 `XboxController` uses the same peer owner with a licensed SDL/Bluepad32 codec;
 standard/Elite input, rumble and pending-read cleanup have protected ARM checks.
-Physical controller behavior remains unverified. Broadcasting, physical reception/device connection/pairing, AppData clients
-and remaining wireless bindings are pending. See [Bluetooth](../docs/bluetooth.md).
+Physical controller behavior remains unverified. `HubNetwork` uses shared native
+Classic routing/inboxes with protected ARM checks for both roles, the Python
+codec, forwarding and cleanup. Physical network interoperability, broadcasting,
+reception/device connection/pairing and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
 Occasional IMU acquisition failures remain during idle operation and USB/BLE
 application transfers; isolate the scheduling/I/O cause before claiming reliability.
 Account separately for static reservations, stacks, Python heap and peak loading memory

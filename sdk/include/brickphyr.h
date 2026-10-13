@@ -10,6 +10,7 @@
 #include <brickphyr_light.h>
 #include <brickphyr_radio.h>
 #include <brickphyr_ble_peer.h>
+#include <brickphyr_network.h>
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
@@ -58,6 +59,20 @@ __syscall int bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state);
 __syscall int bp_lwp3_write(uint32_t handle, const void *data, uint32_t size);
 __syscall int bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message);
 __syscall int bp_ble_peer_close(uint32_t handle);
+/* One HubNetwork inbox lease; memory is allocated per source. Close/stop
+ * detaches queues and cancels pending work; established network links persist.
+ * Connect/send return a positive request token, completed through get().
+ * Cancel only affects the matching token. All messages are copied. */
+__syscall int bp_network_open(uint32_t inbox_size, uint32_t *handle);
+__syscall int bp_network_get(uint32_t handle, struct bp_network_state *state);
+__syscall int bp_network_connect(uint32_t handle, const uint8_t *address);
+__syscall int bp_network_send(uint32_t handle, const struct bp_network_message *message);
+__syscall int bp_network_cancel(uint32_t handle, uint32_t request);
+/* Snapshot returns an exclusive sequence bound; latest keeps one per source.
+ * Read returns 1 with the oldest message before that bound, or 0 when empty. */
+__syscall int bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through);
+__syscall int bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message);
+__syscall int bp_network_close(uint32_t handle);
 /* Xbox report-3 force feedback. Completes when the write is acknowledged,
  * without waiting for the physical effect. Unsupported inputs have no effects. */
 __syscall int bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble);

@@ -14,6 +14,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_lwp3.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_ble_peer.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_network.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_xbox.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
@@ -34,6 +35,7 @@ add_custom_command(OUTPUT ${native_abi}
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_radio.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_lwp3.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_ble_peer.h
+    ${BRICKPHYR_ROOT}/sdk/include/brickphyr_network.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_xbox.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_imu.h
     ${BRICKPHYR_ROOT}/sdk/include/brickphyr_sound.h
@@ -58,6 +60,9 @@ if(CONFIG_BRICKPHYR_BLE_PEER)
     ${BRICKPHYR_ROOT}/src/xbox_device.c)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/lego)
   include(${BRICKPHYR_ROOT}/cmake/pbio.cmake)
+endif()
+if(CONFIG_BRICKPHYR_HUB_NETWORK)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_network.c)
 endif()
 if(CONFIG_MCUMGR)
   target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application_mgmt.c)

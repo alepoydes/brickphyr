@@ -303,8 +303,12 @@ service, standard/Elite input, raw state, rumble and lifetime cleanup. Its codec
 uses SDL/Bluepad32, excluding the non-free reference binding. Known BLE 5.x
 report layouts are implemented; physical acceptance remains open. See
 [Xbox limits and usage](bluetooth.md#application-xbox-controller).
-`HubNetwork` remains unfinished work. The legacy hub, geometry, `LUMPDevice`
-and `tools.AppData` aliases are present.
+`messaging.HubNetwork` ports the reference typed codec, per-sender inboxes and
+Classic star routing to the shared native service. Protected ARM checks cover
+connect/send, both network roles, forwarding, snapshots and lifetime cleanup.
+Physical pairing, interoperability and coexistence remain unverified; see
+[HubNetwork](bluetooth.md#application-hub-network). The legacy hub, geometry,
+`LUMPDevice` and `tools.AppData` aliases are present.
 
 System `reset_storage` remains unfinished required work.
 Charger `connected()` returns the shared native source code: 0 none, 1

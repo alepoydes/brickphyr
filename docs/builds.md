@@ -514,6 +514,9 @@ provides [temporary and installed Python programs](host.md#python-applications),
 including imports, through Brickphyr management. REPL and the Pybricks execution
 adapter have software and bounded Inventor F4 USB/BLE checks; remaining acceptance
 is listed in the [plan](python.md).
+This full profile includes [Classic HubNetwork](bluetooth.md#application-hub-network)
+alongside BLE; the reduced profiles below omit its Classic stack. Physical
+network acceptance and combined memory measurements remain pending.
 The experimental [Pybricks library](compatibility.md#implemented-library-subset)
 is enabled by default. `CONFIG_BRICKPHYR_PYBRICKS` selects that library;
 `CONFIG_BRICKPHYR_PYBRICKS_EXECUTION` independently selects the USB/BLE client

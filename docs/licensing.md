@@ -62,6 +62,9 @@ The artifact remains unchanged; runtime platform configuration disables eHCILL
 deep sleep because the selected H:4 transport does not implement it. The
 [TI license](https://git.ti.com/cgit/ti-bt/service-packs/tree/LICENSE?id=3aa1d75f3c2ae77f6e4d36194e3d281b899ab149)
 and cryptographic-library licenses accompany the firmware in `ReadMe_OSS.txt`.
+The HubNetwork port adapts the Pybricks MIT-licensed message codec, inboxes and
+star routing at `a7b1b04ae4f8449dd46b3dfb97c420334439fd35`; source comments
+identify the original paths. Zephyr replaces that adapter's Bluetooth transport.
 No BTstack code is linked.
 
 Reusing a flashing protocol does not grant

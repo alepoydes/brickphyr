@@ -400,6 +400,22 @@ The same fixture runs the real TI service-pack loader against synthetic HCI
 replies and reads its embedded version through the protected Python binding.
 It does not verify physical controller initialization.
 
+The focused HubNetwork case runs only its own suite:
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-network-tests -- -DFOCUSED_TEST=test_hub_network_classic_routing_and_lifetime
+uv run --locked pytest -q -x tests/test_native.py -k python-network-tests
+```
+
+It uses the production protected binding, syscalls, native queues and radio worker
+with synthetic public Classic connection/L2CAP endpoints. Literal reference frames
+check typed values and the full 520-byte packet while common TX MTU stays 65.
+Both coordinator and leaf paths exercise source/destination routing, broadcast
+and unicast forwarding, overflow, `latest` and receipt snapshots. Forced stop
+while connecting, reopening established links, stale handles and delayed channel
+release check application lifetime and connection references. This does not
+exercise the controller, pairing, encryption or physical radio coexistence.
+
 The LEGO peripheral case drives the real native service and protected
 `Remote`/`LWP3Device` bindings with synthetic public GATT callbacks. It checks
 advertisement/response address matching, scan timeout, reference Remote messages,

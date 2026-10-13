@@ -6,11 +6,14 @@
 #include "host_protocol.h"
 #include "host_transport.h"
 #include "hub_ble_peer.h"
+#include "hub_network.h"
 #include <pbio/protocol.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/classic/classic.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/l2cap.h>
 #include <zephyr/drivers/bluetooth.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
@@ -44,6 +47,131 @@ static struct bt_gatt_write_params *held_write;
 static struct bt_gatt_subscribe_params *lego_subscription;
 static const bt_addr_le_t lego_address = {.type = BT_ADDR_LE_RANDOM, .a = {{1, 2, 3, 4, 5, 0xc6}}};
 K_MSGQ_DEFINE(lego_writes, sizeof(struct bp_lwp3_message), 16, 1);
+
+/* Three synthetic Classic ACLs exercise the actual HubNetwork routing service.
+ * Only controller/connection/L2CAP endpoints are replaced. */
+struct br_link {
+	uintptr_t token;
+	bt_addr_t address;
+	atomic_t refs;
+	struct bt_l2cap_chan *channel;
+	bool connected;
+};
+static struct br_link br_links[3] = {
+	{.address = {.val = {6, 5, 4, 3, 2, 1}}},
+	{.address = {.val = {12, 11, 10, 9, 8, 7}}},
+	{.address = {.val = {18, 17, 16, 15, 14, 13}}},
+};
+static const bt_addr_t br_local = {.val = {0x26, 0x25, 0x24, 0x23, 0x22, 0x21}};
+static struct bt_l2cap_server *br_server;
+static bt_br_conn_req_func_t br_incoming;
+static bool hold_br_create, hold_br_disconnect;
+static atomic_t br_creates, br_disconnects;
+struct br_frame { uint8_t peer; uint16_t size; uint8_t data[520]; };
+K_MSGQ_DEFINE(br_frames, sizeof(struct br_frame), 12, 4);
+struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn);
+
+static struct bt_conn *br_conn(struct br_link *link)
+{
+	return (struct bt_conn *)&link->token;
+}
+
+static struct br_link *br_for_conn(const struct bt_conn *conn)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(br_links); i++) {
+		if (conn == br_conn(&br_links[i])) return &br_links[i];
+	}
+	return NULL;
+}
+
+static struct br_link *br_for_address(const bt_addr_t *address)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(br_links); i++) {
+		if (!bt_addr_cmp(address, &br_links[i].address)) return &br_links[i];
+	}
+	return NULL;
+}
+
+static void br_connection_event(struct br_link *link, bool connected)
+{
+	link->connected = connected;
+	struct bt_conn *conn = br_conn(link);
+	if (!connected && link->channel) {
+		struct bt_l2cap_chan *channel = link->channel;
+		link->channel = NULL;
+		channel->ops->released(channel);
+	}
+	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
+		if (connected && cb->connected) cb->connected(conn, 0);
+		if (!connected && cb->disconnected) {
+			cb->disconnected(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		}
+	}
+}
+
+int __wrap_bt_br_oob_get_local(struct bt_br_oob *oob)
+{
+	oob->addr = br_local;
+	return 0;
+}
+
+int __wrap_bt_br_set_connectable(bool enable, bt_br_conn_req_func_t callback)
+{
+	br_incoming = enable ? callback : NULL;
+	return 0;
+}
+
+int __wrap_bt_l2cap_br_server_register(struct bt_l2cap_server *server)
+{
+	zassert_equal(server->psm, 0x1001);
+	br_server = server;
+	return 0;
+}
+
+struct bt_conn *__wrap_bt_conn_lookup_addr_br(const bt_addr_t *address)
+{
+	struct br_link *link = br_for_address(address);
+	return link && atomic_get(&link->refs) ? __wrap_bt_conn_ref(br_conn(link)) : NULL;
+}
+
+struct bt_conn *__wrap_bt_conn_create_br(const bt_addr_t *address,
+	const struct bt_br_conn_param *param)
+{
+	ARG_UNUSED(param);
+	struct br_link *link = br_for_address(address);
+	zassert_not_null(link);
+	zassert_equal(atomic_get(&link->refs), 0);
+	atomic_set(&link->refs, 1); /* Owned result, transferred to the service. */
+	atomic_inc(&br_creates);
+	if (!hold_br_create) br_connection_event(link, true);
+	return br_conn(link);
+}
+
+int __wrap_bt_l2cap_chan_connect(struct bt_conn *conn, struct bt_l2cap_chan *channel,
+	uint16_t psm)
+{
+	struct br_link *link = br_for_conn(conn);
+	zassert_not_null(link);
+	zassert_equal(psm, 0x1001);
+	zassert_true(link->connected);
+	link->channel = channel;
+	channel->conn = conn;
+	CONTAINER_OF(channel, struct bt_l2cap_br_chan, chan)->tx.mtu = 520;
+	channel->ops->connected(channel);
+	return 0;
+}
+
+int __wrap_bt_l2cap_chan_send(struct bt_l2cap_chan *channel, struct net_buf *buf)
+{
+	struct br_link *link = br_for_conn(channel->conn);
+	zassert_not_null(link);
+	zassert_true(buf->len <= 520);
+	struct br_frame frame = {.peer = link - br_links, .size = buf->len};
+	memcpy(frame.data, buf->data, buf->len);
+	zassert_ok(k_msgq_put(&br_frames, &frame, K_NO_WAIT));
+	net_buf_unref(buf);
+	return 0;
+}
 
 static void lego_connection_event(bool connected)
 {
@@ -102,6 +230,7 @@ static const struct bt_gatt_attr *command_attribute;
 static struct k_thread supervisor;
 static K_THREAD_STACK_DEFINE(supervisor_stack, 4096);
 static atomic_t supervisor_stop;
+static bool fixture_started;
 
 /* Same periodic lifecycle service as the hub loop; status reads must not be
  * needed to reap a returned program before its stopped event can be sent. */
@@ -174,6 +303,8 @@ int __wrap_bt_le_scan_stop(void)
 }
 struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
 {
+	struct br_link *br = br_for_conn(conn);
+	if (br) { atomic_inc(&br->refs); return conn; }
 	if (conn == lego) { atomic_inc(&lego_refs); return conn; }
 	zassert_equal(conn, peer);
 	atomic_inc(&refs);
@@ -181,12 +312,20 @@ struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
 }
 void __wrap_bt_conn_unref(struct bt_conn *conn)
 {
+	struct br_link *br = br_for_conn(conn);
+	if (br) { zassert_true(atomic_dec(&br->refs) > 0); return; }
 	if (conn == lego) { zassert_true(atomic_dec(&lego_refs) > 0); return; }
 	zassert_equal(conn, peer);
 	zassert_true(atomic_dec(&refs) > 0);
 }
 int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 {
+	struct br_link *br = br_for_conn(conn);
+	if (br) {
+		atomic_inc(&br_disconnects);
+		if (!hold_br_disconnect) br_connection_event(br, false);
+		return 0;
+	}
 	if (conn == lego) {
 		if (!hold_lego_disconnect) lego_disconnected();
 		return 0;
@@ -196,6 +335,15 @@ int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 }
 int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
 {
+	struct br_link *br = br_for_conn(conn);
+	if (br) {
+		memset(info, 0, sizeof(*info));
+		info->type = BT_CONN_TYPE_BR;
+		info->role = BT_CONN_ROLE_CENTRAL;
+		info->state = br->connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_CONNECTING;
+		info->br.dst = &br->address;
+		return 0;
+	}
 	if (conn == lego) {
 		memset(info, 0, sizeof(*info));
 		info->type = BT_CONN_TYPE_LE;
@@ -511,6 +659,8 @@ static const uint8_t native[] = {
 
 static void *setup(void)
 {
+	if (fixture_started) return NULL;
+	fixture_started = true;
 	k_thread_create(&supervisor, supervisor_stack, K_THREAD_STACK_SIZEOF(supervisor_stack),
 		poll_applications, NULL, NULL, NULL, 0, 0, K_NO_WAIT);
 	zassert_ok(host_transport_init(uart, 0));
@@ -1012,6 +1162,175 @@ static void radio_action(const char *action, const char *marker)
 	request[size + 1] = '\n';
 	message_command(false, request, size + 2);
 	message_until(false, marker);
+}
+
+NET_BUF_POOL_FIXED_DEFINE(br_rx_pool, 1, 520, 0, NULL);
+
+static void br_inject(size_t source, const uint8_t destination[6],
+	const uint8_t *payload, size_t size)
+{
+	zassert_true(source < ARRAY_SIZE(br_links));
+	zassert_true(size + 7 <= 520);
+	struct bt_l2cap_chan *channel = br_links[source].channel;
+	zassert_not_null(channel);
+	struct net_buf *buf = net_buf_alloc(&br_rx_pool, K_NO_WAIT);
+	zassert_not_null(buf);
+	net_buf_add_u8(buf, 0);
+	net_buf_add_mem(buf, destination, 6);
+	net_buf_add_mem(buf, payload, size);
+	zassert_ok(channel->ops->recv(channel, buf));
+	net_buf_unref(buf);
+}
+
+static void br_expect(size_t destination, const uint8_t source[6],
+	const uint8_t *payload, size_t size)
+{
+	struct br_frame frame;
+	zassert_ok(k_msgq_get(&br_frames, &frame, K_SECONDS(1)));
+	zassert_equal(frame.peer, destination);
+	zassert_equal(frame.size, size + 7);
+	zassert_equal(frame.data[0], 0);
+	zassert_mem_equal(frame.data + 1, source, 6);
+	zassert_mem_equal(frame.data + 7, payload, size);
+}
+
+static void br_wait_refs(size_t index, int expected)
+{
+	int64_t deadline = k_uptime_get() + 1000;
+	while (atomic_get(&br_links[index].refs) != expected) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+}
+
+ZTEST(python_ble_network, test_hub_network_classic_routing_and_lifetime)
+{
+	static const uint8_t program[] = {
+#include <network.inc>
+	};
+	static const uint8_t local[] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26};
+	static const uint8_t a[] = {1, 2, 3, 4, 5, 6};
+	static const uint8_t c[] = {13, 14, 15, 16, 17, 18};
+	static const uint8_t all[] = {255, 255, 255, 255, 255, 255};
+	static const uint8_t typed[] = {0x88, 'i', 'f', '?', 'n', '1', 's', '2', 'u',
+		42, 0, 0, 0, 0, 0, 0xc0, 0x3f, 1, 0, 0, 0xc3, 0xa9};
+	zassert_not_null(br_server);
+	zassert_not_null(br_incoming);
+	k_msgq_purge(&events);
+	k_msgq_purge(&br_frames);
+	atomic_set(&br_creates, 0);
+	atomic_set(&br_disconnects, 0);
+	connected(true);
+	download(program, sizeof(program));
+	hold_br_create = hold_br_disconnect = true;
+	start("network ready");
+	const uint8_t pending[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN,
+		'p', 'e', 'n', 'd', 'i', 'n', 'g', '\n'};
+	message_command(false, pending, sizeof(pending));
+	int64_t deadline = k_uptime_get() + 1000;
+	while (atomic_get(&br_creates) != 1) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	zassert_ok(application_stop());
+	deadline = k_uptime_get() + 1000;
+	while (!atomic_get(&br_disconnects)) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	/* The controller reports termination after the VM and its lease are gone. */
+	br_connection_event(&br_links[0], false);
+	br_wait_refs(0, 0);
+	hold_br_create = hold_br_disconnect = false;
+	start("network ready");
+	radio_action("go", "network connected");
+	zassert_equal(atomic_get(&br_creates), 4);
+	uint8_t maximum[513];
+	maximum[0] = 0;
+	memset(maximum + 1, 255, 512);
+	br_expect(1, local, maximum, sizeof(maximum));
+
+	/* A busy sender does not displace another source; latest retains one per
+	 * source and returns those survivors in global receipt order. */
+	br_inject(0, local, (uint8_t[]){0, 'A', '0'}, 3);
+	br_inject(1, local, (uint8_t[]){0, 'B', '0'}, 3);
+	br_inject(0, local, (uint8_t[]){0, 'A', '1'}, 3);
+	br_inject(2, local, typed, sizeof(typed));
+	radio_action("", "inbox checked");
+	uint8_t large[401];
+	large[0] = 0;
+	memset(large + 1, 'x', 400);
+	br_inject(0, local, large, sizeof(large));
+	memset(large + 1, 'y', 400);
+	br_inject(0, local, large, sizeof(large));
+	radio_action("", "overflow checked");
+	radio_action("", "network sent");
+	br_expect(2, local, typed, sizeof(typed));
+
+	br_inject(0, all, (uint8_t[]){0, 'R'}, 2);
+	br_inject(0, c, (uint8_t[]){0, 'U'}, 2);
+	br_expect(1, a, (uint8_t[]){0, 'R'}, 2);
+	br_expect(2, a, (uint8_t[]){0, 'R'}, 2);
+	br_expect(2, a, (uint8_t[]){0, 'U'}, 2);
+	radio_action("", "relay checked");
+	radio_action("", "network reopened");
+	zassert_equal(atomic_get(&br_creates), 4, "Close/reopen must retain established links");
+	br_connection_event(&br_links[2], false);
+	br_wait_refs(2, 0);
+	radio_action("", "network lost");
+	radio_action("", "network released");
+	br_connection_event(&br_links[0], false);
+	br_connection_event(&br_links[1], false);
+	br_wait_refs(0, 0);
+	br_wait_refs(1, 0);
+
+	/* Receiver side: admission, channel acceptance and a snapshot boundary
+	 * while a later message arrives. The frame header supplies its source. */
+	uint32_t handle, through;
+	zassert_ok(hub_network_open(525, &handle));
+	atomic_set(&br_links[0].refs, 1); /* Host-owned incoming connection. */
+	zassert_equal(br_incoming(&br_links[0].address, 0), BT_BR_CONN_REQ_ACCEPT_PERIPHERAL);
+	br_connection_event(&br_links[0], true);
+	struct bt_l2cap_chan *incoming;
+	zassert_ok(br_server->accept(br_conn(&br_links[0]), br_server, &incoming));
+	br_links[0].channel = incoming;
+	incoming->conn = br_conn(&br_links[0]);
+	CONTAINER_OF(incoming, struct bt_l2cap_br_chan, chan)->tx.mtu = 520;
+	incoming->ops->connected(incoming);
+	__wrap_bt_conn_unref(br_conn(&br_links[0]));
+	zassert_equal(br_incoming(&br_links[1].address, 0), BT_BR_CONN_REQ_REJECT_NO_RESOURCES);
+	br_inject(0, c, (uint8_t[]){0, '1'}, 2);
+	zassert_ok(hub_network_snapshot(handle, 0, &through));
+	br_inject(0, c, (uint8_t[]){0, '2'}, 2);
+	struct bp_network_message message;
+	zassert_equal(hub_network_read(handle, through, &message), 1);
+	zassert_mem_equal(message.address, c, 6);
+	zassert_equal(message.data[1], '1');
+	zassert_equal(hub_network_read(handle, through, &message), 0);
+	zassert_ok(hub_network_snapshot(handle, 0, &through));
+	zassert_equal(hub_network_read(handle, through, &message), 1);
+	zassert_equal(message.data[1], '2');
+	message = (struct bp_network_message){.size = 2, .data = {0, 'L'}};
+	memcpy(message.address, c, 6);
+	zassert_true(hub_network_send(handle, &message) > 0);
+	br_expect(0, c, (uint8_t[]){0, 'L'}, 2);
+	/* Delay channel release until after a new lease. Connection storage must
+	 * remain alive; releasing it must not close that lease or discard its data. */
+	br_links[0].channel = NULL;
+	br_connection_event(&br_links[0], false);
+	zassert_ok(hub_network_close(handle));
+	uint32_t replacement;
+	zassert_ok(hub_network_open(525, &replacement));
+	zassert_equal(hub_network_close(handle), -ESTALE);
+	zassert_equal(atomic_get(&br_links[0].refs), 1);
+	incoming->ops->released(incoming);
+	br_wait_refs(0, 0);
+	struct bp_network_state state;
+	zassert_ok(hub_network_get(replacement, &state));
+	zassert_equal(state.count, 0);
+	zassert_ok(hub_network_close(replacement));
+	zassert_ok(application_stop());
+	connected(false);
 }
 
 static void expect_lego_write(const uint8_t *data, size_t size)
@@ -1637,9 +1956,25 @@ static void report_stack(const struct k_thread *thread, void *unused)
 
 static void teardown(void *unused)
 {
+	if (!fixture_started) return;
+	fixture_started = false;
 	atomic_set(&supervisor_stop, 1);
 	zassert_ok(k_thread_join(&supervisor, K_SECONDS(1)));
 	k_thread_foreach(report_stack, NULL);
 }
 
-ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, teardown);
+ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, NULL);
+ZTEST_SUITE(python_ble_network, NULL, setup, NULL, NULL, NULL);
+
+/* This Zephyr ARM ztest port provides weak test_main(), but no case filter.
+ * The focused suite has exactly one case; both modes share one fixture. */
+void test_main(void)
+{
+#ifdef BRICKPHYR_FOCUSED_NETWORK_TEST
+	ztest_run_test_suite(python_ble_network, false, 1, 1, NULL);
+#else
+	ztest_run_all(NULL, false, 1, 1);
+	ztest_verify_all_test_suites_ran();
+#endif
+	teardown(NULL);
+}

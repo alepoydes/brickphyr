@@ -499,3 +499,20 @@ References:
 - [Manifest imports](https://docs.zephyrproject.org/latest/develop/west/manifest.html)
 - [Zephyr contribution guidelines](https://docs.zephyrproject.org/latest/contribute/guidelines.html)
 - [Pybricks contribution guidelines](https://github.com/pybricks/pybricks-micropython/blob/master/CONTRIBUTING.md)
+
+## Classic network prerequisites
+
+The experimental HubNetwork build needs local Zephyr corrections beyond the
+manifest pin. Classic link-key aging must also compile without `BT_SETTINGS`.
+An incoming SSP connection request must negotiate the required security before
+returning success, including the pending response, instead of rejecting an
+unencrypted link before pairing can start. Failed pending channels must release
+their storage without dereferencing it after the release callback. Classic
+signaling buffers must reserve `CONFIG_BT_CONN_TX_USER_DATA_SIZE` metadata,
+including on 64-bit builds.
+
+Focused native-simulator tests in Zephyr exercise real key eviction and L2CAP
+request/security/configuration/data/cleanup paths with synthetic security results.
+They do not validate controller encryption or physical pairing. Publish these
+corrections before updating the shared manifest; Brickphyr uses the public
+connection and channel APIs, not private host structures.
