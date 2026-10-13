@@ -114,8 +114,9 @@ physical serial and supply acceptance remain pending.
 `messaging.AppData` and its legacy tools alias share the Pybricks USB/BLE
 dispatcher and protected application mailbox. Transfer and lifetime behavior have
 ARM checks. Passive `BLERadio` observation and legacy hub `observe_channels` use
-the shared radio and protected snapshots; `version()` reads cached TI script
-metadata with an ARM check. `Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub`
+the shared radio and protected snapshots; F4 reception and expiry pass with a
+synthetic Linux advertiser. `version()` reads cached TI script metadata.
+`Remote`, `LWP3Device`, `TechnicMoveHub`, `MarioHub`
 and `DuploTrain` share native LEGO BLE setup, commands and snapshots, with
 protected ARM checks for operations, reconnects and lifetime cleanup.
 `XboxController` uses the same peer owner with a licensed SDL/Bluepad32 codec;
@@ -123,8 +124,8 @@ standard/Elite input, rumble and pending-read cleanup have protected ARM checks.
 Physical controller behavior remains unverified. `HubNetwork` uses shared native
 Classic routing/inboxes with protected ARM checks for both roles, the Python
 codec, forwarding and cleanup. F4 leaf exchange with a synthetic Linux peer
-also passes alongside BLE management. Physical Pybricks interoperability, broadcasting,
-reception/device connection/pairing and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
+also passes alongside BLE management. Physical Pybricks/peripheral interoperability,
+broadcasting and AppData clients remain pending. See [Bluetooth](../docs/bluetooth.md).
 Occasional IMU acquisition failures remain during idle operation and USB/BLE
 application transfers; isolate the scheduling/I/O cause before claiming reliability.
 Account separately for static reservations, stacks, Python heap and peak loading memory

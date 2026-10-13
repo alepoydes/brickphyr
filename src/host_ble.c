@@ -696,7 +696,12 @@ static int advertise(void)
 #endif
 		BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 	};
-	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, data, ARRAY_SIZE(data),
+	/* Name the shared identity explicitly: legacy scanning must not assume
+	 * this advertiser has already initialized a private random address. */
+	const struct bt_le_adv_param *params = BT_LE_ADV_PARAM(
+		BT_LE_ADV_OPT_CONN | BT_LE_ADV_OPT_USE_IDENTITY,
+		BT_GAP_ADV_FAST_INT_MIN_2, BT_GAP_ADV_FAST_INT_MAX_2, NULL);
+	int err = bt_le_adv_start(params, data, ARRAY_SIZE(data),
 		response, ARRAY_SIZE(response));
 	if (err) atomic_clear(&advertising);
 	return err;

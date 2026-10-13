@@ -202,7 +202,13 @@ validated controller setup. It requires the radio to be on and sends no new HCI
 command. Broadcasting remains unfinished and raises `NotImplementedError`.
 Protected ARM checks cover observation values, expiry and lifecycle through a
 synthetic scan callback, and check the version against the actual embedded script.
-Physical reception, coexistence and the version query remain to be checked.
+On one Inventor F4, a synthetic Linux advertiser using the reference 30 ms interval
+also verifies typed reception, refresh from repeated packets, RSSI, expiry and
+version queries through USB and BLE management. The USB check includes ongoing
+hub advertising. Management advertising explicitly uses the hub identity so the
+legacy scanner selects the same address type at cold start. Actual Pybricks
+transmitters, congested radio conditions and sustained-load behavior remain to be
+checked.
 
 For a peer broadcasting on channel 7, run this through either application
 transport; reception itself does not require a connection to that peer:

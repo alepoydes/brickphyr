@@ -282,8 +282,9 @@ application, and close, finalization and application stop release its observer.
 Protected ARM checks cover decoding, expiry, reopening and forced-stop cleanup.
 `version()` returns the loaded TI service pack's cached version string
 (`12_26.24` in the pinned artifact), without another HCI command; a protected
-ARM check uses the actual script metadata. Physical reception, coexistence with
-a management connection, radio timing and the version query remain unverified.
+ARM check uses the actual script metadata. F4 reception, expiry, version queries
+and coexistence with management have a synthetic Linux-advertiser check; see
+[observation limits](bluetooth.md#application-broadcast-observation).
 Broadcast selection and `broadcast()` are explicitly unfinished and raise
 `NotImplementedError` before starting transmission.
 
