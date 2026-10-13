@@ -49,6 +49,7 @@ ZTEST(lump, test_captured_metadata)
 		zassert_equal(l.num_modes, cases[i].modes);
 		zassert_equal(l.baud, 115200);
 		zassert_equal(l.sequence, 0);
+		lump_reset(&l);
 	}
 	static struct lump l;
 	lump_reset(&l);
@@ -83,6 +84,7 @@ ZTEST(lump, test_captured_metadata)
 	zassert_equal(lump_command(command, LUMP_CMD_SPEED, speed + 1, 4), sizeof(speed));
 	zassert_mem_equal(command, speed, sizeof(speed));
 	zassert_equal(lump_command(command, LUMP_CMD_SPEED, speed, 33), -EINVAL);
+	lump_reset(&l);
 }
 
 ZTEST(lump, test_invalid_metadata)
@@ -115,6 +117,30 @@ ZTEST(lump, test_invalid_metadata)
 	zassert_ok(parse_bytes(&l, name, sizeof(name)));
 	const uint8_t too_many_values[] = {0x90, 0x80, 33, 0, 0, 0, 0xce};
 	zassert_equal(parse_bytes(&l, too_many_values, sizeof(too_many_values)), -EBADMSG);
+	lump_reset(&l);
+}
+
+ZTEST(lump, test_mode_memory_lifetime)
+{
+	/* All six maximum-size peers must fit, and reconnect must return their
+	 * memory. This exercises the actual shared allocator, not size arithmetic. */
+	static struct lump peers[BP_PORT_COUNT];
+	uint8_t type[34], modes[34], id = 201;
+	const uint8_t counts[] = {7, 0, 15, 0};
+	int type_size = lump_command(type, LUMP_CMD_TYPE, &id, 1);
+	int modes_size = lump_command(modes, LUMP_CMD_MODES, counts, sizeof(counts));
+	for (size_t round = 0; round < 2; round++) {
+		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) {
+			lump_reset(&peers[port]);
+			zassert_ok(parse_bytes(&peers[port], type, type_size));
+			zassert_ok(parse_bytes(&peers[port], modes, modes_size));
+			zassert_equal(peers[port].num_modes, 16);
+		}
+		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) lump_reset(&peers[port]);
+	}
+	void *reclaimed = k_malloc(ARRAY_SIZE(peers) * 16 * sizeof(struct bp_port_mode));
+	zassert_not_null(reclaimed, "Disconnected peers retained their mode storage");
+	k_free(reclaimed);
 }
 
 static const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lump_uart));

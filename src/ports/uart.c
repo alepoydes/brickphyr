@@ -176,7 +176,7 @@ void port_uart_report_error(uint32_t port)
 		l->error_flags, ring_buf_size_get(&l->rx), l->data_ms);
 }
 
-void port_uart_stop(uint32_t port)
+static void stop_uart(uint32_t port)
 {
 	if (port >= BP_PORT_COUNT) return;
 	k_spinlock_key_t snapshot_key = k_spin_lock(&metadata_lock);
@@ -191,11 +191,24 @@ void port_uart_stop(uint32_t port)
 	irq_unlock(key);
 }
 
+void port_uart_stop(uint32_t port)
+{
+	if (port >= BP_PORT_COUNT) return;
+	stop_uart(port);
+	/* Metadata is unpublished and the worker has stopped parsing. Retain
+	 * phase/error counters for diagnostics, but return the storage now. */
+	k_free(links[port].lump.modes);
+	links[port].lump.modes = NULL;
+	links[port].lump.num_modes = 0;
+	links[port].lump.length = 0;
+}
+
 static int set_baud(uint32_t port, uint32_t baud)
 {
 	const struct device *dev = config[port].uart;
 	struct link *l = &links[port];
-	port_uart_stop(port);
+	/* Baud changes are part of negotiation; retain the parsed mode table. */
+	stop_uart(port);
 	struct uart_config cfg = {.baudrate = baud, .parity = UART_CFG_PARITY_NONE,
 		.stop_bits = UART_CFG_STOP_BITS_1, .data_bits = UART_CFG_DATA_BITS_8,
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE};
@@ -482,8 +495,8 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	out->data_sequence = l->lump.sequence;
 	out->data_ms = l->lump.length ? l->data_ms : 0;
 	out->mode = l->lump.mode;
-	out->data_type = l->lump.modes[l->lump.mode].data_type;
-	out->num_values = l->lump.modes[l->lump.mode].num_values;
+	out->data_type = out->length ? l->lump.modes[l->lump.mode].data_type : 0;
+	out->num_values = out->length ? l->lump.modes[l->lump.mode].num_values : 0;
 	out->write.request = l->write_request;
 	out->write.completed = l->write_completed;
 	out->write.error = l->write_error;

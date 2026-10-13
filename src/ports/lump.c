@@ -6,6 +6,7 @@
 #include "lump.h"
 #include <errno.h>
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
@@ -18,6 +19,7 @@ BUILD_ASSERT(sizeof(float) == 4);
 
 void lump_reset(struct lump *l)
 {
+	k_free(l->modes);
 	*l = (struct lump){.baud = 115200};
 }
 
@@ -110,15 +112,20 @@ static int parse(struct lump *l)
 			return 0;
 		case LUMP_CMD_WRITE:
 			return 0;
-		case LUMP_CMD_MODES:
+		case LUMP_CMD_MODES: {
 			if (l->phase != LUMP_INFO || l->num_modes || data[0] > LUMP_MAX_MODE ||
 			    (length != 1 && length != 2 && length != 4)) {
 				return -EBADMSG;
 			}
-			l->num_modes = (length >= 4 ? data[2] : data[0]) + 1;
-			l->num_view_modes = (length == 4 ? data[3] : length == 2 ? data[1] : data[0]) + 1;
-			return l->num_modes && l->num_modes <= ARRAY_SIZE(l->modes) &&
-				l->num_view_modes && l->num_view_modes <= l->num_modes ? 0 : -EBADMSG;
+			unsigned int modes = (length == 4 ? data[2] : data[0]) + 1;
+			unsigned int view_modes = (length == 4 ? data[3] : length == 2 ? data[1] : data[0]) + 1;
+			if (modes > LUMP_MAX_EXT_MODE + 1 || view_modes > modes) return -EBADMSG;
+			l->modes = k_calloc(modes, sizeof(*l->modes));
+			if (!l->modes) return -ENOMEM;
+			l->num_modes = modes;
+			l->num_view_modes = view_modes;
+			return 0;
+		}
 		case LUMP_CMD_SPEED:
 			if (l->phase != LUMP_INFO || l->got_speed || length != 4) {
 				return -EBADMSG;

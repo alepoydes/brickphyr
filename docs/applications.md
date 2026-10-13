@@ -244,6 +244,18 @@ byte budgets. They do not reserve a second privileged stack for a user-mode tran
 The application retains its MPU-aligned user stack and privileged syscall stack.
 Linker RAM totals also include alignment gaps and kernel-object metadata; they
 are not a measure of free system heap or Python GC capacity.
+
+F4 port-mode descriptions now borrow from the shared system heap while devices
+are connected instead of reserving sixteen complete modes for every port in BSS.
+The native profile provides a 92 KiB heap and the full Python profile 80 KiB;
+the latter retains its 16 KiB MPU-aligned stack and 64 KiB execution arena.
+Actual port metadata occupies 288 bytes per advertised mode plus allocation
+overhead on F4. Six sixteen-mode devices therefore consume about 27 KiB; the
+unoccupied capacity is available to uploads, executable code and other shared
+allocations. These are heap capacities, not increases to Python's GC arena.
+Heap contention or fragmentation can reject a new device or an application
+allocation. Physical combined-load acceptance of this layout remains pending.
+
 The full F4 Python profile uses Zephyr's 50% extra reservation for the generated
 kernel-object table. The default 100% reserve can push the aligned application
 stack across another 16 KiB boundary. This reduces linker padding, not runtime
@@ -272,15 +284,16 @@ full buffers for the last fragment; if that allocation fails, an exact-size
 request may still admit the fragment. Heap counters do not report the largest
 contiguous allocation or prove absence of fragmentation.
 ARM/QEMU checks exercise a synthetic 32 KiB bundle with a native import through
-RAM and stored starts and verify system-heap reclamation. Its fixture has the
-same heap/arena sizes, but does not establish F4 USB/BLE driver overhead or the
-compiler requirements of other programs.
+RAM and stored starts and verify system-heap reclamation. Its fixture uses a
+64 KiB system heap and 64 KiB execution arena, but does not establish F4 USB/BLE
+driver overhead or the compiler requirements of other programs.
 
 On one Robot Inventor F4 (PCB revision unknown), the full Python profile with
 Zephyr's optional memory counters also runs a synthetic 32,768-byte file map
 from RAM and LittleFS over USB. Most of the image is an unused resource; the
 program imports a dynamic C module and creates default HubNetwork inboxes without
-connecting peers. With Zephyr 4.4.2 and Zephyr SDK 1.0.1, the observed budgets are:
+connecting peers. With Zephyr 4.4.2, Zephyr SDK 1.0.1 and the earlier 64 KiB
+system-heap configuration, the observed budgets are:
 
 | Allocation | Observed bytes |
 | --- | ---: |

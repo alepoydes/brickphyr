@@ -12,7 +12,8 @@
 enum lump_phase { LUMP_TYPE, LUMP_INFO, LUMP_ACK, LUMP_DATA };
 struct lump {
 	enum lump_phase phase;
-	struct bp_port_mode modes[LUMP_MAX_EXT_MODE + 1];
+	/* Allocated once from the advertised mode count, immutable after ACK. */
+	struct bp_port_mode *modes;
 	uint32_t baud, bad_frames, sequence;
 	uint32_t firmware_version, hardware_version;
 	uint16_t names, formats;
@@ -23,6 +24,7 @@ struct lump {
 	bool got_speed, got_version;
 };
 
+/* Initially zero-initialize the instance. Reset releases its old metadata. */
 void lump_reset(struct lump *lump);
 /* One byte; 1 means a new DATA sample, 0 means pending/metadata, negative errno
  * means restart the connection. Invalid DATA checksums count and are discarded. */
