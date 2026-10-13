@@ -137,7 +137,7 @@ Both pybricksdev transports pass native-module, finite long-output and active-st
 checks; selected-slot execution after software reboot also passes. A final USB
 upload acknowledgment timed out once and needs diagnosis. Open acceptance includes
 remaining browser reference examples, slot retention across power cycles,
-stalled physical consumers, battery-only watchdog recovery and operator
+sustained BLE send-failure recovery, battery-only watchdog recovery and operator
 checks for physical output, sensors, shutdown and persistence. See the owning
 documents for precise procedures and current status; simulation does not close
 these physical items.

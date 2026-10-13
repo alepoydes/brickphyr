@@ -346,9 +346,13 @@ of about 338 µs within a 1201 µs period, excluding IRQ/software overhead. F4 I
 transactions time out after 10 ms; reset polling is bounded. Observation performs
 no background transmission. Shutdown joins acquisition and powers down both
 sensors. The F4 acquisition thread precedes the 5 ms motor service and host
-processing. CDC uses Zephyr's dedicated preemptible queue, with the
+processing. The main UI/power loop targets a 20 ms cadence and has lower
+priority than acquisition and port service, allowing them to preempt normal UI
+work after I/O completion.
+CDC uses Zephyr's dedicated preemptible queue, with the
 [upstream prerequisite](upstream.md#usb-acquisition-scheduling-prerequisite),
-so a long cooperative USB callback cannot occupy an entire acquisition period.
+so acquisition can preempt its CDC callbacks. The core USB thread remains
+cooperative.
 
 Native simulation uses the actual worker and register library with a synthetic
 I²C/GPIO peer. It checks cold initialization, signed limits and mounting axes,
@@ -366,7 +370,12 @@ Mounting verification, calibrated accuracy, CPU use, stack margin and residual
 current remain open.
 
 Occasional acquisition overruns remain during idle operation and USB/BLE
-application transfers on the Inventor F4; acquisition timing remains unresolved.
+application transfers on the Inventor F4. Diagnostic phase timing distinguishes
+late acquisition starts from delayed worker wakeups after the I²C interrupt
+has already completed the read. The latter can cause conservative rejection
+of an intact frame; the synchronous API does not report the interrupt's
+completion timestamp. USB and cooperative work still need bounded scheduling;
+changing the main loop's priority alone does not establish acquisition reliability.
 
 ## Hub sound
 

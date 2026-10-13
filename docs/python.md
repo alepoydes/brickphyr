@@ -30,7 +30,7 @@ record their [runtime](applications.md#experimental-python-profile),
 | 0 | Task and hardware watchdogs; USB recovery and shutdown/button restart checks on F4 | Battery-only watchdog recovery acceptance |
 | 1–4 | Protected VM, RAM execution, native/Viper and C `.mpy`, named programs and imports; ARM and F4 USB/BLE checks | Preserve regression coverage and finish combined memory, storage and power-cycle acceptance |
 | 5 | Common streams/resources, standard modules and REPL; ARM/CLI and F4 USB/BLE checks for interaction, exit/reset, native SMP backpressure and combined REPL/monitor operation | Preserve native interactive coverage; complete Pybricks-client flow-control acceptance in step 6 |
-| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, F4 USB/BLE native-module execution and slot retention after reboot; unchanged Pybricks Code execution and beta REPL | Power-cycle slot retention, bounded upload acknowledgments, stalled physical consumers and remaining reference examples |
+| 6 | RAM execution, persistent slots and native ABI 6.3 negotiation; ARM checks, F4 USB/BLE native-module execution and slot retention after reboot; unchanged Pybricks Code execution and beta REPL | Power-cycle slot retention, bounded upload acknowledgments, sustained BLE send-failure recovery and remaining reference examples |
 | 7–9 | Tools and initial hub bindings: buttons, static/animated lighting, display text/animation, speaker tones/notes, system information/stop/shutdown, user-data storage, battery and IMU observations/frame/heading/calibration controls; shared native services | Storage reset, remaining hub/device bindings, missing shared-service behavior and required reference examples |
 | 10 | Full, native-Python and native-only F4 package builds; reduced-Python ARM interaction and adapter-boundary checks | Combined physical acceptance, memory budgets, reproducible dependencies and delivery |
 
@@ -48,12 +48,15 @@ combined REPL/application-monitor operation have USB/BLE checks. Compact stream
 responses and negotiated BLE packet sizes reduce the shared connection's
 overhead; monitor rates remain best-effort. Both physical pybricksdev transports
 also pass finite long-output, active-printing stop and reconnect checks. A final
-USB upload acknowledgment timed out once; its cause and deliberately stalled
-physical consumers remain separate acceptance items.
+USB upload acknowledgment timed out once; its cause remains open. F4 USB also
+preserves complete output records after a full, unread TTY buffer and returns
+STOP/status when reading resumes. A diagnostic image also passes finite BLE output
+with measured notification retries. Sustained physical BLE send-failure recovery
+remains open; pausing application reads alone cannot establish it.
 
 | Delivery block | Remaining work | Usable result |
 | --- | --- | --- |
-| Pybricks clients | Resolve the upload-acknowledgment timeout; complete slot power-cycle retention and stalled-consumer acceptance; extend browser reference coverage and track the browser native-compiler limitation | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
+| Pybricks clients | Resolve the upload-acknowledgment timeout; complete slot power-cycle retention and sustained BLE send-failure recovery; extend browser reference coverage and track the browser native-compiler limitation | Reference examples upload, run and stop through the browser over BLE and pybricksdev over USB/BLE; management remains available after reconnect |
 | Hub APIs and observations | `connected()` uses the F4 BC1.2 source snapshot, with physical classification and adapter charging still to accept; complete storage reset, accept physical menu selection, and isolate IMU acquisition gaps during idle operation and transfers | Reference hub examples share the existing hardware services, with valid observations or explicit errors and reliable cleanup |
 | Wired devices | Accept physical writes, the six sensor classes, Light/ColorLightMatrix, PFMotor and custom UART signals/power; UART permission/persistence and supply cleanup have synthetic checks | Reference programs use device modes and measurements; generic access and the existing terminal inventory expose unknown compatible devices |
 | Motors | Accept reference examples/physical motion; coordinates, motion, shared control/model settings, motor/controller logging and blocking/awaitable bindings have synthetic ARM checks | Reference motor programs complete or cancel without stranding port ownership or active outputs |

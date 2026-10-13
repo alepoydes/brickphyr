@@ -583,8 +583,15 @@ another fragment. Detach or selection of native BLE management restores the
 nonblocking application log, whose overflow counter the Pybricks client does not
 expose. Long-output and blocked-stop cases have ARM checks. Both physical clients
 also deliver a finite 4 KiB output exactly, stop continuous printing, interrupt a
-non-yielding loop and run again after reconnecting. Deliberately stalled physical
-consumers remain unverified. F4 USB checks also cover byte-for-byte readback of
+non-yielding loop and run again after reconnecting. F4 USB also preserves complete
+output records across an unread, full host TTY buffer and accepts STOP; its reply
+and stopped status are received after reading resumes. This check does not measure
+when STOP executes during the unread interval. An F4 diagnostic image additionally
+delivers a finite 7.6 kB BLE stream exactly while counters confirm repeated
+notification-allocation retries. Recovery from sustained physical BLE send failure
+remains unverified. Notifications have no application-level acknowledgment, so
+pausing a Python reader does not establish pressure on the hub while the host
+Bluetooth stack keeps receiving. F4 USB checks also cover byte-for-byte readback of
 multi-module program creation/replacement and a newly stored 30 kB program.
 Application storage fills its existing read cache per flash transaction to reduce metadata
 read overhead without additional cache memory. A final USB upload acknowledgment
