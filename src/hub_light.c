@@ -6,11 +6,58 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include "hub_light.h"
+#if DT_NODE_HAS_COMPAT(DT_NODELABEL(hub_leds), lego_hub_pwm_rgb)
+#include <zephyr/drivers/pwm.h>
+
+static const struct pwm_dt_spec rgb_channels[] = {
+	PWM_DT_SPEC_GET_BY_IDX(DT_NODELABEL(hub_leds), 0),
+	PWM_DT_SPEC_GET_BY_IDX(DT_NODELABEL(hub_leds), 1),
+	PWM_DT_SPEC_GET_BY_IDX(DT_NODELABEL(hub_leds), 2),
+};
+BUILD_ASSERT(DT_PROP_LEN(DT_NODELABEL(hub_leds), pwms) == 3);
+
+static bool lights_ready(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(rgb_channels); i++) {
+		if (!pwm_is_ready_dt(&rgb_channels[i])) return false;
+	}
+	return true;
+}
+
+static bool light_present(uint32_t light) { return light == BP_LIGHT_CENTER; }
+
+static int write_frame(const uint16_t frame[9])
+{
+	int first_error = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(rgb_channels); i++) {
+		const struct pwm_dt_spec *channel = &rgb_channels[i];
+		uint32_t pulse = ((uint64_t)channel->period * frame[i] + 32767) / UINT16_MAX;
+		int err = pwm_set_pulse_dt(channel, pulse);
+		/* Still attempt the remaining channels, especially when turning off. */
+		if (!first_error) first_error = err;
+	}
+	return first_error;
+}
+#else
 #include "led_tlc5955.h"
+
+static const struct device *const leds = DEVICE_DT_GET(DT_NODELABEL(hub_leds));
+BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)) ==
+	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 1);
+BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)) ==
+	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 2);
+
+static bool lights_ready(void) { return device_is_ready(leds); }
+static bool light_present(uint32_t light) { return light < BP_LIGHT_COUNT; }
+
+static int write_frame(const uint16_t frame[9])
+{
+	return tlc5955_set_colors16(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)), 3, frame);
+}
+#endif
 
 LOG_MODULE_REGISTER(hub_light);
 
-static const struct device *const leds = DEVICE_DT_GET(DT_NODELABEL(hub_leds));
 static const uint8_t white_balance[] = DT_PROP(DT_NODELABEL(hub_leds), white_balance);
 static K_MUTEX_DEFINE(lock);
 static enum { ANIMATED, MANUAL, OFF } mode = ANIMATED;
@@ -52,10 +99,6 @@ static struct application_light {
 static bool disabled;
 
 BUILD_ASSERT(sizeof(struct bp_light_frame) * BP_LIGHT_MAX_FRAMES == 2048);
-BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(status_bottom)) ==
-	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 1);
-BUILD_ASSERT(DT_NODE_CHILD_IDX(DT_NODELABEL(bluetooth_led)) ==
-	     DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)) + 2);
 BUILD_ASSERT(ARRAY_SIZE(white_balance) == 3);
 #define CHECK_WEIGHT(node, prop, index) \
 	BUILD_ASSERT(DT_PROP_BY_IDX(node, prop, index) >= 0 && \
@@ -141,7 +184,7 @@ static int write_colors(void)
 		}
 	}
 	k_spin_unlock(&application_lock, key);
-	int err = tlc5955_set_colors16(leds, DT_NODE_CHILD_IDX(DT_NODELABEL(status_top)), 3, frame);
+	int err = write_frame(frame);
 	key = k_spin_lock(&application_lock);
 	for (size_t i = 0; i < BP_LIGHT_COUNT; i++) {
 		struct bp_light_state *state = &application_lights[i].state;
@@ -287,7 +330,7 @@ int hub_light_select(enum host_mode selected, enum hub_light_menu menu, int64_t 
 		return -EINVAL;
 	}
 	k_mutex_lock(&lock, K_FOREVER);
-	int err = mode == OFF ? -ESHUTDOWN : !device_is_ready(leds) ? -ENODEV : 0;
+	int err = mode == OFF ? -ESHUTDOWN : !lights_ready() ? -ENODEV : 0;
 	if (!err) {
 		menu_state = menu;
 		bluetooth_manual = false;
@@ -347,7 +390,7 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 		next_frame = started + (elapsed / 20 + 1) * 20;
 	}
 	if (readiness_frame || pending) {
-		int err = device_is_ready(leds) ? write_colors() : -ENODEV;
+		int err = lights_ready() ? write_colors() : -ENODEV;
 
 		if (err) {
 			mode = MANUAL;
@@ -373,11 +416,12 @@ int hub_light_manual(bool center, const uint8_t rgb[3])
 
 int hub_light_pwm(bool center, const uint16_t duty[3])
 {
+	if (!light_present(center ? BP_LIGHT_CENTER : BP_LIGHT_BLUETOOTH)) return -ENODEV;
 	k_mutex_lock(&lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
 	bool owned = application_lights[center ? BP_LIGHT_CENTER : BP_LIGHT_BLUETOOTH].state.owned;
 	k_spin_unlock(&application_lock, key);
-	int err = mode == OFF ? -ESHUTDOWN : !device_is_ready(leds) ? -ENODEV : 0;
+	int err = mode == OFF ? -ESHUTDOWN : !lights_ready() ? -ENODEV : 0;
 	if (!err && owned) {
 		err = -EBUSY;
 	}
@@ -406,7 +450,7 @@ int hub_light_off(void)
 	mode = OFF;
 	int err = -ENODEV;
 
-	if (device_is_ready(leds)) {
+	if (lights_ready()) {
 		memset(colors, 0, sizeof(colors));
 		err = write_colors();
 	}
@@ -420,7 +464,7 @@ int hub_light_write(uint32_t light, const uint8_t rgb[3])
 	if (light >= BP_LIGHT_COUNT || !rgb) {
 		return -EINVAL;
 	}
-	if (!device_is_ready(leds)) {
+	if (!light_present(light) || !lights_ready()) {
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
@@ -446,7 +490,7 @@ int hub_light_animate(uint32_t light, const struct bp_light_frame *frames, size_
 		}
 		period += frames[i].duration_ms;
 	}
-	if (!device_is_ready(leds)) {
+	if (!light_present(light) || !lights_ready()) {
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&application_lock);
@@ -479,7 +523,7 @@ int hub_light_get(uint32_t light, struct bp_light_state *value)
 	if (light >= BP_LIGHT_COUNT || !value) {
 		return -EINVAL;
 	}
-	if (!device_is_ready(leds)) {
+	if (!light_present(light) || !lights_ready()) {
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&application_lock);

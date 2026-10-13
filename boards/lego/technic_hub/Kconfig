@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+config BOARD_TECHNIC_HUB
+	select BOARD_EARLY_INIT_HOOK
+	select INIT_ARCH_HW_AT_BOOT

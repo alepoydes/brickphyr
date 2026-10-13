@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Verify an actual F4 package through Pybricks, without accessing USB."""
+"""Verify built hub packages through Pybricks, without accessing hardware."""
 
 import shutil
 from pathlib import Path
@@ -11,8 +11,11 @@ from west.manifest import Manifest
 from tools.package_firmware import package
 
 
-def test_package_roundtrip_and_rejection(tmp_path, monkeypatch):
-    build = Path(__file__).resolve().parents[1] / "build/prime"
+@pytest.mark.parametrize(
+    "directory,platform", [("prime", "prime_hub_f4"), ("technic-base", "technic_hub")]
+)
+def test_package_roundtrip_and_rejection(tmp_path, monkeypatch, directory, platform):
+    build = Path(__file__).resolve().parents[1] / "build" / directory
     for name in ("zephyr.elf", "zephyr.bin", "zephyr.map", ".config"):
         shutil.copyfile(build / "zephyr" / name, tmp_path / name)
     # Use the SDK selected for the compiled artifact, not a workstation default.
@@ -28,12 +31,24 @@ def test_package_roundtrip_and_rejection(tmp_path, monkeypatch):
     output = package(tmp_path, "test", Path(sdk))
     _, variants = create_firmware_blob(output)
     image = (tmp_path / "zephyr.bin").read_bytes()
-    assert set(variants) == {"prime_hub_f4"}
-    assert bytes(variants["prime_hub_f4"]) == image
+    assert set(variants) == {platform}
+    blob = bytes(variants[platform])
+    assert blob[: len(image)] == image
+    if platform == "technic_hub":
+        assert len(blob) == len(image) + 4
+        # Factory-loader invariant across the programmed image and erased tail.
+        checked = blob + b"\xff" * (0x37000 - len(blob))
+        assert (
+            sum(int.from_bytes(checked[i : i + 4], "little") for i in range(0, len(checked), 4))
+            & 0xFFFFFFFF
+            == 0
+        )
+    else:
+        assert blob == image
 
     previous_package = output.read_bytes()
     corrupt = bytearray(image)
-    pack_into("<I", corrupt, 4, 0x08008001)
+    pack_into("<I", corrupt, 4, 0x08000001)
     (tmp_path / "zephyr.bin").write_bytes(corrupt)
     with pytest.raises(ValueError, match="Reset vector"):
         package(tmp_path, "test", Path(sdk))

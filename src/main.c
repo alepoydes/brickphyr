@@ -8,7 +8,7 @@
 #ifdef CONFIG_BRICKPHYR_NATIVE
 #include "application.h"
 #endif
-#ifdef CONFIG_BOARD_SPIKE_PRIME_F4
+#ifdef CONFIG_BRICKPHYR_HUB
 #include "hub.h"
 #endif
 #include <zephyr/app_version.h>
@@ -39,7 +39,7 @@ static int cmd_reboot(const struct shell *shell, size_t argc, char **argv)
 			shell_error(shell, "Usage: reboot [dfu]");
 			return -EINVAL;
 		}
-#ifdef CONFIG_BOARD_SPIKE_PRIME_F4
+#ifdef CONFIG_BRICKPHYR_HUB
 		int err = hub_reboot_dfu();
 		shell_error(shell, "DFU entry failed: %d", err);
 		return err;
@@ -73,7 +73,7 @@ SHELL_CMD_ARG_REGISTER(reboot, NULL, "Restart the firmware, or enter the existin
 
 int main(void)
 {
-#ifdef CONFIG_BOARD_SPIKE_PRIME_F4
+#ifdef CONFIG_BRICKPHYR_HUB
 	hub_run();
 #endif
 	/* Shell and USB run in their own threads; boot never waits for a host. */

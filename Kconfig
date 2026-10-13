@@ -42,9 +42,13 @@ config TASK_WDT_CHANNELS
 
 source "Kconfig.zephyr"
 
+config BRICKPHYR_HUB
+	bool
+	default y if BOARD_SPIKE_PRIME_F4 || BOARD_TECHNIC_HUB
+
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"
-	default y if BOARD_SPIKE_PRIME_F4
+	default y if BRICKPHYR_HUB
 	depends on DT_HAS_ST_STM32_WATCHDOG_ENABLED || ARCH_POSIX
 	select WATCHDOG
 	select TASK_WDT
@@ -212,7 +216,7 @@ config BRICKPHYR_MATRIX
 config BRICKPHYR_LIGHT
 	bool "Application access to hub button lighting"
 	default y
-	depends on DT_HAS_TI_TLC5955_ENABLED && LED
+	depends on (DT_HAS_TI_TLC5955_ENABLED && LED) || (DT_HAS_LEGO_HUB_PWM_RGB_ENABLED && PWM)
 	help
 	  Shared system indication and application colors on the hub buttons.
 	  The base readiness indication remains available without this API.

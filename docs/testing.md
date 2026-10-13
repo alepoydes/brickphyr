@@ -70,6 +70,21 @@ to inspect local dependency revisions before an update or a release build.
 
 ## Watchdog
 
+The build-only Technic base has a short synthetic GPIO/PWM integration check. It
+uses the same hub loop and light service as F4, checking PWM duty/ownership,
+rejection of the absent Bluetooth light, shutdown hold and a fresh press after
+release. No test substitutes a simulated MCU for physical Technic evidence.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/technic -d build/technic-tests
+uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[technic-tests]'
+```
+
+After the [Technic image build](builds.md#experimental-technic-base), use
+`tests/test_bringup.py::test_technic_image` and the Technic case in
+`tests/test_packaging.py` to check the ELF/binary boundary and the actual package
+through Pybricks' checksum consumer.
+
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a
 synthetic watchdog device and process exit at the board-reset boundary. They
 check healthy progress followed by a stalled hub loop or system queue. The power

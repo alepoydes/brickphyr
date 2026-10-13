@@ -86,6 +86,40 @@ contents, run `storage format apps`. The command initializes only that partition
 and refuses to erase an already mounted application store. Neither a failed mount
 nor an application upload implicitly formats foreign data.
 
+## Technic factory-loader boundary
+
+The build-only `technic_hub` port follows the reference
+[`platform.ld`](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/platform/technic_hub/platform.ld):
+
+| Region | Address range (end exclusive) | Treatment |
+| --- | --- | --- |
+| Factory BLE loader | `0x08000000..0x08008000` | Preserve, including the identity at `0x08007ff0` |
+| Firmware | `0x08008000..0x0803c000` | 208 KiB including the package's appended checksum word |
+| USER_0 | `0x0803c000..0x0803f000` | 12 KiB included in the boot checksum; no Brickphyr writes yet |
+| USER_1 | `0x0803f000..0x08040000` | 4 KiB outside that checksum; no Brickphyr writes yet |
+
+The loader requires the little-endian 32-bit word sum over firmware plus USER_0
+to be zero. The existing Pybricks package consumer appends a correction word
+and treats the unwritten tail as erased `0xff`. The image checker reserves room
+for that word inside the firmware region. Changing USER_0 later requires a
+checksum-aware storage design; it is not an ordinary filesystem partition.
+
+The reference reset driver enters the factory BLE loader by writing
+`0xaaaaaaaa` to SRAM `0x20000200` and resetting. Brickphyr reserves the first
+1 KiB outside runtime SRAM and implements this selector without replacing the
+loader. The factory handoff leaves interrupts enabled, so startup must mask
+them before changing core state; see the
+[Zephyr prerequisite](upstream.md#technic-base-prerequisites).
+
+The maintained Pybricks BLE writer sends an erase command without a page range.
+The factory loader's implementation is unavailable here: its exact erase extent
+and protection have not been physically checked. Installation must treat USER_0
+as erased and cannot promise USER_1 preservation. Back up existing user data and
+obtain consent before an installation that can erase it. Before first hardware
+acceptance, check the factory updater's reported identity/address bounds,
+independent button recovery and restoration. A correctly packaged image alone
+does not establish those properties. No Technic installation has been attempted.
+
 ## Current image and installation boundary
 
 The `spike_prime_f4` devicetree limits the image to the main-firmware partition.

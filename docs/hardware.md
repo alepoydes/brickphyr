@@ -34,7 +34,7 @@ source changes preserve the session and uptime.
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
-| Technic | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
+| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base build | Power/button, timer RGB, watchdog and factory-loader package compile; shared UI has synthetic GPIO/PWM checks | No board available; boot, recovery and electrical behavior unverified |
 | City | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
 | Move | Candidate; severe memory constraints require separate evaluation | None yet | Hardware availability unconfirmed |
 
@@ -80,6 +80,40 @@ Exact firmware/bootloader regions and the verification still needed are in
 [recovery](recovery.md). Derive pins, power sequencing, clocking, calibration
 locations, and port circuitry from the platform sources and available hardware
 evidence; do not fill gaps with plausible constants.
+
+## Experimental Technic base
+
+The four-port Control+/Technic Hub has a build-only base, not yet an application
+platform. Its STM32L431RC, 80 MHz MSI/PLL clock, PC12 power hold, PC14 active-low
+button and RGB pin assignments follow the pinned Pybricks
+[`technic_hub/platform.c`](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/platform/technic_hub/platform.c)
+and [`mpconfigport.h`](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/bricks/technichub/mpconfigport.h).
+Zephyr supplies the clock, GPIO keys, timer PWM, MPU and independent watchdog.
+The shared Brickphyr hub loop, power policy and lighting service handle the
+button's two-second shutdown hold and native-mode indication. Four motor bridges
+start in coast and the sensor supply stays off.
+
+Red PB15/TIM15 CH2 and green PA11/TIM1 CH4 use 10 kHz hardware PWM, sharing the
+reference motor period; blue PA6/TIM16 CH1 uses 1 kHz. This avoids Pybricks'
+software GPIO PWM interrupt while retaining one shared animation/ownership
+implementation. The initial RGB weights follow the reference's relative channel
+factors; brightness, hue and waveforms have not been checked physically. There is
+no separate Bluetooth button/light; requests for that light return `-ENODEV`.
+
+The base reserves the first 1 KiB of SRAM for the factory loader handoff and
+builds in the remaining 63 KiB with the same ARMv7E-M hard-float calling convention
+as F4. Native application loading is not enabled yet. Runtime BLE, IMU, port and
+motor services, battery observations and persistent storage remain unimplemented
+on this board. The CC2640 is held in reset; no host terminal is available in this
+base image. Its factory-programmed TI controller owns GAP/GATT and needs a
+different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
+driver or reflash that controller to bypass the integration work.
+
+[Builds](builds.md#experimental-technic-base) gives the build command;
+[recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM
+selector and installation limits. Compilation and synthetic button/PWM checks
+do not verify startup, watchdog expiry, restoration or power consumption on a
+physical Technic Hub.
 
 ## F4 buttons, lighting, and power
 

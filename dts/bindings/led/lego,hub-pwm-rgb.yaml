@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Hub status RGB light driven by three timer PWM channels
+compatible: "lego,hub-pwm-rgb"
+include: base.yaml
+properties:
+  pwms:
+    type: phandle-array
+    required: true
+    description: Red, green and blue channels, in that order
+  white-balance:
+    type: array
+    required: true
+    description: Linear red, green and blue PWM weights, each from 0 to 255

@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Privileged F4 board operations; not an application ABI. */
+/* Privileged board operations; not an application ABI. */
 int hub_reboot_dfu(void);
 void hub_power_release(void);
 int hub_bluetooth_power_off(void);

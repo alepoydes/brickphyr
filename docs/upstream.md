@@ -151,6 +151,27 @@ is based on v4.4.2. The pinned
 supplies the CDC client and shared Python COBS codec. The corrections below are
 included in these public pins; no manual dependency patches are required.
 
+## Technic base prerequisites
+
+The build-only Technic port additionally needs two local changes that are not
+yet in the manifest pins:
+
+- Pybricks `tools/metadata.py` accepts `--checksum-size` with `--no-custom-name`
+  for sum-checksummed platforms. This supports genuine alternative linker maps
+  without fabricated Pybricks sections. The caller checks its image bounds;
+  Pybricks retains ownership of checksum generation and the BLE installer.
+  Its short `tests/tools/test_metadata.py` checks the package consumer and
+  invalid option combinations.
+- Zephyr's Cortex-M `CONFIG_INIT_ARCH_HW_AT_BOOT` path masks interrupts at its
+  first instruction and keeps them masked until thread startup. This is needed
+  when a chain-loading firmware leaves IRQs enabled: core state and VTOR must
+  not change while inherited handlers can still run. The focused
+  `tests/arch/arm/boot_handoff` QEMU test checks the early/pre-kernel mask and a
+  working kernel timer after thread startup. It is not a LEGO loader simulation.
+
+Keep these reusable corrections in their dependency forks and publish them
+before updating shared manifest pins. No Technic hardware acceptance is implied.
+
 ## Watchdog prerequisites
 
 The F4 watchdog integration additionally requires two local Zephyr corrections,

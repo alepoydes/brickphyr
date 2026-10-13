@@ -61,9 +61,35 @@ static void button_event(struct input_event *event, void *user_data)
 }
 
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(center_keys)), button_event, NULL, center);
+#if DT_NODE_EXISTS(DT_NODELABEL(arrow_keys))
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)), button_event, NULL, arrows);
+#endif
 
-static void shutdown(const struct gpio_dt_spec *vbus, int vbus_error)
+static const struct gpio_dt_spec vbus = GPIO_DT_SPEC_GET_OR(DT_PATH(zephyr_user), vbus_gpios, {0});
+static int vbus_error;
+
+static int usb_power(void)
+{
+	return !vbus.port ? 0 : vbus_error ? vbus_error : gpio_pin_get_dt(&vbus);
+}
+
+static int center_pressed(void)
+{
+	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
+	if (!device_is_ready(center)) return -ENODEV;
+#if DT_NODE_HAS_COMPAT(DT_NODELABEL(center_keys), gpio_keys)
+	const struct gpio_dt_spec pin = GPIO_DT_SPEC_GET(DT_NODELABEL(center_key), gpios);
+	int raw = gpio_pin_get_dt(&pin);
+	/* Use the driver's debounced event, but a GPIO read error or a pending
+	 * transition must not manufacture a release/repress wake gesture. */
+	if (raw < 0) return raw;
+	return raw == (int)atomic_test_bit(&buttons, 0) ? raw : -EAGAIN;
+#else
+	return resistor_ladder_get_key(center, INPUT_KEY_ENTER);
+#endif
+}
+
+static void shutdown(void)
 {
 	int stopped = application_shutdown();
 	if (stopped) {
@@ -132,23 +158,20 @@ static void shutdown(const struct gpio_dt_spec *vbus, int vbus_error)
 	host_ble_shutdown();
 #endif
 	hub_power_release();
-	/* USB may keep the MCU powered. Keep the existing ADC/input driver alive,
+	/* USB or a held button may keep the MCU powered. Keep the input driver alive,
 	 * require a valid release, then reboot on a fresh debounced press. */
 	bool released = false;
-	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
 
 	for (;;) {
 		hub_watchdog_feed();
-		hub_charger_update(vbus_error ? vbus_error : gpio_pin_get_dt(vbus), k_uptime_get());
-		int pressed = device_is_ready(center) ?
-			resistor_ladder_get_key(center, INPUT_KEY_ENTER) : -ENODEV;
+		hub_charger_update(usb_power(), k_uptime_get());
+		int pressed = center_pressed();
 		if (pressed == 0) {
 			released = true;
 		} else if (pressed == 1 && released) {
 			sys_reboot(SYS_REBOOT_COLD);
 		}
-		k_sem_take(&button_changed,
-			K_MSEC(DT_PROP(DT_NODELABEL(center_keys), sample_period_ms)));
+		k_sem_take(&button_changed, K_MSEC(20));
 	}
 }
 
@@ -161,23 +184,31 @@ static int cmd_shutdown(const struct shell *shell, size_t argc, char **argv)
 
 static int cmd_buttons(const struct shell *shell, size_t argc, char **argv)
 {
-	if (!device_is_ready(DEVICE_DT_GET(DT_NODELABEL(center_keys))) ||
-	    !device_is_ready(DEVICE_DT_GET(DT_NODELABEL(arrow_keys)))) {
+	if (!device_is_ready(DEVICE_DT_GET(DT_NODELABEL(center_keys)))) {
 		shell_error(shell, "Button driver unavailable.");
 		return -ENODEV;
 	}
+#if DT_NODE_HAS_COMPAT(DT_NODELABEL(center_keys), lego_resistor_ladder)
 	const struct device *ladders[] = {DEVICE_DT_GET(DT_NODELABEL(center_keys)),
 					 DEVICE_DT_GET(DT_NODELABEL(arrow_keys))};
 
 	for (size_t i = 0; i < ARRAY_SIZE(ladders); i++) {
+		if (!device_is_ready(ladders[i])) {
+			shell_error(shell, "%s: unavailable", ladders[i]->name);
+			return -ENODEV;
+		}
 		struct resistor_ladder_sample sample = resistor_ladder_get_sample(ladders[i]);
 
 		shell_print(shell, "%s: ADC %d, error %d, failures %u", ladders[i]->name,
 			    sample.raw, sample.error, sample.failures);
 	}
+#endif
 	atomic_val_t state = atomic_get(&buttons);
 
 	for (size_t i = 0; i < ARRAY_SIZE(codes); i++) {
+#if DT_NODE_HAS_COMPAT(DT_NODELABEL(center_keys), gpio_keys)
+		if (i != 0) continue;
+#endif
 		shell_print(shell, "%s: %s, presses: %ld", names[i],
 			    state & BIT(i) ? "down" : "up", (long)atomic_get(&presses[i]));
 	}
@@ -233,8 +264,9 @@ void hub_run(void)
 	if (watchdog_error) {
 		LOG_ERR("System supervision unavailable: %d", watchdog_error);
 	}
-	const struct gpio_dt_spec vbus = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), vbus_gpios);
-	int vbus_error = gpio_is_ready_dt(&vbus) ? gpio_pin_configure_dt(&vbus, GPIO_INPUT) : -ENODEV;
+	if (vbus.port) {
+		vbus_error = gpio_is_ready_dt(&vbus) ? gpio_pin_configure_dt(&vbus, GPIO_INPUT) : -ENODEV;
+	}
 	int64_t pressed_at = -1;
 	atomic_val_t center_presses = 0;
 	atomic_val_t observed[ARRAY_SIZE(codes)] = {0};
@@ -246,8 +278,8 @@ void hub_run(void)
 
 	for (;;) {
 		int64_t now = k_uptime_get();
-		int usb_power = vbus_error ? vbus_error : gpio_pin_get_dt(&vbus);
-		hub_charger_update(usb_power, now);
+		int supply = usb_power();
+		hub_charger_update(supply, now);
 		application_poll();
 		bool activity = false;
 		bool down = atomic_test_bit(&buttons, 0);
@@ -262,9 +294,13 @@ void hub_run(void)
 		center_presses = count;
 		if (pressed_at >= 0 && now - pressed_at >= 2000) {
 			hub_power_request_shutdown();
-			shutdown(&vbus, vbus_error);
+			shutdown();
 		}
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 		enum host_mode current = host_interface_current();
+#else
+		enum host_mode current = HOST_SHELL;
+#endif
 		application_buttons(menu.open ? 0 : hub_buttons());
 		/* Menu entry/cancel precedes navigation. Center confirms on release,
 		 * leaving its entire hold interval available for power-off. */
@@ -291,7 +327,10 @@ void hub_run(void)
 			}
 			if (i == 0 && !down && (center_was_down || pressed) &&
 			    hub_menu_input(&menu, codes[i], false, current)) {
-				int err = menu.selected == current ? 0 : host_interface_select(menu.selected);
+				int err = -ENOTSUP;
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+				err = menu.selected == current ? 0 : host_interface_select(menu.selected);
+#endif
 				if (!err) {
 					menu.open = false;
 					current = menu.selected;
@@ -304,14 +343,16 @@ void hub_run(void)
 			}
 		}
 		center_was_down = down;
-		if (hub_power_update(usb_power, activity, now)) {
-			shutdown(&vbus, vbus_error);
+		if (hub_power_update(supply, activity, now)) {
+			shutdown();
 		}
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 		if (menu.open) {
 			/* Refresh completion while presenting the selection menu. */
 			uint8_t status[8];
 			host_interface_status(status);
 		}
+#endif
 		enum host_mode selected = menu.open ? menu.selected : current;
 		enum hub_light_menu indicator = !menu.open ? HUB_LIGHT_NORMAL :
 			now < busy_until ? HUB_LIGHT_BUSY : HUB_LIGHT_MENU;

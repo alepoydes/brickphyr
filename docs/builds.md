@@ -131,8 +131,32 @@ metadata, and component license texts. Hub-name customization is disabled so
 the installer cannot patch a name into a Zephyr image. A short test opens the
 package through the Pybricks reader and checks that the binary is unchanged.
 
-The target packages only the existing F4 build and performs no USB operation.
-It does not add H5 support. Building a package does not verify recovery on hardware.
+The target selects the supported board from the build configuration and performs
+no hardware operation. It also packages the limited Technic base below; H5 is
+unsupported. Building a package does not verify recovery on hardware.
+
+### Experimental Technic base
+
+This builds the initial power/button/RGB/watchdog port for the four-port Technic
+Hub 88012. It does not yet provide a Bluetooth terminal or application loading.
+There is no USB interface on this hub. Read the
+[hardware scope](hardware.md#experimental-technic-base) and
+[factory-loader boundary](recovery.md#technic-factory-loader-boundary) before
+considering installation; no physical Technic checks have been performed.
+
+```sh
+uv run --locked west build -b technic_hub -d build/technic-base
+uv run --locked west build -d build/technic-base -t firmware_package
+```
+
+The package is `build/technic-base/zephyr/firmware.zip`. Packaging requires the
+[local metadata extension](upstream.md#technic-base-prerequisites); the board also
+requires Zephyr's early chainload interrupt correction described there. The
+image checker validates the main-firmware range, reserved loader-selector SRAM,
+word alignment and space for the checksum word. Pybricks' package consumer adds
+that word using its existing Technic checksum algorithm. Use the maintained
+Pybricks BLE installer when hardware acceptance becomes possible; neither the
+factory loader nor the CC2640 firmware is included in this package.
 
 ### Diagnostic shell
 

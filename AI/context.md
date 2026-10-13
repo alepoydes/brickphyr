@@ -82,7 +82,9 @@ checks. Native `.mpy` requires that SDK; ordinary Pybricks bytecode stays compat
 Port metadata now allocates only advertised modes, sharing reclaimed heap with
 applications. A versioned native ELF API replaces configuration-specific syscall
 IDs; cross-hub hardware acceptance and further memory optimization remain work.
-Technic support is not established. The remaining Python acceptance scope below is retained.
+Technic has a [build-only power/UI/watchdog base](../docs/hardware.md#experimental-technic-base);
+BLE, applications and physical acceptance remain pending. The remaining Python
+acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance
 

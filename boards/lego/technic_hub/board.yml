@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+board:
+  name: technic_hub
+  full_name: LEGO Technic Hub (STM32L431RC)
+  vendor: lego
+  socs:
+    - name: stm32l431xx

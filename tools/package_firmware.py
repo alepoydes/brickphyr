@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Package a checked F4 image using Pybricks' metadata generator."""
+"""Package a checked hub image using Pybricks' metadata generator."""
 
 import argparse
 import subprocess
@@ -14,8 +14,19 @@ from tools.check_image import check_image
 
 
 def package(build: Path, version: str, sdk: Path) -> Path:
+    config = set((build / ".config").read_text().splitlines())
+    if "CONFIG_BOARD_SPIKE_PRIME_F4=y" in config:
+        platform, stm32 = "prime_hub_f4", "stm32f4xx"
+        metadata_options = []
+    elif "CONFIG_BOARD_TECHNIC_HUB=y" in config:
+        platform, stm32 = "technic_hub", "stm32l4xx"
+        # The factory loader checks firmware plus the first 12 KiB of user
+        # storage, assuming the unwritten tail was erased by its installer.
+        metadata_options = ["--checksum-size", "0x37000"]
+    else:
+        raise ValueError("No supported hub board in the build configuration")
     image = (build / "zephyr.bin").read_bytes()
-    check_image(build / "zephyr.elf", image)
+    check_image(build / "zephyr.elf", image, platform)
     manifest = Manifest.from_topdir()
     pybricks = Path(manifest.get_projects(["pybricks"])[0].abspath)
     output = build / "firmware.zip"
@@ -23,26 +34,34 @@ def package(build: Path, version: str, sdk: Path) -> Path:
     notices = [
         ("Brickphyr", root / "LICENSE"),
         ("Pybricks MIT helpers", root / "LICENSES/Pybricks-MIT.txt"),
-        ("ST/Pybricks IMU register helpers", root / "LICENSES/ST-LSM6DS3TR-C.txt"),
-        ("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"),
-        ("LEGO PBIO motor computation", root / "LICENSES/LEGO-BSD-3-Clause.txt"),
     ]
-    config = (build / ".config").read_text().splitlines()
+    if "CONFIG_BRICKPHYR_IMU=y" in config:
+        notices.append(("ST/Pybricks IMU register helpers", root / "LICENSES/ST-LSM6DS3TR-C.txt"))
+    if config & {"CONFIG_BRICKPHYR_IMU=y", "CONFIG_BRICKPHYR_PORT_UART=y"}:
+        notices.append(("Pybricks continuation macros", root / "LICENSES/Pybricks-BSD.txt"))
+    if config & {"CONFIG_BRICKPHYR_MOTOR_CONTROL=y", "CONFIG_BRICKPHYR_PYBRICKS=y"}:
+        notices.append(("LEGO PBIO computation", root / "LICENSES/LEGO-BSD-3-Clause.txt"))
     if "CONFIG_BRICKPHYR_BLE_PEER=y" in config:
         notices.append(("SDL Xbox report codec", root / "LICENSES/SDL-Zlib.txt"))
     if "CONFIG_BRICKPHYR_PYTHON=y" in config:
         notices.append(("MicroPython core", root / "LICENSES/MicroPython-MIT.txt"))
-    for project_name, license_path in (
+    dependencies = [
         ("zephyr", "LICENSE"),
         ("cmsis_6", "LICENSE"),
-        ("hal_stm32", "stm32cube/stm32f4xx/drivers/LICENSE.md"),
-        ("hal_stm32", "stm32cube/stm32f4xx/soc/LICENSE.md"),
-        ("littlefs", "LICENSE.md"),
-        ("zcbor", "LICENSE"),
-        ("mbedtls", "LICENSE"),
-        ("tf-psa-crypto", "LICENSE"),
-        ("ti-bt-service-packs", "LICENSE"),
+        ("hal_stm32", f"stm32cube/{stm32}/drivers/LICENSE.md"),
+        ("hal_stm32", f"stm32cube/{stm32}/soc/LICENSE.md"),
+    ]
+    for symbol, project_name, license_path in (
+        ("FILE_SYSTEM_LITTLEFS", "littlefs", "LICENSE.md"),
+        ("ZCBOR", "zcbor", "LICENSE"),
+        ("MBEDTLS", "mbedtls", "LICENSE"),
+        ("PSA_CRYPTO", "tf-psa-crypto", "LICENSE"),
+        ("BT_HCI_SETUP", "ti-bt-service-packs", "LICENSE"),
+        ("CMSIS_DSP", "cmsis-dsp", "LICENSE"),
     ):
+        if f"CONFIG_{symbol}=y" in config:
+            dependencies.append((project_name, license_path))
+    for project_name, license_path in dependencies:
         project = manifest.get_projects([project_name])[0]
         notices.append((f"{project_name}: {license_path}", Path(project.abspath) / license_path))
     for license_path in (
@@ -52,7 +71,9 @@ def package(build: Path, version: str, sdk: Path) -> Path:
         "gcc/COPYING.RUNTIME",
     ):
         notices.append((license_path, sdk / "gnu/arm-zephyr-eabi/share/licenses" / license_path))
-    notice = "Experimental Brickphyr F4 firmware. Source-component and runtime license texts.\n"
+    notice = (
+        f"Experimental Brickphyr {platform} firmware. Source-component and runtime license texts.\n"
+    )
     notice += "\n\n".join(f"{name}\n\n{path.read_text()}" for name, path in notices)
 
     with TemporaryDirectory(dir=build) as directory:
@@ -63,10 +84,11 @@ def package(build: Path, version: str, sdk: Path) -> Path:
                 sys.executable,
                 str(pybricks / "tools/metadata.py"),
                 version,
-                "prime_hub_f4",
+                platform,
                 str(build / "zephyr.map"),
                 str(metadata),
                 "--no-custom-name",
+                *metadata_options,
             ],
             check=True,
         )

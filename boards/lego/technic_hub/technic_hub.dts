@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: Apache-2.0
+
+/dts-v1/;
+#include <st/l4/stm32l431Xc.dtsi>
+#include <st/l4/stm32l431r(b-c)tx-pinctrl.dtsi>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	model = "LEGO Technic Hub";
+	compatible = "lego,technic-hub";
+	aliases { watchdog0 = &iwdg; };
+	chosen {
+		zephyr,sram = &app_sram;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &firmware_partition;
+	};
+	/* Keep the loader's selector at 0x20000200 outside the C runtime. The
+	 * whole first KiB is reserved so the remaining SRAM has KiB alignment. */
+	app_sram: memory@20000400 {
+		compatible = "mmio-sram";
+		reg = <0x20000400 DT_SIZE_K(63)>;
+	};
+	boot_request: boot-request@20000200 {
+		compatible = "zephyr,memory-region";
+		reg = <0x20000200 4>;
+		zephyr,memory-region = "BOOT_REQUEST";
+	};
+	center_keys: buttons {
+		compatible = "gpio-keys";
+		center_key: center {
+			gpios = <&gpioc 14 GPIO_ACTIVE_LOW>;
+			zephyr,code = <INPUT_KEY_ENTER>;
+		};
+	};
+	hub_leds: status-light {
+		compatible = "lego,hub-pwm-rgb";
+		/* TIM1/15 also serve motors, so use their reference 10 kHz period.
+		 * Hardware PWM avoids the reference's TIM2 software GPIO ISR. */
+		pwms = <&pwm15 2 PWM_USEC(100) PWM_POLARITY_NORMAL>,
+		       <&pwm1 4 PWM_USEC(100) PWM_POLARITY_NORMAL>,
+		       <&pwm16 1 PWM_USEC(1000) PWM_POLARITY_NORMAL>;
+		/* Relative reference weights 1000:270:200, not a measured calibration. */
+		white-balance = <255 69 51>;
+	};
+};
+
+/* Only app_sram is available to the runtime; sram0 includes the selector. */
+&sram0 { status = "disabled"; };
+&clk_msi { status = "okay"; msi-range = <6>; };
+&clk_lsi { status = "okay"; };
+&pll {
+	clocks = <&clk_msi>;
+	div-m = <1>;
+	mul-n = <40>;
+	div-p = <7>;
+	div-q = <4>;
+	div-r = <2>;
+	status = "okay";
+};
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(80)>;
+	ahb-prescaler = <1>;
+	/* 5 MHz APB1 permits the LPUART's 2400-baud device handshake. */
+	apb1-prescaler = <16>;
+	apb2-prescaler = <1>;
+};
+&iwdg { status = "okay"; };
+
+&gpioa {
+	motors-off {
+		gpio-hog;
+		gpios = <1 GPIO_ACTIVE_HIGH>, <8 GPIO_ACTIVE_HIGH>,
+			<9 GPIO_ACTIVE_HIGH>, <10 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+&gpiob {
+	motors-off {
+		gpio-hog;
+		gpios = <0 GPIO_ACTIVE_HIGH>, <1 GPIO_ACTIVE_HIGH>,
+			<13 GPIO_ACTIVE_HIGH>, <14 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+	sensors-off {
+		gpio-hog;
+		gpios = <12 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+&gpioc {
+	power_hold: power-hold {
+		gpio-hog;
+		gpios = <12 GPIO_ACTIVE_HIGH>;
+		output-high;
+	};
+};
+&gpiod {
+	/* Keep the factory-programmed CC2640 idle until its transport is ready. */
+	bt-reset {
+		gpio-hog;
+		gpios = <2 GPIO_ACTIVE_LOW>;
+		output-high;
+	};
+};
+
+&timers1 {
+	status = "okay";
+	st,prescaler = <7>;
+	pwm1: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch4_pa11>;
+		pinctrl-names = "default";
+	};
+};
+&timers15 {
+	status = "okay";
+	st,prescaler = <7>;
+	pwm15: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim15_ch2_pb15>;
+		pinctrl-names = "default";
+	};
+};
+&timers16 {
+	status = "okay";
+	st,prescaler = <7>;
+	pwm16: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim16_ch1_pa6>;
+		pinctrl-names = "default";
+	};
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		factory_partition: partition@0 {
+			label = "factory-loader";
+			reg = <0 0x8000>;
+			read-only;
+		};
+		firmware_partition: partition@8000 {
+			label = "firmware";
+			reg = <0x8000 0x34000>;
+		};
+		/* Do not write either user partition: USER_0 affects the loader's
+		 * boot checksum and no storage implementation is provided yet. */
+		user_checked_partition: partition@3c000 {
+			label = "user-checked";
+			reg = <0x3c000 0x3000>;
+			read-only;
+		};
+		user_partition: partition@3f000 {
+			label = "user";
+			reg = <0x3f000 0x1000>;
+			read-only;
+		};
+	};
+};

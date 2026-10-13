@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+/ {
+	center_keys: buttons {
+		compatible = "gpio-keys";
+		center_key: center {
+			gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;
+			zephyr,code = <INPUT_KEY_ENTER>;
+		};
+	};
+	test_pwm: pwm {
+		compatible = "zephyr,fake-pwm";
+		#pwm-cells = <2>;
+		frequency = <10000000>;
+	};
+	hub_leds: status-light {
+		compatible = "lego,hub-pwm-rgb";
+		pwms = <&test_pwm 0 100000>, <&test_pwm 1 100000>, <&test_pwm 2 1000000>;
+		white-balance = <255 69 51>;
+	};
+};

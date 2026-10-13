@@ -107,11 +107,28 @@ def test_image():
         check_image(elf, corrupt)
 
 
+def test_technic_image():
+    elf = BUILD / "technic-base/zephyr/zephyr.elf"
+    image = (elf.parent / "zephyr.bin").read_bytes()
+    check_image(elf, image, "technic_hub")
+    corrupt = bytearray(image)
+    pack_into("<I", corrupt, 0, 0x20000200)  # Loader selector cannot be a stack.
+    with pytest.raises(ValueError, match="SRAM"):
+        check_image(elf, corrupt, "technic_hub")
+    with pytest.raises(ValueError, match="word aligned"):
+        check_image(elf, image[:-1], "technic_hub")
+    with pytest.raises(ValueError, match="main-firmware"):
+        check_image(elf, image + bytes(208 * 1024 - len(image)), "technic_hub")
+    with pytest.raises(ValueError, match="Reset vector"):
+        check_image(elf, image, "prime_hub_f4")
+
+
 @pytest.mark.parametrize(
     "suite",
     [
         "hub-tests",
         "poweroff-tests",
+        "technic-tests",
         "radio-tests",
         "imu-tests",
         "imu-failure-tests",
