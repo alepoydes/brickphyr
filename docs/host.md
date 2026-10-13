@@ -584,9 +584,13 @@ nonblocking application log, whose overflow counter the Pybricks client does not
 expose. Long-output and blocked-stop cases have ARM checks. Both physical clients
 also deliver a finite 4 KiB output exactly, stop continuous printing, interrupt a
 non-yielding loop and run again after reconnecting. Deliberately stalled physical
-consumers remain unverified. A final USB upload acknowledgment exceeded the
-client's two-second timeout in one check; its cause remains unresolved. A later
-successful transfer does not establish a worst-case storage-response bound.
+consumers remain unverified. F4 USB checks also cover byte-for-byte readback of
+multi-module program creation/replacement and a newly stored 30 kB program.
+Application storage fills its existing read cache per flash transaction to reduce metadata
+read overhead without additional cache memory. A final USB upload acknowledgment
+exceeded the client's two-second timeout in one check; its cause remains
+unresolved. Successful timed transfers do not establish a worst-case
+storage-response bound.
 DFU through this protocol is still unsupported; use Shell `reboot dfu`.
 
 The returned firmware version does not impersonate Pybricks.

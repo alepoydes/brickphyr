@@ -16,7 +16,11 @@
 #endif
 
 LOG_MODULE_REGISTER(app_store);
-FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(filesystem);
+/* SPI NOR transaction setup dominates short metadata reads. Fill the existing
+ * read cache instead of fetching the same cache window in smaller fragments. */
+FS_LITTLEFS_DECLARE_CUSTOM_CONFIG(filesystem, 4,
+	CONFIG_FS_LITTLEFS_CACHE_SIZE, CONFIG_FS_LITTLEFS_PROG_SIZE,
+	CONFIG_FS_LITTLEFS_CACHE_SIZE, CONFIG_FS_LITTLEFS_LOOKAHEAD_SIZE);
 static struct fs_mount_t mount = {
 	.type = FS_LITTLEFS,
 	.fs_data = &filesystem,
