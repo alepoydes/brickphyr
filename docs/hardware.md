@@ -109,6 +109,15 @@ base image. Its factory-programmed TI controller owns GAP/GATT and needs a
 different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
 driver or reflash that controller to bypass the integration work.
 
+The optional [CC2640 transport profile](builds.md#experimental-technic-base)
+adds a Zephyr SPI/GPIO port of Pybricks' NPI framing, ready handshake and reset
+sequence. It checks framed event lengths and checksums, bounds handshakes and
+latches the first failure until explicit reset. Synthetic SPI/GPIO checks cover
+full-size packets, a rapid ready-line release/reassertion and fault cleanup.
+The controller still stays in reset at boot: TI initialization, GAP/GATT services
+and a usable BLE endpoint remain pending. The shared Shell/SMP also has a
+UART-free build and synthetic session check, without a second terminal engine.
+
 [Builds](builds.md#experimental-technic-base) gives the build command;
 [recovery](recovery.md#technic-factory-loader-boundary) owns the checksum, SRAM
 selector and installation limits. Compilation and synthetic button/PWM checks

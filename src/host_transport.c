@@ -147,6 +147,7 @@ static void notify_shell(enum shell_transport_evt event)
 	}
 }
 
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
 static void uart_callback(const struct device *dev, void *context)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -191,6 +192,36 @@ static void uart_callback(const struct device *dev, void *context)
 	k_spin_unlock(&lock, key);
 	k_sem_give(&wake);
 	k_sem_give(&smp_tx_ready);
+}
+
+#endif
+
+static void serial_rx_resume(void)
+{
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+	if (uart) uart_irq_rx_enable(uart);
+#endif
+}
+
+static void serial_tx_resume(void)
+{
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+	if (uart) uart_irq_tx_enable(uart);
+#endif
+}
+
+/* Called with lock held so a deferred UART callback cannot compete. */
+static int serial_drain(void)
+{
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+	if (uart) {
+		unsigned char stale;
+		int err;
+		while ((err = uart_poll_in(uart, &stale)) == 0) { }
+		return err;
+	}
+#endif
+	return -1;
 }
 
 static int transport_init(const struct shell_transport *transport, const void *config,
@@ -238,7 +269,7 @@ static int transport_read(const struct shell_transport *transport, void *data,
 			process_smp();
 		}
 	}
-	uart_irq_rx_enable(uart);
+	serial_rx_resume();
 	return 0;
 }
 
@@ -253,7 +284,7 @@ static void output_ready(void)
 	}
 	k_spin_unlock(&lock, key);
 	if (serial) {
-		uart_irq_tx_enable(uart);
+		serial_tx_resume();
 	}
 }
 
@@ -355,7 +386,7 @@ static int cmd_python(const struct shell *shell, size_t argc, char **argv)
 		bool ended = status.state != APPLICATION_RUNNING;
 		if (!ended && !received) {
 			received = stream_read(input, sizeof(input));
-			uart_irq_rx_enable(uart);
+			serial_rx_resume();
 		}
 		if (memchr(input, 0x18, received)) {
 			err = application_stop();
@@ -397,12 +428,11 @@ static int cmd_python(const struct shell *shell, size_t argc, char **argv)
 	if (occupied && generation == shell_generation) {
 		ring_buf_reset(&receive_buffer);
 		if (!ble_shell) {
-			unsigned char stale;
-			while (uart_poll_in(uart, &stale) == 0) { }
+			(void)serial_drain();
 		}
 	}
 	k_spin_unlock(&lock, key);
-	uart_irq_rx_enable(uart);
+	serial_rx_resume();
 	application_get_status(&status);
 	shell_print(shell, "\nREPL: result %d; fault %u; cleanup %d; output dropped %u",
 		status.result, status.fault, status.cleanup_error, status.output_dropped);
@@ -416,6 +446,7 @@ SHELL_CMD_ARG_REGISTER(python, NULL, "Enter Python REPL on a plain terminal.", c
 
 static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 {
+	if (!uart) return -ENOTSUP;
 	if (strcmp(argv[1], "pybricks")) {
 		shell_error(shell, "Usage: host_mode pybricks");
 		return -EINVAL;
@@ -587,7 +618,7 @@ static void host_thread(void *a, void *b, void *c)
 				protocol.exit_compatibility = false;
 			}
 		}
-		uart_irq_rx_enable(uart);
+		serial_rx_resume();
 	}
 }
 
@@ -598,15 +629,19 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 {
 	uart = device;
 	variant = hub_variant;
-	if (!device_is_ready(uart)) {
+	if (uart && !device_is_ready(uart)) {
 		return -ENODEV;
 	}
 	k_fifo_init(&smp_input.buf_ready);
 	smp_transport.functions.output = smp_output;
 	smp_transport.functions.get_mtu = smp_mtu;
-	int err = uart_irq_callback_user_data_set(uart, uart_callback, NULL);
-	if (err) {
-		return err;
+	if (uart) {
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+		int err = uart_irq_callback_user_data_set(uart, uart_callback, NULL);
+		if (err) return err;
+#else
+		return -ENOTSUP;
+#endif
 	}
 	mgmt_callback_register(&command_access);
 	mgmt_callback_register(&settings_access);
@@ -616,10 +651,10 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 	k_thread_create(&host_worker, host_stack, K_KERNEL_STACK_SIZEOF(host_stack),
 			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&host_worker, "host_stream");
-	uart_irq_rx_enable(uart);
+	serial_rx_resume();
 	/* Establish initial completion in the UART callback without requiring
 	 * a USB status request before the first Bluetooth connection. */
-	uart_irq_tx_enable(uart);
+	serial_tx_resume();
 	k_sem_give(&wake);
 	return 0;
 }
@@ -645,6 +680,7 @@ static void stream_changed(bool open)
 
 void host_connection_changed(bool open)
 {
+	if (!uart) return;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (open && usb_open) {
 		k_spin_unlock(&lock, key);
@@ -655,10 +691,7 @@ void host_connection_changed(bool open)
 		 * FIFO synchronously: its deferred IRQ callback may still be pending.
 		 * poll_in is the public nonblocking API outside that callback; the
 		 * same lock excludes our IRQ reader until admission is complete. */
-		unsigned char stale;
-		int err;
-		while ((err = uart_poll_in(uart, &stale)) == 0) {
-		}
+		int err = serial_drain();
 		if (err != -1 && !first_error) {
 			first_error = err;
 		}
@@ -670,7 +703,7 @@ void host_connection_changed(bool open)
 		stream_changed(open);
 	}
 	k_spin_unlock(&lock, key);
-	uart_irq_rx_enable(uart);
+	serial_rx_resume();
 }
 
 void host_interface_status(uint8_t state[8])
@@ -679,16 +712,16 @@ void host_interface_status(uint8_t state[8])
 	state[0] = 1;
 	state[1] = mode;
 	state[2] = occupied || ble_occupied;
-	state[3] = ready && tx_idle && !ble_occupied && !first_error;
+	state[3] = uart && ready && tx_idle && !ble_occupied && !first_error;
 	sys_put_le32(first_error, state + 4);
 	k_spin_unlock(&lock, key);
 	/* Refresh completion in the UART callback, the API's required context. */
-	uart_irq_tx_enable(uart);
+	serial_tx_resume();
 }
 
 int host_interface_select(uint16_t requested)
 {
-	if (requested > HOST_SHELL) {
+	if (!uart || requested > HOST_SHELL) {
 		return -ENOTSUP;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);

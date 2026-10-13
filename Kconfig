@@ -46,6 +46,16 @@ config BRICKPHYR_HUB
 	bool
 	default y if BOARD_SPIKE_PRIME_F4 || BOARD_TECHNIC_HUB
 
+config BRICKPHYR_CC2640_NPI
+	bool "CC2640 SPI network-processor transport"
+	depends on DT_HAS_TI_CC2640_NPI_ENABLED
+	select GPIO
+	select SPI
+	select SPI_STM32_INTERRUPT if SOC_FAMILY_STM32
+	help
+	  Bounded SPI transport for the factory TI BLE stack on Technic Hub.
+	  This does not enable advertising or a Bluetooth host endpoint.
+
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"
 	default y if BRICKPHYR_HUB

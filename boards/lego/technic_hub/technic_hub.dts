@@ -98,10 +98,25 @@
 };
 &gpiod {
 	/* Keep the factory-programmed CC2640 idle until its transport is ready. */
-	bt-reset {
+	bt_reset: bt-reset {
 		gpio-hog;
 		gpios = <2 GPIO_ACTIVE_LOW>;
 		output-high;
+	};
+};
+
+&spi1 {
+	/* Disabled until a profile explicitly selects the TI transport. */
+	pinctrl-0 = <&spi1_sck_pb3 &spi1_miso_pb4 &spi1_mosi_pb5>;
+	pinctrl-names = "default";
+	cc2640: bluetooth@0 {
+		compatible = "ti,cc2640-npi";
+		reg = <0>;
+		spi-max-frequency = <2500000>;
+		reset-gpios = <&gpiod 2 GPIO_ACTIVE_LOW>;
+		mrdy-gpios = <&gpioa 15 GPIO_ACTIVE_LOW>;
+		srdy-gpios = <&gpioc 13 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		status = "disabled";
 	};
 };
 

@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
+&bt_reset { status = "disabled"; };
+&spi1 { status = "okay"; };
+&cc2640 { status = "okay"; };

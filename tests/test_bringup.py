@@ -129,6 +129,8 @@ def test_technic_image():
         "hub-tests",
         "poweroff-tests",
         "technic-tests",
+        "cc2640-npi-tests",
+        "host-ble-only-tests",
         "radio-tests",
         "imu-tests",
         "imu-failure-tests",

@@ -85,6 +85,19 @@ After the [Technic image build](builds.md#experimental-technic-base), use
 `tests/test_packaging.py` to check the ELF/binary boundary and the actual package
 through Pybricks' checksum consumer.
 
+The CC2640 NPI fixture executes the production SPI/GPIO transport against Zephyr
+emulators. It checks literal wire packets, the 255-byte boundary, a ready-line
+release followed immediately by reassertion, malformed input, timeout and first
+error retention. A separate UART-free host fixture checks cold Shell/SMP use and
+reconnection through the existing BLE stream API. Neither establishes CC2640
+radio behavior or physical BLE connectivity.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/cc2640_npi -d build/cc2640-npi-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/host -d build/host-ble-only-tests -- -DEXTRA_CONF_FILE=ble_only.conf
+uv run --locked pytest -q -x 'tests/test_bringup.py::test_hub_drivers[cc2640-npi-tests]' 'tests/test_bringup.py::test_hub_drivers[host-ble-only-tests]'
+```
+
 The watchdog checks use production supervision and Zephyr Task Watchdog, with a
 synthetic watchdog device and process exit at the board-reset boundary. They
 check healthy progress followed by a stalled hub loop or system queue. The power

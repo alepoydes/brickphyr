@@ -8,7 +8,9 @@
 enum host_mode { HOST_PYBRICKS, HOST_SHELL };
 
 /* One shared stream/Shell; USB selection is permitted between closed sessions.
- * Owner commands can request the next mode, applied when their session closes. */
+ * Owner commands can request the next mode, applied when their session closes.
+ * Pass NULL for UART on BLE-only boards: the same Shell/SMP stays available,
+ * but USB mode selection returns -ENOTSUP and USB connection events do nothing. */
 int host_transport_init(const struct device *uart, uint16_t hub_variant);
 void host_connection_changed(bool open);
 void host_interface_status(uint8_t state[8]);

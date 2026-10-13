@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+description: TI CC2640 factory network processor using SPI NPI
+compatible: "ti,cc2640-npi"
+include: spi-device.yaml
+properties:
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: Active-low reset, released to input after the startup pulse
+  mrdy-gpios:
+    type: phandle-array
+    required: true
+    description: Active-low host ready output
+  srdy-gpios:
+    type: phandle-array
+    required: true
+    description: Active-low controller ready input with pull-up and both-edge IRQ

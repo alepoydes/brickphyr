@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/gpio/gpio.h>
+/ {
+	npi_gpio: npi-gpio {
+		compatible = "zephyr,gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <3>;
+		rising-edge;
+		falling-edge;
+	};
+	npi_spi: spi@10000000 {
+		compatible = "zephyr,spi-emul-controller";
+		reg = <0x10000000 4>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		npi: radio@0 {
+			compatible = "ti,cc2640-npi";
+			reg = <0>;
+			spi-max-frequency = <2000000>;
+			mrdy-gpios = <&npi_gpio 0 GPIO_ACTIVE_LOW>;
+			srdy-gpios = <&npi_gpio 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			reset-gpios = <&npi_gpio 2 GPIO_ACTIVE_LOW>;
+		};
+	};
+};
