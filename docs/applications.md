@@ -166,6 +166,12 @@ byte budgets. They do not reserve a second privileged stack for a user-mode tran
 The application retains its MPU-aligned user stack and privileged syscall stack.
 Linker RAM totals also include alignment gaps and kernel-object metadata; they
 are not a measure of free system heap or Python GC capacity.
+The full F4 Python profile uses Zephyr's 50% extra reservation for the generated
+kernel-object table. The default 100% reserve can push the aligned application
+stack across another 16 KiB boundary. This reduces linker padding, not runtime
+heaps, stacks or permission capacity. The final linker still checks that the full
+table fits; changes to the object set require a fresh memory-budget check.
+Reduced profiles retain Zephyr's default reserve.
 
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports
