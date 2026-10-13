@@ -359,7 +359,7 @@ uv run --locked pytest -q tests/test_native.py -k python-slots
 
 The BLE fixture uses the real GATT adapter, common host owner and protected
 interpreter with synthetic controller calls. The native Shell REPL checks
-complete output at ATT MTU 23 and 64, negotiated notification bounds and explicit
+complete output at ATT MTU 23 and the configured maximum, negotiated notification bounds and explicit
 exit while notifications are blocked. Standard SMP BLE requests also exercise the real
 Zephyr transport and application handlers: status polling preserves an attached
 output consumer and interruption remains available while its queue is full.
@@ -381,6 +381,16 @@ cannot establish reception or coexistence on physical BLE hardware.
 The same fixture runs the real TI service-pack loader against synthetic HCI
 replies and reads its embedded version through the protected Python binding.
 It does not verify physical controller initialization.
+
+The LEGO peripheral case drives the real native service and protected
+`Remote`/`LWP3Device` bindings with synthetic public GATT callbacks. It checks
+advertisement/response address matching, scan timeout, reference Remote messages,
+button snapshots, raw queue overflow, name changes, connection reuse and
+blocking/awaitable operations. Scan-start and connection callbacks deliberately
+complete before their API calls return. Forced stop during a delayed write
+checks that kernel-owned parameters survive interpreter unload and cannot be
+reused before disconnection. A management link remains independent throughout.
+This does not exercise over-the-air pairing or physical simultaneous roles.
 
 The slot variant uses that same fixture with the existing 64 KiB simulated
 LittleFS store. It checks multiple slots, selected-slot admission, interrupted

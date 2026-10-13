@@ -5,6 +5,7 @@
 #endif
 #include "host_protocol.h"
 #include "host_transport.h"
+#include "hub_lwp3.h"
 #include <pbio/protocol.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -30,6 +31,49 @@ static atomic_t scan_starts, scan_stops;
 static atomic_t negotiated_mtu = ATOMIC_INIT(23);
 static atomic_t shell_max_notify;
 static bool peer_connected;
+static uintptr_t lego_token;
+static struct bt_conn *const lego = (void *)&lego_token;
+static atomic_t lego_refs, lego_creates, lego_pairs;
+static bool offer_lego = true, hold_lego_write, hold_lego_disconnect;
+static atomic_t active_scan;
+static struct bt_gatt_write_params *held_write;
+static struct bt_gatt_subscribe_params *lego_subscription;
+static const bt_addr_le_t lego_address = {.type = BT_ADDR_LE_RANDOM, .a = {{1, 2, 3, 4, 5, 0xc6}}};
+K_MSGQ_DEFINE(lego_writes, sizeof(struct bp_lwp3_message), 16, 1);
+
+static void lego_connection_event(bool connected)
+{
+	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
+		if (connected && cb->connected) cb->connected(lego, 0);
+		if (!connected && cb->disconnected) cb->disconnected(lego, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+}
+
+static void lego_disconnected(void)
+{
+	if (lego_subscription) {
+		lego_subscription->notify(lego, lego_subscription, NULL, 0);
+		lego_subscription = NULL;
+	}
+	lego_connection_event(false);
+}
+
+static void lego_advertise(bt_le_scan_cb_t cb)
+{
+	/* Literal LEGO advertisement and scan response. The unrelated response
+	 * between them must not supply the name for the selected address. */
+	uint8_t data[] = {2, 1, 6, 17, 7, 0x23, 0xd1, 0xbc, 0xea, 0x5f, 0x78, 0x23, 0x16,
+		0xde, 0xef, 0x12, 0x12, 0x23, 0x16, 0, 0, 9, 0xff, 0x97, 3, 0, 0x42, 0, 0, 0, 0};
+	uint8_t name[] = {7, 9, 'R', 'e', 'm', 'o', 't', 'e'};
+	uint8_t unrelated[] = {6, 9, 'W', 'r', 'o', 'n', 'g'};
+	struct net_buf_simple packet;
+	net_buf_simple_init_with_data(&packet, data, sizeof(data));
+	cb(&lego_address, -40, BT_GAP_ADV_TYPE_ADV_IND, &packet);
+	net_buf_simple_init_with_data(&packet, unrelated, sizeof(unrelated));
+	cb(BT_ADDR_LE_ANY, -40, BT_GAP_ADV_TYPE_SCAN_RSP, &packet);
+	net_buf_simple_init_with_data(&packet, name, sizeof(name));
+	cb(&lego_address, -40, BT_GAP_ADV_TYPE_SCAN_RSP, &packet);
+}
 static unsigned int notifications_retried;
 static unsigned int app_notifications_retried;
 static struct k_work_q rx_queue;
@@ -53,7 +97,7 @@ static void poll_applications(void *a, void *b, void *c)
 	}
 }
 
-struct event { uint16_t length; uint8_t data[61]; };
+struct event { uint16_t length; uint8_t data[CONFIG_BT_L2CAP_TX_MTU - 3]; };
 K_MSGQ_DEFINE(events, sizeof(struct event), 32, 4);
 extern const struct bt_gatt_service_static pybricks_service;
 extern const struct bt_gatt_service_static brickphyr_terminal;
@@ -90,13 +134,17 @@ int __wrap_bt_le_adv_stop(void) { return 0; }
 int __wrap_bt_le_scan_start(const struct bt_le_scan_param *param, bt_le_scan_cb_t cb)
 {
 	zassert_not_equal(k_current_get(), &k_sys_work_q.thread);
-	zassert_equal(param->type, BT_LE_SCAN_TYPE_PASSIVE);
+	bool active = param->type == BT_LE_SCAN_TYPE_ACTIVE;
 	zassert_equal(param->options, 0); /* Repeated values must refresh age/RSSI. */
-	zassert_equal(param->interval, 0x70);
-	zassert_equal(param->window, 0x38);
+	zassert_equal(param->interval, active ? 0x30 : 0x70);
+	zassert_equal(param->window, active ? 0x30 : 0x38);
 	zassert_is_null(scan_callback);
 	scan_callback = cb;
+	atomic_set(&active_scan, active);
 	atomic_inc(&scan_starts);
+	/* Deliberately deliver before scan_start returns to expose the race
+	 * between finding a candidate and stopping explicit scanning. */
+	if (active && offer_lego) lego_advertise(cb);
 	return 0;
 }
 int __wrap_bt_le_scan_stop(void)
@@ -104,32 +152,119 @@ int __wrap_bt_le_scan_stop(void)
 	zassert_not_equal(k_current_get(), &k_sys_work_q.thread);
 	zassert_not_null(scan_callback);
 	scan_callback = NULL;
+	atomic_clear(&active_scan);
 	atomic_inc(&scan_stops);
 	return 0;
 }
 struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn)
 {
+	if (conn == lego) { atomic_inc(&lego_refs); return conn; }
 	zassert_equal(conn, peer);
 	atomic_inc(&refs);
 	return conn;
 }
 void __wrap_bt_conn_unref(struct bt_conn *conn)
 {
+	if (conn == lego) { zassert_true(atomic_dec(&lego_refs) > 0); return; }
 	zassert_equal(conn, peer);
 	zassert_true(atomic_dec(&refs) > 0);
 }
 int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 {
+	if (conn == lego) {
+		if (!hold_lego_disconnect) lego_disconnected();
+		return 0;
+	}
 	zassert_unreachable("Unexpected adapter disconnect");
 	return -EIO;
 }
 int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
 {
+	if (conn == lego) {
+		memset(info, 0, sizeof(*info));
+		info->type = BT_CONN_TYPE_LE;
+		info->role = BT_CONN_ROLE_CENTRAL;
+		info->state = BT_CONN_STATE_CONNECTED;
+		return 0;
+	}
 	zassert_equal(conn, peer);
 	memset(info, 0, sizeof(*info));
 	info->type = BT_CONN_TYPE_LE;
 	info->role = BT_CONN_ROLE_PERIPHERAL;
 	info->state = peer_connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
+	return 0;
+}
+
+int __wrap_bt_conn_le_create(const bt_addr_le_t *address,
+	const struct bt_conn_le_create_param *create, const struct bt_le_conn_param *param, struct bt_conn **result)
+{
+	zassert_is_null(scan_callback, "Explicit scan must stop before initiating");
+	zassert_equal(bt_addr_le_cmp(address, &lego_address), 0);
+	zassert_equal(create->timeout, 500);
+	zassert_equal(atomic_get(&lego_refs), 0);
+	atomic_inc(&lego_refs);
+	atomic_inc(&lego_creates);
+	/* Public API can deliver this callback before returning its owned ref. */
+	lego_connection_event(true);
+	*result = lego;
+	return 0;
+}
+
+int __wrap_bt_conn_set_security(struct bt_conn *conn, bt_security_t security)
+{
+	zassert_equal(conn, lego);
+	zassert_equal(security, BT_SECURITY_L2 | BT_SECURITY_FORCE_PAIR);
+	atomic_inc(&lego_pairs);
+	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
+		if (cb->security_changed) cb->security_changed(conn, BT_SECURITY_L2, BT_SECURITY_ERR_SUCCESS);
+	}
+	return 0;
+}
+
+int __wrap_bt_gatt_discover(struct bt_conn *conn, struct bt_gatt_discover_params *params)
+{
+	zassert_equal(conn, lego);
+	struct bt_gatt_service_val service = {.uuid = params->uuid, .end_handle = 9};
+	struct bt_gatt_chrc characteristic = {.uuid = params->uuid, .value_handle = 3, .properties = 0x1c};
+	struct bt_gatt_attr attr = {.uuid = params->uuid};
+	if (params->type == BT_GATT_DISCOVER_PRIMARY) {
+		attr.handle = 1;
+		attr.user_data = &service;
+	} else if (params->type == BT_GATT_DISCOVER_CHARACTERISTIC) {
+		zassert_equal(params->start_handle, 2);
+		attr.handle = 2;
+		attr.user_data = &characteristic;
+	} else {
+		zassert_equal(params->type, BT_GATT_DISCOVER_DESCRIPTOR);
+		zassert_equal(params->start_handle, 4);
+		zassert_equal(params->end_handle, 9);
+		attr.handle = 4;
+	}
+	zassert_equal(params->func(conn, &attr, params), BT_GATT_ITER_STOP);
+	return 0;
+}
+
+int __wrap_bt_gatt_subscribe(struct bt_conn *conn, struct bt_gatt_subscribe_params *params)
+{
+	zassert_equal(conn, lego);
+	zassert_equal(params->value_handle, 3);
+	zassert_equal(params->ccc_handle, 4);
+	zassert_true(atomic_test_bit(params->flags, BT_GATT_SUBSCRIBE_FLAG_VOLATILE));
+	lego_subscription = params;
+	params->subscribe(conn, 0, params);
+	return 0;
+}
+
+int __wrap_bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *params)
+{
+	zassert_equal(conn, lego);
+	zassert_equal(params->handle, 3);
+	zassert_true(params->length <= BP_LWP3_MESSAGE_MAX);
+	struct bp_lwp3_message message = {.size = params->length};
+	memcpy(message.data, params->data, params->length);
+	zassert_ok(k_msgq_put(&lego_writes, &message, K_NO_WAIT));
+	if (hold_lego_write) held_write = params;
+	else params->func(conn, 0, params);
 	return 0;
 }
 bool __wrap_bt_gatt_is_subscribed(struct bt_conn *conn,
@@ -678,7 +813,7 @@ ZTEST(python_ble, test_native_terminal_output)
 			zassert_str_equal(text + 4090, "!\r\n>>> ");
 			zassert_equal(atomic_get(&shell_max_notify), 20);
 			/* A peer exchange raises the ATT MTU on this connection. */
-			atomic_set(&negotiated_mtu, 64);
+			atomic_set(&negotiated_mtu, CONFIG_BT_L2CAP_TX_MTU);
 			atomic_set(&shell_max_notify, 0);
 			terminal_send("print('x' * 128)\r");
 			terminal_until(">>> ");
@@ -686,7 +821,7 @@ ZTEST(python_ble, test_native_terminal_output)
 			memset(line + 2, 'x', 128);
 			memcpy(line + 130, "\r\n", 3);
 			zassert_not_null(strstr(output, line), "%s", output);
-			zassert_equal(atomic_get(&shell_max_notify), 61);
+			zassert_equal(atomic_get(&shell_max_notify), CONFIG_BT_L2CAP_TX_MTU - 3);
 		}
 	}
 	connected(false);
@@ -795,6 +930,113 @@ static void radio_action(const char *action, const char *marker)
 	request[size + 1] = '\n';
 	message_command(false, request, size + 2);
 	message_until(false, marker);
+}
+
+static void expect_lego_write(const uint8_t *data, size_t size)
+{
+	struct bp_lwp3_message message;
+	zassert_ok(k_msgq_get(&lego_writes, &message, K_SECONDS(1)));
+	zassert_equal(message.size, size);
+	for (size_t i = 0; i < size; i++) {
+		zassert_equal(message.data[i], data[i], "Byte %zu: got %u, expected %u",
+			i, message.data[i], data[i]);
+	}
+}
+
+static void expect_remote_setup(void)
+{
+	const uint8_t left[] = {10, 0, 0x41, 0, 4, 1, 0, 0, 0, 1};
+	const uint8_t right[] = {10, 0, 0x41, 1, 4, 1, 0, 0, 0, 1};
+	const uint8_t mode[] = {10, 0, 0x41, 52, 1, 1, 0, 0, 0, 0};
+	const uint8_t blue[] = {10, 0, 0x81, 52, 0, 0x51, 1, 0, 0, 94};
+	expect_lego_write(left, sizeof(left));
+	expect_lego_write(right, sizeof(right));
+	expect_lego_write(mode, sizeof(mode));
+	expect_lego_write(blue, sizeof(blue));
+}
+
+static void lego_notify(const uint8_t *data, size_t size)
+{
+	zassert_not_null(lego_subscription);
+	lego_subscription->notify(lego, lego_subscription, data, size);
+}
+
+ZTEST(python_ble, test_lwp3_remote_and_cleanup)
+{
+	static const uint8_t program[] = {
+#include <lwp3.inc>
+	};
+	k_msgq_purge(&events);
+	k_msgq_purge(&lego_writes);
+	connected(true);
+	download(program, sizeof(program));
+	start("remote ready");
+	zassert_equal(atomic_get(&lego_creates), 1);
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	expect_remote_setup();
+	const uint8_t left[] = {7, 0, 0x45, 0, 1, 0, 0};
+	const uint8_t right[] = {7, 0, 0x45, 1, 0, 0, 1};
+	const uint8_t center[] = {5, 0, 0x08, 2, 1};
+	lego_notify(left, sizeof(left));
+	lego_notify(right, sizeof(right));
+	lego_notify(center, sizeof(center));
+	/* Claimed length cannot authorize reading a short notification. */
+	lego_notify((uint8_t[]){7, 0, 0x45, 0}, 4);
+	radio_action("", "raw ready");
+	zassert_equal(atomic_get(&lego_creates), 1, "Reclaim should reuse the link");
+	const uint8_t red[] = {10, 0, 0x81, 52, 0, 0x51, 1, 251, 0, 0};
+	const uint8_t rename[] = {12, 0, 1, 1, 1, 'R', 'e', 'n', 'a', 'm', 'e', 'd'};
+	expect_lego_write(red, sizeof(red));
+	expect_lego_write(rename, sizeof(rename));
+	for (uint8_t i = 1; i <= 3; i++) lego_notify((uint8_t[]){5, 0, 8, 2, i}, 5);
+	radio_action("", "paired done");
+	zassert_equal(atomic_get(&lego_pairs), 1);
+	zassert_equal(atomic_get(&lego_creates), 2);
+	zassert_equal(atomic_get(&lego_refs), 0);
+	zassert_not_null(scan_callback, "Passive observer must resume after initiating");
+	zassert_false(atomic_get(&active_scan));
+	expect_lego_write((uint8_t[]){5, 0, 1, 2, 5}, 5);
+	radio_action("", "stop ready");
+	expect_remote_setup();
+	hold_lego_write = hold_lego_disconnect = true;
+	const uint8_t input[] = {PBIO_PYBRICKS_COMMAND_WRITE_STDIN, '\n'};
+	message_command(false, input, sizeof(input));
+	int64_t deadline = k_uptime_get() + 1000;
+	while (!held_write) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	zassert_ok(application_stop());
+	/* Stop joins/unloads Python before a delayed ATT write callback. Params
+	 * and bytes must still be kernel-owned; a new lease cannot reuse them. */
+	uint32_t handle;
+	const struct bp_lwp3_config config = {.kind = 0x42};
+	zassert_equal(hub_lwp3_open(&config, &handle), -EBUSY);
+	zassert_equal(held_write->length, 10);
+	zassert_equal(((const uint8_t *)held_write->data)[2], 0x81);
+	held_write->func(lego, BT_ATT_ERR_UNLIKELY, held_write);
+	held_write = NULL;
+	lego_disconnected();
+	while (atomic_get(&lego_refs) || scan_callback) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	zassert_equal(host_ble_status(), HOST_BLE_PYBRICKS);
+	hold_lego_write = hold_lego_disconnect = false;
+	offer_lego = false;
+	start("searching");
+	while (!atomic_get(&active_scan)) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	zassert_ok(application_stop());
+	while (scan_callback) {
+		k_msleep(1);
+		zassert_true(k_uptime_get() < deadline);
+	}
+	offer_lego = true;
+	zassert_equal(atomic_get(&lego_refs), 0);
+	connected(false);
 }
 
 ZTEST(python_ble, test_radio_observation_and_cleanup)

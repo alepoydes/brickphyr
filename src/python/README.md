@@ -188,6 +188,15 @@ cached by the radio owner after initialization, without another HCI command.
 Broadcasting remains unfinished.
 See [observation support](../../docs/bluetooth.md#application-broadcast-observation).
 
+`lwp3device.c` adapts `pybricks/iodevices/pb_type_iodevices_lwp3device.c`
+at that revision for `Remote` and `LWP3Device`, retaining its MIT attribution.
+Python keeps the reference constructors, keypad/light wrappers and raw message
+shape. A protected numeric lease replaces PBIO's pointer-owning connection
+callbacks; the native radio peer copies filters and messages, caches Remote
+buttons and owns notification queues. The binding sequences Remote setup writes
+through that peer. Finalizers release leases,
+while supervised application cleanup disconnects the peer.
+
 `hub.c`, `light.c`, `matrix.c`, `speaker.c`, `system.c` and `imu.c` adapt the hub,
 battery, charger observations, internal color-light, light-matrix, speaker, system
 and IMU bindings from Pybricks

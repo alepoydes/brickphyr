@@ -15,6 +15,7 @@
 #include "hub_matrix.h"
 #include "hub_light.h"
 #include "hub_radio.h"
+#include "hub_lwp3.h"
 #include "hub_sound.h"
 #include "hub_imu.h"
 #include "hub_battery.h"
@@ -846,6 +847,64 @@ static inline int z_vrfy_bp_radio_get(uint32_t handle, uint32_t channel, struct 
 int z_impl_bp_radio_close(uint32_t handle) { return hub_radio_close(handle); }
 static inline int z_vrfy_bp_radio_close(uint32_t handle) { return z_impl_bp_radio_close(handle); }
 #include <zephyr/syscalls/bp_radio_close_mrsh.c>
+
+int z_impl_bp_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
+{
+	return hub_lwp3_open(config, handle);
+}
+static inline int z_vrfy_bp_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(config, __alignof__(*config))));
+	K_OOPS(K_SYSCALL_MEMORY_READ(config, sizeof(*config)));
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	return z_impl_bp_lwp3_open(config, handle);
+}
+#include <zephyr/syscalls/bp_lwp3_open_mrsh.c>
+
+int z_impl_bp_lwp3_connect(uint32_t handle) { return hub_lwp3_connect(handle); }
+static inline int z_vrfy_bp_lwp3_connect(uint32_t handle) { return z_impl_bp_lwp3_connect(handle); }
+#include <zephyr/syscalls/bp_lwp3_connect_mrsh.c>
+
+int z_impl_bp_lwp3_disconnect(uint32_t handle) { return hub_lwp3_disconnect(handle); }
+static inline int z_vrfy_bp_lwp3_disconnect(uint32_t handle) { return z_impl_bp_lwp3_disconnect(handle); }
+#include <zephyr/syscalls/bp_lwp3_disconnect_mrsh.c>
+
+int z_impl_bp_lwp3_close(uint32_t handle) { return hub_lwp3_close(handle); }
+static inline int z_vrfy_bp_lwp3_close(uint32_t handle) { return z_impl_bp_lwp3_close(handle); }
+#include <zephyr/syscalls/bp_lwp3_close_mrsh.c>
+
+int z_impl_bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state) { return hub_lwp3_get(handle, state); }
+static inline int z_vrfy_bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state)
+{
+	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
+	return z_impl_bp_lwp3_get(handle, state);
+}
+#include <zephyr/syscalls/bp_lwp3_get_mrsh.c>
+
+int z_impl_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
+{
+	return hub_lwp3_write(handle, data, size);
+}
+static inline int z_vrfy_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
+{
+	if (size < 3 || size > BP_LWP3_MESSAGE_MAX) return -EINVAL;
+	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	return z_impl_bp_lwp3_write(handle, data, size);
+}
+#include <zephyr/syscalls/bp_lwp3_write_mrsh.c>
+
+int z_impl_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
+{
+	return hub_lwp3_read(handle, message);
+}
+static inline int z_vrfy_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
+{
+	K_OOPS(K_SYSCALL_MEMORY_WRITE(message, sizeof(*message)));
+	return z_impl_bp_lwp3_read(handle, message);
+}
+#include <zephyr/syscalls/bp_lwp3_read_mrsh.c>
 
 int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value)
@@ -1726,6 +1785,8 @@ static int release(void)
 	int err = hub_ports_release(BP_PORT_APPLICATION);
 	int radio_error = hub_radio_release();
 	if (!err) err = radio_error;
+	int lwp3_error = hub_lwp3_release();
+	if (!err) err = lwp3_error;
 	hub_imu_release();
 	/* A domain is initialized once. Remove public partition descriptors only
 	 * after joining the thread, before freeing the memory they describe. */

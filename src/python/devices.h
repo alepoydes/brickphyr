@@ -16,6 +16,7 @@ extern const mp_obj_type_t python_dc_motor_type, python_motor_type;
 void python_motor_connection(mp_obj_t motor, uint32_t *port, uint32_t *generation);
 void python_motor_applied(mp_obj_t motor, uint32_t request);
 extern const mp_obj_type_t python_car_type;
+extern const mp_obj_type_t python_remote_type, python_lwp3device_type;
 extern const mp_obj_module_t python_system;
 extern const mp_obj_base_t python_imu;
 void python_imu_axes(mp_obj_t top, mp_obj_t front);

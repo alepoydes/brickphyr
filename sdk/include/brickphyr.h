@@ -9,6 +9,7 @@
 #include <brickphyr_matrix.h>
 #include <brickphyr_light.h>
 #include <brickphyr_radio.h>
+#include <brickphyr_lwp3.h>
 #include <brickphyr_imu.h>
 #include <brickphyr_sound.h>
 #include <brickphyr_battery.h>
@@ -43,6 +44,20 @@ __syscall int bp_radio_ready(uint32_t handle);
 __syscall int bp_radio_version(char *value, uint32_t size);
 __syscall int bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample);
 __syscall int bp_radio_close(uint32_t handle);
+/* One application LEGO BLE peer, separate from computer management. Open copies
+ * its filter and allocates only the requested notification queue (0..255).
+ * Connect/disconnect/write start cancellable asynchronous operations; get copies
+ * busy/error and the cached Remote buttons. No application buffer reaches HCI.
+ * read returns the oldest message size, or 0; overflow drops the oldest message.
+ * close releases the lease, retaining an idle connected peer for reuse within
+ * this application. Supervised application cleanup always disconnects it. */
+__syscall int bp_lwp3_open(const struct bp_lwp3_config *config, uint32_t *handle);
+__syscall int bp_lwp3_connect(uint32_t handle);
+__syscall int bp_lwp3_disconnect(uint32_t handle);
+__syscall int bp_lwp3_get(uint32_t handle, struct bp_lwp3_state *state);
+__syscall int bp_lwp3_write(uint32_t handle, const void *data, uint32_t size);
+__syscall int bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message);
+__syscall int bp_lwp3_close(uint32_t handle);
 /* Read the calling application's launch identity and current management link.
  * No I/O or wait; name and boot cause share the firmware's existing providers. */
 __syscall int bp_system_get(struct bp_system_info *info);

@@ -262,6 +262,15 @@ config BRICKPHYR_RADIO
 	  Observe Pybricks broadcasts through the same Zephyr radio as management.
 	  Only requested channels allocate storage; applications get copied samples.
 
+config BRICKPHYR_LWP3
+	bool "Application LEGO BLE devices"
+	depends on BRICKPHYR_RADIO && BT_CENTRAL && BT_GATT_CLIENT && BT_MAX_CONN >= 2
+	default y
+	help
+	  One LEGO Wireless Protocol v3 peer alongside computer management.
+	  Discovery and ATT use the existing radio workqueue. Pairing additionally
+	  requires BT_SMP; notification buffers are allocated per application lease.
+
 config BRICKPHYR_PYBRICKS_SLOTS
 	int "Persistent Pybricks program slots"
 	depends on BRICKPHYR_PYTHON && BRICKPHYR_APP_STORAGE && SHELL

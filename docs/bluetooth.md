@@ -15,7 +15,9 @@ identification, reconnection, return to Shell and USB/BLE exclusion are checked 
 one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide echo
 and settings read/write/save through the same runtime and persistence handlers as
 USB. The native interface also provides the [shared interactive Shell](host.md#native-bluetooth-terminal).
-Program execution, pairing and controller input are not implemented in this profile.
+The native application API includes experimental LEGO peripheral connections;
+see [application LEGO devices](#application-lego-devices) for its limits and evidence.
+Program execution through the Pybricks endpoint requires Python.
 Adding the [Python profile](builds.md#experimental-python-profile) supplies
 experimental program execution through the same endpoint; its current
 [client coverage](host.md#implemented-pybricks-subset) is separate from the
@@ -169,8 +171,9 @@ profile, or consume its advertisement. Recycled connection objects restart
 advertising only when no management owner and no active advertisement remain.
 Pending disconnects retain each distinct connection separately, so a slow HCI
 command cannot discard another rejected client's cleanup. These boundaries have
-synthetic checks with multiple connection slots. The F4 profile still reserves
-one slot; application-side LEGO device connection support remains unfinished.
+synthetic checks with multiple connection slots. The F4 profile reserves two
+slots: one management connection and one application LEGO device. Simultaneous
+physical links remain an acceptance item.
 
 The local H:4 close-path correction discards partial framing and releases pending
 buffers even when board teardown reports an error. UART-emulator checks cover
@@ -210,6 +213,64 @@ while True:
     print(radio.observe(7), radio.signal_strength(7))
     wait(200)
 ```
+
+### Application LEGO devices
+
+`CONFIG_BRICKPHYR_LWP3` adds one LEGO Wireless Protocol v3 peer through Zephyr's
+central role and GATT client. The native `bp_lwp3_*` API and Python
+`pupdevices.Remote` / `iodevices.LWP3Device` share this service. Application
+loading and terminal commands remain available through either USB or BLE;
+an outgoing LEGO link does not acquire computer management or change its profile.
+
+For a Powered Up Remote in discovery mode, run a Python application such as:
+
+```python
+from pybricks.pupdevices import Remote
+from pybricks.tools import wait
+
+remote = Remote()  # Optional name prefix and scan timeout, default 10000 ms.
+for _ in range(20):
+    print(remote.buttons.pressed())
+    wait(250)
+remote.disconnect()
+```
+
+`Remote` provides the reference button set, color light, name and
+connect/disconnect operations. `LWP3Device` provides raw messages, an optional
+pairing request and a bounded notification queue. Messages are 3–20 bytes and
+must carry their length in the first byte. `read()` returns the oldest message
+or `None`; a full queue drops the oldest message. Notification capacity is
+1–255 messages (a Python request of zero uses one). Remote button snapshots are
+independent of this queue. Names and name filters are limited to 14 UTF-8 bytes.
+Writes, name changes, connection and disconnection work synchronously or through
+the reference awaitable interface; construction is blocking.
+
+Discovery shares the existing radio worker and scanner. It temporarily requests
+active scanning for the LEGO service, hub kind and name, matching scan responses
+by address. Explicit scanning pauses during connection creation; passive broadcast
+observation resumes afterwards. Scan timeout is configurable, including `None`
+for cancellable indefinite scanning. Connection and pairing each have a five-second
+bound; ATT operations use the protocol's 30-second transaction bound.
+
+Closing or finalizing a device releases its claim. A matching, idle connection
+can be reused within the same application. Explicit `disconnect()` and supervised
+application cleanup end the physical link. Discovery, ATT parameters, outgoing
+bytes and notification buffers belong to the kernel, so late callbacks cannot
+access an unloaded interpreter. A new claim is rejected as busy until pending
+disconnection cleanup finishes, preventing early reuse of its buffers.
+
+The F4 profile enables optional pairing, including LE legacy pairing for older
+LEGO devices. Bond keys stay in RAM; two records accommodate both live links,
+and unused records can be replaced when full. Pairing without a passkey does not
+authenticate the operator. Builds without the required central/GATT service
+return an unsupported error before starting device work.
+
+Protected ARM checks use synthetic BLE peers to exercise reference Remote
+messages, cached buttons, raw queue overflow, name changes, link reuse,
+blocking/awaitable operations, scan cancellation and delayed-write cleanup after
+Python stop. These establish software behavior only. Physical Remote/LWP3
+connection, pairing, radio timing and coexistence with management and broadcasts
+remain unverified; other controller and wireless hub classes remain unfinished.
 
 ## Boundaries
 

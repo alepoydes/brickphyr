@@ -416,6 +416,7 @@ static const mp_rom_map_elem_t pupdevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR_PFMotor), MP_ROM_PTR(&pf_type)},
 	{MP_ROM_QSTR(MP_QSTR_DCMotor), MP_ROM_PTR(&python_dc_motor_type)},
 	{MP_ROM_QSTR(MP_QSTR_Motor), MP_ROM_PTR(&python_motor_type)},
+	{MP_ROM_QSTR(MP_QSTR_Remote), MP_ROM_PTR(&python_remote_type)},
 };
 static MP_DEFINE_CONST_DICT(pupdevices_dict, pupdevices_globals);
 const mp_obj_module_t pb_module_pupdevices = {{&mp_type_module}, (mp_obj_dict_t *)&pupdevices_dict};

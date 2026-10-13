@@ -285,8 +285,15 @@ Protected ARM checks cover decoding, expiry, reopening and forced-stop cleanup.
 ARM check uses the actual script metadata. Physical reception, coexistence with
 a management connection, radio timing and the version query remain unverified.
 Broadcast selection and `broadcast()` are explicitly unfinished and raise
-`NotImplementedError` before starting transmission. `HubNetwork` and the
-remaining peripheral wireless bindings are still required.
+`NotImplementedError` before starting transmission.
+
+`pupdevices.Remote` and `iodevices.LWP3Device` use the shared native LEGO BLE
+service. Protected ARM checks cover reference Remote setup, buttons/light/name,
+raw notifications, link reuse, blocking/awaitable operations and forced-stop
+cleanup with late ATT callbacks. Physical device connection, pairing and radio
+coexistence remain unverified. See [LEGO device usage and limits](bluetooth.md#application-lego-devices).
+`HubNetwork`, other wireless hub/controller classes and required aliases remain
+unfinished work.
 
 System `reset_storage` remains unfinished required work.
 Charger `connected()` returns the shared native source code: 0 none, 1

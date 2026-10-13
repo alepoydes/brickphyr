@@ -4,6 +4,8 @@
 #include "application.h"
 #include "hub.h"
 #include "hub_radio.h"
+#include "hub_lwp3.h"
+#include "host_radio.h"
 
 #include <string.h>
 #include <pbio/protocol.h>
@@ -51,7 +53,8 @@ static atomic_t advertising;
 static int radio_error;
 static const char *failed_operation;
 static struct k_work_q radio_queue;
-/* F4 startup/re-advertising measured 548 bytes; reserve 1 KiB plus the kernel guard. */
+/* F4 startup/re-advertising measured 548 bytes; inspected central call chains
+ * reach 544 bytes. Reserve 1 KiB plus the guard; central high-water is pending. */
 static K_KERNEL_STACK_DEFINE(radio_stack, 1024);
 
 #ifdef CONFIG_BRICKPHYR_RADIO
@@ -67,14 +70,31 @@ static struct observed_channel *observed;
 static size_t observed_count;
 static uint32_t observe_handle, observe_sequence;
 static int observe_error;
-static bool scanning;
+static int scanning; /* 0 stopped, 1 passive observation, 2 active discovery. */
 static void update_scan(struct k_work *work);
-static K_WORK_DEFINE(scan_work, update_scan);
+static K_WORK_DELAYABLE_DEFINE(scan_work, update_scan);
 static int radio_failed(const char *operation, int error);
+
+void host_radio_schedule(k_timeout_t delay)
+{
+	if (K_TIMEOUT_EQ(delay, K_NO_WAIT)) k_work_reschedule_for_queue(&radio_queue, &scan_work, delay);
+	else k_work_schedule_for_queue(&radio_queue, &scan_work, delay);
+}
+
+int host_radio_error(void)
+{
+	int state = atomic_get(&radio_state);
+	return atomic_get(&shutting_down) ? -ESHUTDOWN :
+		state == RADIO_FAILED ? (radio_error < 0 ? radio_error : -EIO) :
+		state != RADIO_ON ? -EHOSTDOWN : 0;
+}
 
 static void receive_broadcast(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	struct net_buf_simple *buffer)
 {
+#ifdef CONFIG_BRICKPHYR_LWP3
+	hub_lwp3_receive(addr, type, buffer->data, buffer->len);
+#endif
 	/* Accept every legacy advertising type, as the reference does for City
 	 * firmware. Walk AD elements instead of assuming manufacturer data is first. */
 	const uint8_t *data = buffer->data;
@@ -111,19 +131,31 @@ static void update_scan(struct k_work *work)
 	bool desired = observe_handle && observed_count && !atomic_get(&shutting_down);
 	uint32_t handle = observe_handle;
 	k_spin_unlock(&observe_lock, key);
-	int state = atomic_get(&radio_state);
-	int err = atomic_get(&shutting_down) ? -ESHUTDOWN :
-		state == RADIO_FAILED ? (radio_error < 0 ? radio_error : -EIO) :
-		state != RADIO_ON ? -EHOSTDOWN : 0;
-	if (!err && desired != scanning) {
+	int peer_mode = hub_lwp3_scan_mode();
+	int wanted = peer_mode == 1 ? 2 : peer_mode == 2 ? 0 : desired ? 1 : 0;
+	int err = host_radio_error();
+	if (!err && wanted != scanning) {
+		if (scanning) {
+			err = bt_le_scan_stop();
+			if (err) radio_failed("scan stop", err);
+			else scanning = 0;
+		}
 		/* Reference passive scan: 70 ms interval / 35 ms window, leaving
 		 * radio time for existing connections and advertising. No duplicate
-		 * filter: repeated values still refresh their age and signal strength. */
-		err = desired ? bt_le_scan_start(BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE,
-			0, 0x70, 0x38), receive_broadcast) : bt_le_scan_stop();
-		if (err) radio_failed(desired ? "scan start" : "scan stop", err);
-		else scanning = desired;
+		 * filter: repeated values still refresh age/RSSI. LWP3 temporarily
+		 * uses the reference active 30/30 ms scan to obtain device names. */
+		if (!err && wanted) {
+			err = bt_le_scan_start(BT_LE_SCAN_PARAM(wanted == 2 ? BT_LE_SCAN_TYPE_ACTIVE :
+				BT_LE_SCAN_TYPE_PASSIVE, 0, wanted == 2 ? 0x30 : 0x70,
+				wanted == 2 ? 0x30 : 0x38), receive_broadcast);
+			if (err) radio_failed("scan start", err);
+			else scanning = wanted;
+		}
 	}
+	/* Explicit scanning is stopped before CREATE. All GATT/HCI work shares
+	 * this queue and lifecycle mutex; RX only publishes copied peer state. */
+	hub_lwp3_process(err, !scanning);
+	if (hub_lwp3_scan_mode() != peer_mode) host_radio_schedule(K_NO_WAIT);
 	key = k_spin_lock(&observe_lock);
 	if (handle == observe_handle) observe_error = err > 0 ? -EIO : err;
 	k_spin_unlock(&observe_lock, key);
@@ -154,7 +186,7 @@ int hub_radio_observe(const uint8_t *channels, size_t count, uint32_t *handle)
 			if (!observe_sequence) observe_sequence++;
 			*handle = observe_handle = observe_sequence;
 			observe_error = -EAGAIN;
-			k_work_submit_to_queue(&radio_queue, &scan_work);
+			host_radio_schedule(K_NO_WAIT);
 		}
 	}
 	k_spin_unlock(&observe_lock, key);
@@ -213,7 +245,7 @@ static int retire_observer(uint32_t handle, bool force)
 		k_free(observed);
 		observed = NULL;
 		observed_count = observe_handle = 0;
-		k_work_submit_to_queue(&radio_queue, &scan_work);
+		host_radio_schedule(K_NO_WAIT);
 	}
 	k_spin_unlock(&observe_lock, key);
 	return 0;
@@ -664,6 +696,11 @@ static int radio_failed(const char *operation, int error)
 	return error;
 }
 
+int host_radio_failure(const char *operation, int error)
+{
+	return radio_failed(operation, error);
+}
+
 static void disconnect_peer(struct k_work *work)
 {
 	for (;;) {
@@ -752,9 +789,9 @@ static int set_radio(bool enable)
 				}
 			} else if (observe_handle) {
 				observe_error = -EAGAIN;
-				k_work_submit_to_queue(&radio_queue, &scan_work);
 			}
 			k_spin_unlock(&observe_lock, key);
+			host_radio_schedule(K_NO_WAIT);
 #endif
 		}
 	}
