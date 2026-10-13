@@ -225,13 +225,17 @@ config BRICKPHYR_NATIVE
 	depends on LOG && LOG_MODE_DEFERRED
 	select LOG_OUTPUT
 	help
-	  One separately built application, with a matching experimental SDK.
+	  One separately built application, with a compatible versioned SDK.
 
 config BRICKPHYR_NATIVE_FIXTURES
 	bool "Embed native lifecycle test images"
 	depends on BRICKPHYR_NATIVE
 	help
 	  Board acceptance fixture; not an application upload mechanism.
+
+config LLEXT_EXPORT_SYMBOL_GROUP_BRICKPHYR
+	bool
+	default y if BRICKPHYR_NATIVE
 
 config BRICKPHYR_APPLICATION_STACK_SIZE
 	int "Application stack bytes"

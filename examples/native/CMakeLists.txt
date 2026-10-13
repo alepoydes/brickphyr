@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20)
-# The exported SDK supplies the board's ARM architecture and float ABI.
+# The portable SDK supplies the target's ARM architecture, float ABI and libc.
 set(CMAKE_C_COMPILER "$ENV{ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 project(brickphyr_examples C)
@@ -8,9 +8,10 @@ if(NOT LLEXT_EDK_INSTALL_DIR)
   set(LLEXT_EDK_INSTALL_DIR "$ENV{LLEXT_EDK_INSTALL_DIR}")
 endif()
 include(${LLEXT_EDK_INSTALL_DIR}/cmake.cflags)
-# Keep compile-only library specs out of the application link.
+# Picolibc specs also inject linker script and section-GC options; the final
+# relocatable link selects its static archives explicitly below.
 set(application_link_flags ${LLEXT_CFLAGS})
-list(FILTER application_link_flags EXCLUDE REGEX "^-specs=")
+list(FILTER application_link_flags EXCLUDE REGEX "^(-specs=|-I)")
 file(WRITE ${PROJECT_BINARY_DIR}/application.ld.in "#include <brickphyr.ld.h>\n")
 add_custom_command(OUTPUT application.ld
   COMMAND ${CMAKE_C_COMPILER} ${LLEXT_CFLAGS} -E -P -MMD -MF application.ld.d
@@ -32,7 +33,7 @@ foreach(example ${native_examples})
   target_link_options(${example} PRIVATE ${application_link_flags} -nostdlib
     -r -Wl,--strip-debug -T${PROJECT_BINARY_DIR}/application.ld)
   # Compiler-emitted memory operations execute in the application's domain.
-  # Resolve them from the SDK's static C library, never privileged imports.
+  # Resolve them from the compiler's static C library, never privileged imports.
   if(example STREQUAL "imu_filter")
     target_link_libraries(${example} PRIVATE ${dsp_library})
   endif()

@@ -69,6 +69,36 @@ const void *native_fixture_hello(size_t *length)
 
 int native_fixture_run(const char *name)
 {
+	if (!strcmp(name, "badimport") || !strcmp(name, "badreloc")) {
+		unsigned char *changed = k_malloc(sizeof(hello));
+		if (!changed) return -ENOMEM;
+		memcpy(changed, hello, sizeof(hello));
+		elf_ehdr_t *header = (void *)changed;
+		elf_shdr_t *sections = (void *)(changed + header->e_shoff);
+		bool found = false;
+		for (size_t i = 0; i < header->e_shnum && !found; i++) {
+			if (sections[i].sh_type != SHT_REL) continue;
+			elf_shdr_t *symtab = &sections[sections[i].sh_link];
+			elf_sym_t *symbols = (void *)(changed + symtab->sh_offset);
+			char *names = (void *)(changed + sections[symtab->sh_link].sh_offset);
+			elf_rel_t *relocations = (void *)(changed + sections[i].sh_offset);
+			for (size_t j = 0; j < sections[i].sh_size / sizeof(*relocations); j++) {
+				elf_rel_t *rel = &relocations[j];
+				elf_sym_t *symbol = &symbols[ELF_R_SYM(rel->r_info)];
+				if (symbol->st_shndx != SHN_UNDEF) continue;
+				if (!strcmp(name, "badimport")) {
+					memcpy(names + symbol->st_name, "k_sleep", sizeof("k_sleep"));
+				} else {
+					rel->r_info = (rel->r_info & ~0xffU) | 10; /* R_ARM_THM_CALL */
+				}
+				found = true;
+				break;
+			}
+		}
+		int err = found ? application_run_native(changed, sizeof(hello)) : -ENOENT;
+		k_free(changed);
+		return err;
+	}
 	if (!strcmp(name, "badfloat") || !strcmp(name, "unwind")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) {
@@ -94,16 +124,26 @@ int native_fixture_run(const char *name)
 		k_free(changed);
 		return err;
 	}
-	if (!strcmp(name, "badabi")) {
+	if (!strcmp(name, "badabi") || !strcmp(name, "missingcap") || !strcmp(name, "bigstack")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) {
 			return -ENOMEM;
 		}
 		memcpy(changed, hello, sizeof(hello));
 		int err = -ENOENT;
-		for (size_t i = 0; i + sizeof(BRICKPHYR_ABI) <= sizeof(hello); i++) {
-			if (!memcmp(changed + i, BRICKPHYR_ABI, sizeof(BRICKPHYR_ABI))) {
-				changed[i] ^= 1;
+		elf_ehdr_t *header = (void *)changed;
+		elf_shdr_t *sections = (void *)(changed + header->e_shoff);
+		const char *names = (void *)(changed + sections[header->e_shstrndx].sh_offset);
+		for (size_t i = 0; i < header->e_shnum; i++) {
+			if (!strcmp(names + sections[i].sh_name, ".brickphyr.abi")) {
+				struct bp_application_abi *abi = (void *)(changed + sections[i].sh_offset);
+				if (!strcmp(name, "badabi")) {
+					abi->major++;
+				} else if (!strcmp(name, "missingcap")) {
+					abi->capabilities = 1U << 31;
+				} else {
+					abi->stack_size = UINT32_MAX;
+				}
 				err = application_run_native(changed, sizeof(hello));
 				break;
 			}

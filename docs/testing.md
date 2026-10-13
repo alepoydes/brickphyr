@@ -560,11 +560,11 @@ uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp
 uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
   -DCONFIG_BRICKPHYR_PYTHON=y '-DEXTRA_CONF_FILE=host.conf;../native/fpu.conf'
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t brickphyr-sdk
 mkdir -p build/native-smp-sdk
-tar -xf build/native-smp-tests/zephyr/llext-edk.tar.xz -C build/native-smp-sdk
+tar -xf build/native-smp-tests/zephyr/brickphyr-sdk.tar.xz -C build/native-smp-sdk
 uv run --locked cmake -S examples/native -B build/native-smp-examples -G Ninja \
-  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/llext-edk"
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-smp-examples
 uv run --locked pytest -q -x tests/test_bringup.py tests/test_packaging.py
 ```
@@ -775,6 +775,28 @@ uv run --locked west build -b mps2/an386 -s tests/native -d build/native-fpu-tes
   '-DEXTRA_CONF_FILE=fpu.conf;../../boards/spike_prime_f4_dsp.conf'
 uv run --locked pytest -q -x tests/test_native.py -k native-fpu-tests
 ```
+
+A separate ABI acceptance uses one `hello.elf` built by the exported F4 SDK
+in both M4 configurations. Export the SDK and build `build/native-examples` as
+shown in [builds](builds.md#experimental-native-sdk), then prepare both fixtures:
+
+```sh
+uv run --locked west build -d build/native-fpu-tests -- \
+  -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
+uv run --locked west build -b mps2/an386 -s tests/native -d build/native-portable-tests -- \
+  -DDTC_OVERLAY_FILE=app.overlay -DEXTRA_CONF_FILE=fpu.conf \
+  -DCONFIG_AUXDISPLAY=y -DCONFIG_BRICKPHYR_APPLICATION_STACK_SIZE=4096 \
+  -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
+uv run --locked pytest -q -x tests/test_native.py \
+  -k 'native-fpu-tests or native-portable-tests'
+```
+
+Enabling the additional Zephyr display API changes its generated syscall IDs;
+the application ELF remains unchanged. This checks binary admission, static C
+initialization, float arithmetic and protected API calls across configurations,
+not compatibility with physical Technic hardware. The lifecycle fixture also
+rejects unsupported ABI/capabilities/stack sizes, imports and import relocations
+without stopping the current program. No test rebuilds firmware implicitly.
 
 The focused M4 QEMU check passes. Its DSP fixture checks a four-tap FIR impulse
 response, the linked native SDK archive and `snprintf` through the production

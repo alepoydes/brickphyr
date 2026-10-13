@@ -303,6 +303,10 @@ int main(void)
 	k_msleep(20);
 	CHECK(native_fixture_run("truncated") == -ENOEXEC);
 	CHECK(native_fixture_run("badabi") == -EPROTONOSUPPORT);
+	CHECK(native_fixture_run("missingcap") == -ENOTSUP);
+	CHECK(native_fixture_run("bigstack") == -ENOMEM);
+	CHECK(native_fixture_run("badimport") == -ENOTSUP);
+	CHECK(native_fixture_run("badreloc") == -ENOTSUP);
 	CHECK(native_fixture_run("badfloat") == -ENOTSUP);
 	CHECK(native_fixture_run("unwind") == -ENOTSUP);
 	application_get_status(&status);

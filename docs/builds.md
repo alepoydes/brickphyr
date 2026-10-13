@@ -457,18 +457,19 @@ uv run --locked west build -b spike_prime_f4 -d build/native-apps -t firmware_pa
   '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf' \
   -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay \
   -DCONFIG_BRICKPHYR_NATIVE_FIXTURES=y
-uv run --locked west build -d build/native-apps -t llext-edk
+uv run --locked west build -d build/native-apps -t brickphyr-sdk
 mkdir -p build/native-sdk
-tar -xf build/native-apps/zephyr/llext-edk.tar.xz -C build/native-sdk
+tar -xf build/native-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-sdk
 uv run --locked cmake -S examples/native -B build/native-examples -G Ninja \
-  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-sdk/llext-edk"
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-examples
 ```
 
 Set `ZEPHYR_SDK_INSTALL_DIR` to the SDK installed during workspace setup. The
-separate example build uses the exported EDK and toolchain, without compiling
-the firmware again. Use an EDK from the exact firmware configuration; mismatched
-ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
+separate example build uses the exported SDK and toolchain, without compiling
+the firmware again. Its [versioned ELF ABI](applications.md#portable-elf-abi)
+is independent of Zephyr configuration; architecture, required services and
+memory must still match the destination. The resulting `hello.elf` demonstrates time, output,
 constructors and floating-point arithmetic; `counter.elf` reports a counter and buttons.
 `matrix.elf` displays a smile until stopped. `imu.elf` reports calibrated
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
@@ -478,8 +479,9 @@ acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.
 `spin.elf` and `fault.elf` are
-deliberate failure fixtures. Regenerate the EDK and rebuild applications after a
-firmware/SDK change; the ABI identity also includes the ARM syscall stubs.
+deliberate failure fixtures. Rebuild old experimental images using the portable SDK;
+they contained configuration-specific syscall IDs. Compatible v1 builds can
+reuse the new ELF without recompilation.
 
 After [authorized installation](recovery.md), use either terminal transport:
 
@@ -496,7 +498,7 @@ diagnostics
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
-these include a shared 64 KiB execution arena and a 64 KiB system heap. The loader reports the image size,
+these include a shared 64 KiB execution arena and the configured system heap. The loader reports the image size,
 reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
 the receive buffer is then released. File loading reserves no ELF receive buffer
 and reports the same loader/loaded allocation for the same image.
@@ -619,6 +621,7 @@ script. Rejected Pybricks commands preserve the running native Python program
 and its output. The native-only profile runs a matching-SDK C example over USB
 and BLE and rejects Python operations. Switching through these profiles and back
 preserves stored programs; the named Python program runs again in the full image.
-Native ELF applications still require the matching firmware SDK/ABI. These checks
+Native ELF applications require a compatible architecture/API and sufficient services
+and memory; they no longer require the exact firmware configuration. These checks
 do not establish every peripheral's behavior or peak-load capacity. The profiles
 share the application supervisor and drivers.

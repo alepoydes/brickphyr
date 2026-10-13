@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "native_image.h"
 
-#include <brickphyr_abi.h>
+#include <brickphyr.h>
 #include <errno.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
 
-/* The initial SDK emits ELF32 ARM relocatable objects. Bound parser work and
+/* The SDK emits ELF32 ARM relocatable objects. Bound parser work and
  * memory before giving an untrusted image to the privileged linker. */
 #define HEAP_LIMIT APPLICATION_MEMORY_LIMIT
 #define SECTION_LIMIT 64
@@ -70,8 +70,8 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 	    !range(header->e_shoff, header->e_shnum * sizeof(elf_shdr_t), length)) {
 		return -ENOEXEC;
 	}
-	/* Relocatable objects may omit the float flags; the SDK identity also
-	 * binds their compiler configuration. Reject an explicit incompatible ABI. */
+	/* Relocatable objects may omit float flags; application metadata declares
+	 * the instruction set and calling convention too. Reject contradictions. */
 	uint32_t float_abi = header->e_flags & 0x600U;
 	uint32_t expected_abi = IS_ENABLED(CONFIG_FP_HARDABI) ? 0x400U : 0x200U;
 	if ((header->e_flags & 0xff000000U) != 0x05000000U ||
@@ -105,13 +105,20 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 			return -ENOEXEC;
 		}
 		if (!strcmp(name, ".brickphyr.abi")) {
-			char identity[sizeof(BRICKPHYR_ABI)];
+			struct bp_application_abi identity;
 			if (abi || sh.sh_type != SHT_PROGBITS || sh.sh_size != sizeof(identity)) {
 				return -ENOEXEC;
 			}
-			err = read_at(&image, sh.sh_offset, identity, sizeof(identity));
-			if (err || memcmp(identity, BRICKPHYR_ABI, sizeof(identity))) {
+			err = read_at(&image, sh.sh_offset, &identity, sizeof(identity));
+			if (err || identity.magic != BP_ABI_MAGIC || identity.major != BP_ABI_MAJOR ||
+			    identity.minor > BP_ABI_MINOR || identity.architecture != BP_ABI_ARCH) {
 				return err ? err : -EPROTONOSUPPORT;
+			}
+			if (identity.capabilities & ~bp_capabilities()) {
+				return -ENOTSUP;
+			}
+			if (!identity.stack_size || identity.stack_size > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) {
+				return -ENOMEM;
 			}
 			abi = true;
 		}
@@ -154,8 +161,15 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 					return err;
 				}
 				if (sym.st_shndx == SHN_UNDEF) {
-					/* The SDK uses inline SVC stubs; no privileged imports. */
-					if (offset || name[0]) {
+					if (!offset && !name[0]) {
+						continue;
+					}
+					/* The only import is the resident, versioned API table.
+					 * GCC emits an undefined data reference as STT_NOTYPE. */
+					if (strcmp(name, "bp_api_v1") || ELF_ST_BIND(sym.st_info) != STB_GLOBAL ||
+					    (ELF_ST_TYPE(sym.st_info) != STT_NOTYPE && ELF_ST_TYPE(sym.st_info) != STT_OBJECT) ||
+					    sym.st_value || sym.st_size || sym.st_other ||
+					    llext_find_sym(NULL, name) != &bp_api_v1) {
 						return -ENOTSUP;
 					}
 					continue;
@@ -193,6 +207,26 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 				if (err || !range(rel.r_offset, sizeof(uint32_t), target.sh_size) ||
 				    ELF_R_SYM(rel.r_info) >= symbols.sh_size / sizeof(elf_sym_t)) {
 					return err ? err : -ENOEXEC;
+				}
+				elf_sym_t symbol;
+				err = read_at(&image, symbols.sh_offset + ELF_R_SYM(rel.r_info) * sizeof(symbol),
+					      &symbol, sizeof(symbol));
+				if (err) {
+					return err;
+				}
+				if (symbol.st_shndx == SHN_UNDEF) {
+					/* SDK literals take the table's address, not a branch to
+					 * it or a guessed offset in resident firmware. */
+					uint32_t addend;
+					if (!(target.sh_flags & SHF_ALLOC) || target.sh_type != SHT_PROGBITS ||
+					    ELF_R_TYPE(rel.r_info) != 2 /* R_ARM_ABS32 */ ||
+					    (rel.r_offset & 3U)) {
+						return -ENOTSUP;
+					}
+					err = read_at(&image, target.sh_offset + rel.r_offset, &addend, sizeof(addend));
+					if (err || addend) {
+						return err ? err : -ENOTSUP;
+					}
 				}
 			}
 		} else if (sh.sh_type == SHT_RELA || sh.sh_type == SHT_DYNSYM) {

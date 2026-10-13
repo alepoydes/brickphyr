@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-BRICKPHYR_APPLICATION();
+BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU, 2048);
 
 int app_main(void)
 {

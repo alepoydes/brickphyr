@@ -1,7 +1,7 @@
 # Applications and runtime contract
 
 This document distinguishes the experimental native and Python implementations
-from the remaining application model. The ABI is not stable. Keep SDK definitions shared
+from the remaining application model. The ABI remains experimental and versioned. Keep SDK definitions shared
 with the firmware; do not copy an API description into multiple runtimes.
 
 The [Python implementation plan](python.md) describes Python support and remaining
@@ -56,15 +56,17 @@ allocator reserves, so it is not the firmware's live working set.
    and accept clean builds, SDK examples and release artifacts. Report per-board
    capabilities and outstanding physical checks explicitly.
 
-This is planned work. The current native SDK still requires the matching firmware
-configuration, and Technic firmware support is not implemented. Existing Python
+The native ELF interface now has a versioned table independent of firmware
+configuration; Technic firmware support is not implemented. Existing Python
 acceptance work remains tracked in its owning plan; WASM is outside this milestone.
 
 ## Experimental native profile
 
 The opt-in F4 profile runs one ARM ELF32 relocatable C image through Zephyr LLEXT.
-The matching SDK emits inline system-call stubs and an ABI identity checked before
-replacement. Unresolved imports, TLS and incompatible ARM/float formats are rejected.
+The SDK emits calls through a versioned, read-only firmware API table. Its resident
+wrappers enter the existing Zephyr syscall verifiers; applications do not embed
+Zephyr syscall numbers. Only `bp_api_v1` may be imported. TLS, other unresolved
+imports and incompatible ARM/float formats are rejected before replacement.
 The F4 hard-float build uses Thumb, single-precision hardware floating point and
 the matching SDK's static C library for operations such as compiler-generated
 `memset`, linked into the application. These execute in its protected domain; no privileged C-library
@@ -84,6 +86,50 @@ fixed-rate filter or physical IMU performance. The full F4 firmware and matching
 SDK, plus the separately built example, compile with DSP enabled; a focused M4
 QEMU fixture passes through the production native loader. Physical RAM and stored
 execution over USB/BLE remain to be checked.
+
+### Portable ELF ABI
+
+`.brickphyr.abi` carries a 20-byte, little-endian record: the `BPA1` magic,
+16-bit major/minor versions, then 32-bit architecture, required-capability mask
+and stack requirement. Version 1 uses fixed-width public structures, 32-bit
+pointers and ARM EABI5/AAPCS. F4 uses ARMv7E-M Thumb with FPv4-SP-D16 hard float;
+the ARMv7-M software-float fixture is a distinct architecture, not interchangeable.
+
+`BRICKPHYR_APPLICATION()` declares the current ABI, no mandatory optional
+services, and a 2048-byte stack. Use
+`BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU, 2048)` to require the IMU service,
+for example. Combine capability bits with `|`; `bp_capabilities()` reports the
+available services for conditional use. Capabilities describe compiled services,
+not peripheral readiness or ownership. Device operations still report their
+ordinary initialization, connection and ownership errors.
+
+Admission requires the same major and architecture, a supported minor, all
+required services and sufficient stack and loader memory. Rejection preserves
+the running application. The stack requirement is an admission threshold; the
+firmware still reserves one configured application stack. A matching architecture alone cannot promise that any
+program fits or that a requested device is present. Within a major version,
+existing function slots, signatures, structure layouts, units and semantics are
+fixed; append calls at the end and increase the minor version. Incompatible
+changes require a new major and table symbol. The table is generated from the
+public syscall declarations; bindings keep using the same implementation.
+
+The exported native SDK contains public Brickphyr headers and the CPU/ABI flags
+selected from the actual build, with optional CMSIS-DSP headers/archive. It does
+not expose Zephyr configuration, syscall IDs or board headers. Static C-library
+operations execute in the application domain. The API import restriction defines
+the supported interface; MPU permissions and syscall verifiers provide isolation.
+This ELF contract is separate from native `.mpy`, which still needs the matching
+MicroPython compiler and runtime described below.
+
+An independently built F4 SDK `hello.elf` passes unchanged in two Cortex-M4
+QEMU firmware configurations with different Zephyr syscall IDs and application
+stack sizes. These checks include constructors, float arithmetic, time/output
+calls, rejection and protected cleanup. They do not establish cross-hub hardware
+compatibility. In the full F4 Python/DSP build, the table/admission change adds
+1784 bytes of linked flash and no linked RAM: 783001 bytes flash and 324352 bytes
+RAM, including reserved application pools. The table itself occupies 440 bytes
+of read-only flash. Calls add a table lookup and resident SVC wrapper, without
+allocation; physical call and loading latency remain unmeasured.
 
 Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
 allocated sections left outside the accepted image format fail admission before
@@ -196,7 +242,7 @@ previously installed applications.
 The host [CLI](host.md#native-applications) provides the same lifecycle over USB
 and BLE. Removal or replacement affects the stored image, not a running instance:
 LLEXT has already copied its execution sections into protected RAM. There is no
-autorun. Installed images retain their ABI identity; firmware/SDK changes can
+autorun. Installed images retain their ABI requirements; incompatible interface changes can
 require rebuilding and reinstalling them.
 
 File runs use Zephyr's LLEXT file loader without reserving a full ELF receive
@@ -658,8 +704,9 @@ to fight an active owner. Read-only monitoring should use existing observations
 when it can, with a documented bounded cost.
 
 The experimental SDK is generated from the same definitions as the firmware
-exports. Initially require a compatible SDK/firmware ABI identity rather than
-adding layers to preserve every experimental build. Reject mismatches clearly.
+exports. Its versioned ELF interface is independent of Zephyr configuration;
+reject unsupported architectures, interface versions and required capabilities
+clearly, before replacing a running application.
 
 ## Host and input devices
 

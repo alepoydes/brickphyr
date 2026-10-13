@@ -3,8 +3,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <zephyr/toolchain.h>
-#include <zephyr/syscall.h>
 #include <brickphyr_abi.h>
 #include <brickphyr_matrix.h>
 #include <brickphyr_light.h>
@@ -21,10 +19,12 @@
 #include <brickphyr_drivebase.h>
 #include <brickphyr_system.h>
 
-/* Every image carries the identity generated with its SDK. */
-#define BRICKPHYR_APPLICATION() \
-	static const char __attribute__((section(".brickphyr.abi"), used)) \
-		brickphyr_application_abi[] = BRICKPHYR_ABI
+#if defined(__ZEPHYR__) && !defined(LL_EXTENSION_BUILD)
+#include <zephyr/toolchain.h>
+#include <zephyr/syscall.h>
+
+/* ABI v1 slots follow declaration order. Append new calls at the end; changing
+ * existing signatures or public structure layouts requires a new ABI major. */
 
 /* Monotonic milliseconds since hub boot. No allocation. */
 __syscall int64_t bp_time_ms(void);
@@ -350,7 +350,10 @@ __syscall int bp_sound_finish(void);
 __syscall int bp_sound_stop(void);
 __syscall int bp_sound_get(struct bp_sound_state *state);
 
+#include <zephyr/syscalls/brickphyr.h>
+#endif
+
+#include <brickphyr_api.h>
+
 /* The firmware calls this entry in user mode; return ends the application. */
 int app_main(void);
-
-#include <zephyr/syscalls/brickphyr.h>

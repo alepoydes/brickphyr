@@ -6,6 +6,7 @@ import os
 import re
 import selectors
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -25,6 +26,17 @@ from brickphyrdev.application import (
     upload,
 )
 from brickphyrdev.telemetry import info, snapshot
+
+
+def incompatible_native(image):
+    # Change ELF application metadata, preserving the payload's shape.
+    from io import BytesIO
+    from elftools.elf.elffile import ELFFile
+
+    section = ELFFile(BytesIO(image)).get_section_by_name(".brickphyr.abi")
+    changed = bytearray(image)
+    struct.pack_into("<H", changed, section["sh_offset"] + 4, 0xffff)
+    return bytes(changed)
 
 
 def qemu(build):
@@ -51,6 +63,7 @@ def test_reserved_slot_names():
     [
         ("native-app-tests", b"NATIVE PASS:"),
         ("native-fpu-tests", b"NATIVE PASS:"),
+        ("native-portable-tests", b"NATIVE PASS:"),
         ("python-core-fpu-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
@@ -203,7 +216,7 @@ def test_native_smp_and_cli():
             await checked(client, Start())
             assert (await snapshot(client, "application")).values["state"] == 1
             hello = (examples / "hello.elf").read_bytes()
-            incompatible = hello.replace(status.abi.encode(), b"0" * 64)
+            incompatible = incompatible_native(hello)
             for bad in (hello[:-1], incompatible):
                 with pytest.raises(RuntimeError, match="Upload rejected"):
                     await upload(client, transport, bad)
@@ -269,7 +282,7 @@ def test_installed_applications():
                 await checked(client, Publish(name="hello", size=len(hello)))
             assert await client.download_file("/apps/hello") == hello
             assert (await checked(client, Status())).state == 1
-            incompatible = hello.replace((await checked(client, Status())).abi.encode(), b"0" * 64)
+            incompatible = incompatible_native(hello)
             with pytest.raises(RuntimeError, match="Publish rejected"):
                 await install(client, incompatible, "hello")
             assert await client.download_file("/apps/hello") == hello
