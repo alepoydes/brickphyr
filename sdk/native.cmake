@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Included after Zephyr configuration by firmware and ARM acceptance fixtures.
+zephyr_linker_sources(RAM_SECTIONS ${BRICKPHYR_ROOT}/sdk/execution.ld)
 zephyr_include_directories(${BRICKPHYR_ROOT}/sdk/include)
 zephyr_syscall_header(${BRICKPHYR_ROOT}/sdk/include/brickphyr.h)
 zephyr_syscall_header(${BRICKPHYR_ROOT}/include/application_private.h)

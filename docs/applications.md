@@ -16,18 +16,45 @@ and full Python profiles separately: linked RAM includes application arenas and
 allocator reserves, so it is not the firmware's live working set.
 
 1. Establish comparable flash, RAM, stack, peak loading and execution budgets.
-   Remove unnecessary image contents and allocations; size buffers and stacks
-   from their contracts and measured workloads. Return the recovered capacity to
-   applications where the board's alignment and loading constraints allow it.
-2. Optimize measured execution bottlenecks, including interrupt work, copies,
-   queues and service waits. Preserve behavior and report memory, throughput and
-   latency changes together rather than trading one for another silently.
-3. Decouple the native application ABI from firmware configuration and Zephyr's
+   Include the four-port Control+/Technic Hub's reference limits from the start:
+   208 KiB firmware flash, 16 KiB user flash and 64 KiB RAM. Check the feasibility
+   of protected native execution and its distinct BLE controller before promising
+   a complete port. Preserve its factory loader and checksum-sensitive storage.
+2. Enable hardware single-precision arithmetic with the hard-float calling
+   convention on capable targets. Rebuild the firmware, libraries, MicroPython
+   and SDK together; compatibility with earlier experimental native binaries is
+   not required. Check FP context across preemption, system calls and application
+   termination, including native/Viper/C `.mpy`, and measure stack and memory costs.
+3. Make CMSIS-DSP an optional SDK library, also usable by firmware. Include only
+   required routines and tables. Deliver a small sensor-processing application
+   through RAM and stored-program workflows over USB/BLE. CMSIS-NN remains a
+   later optional library for a concrete model, not a mandatory firmware payload.
+4. Remove unnecessary image contents, dependencies and allocations; size buffers
+   and stacks from contracts and measurements. Review loading copies, inactive
+   engine reservations and MPU alignment. Return recovered capacity to applications.
+   Optimize measured execution bottlenecks, including interrupt work, copies,
+   queues and service waits, preserving numerical behavior and responsiveness.
+   Report memory, throughput and latency changes together.
+5. Decouple the native application ABI from firmware configuration and Zephyr's
    generated syscall numbering. Version the public interface and check required
-   capabilities and memory before execution. Target the same application binary
+   capabilities and memory before execution, retaining ELF/LLEXT. Target the same application binary
    on SPIKE/Inventor F4 and the four-port Technic Hub when both builds provide its
    instruction set, calling convention and required services. Keep adaptation
    costs small and measure them; do not introduce a VM for this compatibility.
+6. Bring up Technic as a board/profile in the same implementation: first boot,
+   recovery, power/UI, watchdog and BLE Shell; then IMU, four ports, motors,
+   settings, storage and native applications. Reuse the Pybricks BLE installer
+   and selected hardware code. Start with the native profile; additional engines
+   depend on measured capacity. Deliver a build-checked port while Technic hardware
+   is unavailable. Cross-hub hardware acceptance remains separate and requires
+   the same binary running on physical F4 and Technic boards.
+7. Complete the remaining [Python and device acceptance](python.md#starting-point),
+   including client transfer recovery, persistent programs and battery watchdog
+   behavior. Keep USB-initiated wake and physical charging-source acceptance as
+   explicit hardware checks. Define storage-reset scope before implementation.
+8. Publish required dependency changes in their forks, pin reachable revisions
+   and accept clean builds, SDK examples and release artifacts. Report per-board
+   capabilities and outstanding physical checks explicitly.
 
 This is planned work. The current native SDK still requires the matching firmware
 configuration, and Technic firmware support is not implemented. Existing Python
@@ -44,6 +71,12 @@ application. These execute in its protected domain; no privileged C-library
 imports are exposed. This does not supply POSIX or host I/O functions.
 `app_main`, constructors and normal-return destructors run in user mode.
 Explicit stop and faults do not depend on user cleanup executing.
+
+On the current ARMv7-M targets, the shared execution arena occupies aligned RAM
+without a flash initialization image. Native loading and Python GC initialize
+their own allocations; neither may assume the arena is zero on first use or
+after another program. This removes 64 KiB of empty image content without reducing
+application memory or changing its MPU permissions.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
 bounded output, read-only buttons, optional
