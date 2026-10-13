@@ -29,6 +29,8 @@ int port_uart_poll(uint32_t port, struct bp_port_state *value,
 	struct bp_sensor_sample *sensor, uint32_t measurement,
 	const struct port_uart_write *write, bool cancel);
 void port_uart_stop(uint32_t port);
+/* Worker-only error context, after stop and before the next start. */
+void port_uart_report_error(uint32_t port);
 bool port_uart_available(uint32_t port);
 /* Concurrent snapshot reader: immutable metadata after negotiation. */
 int port_uart_get_mode(uint32_t port, uint32_t mode, struct bp_port_mode *value);
@@ -44,6 +46,7 @@ static inline int port_uart_poll(uint32_t port, struct bp_port_state *value,
 	struct bp_sensor_sample *sensor, uint32_t measurement,
 	const struct port_uart_write *write, bool cancel) { return -ENOTSUP; }
 static inline void port_uart_stop(uint32_t port) { }
+static inline void port_uart_report_error(uint32_t port) { }
 static inline int port_uart_get_mode(uint32_t port, uint32_t mode,
 	struct bp_port_mode *value) { return -ENOTSUP; }
 #endif

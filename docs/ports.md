@@ -1003,6 +1003,14 @@ does not stop other ports. Cached results older than the longest ten-step
 probe, including kernel tick rounding, report `-ETIMEDOUT`. A getter never
 increments counters or changes the acquisition state.
 
+When automatic detection or Powered Up communication produces a port's first
+failure since boot, the bounded `diagnostics` log records its operation and cleanup
+errors, probe step, timestamp and service delay. UART failures additionally report
+the negotiation/parser phase, interrupt error and raw UART flags, queued bytes
+and last DATA timestamp. Logging follows
+interrupt shutdown and output cleanup attempts, before recovery resets the UART
+state. Later failures increment the counter without flooding the log.
+
 ## UART negotiation and raw observations
 
 The selected parser in `src/ports/lump.c` comes from Pybricks

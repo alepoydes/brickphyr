@@ -26,6 +26,9 @@
 #include <stdlib.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(hub_ports, LOG_LEVEL_WRN);
 
 #define PORTS DT_NODELABEL(hub_ports)
 #define SETTLE_MS 2
@@ -1485,9 +1488,11 @@ static void scan(struct k_work *item)
 		if (!pins[i][P5].port) {
 			continue;
 		}
-		if (k_uptime_get() >= ports[i].next_ms) {
+		int64_t started = k_uptime_get();
+		if (started >= ports[i].next_ms) {
 			k_spinlock_key_t key = k_spin_lock(&lock);
 			bool serial = ports[i].serial != SERIAL_OFF;
+			bool first_failure = !ports[i].value.failures;
 			k_spin_unlock(&lock, key);
 			int err = 0;
 			if (serial) serial_advance(i);
@@ -1498,6 +1503,12 @@ static void scan(struct k_work *item)
 				int cleanup = release_pins(i);
 				finish_reset(i, cleanup);
 				publish(i, err, cleanup, NULL, NULL, 0);
+				if (first_failure) {
+					LOG_WRN("Port %c failed at %lld ms: %d, cleanup %d, probe step %u, "
+						"service late by %lld ms", 'A' + i, k_uptime_get(), err, cleanup,
+						ports[i].step, started - ports[i].next_ms);
+					if (ports[i].step == UART) port_uart_report_error(i);
+				}
 				ports[i].step = START;
 			}
 			ports[i].next_ms = k_uptime_get() + (err ? RETRY_MS : SETTLE_MS);

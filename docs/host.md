@@ -539,8 +539,9 @@ synthetic GATT peer and UART. Inventor F4 checks with pybricksdev cover binary
 USB/BLE exchange, offsets and rejected out-of-bounds writes, configuration events,
 awaitable sends, USB-to-BLE reconnection and mailbox cleanup after forced stop.
 
-For a connected pybricksdev hub, subscribe before starting the program so its
-mode announcement is received. The application defines the receive-buffer layout:
+For a connected pybricksdev hub whose program has opened AppData, the application
+defines the receive-buffer layout. Subscribe before starting the program when
+its initial mode announcement is needed. A subsequent exchange can use:
 
 ```python
 with hub.app_data_observable.subscribe(lambda data: print(data.hex())):

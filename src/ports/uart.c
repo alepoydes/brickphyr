@@ -8,8 +8,11 @@
 #include <zephyr/drivers/pinctrl.h>
 #endif
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/ring_buffer.h>
+
+LOG_MODULE_REGISTER(port_uart, LOG_LEVEL_WRN);
 
 #define PORTS DT_NODELABEL(hub_ports)
 #define IO_TIMEOUT_MS 250
@@ -44,6 +47,8 @@ static struct link {
 	uint8_t rx_buffer[RX_CAPACITY], tx[37];
 	size_t tx_size, tx_pos;
 	int error;
+	unsigned int error_flags;
+	int64_t error_ms;
 	bool active, tx_busy, serial;
 	int64_t tx_done_ms, tx_deadline, born_ms, deadline, keepalive_ms, data_ms;
 	uint32_t baud;
@@ -95,6 +100,7 @@ static void interrupt(const struct device *dev, void *arg)
 		 * the fast baud. Synchronize on a valid TYPE, as PBIO does; once TYPE
 		 * is known, any receive error invalidates the session. */
 		if (err < 0 || l->serial || (err & ~(UART_ERROR_FRAMING | UART_BREAK)) || l->lump.phase != LUMP_TYPE) {
+			l->error_flags = err > 0 ? err : 0;
 			err = err < 0 ? err : -EIO;
 			goto failed;
 		}
@@ -147,6 +153,7 @@ static void interrupt(const struct device *dev, void *arg)
 	}
 	return;
 failed:
+	l->error_ms = k_uptime_get();
 	l->error = err;
 	l->active = false;
 	disable_irq(dev);
@@ -155,6 +162,18 @@ failed:
 bool port_uart_available(uint32_t port)
 {
 	return port < BP_PORT_COUNT && config[port].uart;
+}
+
+void port_uart_report_error(uint32_t port)
+{
+	if (!port_uart_available(port)) return;
+	struct link *l = &links[port];
+	/* The port worker calls this after disabling IRQ access and before
+	 * reinitialization. No formatting or logging runs in the UART ISR. */
+	LOG_WRN("Port %c UART: phase %u, parser %u, IRQ error %d at %lld ms, "
+		"flags 0x%x, queued %u, last DATA %lld ms",
+		'A' + port, l->phase, l->lump.phase, l->error, l->error_ms,
+		l->error_flags, ring_buf_size_get(&l->rx), l->data_ms);
 }
 
 void port_uart_stop(uint32_t port)
