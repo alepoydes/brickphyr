@@ -529,8 +529,8 @@ completion through `bp_motor_get`.
 a closed object or an object from a disconnected device raise `ENODEV`. A stale
 close cannot release a replacement device. Release errors preserve ownership for
 retry and supervised cleanup. Protected ARM checks cover passive-motor PWM,
-voltage limiting, hotplug and cleanup with synthetic I/O. Physical Python motor
-acceptance remains pending.
+voltage limiting, hotplug and cleanup with synthetic I/O. Bounded F4 checks with
+an encoded motor also cover `DCMotor`; see [physical coverage](#python-motor-hardware-checks).
 
 ## Python encoded motors
 
@@ -693,6 +693,28 @@ have numerical and protected ARM checks. Model tuning, CSV units/downsampling,
 retained logs and forced-stop memory cleanup have synthetic checks too. These
 are not physical motion or tuning measurements. Complete Motor compatibility has
 not been established.
+
+### Python motor hardware checks
+
+The full Python profile has bounded checks on one Robot Inventor F4 (PCB revision
+unknown), with two ID-75 motors on A/B and suspended wheels. Temporary Python
+programs run from RAM through native USB/BLE management, with a 3500 mV voltage
+limit and cleanup checked through the shared native motor snapshots:
+
+- USB: `Motor.dc()` in both directions on both ports; blocking `run_angle()` and
+  `run_target()` reach their encoder targets within the configured tolerance.
+  `DCMotor` with `Direction.COUNTERCLOCKWISE` reverses the raw encoder direction.
+- BLE: concurrent awaitable timed moves complete; a replacement through an alias
+  survives closure of the old awaitable. Stopping A leaves B running, and host
+  application stop releases both outputs.
+- USB: `run_until_stalled()` ends with coast after the operator restrains A's
+  wheel; the operator confirms that drive effort disappears.
+
+Completed checks leave both outputs coasting with no port owner. Port connection
+generations and error counters remain unchanged. These checks establish bounded
+Python motor operation, not mechanical angle accuracy, controller tuning under
+load, all motor models or robotics trajectories. Physical gearing, model/logging
+behavior and the remaining reference examples still require acceptance.
 
 ## Paired drive control
 

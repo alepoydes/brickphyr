@@ -98,7 +98,9 @@ ARM checks for the shared native direction/voltage configuration, PWM, hotplug
 and cleanup. `Motor` adds shared gearing/origin, measurements, regulated motion,
 blocking/awaitable completion, replacement and shared `control` settings/trajectory
 checks. Model tuning/state and motor/controller CSV logging also have synthetic checks;
-physical Python motor acceptance remains pending.
+bounded ID-75 Python motion, replacement, manual stall and host-stop checks pass
+on F4 through USB/BLE. See [physical motor coverage](../docs/ports.md#python-motor-hardware-checks)
+for remaining acceptance.
 Native/Python DriveBase uses the same paired port worker and shared IMU, with
 synthetic scheduling, gyro reset, cancellation and cleanup checks. `move_by`
 and SpikeBase movement use that worker, with numerical and protected ARM checks.

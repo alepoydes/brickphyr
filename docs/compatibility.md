@@ -142,7 +142,7 @@ subpackages and application modules.
 | `Light`, `ColorLightMatrix` | Passive light brightness/off and UART 3×3 colors/off, native output encoding, connection-bound commands and port cleanup |
 | `PFMotor` | Native IR command encoding through ColorDistanceSensor, blocking/awaitable duty/coast/brake, direction, generation checks and coast transmission during cleanup; no remote acknowledgement |
 | `DCMotor` | Shared native direction/voltage limits, duty, coast, brake, settings and close; generation-bound output and supervised release |
-| `Motor` | Shared direction/gears/origin/profile, angle/speed/load/stall, DC and regulated motion, stop modes, blocking/awaitable completion, replacement, cleanup, `control` settings/trajectory/status, `model` tuning/state and independent `log`/`control.log` CSV export; physical acceptance remains pending |
+| `Motor` | Shared direction/gears/origin/profile, angle/speed/load/stall, DC and regulated motion, stop modes, blocking/awaitable completion, replacement, cleanup, `control` settings/trajectory/status, `model` tuning/state and independent `log`/`control.log` CSV export; bounded F4 motion checks, with remaining physical acceptance below |
 
 Checks execute through the protected ARM application path. Unchanged reference
 color, multitasking and COBS programs also pass through the actual pybricksdev
@@ -181,6 +181,12 @@ On the Inventor F4, `PUPDevice.info()`, reset and synchronous/async CALIB reads
 from an idle ID-75 motor pass through USB/BLE application upload and execution,
 with port release afterwards. No motor drive is part of this check; physical sensor,
 touch-switch and third-party raw-mode acceptance remain pending.
+
+`Motor` and `DCMotor` also have bounded ID-75 motion checks through native USB/BLE
+management on the Inventor F4, including targets, concurrent moves, replacement,
+manual stall and host stop. See [physical motor coverage](ports.md#python-motor-hardware-checks)
+for conditions and remaining limits.
+
 Display cleanup and error-free driver completion are checked there; perceived
 output and running that example through the browser remain separate acceptance items.
 
