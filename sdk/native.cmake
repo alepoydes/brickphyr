@@ -70,8 +70,12 @@ if(CONFIG_MCUMGR)
 endif()
 
 if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
-  foreach(example hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault system_fault data_fault motor)
-    if(example MATCHES "_fault$" OR example STREQUAL "motor")
+  set(native_examples hello counter spin fault matrix matrix_fault light_fault imu sound sound_fault battery_fault system_fault data_fault motor)
+  if(CONFIG_FPU)
+    list(APPEND native_examples fpu)
+  endif()
+  foreach(example ${native_examples})
+    if(example MATCHES "_fault$" OR example STREQUAL "motor" OR example STREQUAL "fpu")
       set(example_source ${BRICKPHYR_ROOT}/tests/native/${example}.c)
     else()
       set(example_source ${BRICKPHYR_ROOT}/examples/native/${example}.c)
@@ -102,4 +106,19 @@ endif()
 
 if(CONFIG_BRICKPHYR_PYTHON)
   add_subdirectory(${BRICKPHYR_ROOT}/src/python ${CMAKE_BINARY_DIR}/python)
+endif()
+
+if(CONFIG_LLEXT_EDK)
+  set(sdk_python_args)
+  if(CONFIG_BRICKPHYR_PYTHON)
+    list(APPEND sdk_python_args --micropython ${WEST_TOPDIR}/pybricks-micropython/micropython)
+  endif()
+  add_custom_target(brickphyr-sdk
+    COMMAND ${PYTHON_EXECUTABLE} ${BRICKPHYR_ROOT}/tools/export_sdk.py
+      ${CMAKE_BINARY_DIR} ${sdk_python_args}
+    DEPENDS llext-edk
+    VERBATIM)
+  if(CONFIG_BRICKPHYR_PYTHON)
+    add_dependencies(brickphyr-sdk mpy_cross)
+  endif()
 endif()

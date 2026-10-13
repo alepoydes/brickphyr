@@ -19,8 +19,16 @@ mp_obj_t mpy_init(mp_obj_fun_bc_t *self, size_t n_args, size_t n_kw, mp_obj_t *a
 		mp_raise_ValueError("BSS was not initialized");
 	}
 	mp_store_global(MP_QSTR_add, MP_OBJ_FROM_PTR(&add_object));
+	mp_obj_t fraction = mp_obj_new_float(1.5f);
 	mp_obj_t gc = mp_import_name(MP_QSTR_gc, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
 	mp_call_function_n_kw(mp_load_attr(gc, MP_QSTR_collect), 0, 0, NULL);
+	union {
+		mp_float_t value;
+		uint32_t bits;
+	} decoded = {.value = mp_obj_get_float(fraction)};
+	if (decoded.bits != 0x3fc00000U) {
+		mp_raise_ValueError("float ABI mismatch after GC");
+	}
 	mp_obj_t argument = mp_obj_new_int(33);
 	mp_obj_t result = mp_call_function_n_kw(MP_OBJ_FROM_PTR(&add_object), 1, 0, &argument);
 	mp_printf(&mp_plat_print, "native C %d %d\n", (int)mp_obj_get_int(result), (int)calls);

@@ -65,9 +65,9 @@ acceptance work remains tracked in its owning plan; WASM is outside this milesto
 The opt-in F4 profile runs one ARM ELF32 relocatable C image through Zephyr LLEXT.
 The matching SDK emits inline system-call stubs and an ABI identity checked before
 replacement. Unresolved imports, TLS and incompatible ARM/float formats are rejected.
-The current toolchain uses Thumb, soft-float compiler support and the SDK's static
-C library for operations such as compiler-generated `memset`, linked into the
-application. These execute in its protected domain; no privileged C-library
+The F4 hard-float build uses Thumb, single-precision hardware floating point and
+the matching SDK's static C library for operations such as compiler-generated
+`memset`, linked into the application. These execute in its protected domain; no privileged C-library
 imports are exposed. This does not supply POSIX or host I/O functions.
 `app_main`, constructors and normal-return destructors run in user mode.
 Explicit stop and faults do not depend on user cleanup executing.
@@ -133,7 +133,7 @@ reports the image, reserved loader budget, LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
 
-The board checks verify repeated execution/unload, constructor state,
+Earlier board checks verified repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
 cross-transport reconnection and power holds on one Robot Inventor F4 (PCB revision
 unknown). ARM QEMU additionally checks allocator capacity restoration, exhaustion,
@@ -198,10 +198,12 @@ mode. Each start initializes fresh interpreter state; normal return, exceptions
 and forced stop release ownership before another engine can use the arena.
 Closing the host connection leaves the program running and its power hold active.
 
-Native/Viper decorators and native format-6.3 `.mpy` use MicroPython's compiler
-and loader in that same domain. The tested external compiler target is `armv7m`,
-software floating point, single-precision MicroPython objects; incompatible native
-architectures/sub-versions are rejected. A separate 16 KiB code region is allocated
+Native/Viper source decorators still compile on the hub. Precompiled native/Viper
+and dynamic C modules require Brickphyr's matching SDK compiler: native `.mpy`
+uses format 7.0, with `armv7emsp` and the hard-float single-precision ABI on F4.
+Native format 6.3 is rejected; ordinary format-6 bytecode remains compatible with
+Pybricks clients. See [SDK compilation](builds.md#experimental-python-profile).
+A separate 16 KiB code region is allocated
 from the system heap on first use, with up to 32 KiB transient allocator space
 needed for MPU alignment. This region is read/execute for the application; its
 ordinary data remains non-executable. A privileged, preemptible worker with a
@@ -296,8 +298,11 @@ checks cover source/bytecode, GC, exceptions and another run. A non-yielding Pyt
 loop remains running across USB-to-BLE handover and can be stopped through BLE;
 incomplete staging is discarded and the application power hold clears on stop.
 These checks do not establish Pybricks API compatibility or hardware timing bounds.
-Bounded native/Viper calculations and a dynamic C `.mpy` with GC also pass through
-USB/BLE on that F4. ARM QEMU additionally checks write/execute protection, kernel
+The F4 hard-float image has USB/BLE checks for native ELF register preservation
+across API calls, on-hub Native/Viper compilation, SDK format-7 execution and
+dynamic C imports with float objects, exceptions and GC. Forced stop of a native
+float loop permits another run; stored files remain unchanged. ARM QEMU also
+checks all s16–s31 registers across exceptions and preempting threads, and checks write/execute protection, kernel
 data protection, forced native-loop stop, code exhaustion and subsequent execution.
 Source, bytecode and dynamic C imports share MicroPython's import machinery.
 Package-relative imports, fresh module state and recovery from a truncated native

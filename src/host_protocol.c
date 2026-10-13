@@ -161,8 +161,6 @@ size_t host_protocol_read(uint8_t service, uint16_t id, uint16_t variant,
 		/* Leave room for file-map headers when normalizing up to 64 modules. */
 		pbio_pybricks_hub_capabilities(value, max_write,
 			PBIO_PYBRICKS_FEATURE_FLAG_USER_PROG_FORMAT_MULTI_MPY_V6 |
-			(IS_ENABLED(CONFIG_CPU_CORTEX_M) ?
-			 PBIO_PYBRICKS_FEATURE_FLAG_USER_PROG_FORMAT_MULTI_MPY_V6_3_NATIVE : 0) |
 			PBIO_PYBRICKS_FEATURE_FLAG_BUILTIN_USER_PROGRAM_REPL,
 			PYTHON_PYBRICKS_LIMIT,
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0

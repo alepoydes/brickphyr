@@ -469,7 +469,7 @@ Set `ZEPHYR_SDK_INSTALL_DIR` to the SDK installed during workspace setup. The
 separate example build uses the exported EDK and toolchain, without compiling
 the firmware again. Use an EDK from the exact firmware configuration; mismatched
 ABI identities are rejected. The resulting `hello.elf` demonstrates time, output,
-constructors and soft-float arithmetic; `counter.elf` reports a counter and buttons.
+constructors and floating-point arithmetic; `counter.elf` reports a counter and buttons.
 `matrix.elf` displays a smile until stopped. `imu.elf` reports calibrated
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
 `sound.elf` plays a short tone followed by generated PCM through the
@@ -513,6 +513,33 @@ uv run --locked west build -b spike_prime_f4 -d build/python-apps -t firmware_pa
 
 The manifest-selected MicroPython submodule must be present. Its core and matching
 `mpy_cross` target use one source revision; see [integration](../src/python/README.md).
+Export the SDK from this same configured build to compile native `.mpy` modules:
+
+```sh
+uv run --locked west build -d build/python-apps -t brickphyr-sdk
+mkdir -p build/python-sdk
+tar -xf build/python-apps/zephyr/brickphyr-sdk.tar.xz -C build/python-sdk
+uv run brickphyrdev compile script.py --sdk "$PWD/build/python-sdk/brickphyr-sdk"
+uv run brickphyrdev app run script.mpy
+```
+
+`brickphyr-sdk.tar.xz` contains one `brickphyr-sdk` directory. Its `python/`
+directory holds the matching `mpy-cross`, `compiler.json`, MicroPython headers,
+`py/dynruntime.mk` and `tools/mpy_ld.py` for C native modules. `compile` defaults
+to `script.mpy`; `--output` changes the path, and `LLEXT_EDK_INSTALL_DIR` supplies
+the SDK when `--sdk` is omitted. To build a C `.mpy`, use upstream's
+`dynruntime.mk` from the SDK with Make command-line variables
+`MPY_DIR="$SDK/python" MPY_CROSS="$SDK/python/mpy-cross" ARCH=armv7emsp`;
+the upstream architecture rules select the F4 hard-float ABI. Run Make in the
+project's `uv run` environment to supply its Python/pyelftools dependency. Set `CROSS` to the
+installed ARM compiler prefix when the default `arm-none-eabi-` is unavailable.
+The SDK emits format-6 bytecode for ordinary Python and format 7.0 for native code.
+Native files require this matching SDK; format-6 bytecode from ordinary Pybricks
+clients remains accepted. Native format-6.3 files are rejected. The exported SDK's
+ELF, native/Viper `.mpy` and dynamic C module have bounded USB/BLE execution checks
+on the Inventor F4; ordinary SDK bytecode also passes through both pybricksdev
+clients. See [execution coverage](applications.md#experimental-python-profile).
+
 Installation uses the [existing recovery procedure](recovery.md). This profile
 provides [temporary and installed Python programs](host.md#python-applications),
 including imports, through Brickphyr management. REPL and the Pybricks execution

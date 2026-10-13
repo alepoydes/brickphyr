@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20)
-# This SDK is currently ARM EABI5/soft-float, produced by Zephyr SDK 1.0.1.
+# The exported SDK supplies the board's ARM architecture and float ABI.
 set(CMAKE_C_COMPILER "$ENV{ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 project(brickphyr_examples C)

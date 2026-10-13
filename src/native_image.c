@@ -70,8 +70,12 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 	    !range(header->e_shoff, header->e_shnum * sizeof(elf_shdr_t), length)) {
 		return -ENOEXEC;
 	}
-	/* EABI5, soft-float call convention, as emitted by the matching F4 SDK. */
-	if ((header->e_flags & 0xff000400U) != 0x05000000U) {
+	/* Relocatable objects may omit the float flags; the SDK identity also
+	 * binds their compiler configuration. Reject an explicit incompatible ABI. */
+	uint32_t float_abi = header->e_flags & 0x600U;
+	uint32_t expected_abi = IS_ENABLED(CONFIG_FP_HARDABI) ? 0x400U : 0x200U;
+	if ((header->e_flags & 0xff000000U) != 0x05000000U ||
+	    (float_abi && float_abi != expected_abi)) {
 		return -ENOTSUP;
 	}
 	elf_shdr_t names;

@@ -3,12 +3,17 @@
 
 import argparse
 
-from . import application, monitor, terminal, usb
+from . import application, compiler, monitor, terminal, usb
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
+    compile_parser = commands.add_parser("compile", help="Compile Python source with the SDK")
+    compile_parser.add_argument("source", help="Python source file")
+    compile_parser.add_argument("--output", help="Output .mpy path; default is SOURCE.mpy")
+    compile_parser.add_argument("--sdk", help="Extracted native SDK directory")
+    compile_parser.set_defaults(handler=compiler.run)
     terminal_parser = commands.add_parser("terminal", help="Open the shared Shell over BLE or USB")
     terminal_parser.add_argument(
         "target", nargs="?", help="BLE name or address (default Brickphyr); omit for USB"

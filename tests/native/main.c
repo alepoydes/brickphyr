@@ -99,6 +99,29 @@ static size_t available(void)
 	return low;
 }
 
+#ifdef CONFIG_FPU
+static int check_fp_context(void)
+{
+	CHECK(native_fixture_run("fpu") == 0);
+	uint32_t expected[16], observed[16];
+	for (unsigned int i = 0; i < ARRAY_SIZE(expected); i++) {
+		expected[i] = 0x42000000U + (i << 12);
+	}
+	for (unsigned int pass = 0; pass < 12; pass++) {
+		__asm__ volatile("vldmia %0, {s16-s31}" : : "r"(expected) :
+			"s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23",
+			"s24", "s25", "s26", "s27", "s28", "s29", "s30", "s31", "memory");
+		k_msleep(1);
+		__asm__ volatile("vstmia %0, {s16-s31}" : : "r"(observed) : "memory");
+		CHECK(!memcmp(expected, observed, sizeof(expected)));
+	}
+	struct application_status status;
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0 && !status.cleanup_error);
+	return 0;
+}
+#endif
+
 int main(void)
 {
 	/* Cold entry must work with arbitrary arena contents, just as reuse does. */
@@ -107,6 +130,9 @@ int main(void)
 	LOG_WRN("Synthetic diagnostic before application unload");
 	struct application_status status;
 	size_t capacity = available();
+#ifdef CONFIG_FPU
+	CHECK(check_fp_context() == 0 && available() == capacity);
+#endif
 	for (int i = 0; i < 2; i++) {
 		int err = native_fixture_run("hello");
 		printk("hello load %d\n", err);
@@ -268,6 +294,7 @@ int main(void)
 	k_msleep(20);
 	CHECK(native_fixture_run("truncated") == -ENOEXEC);
 	CHECK(native_fixture_run("badabi") == -EPROTONOSUPPORT);
+	CHECK(native_fixture_run("badfloat") == -ENOTSUP);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING);
 	k_sem_give(&stop_requested);

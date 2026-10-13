@@ -10,9 +10,15 @@ the STM32 library and upstream hardware ports are not included.
 
 `CMakeLists.txt` reuses MicroPython's source list and generated qstr/module/root
 tables. The `mpy_cross` target builds the compiler from that same checkout into
-the build directory. Plain bytecode uses format 6; native modules use format 6.3
-and additionally depend on architecture and runtime ABI. The tested producer
-target is `armv7m` with software floating point and MicroPython single precision.
+the build directory. The local MicroPython fork emits native `.mpy` major 7,
+sub-version 0: its larger Thumb exception frame preserves s16–s31 across NLR.
+Ordinary bytecode still uses major 6.
+The reader also accepts major-6 bytecode with no native architecture, preserving
+ordinary Pybricks client imports. Native 6.3 modules are rejected. The F4
+hard-float producer selects `armv7emsp` and single-precision objects; the SDK
+exports that matching compiler and upstream C-module rules. Bounded F4 USB/BLE
+checks cover SDK-native execution, C imports, float/GC/exception recovery and
+forced stop followed by another run.
 
 `runtime.c` adapts initialization and execution from
 `ports/embed/port/embed_util.c` at that revision, preserving its MIT attribution.
@@ -44,11 +50,12 @@ stop/unload. Code is retained until application exit; upstream root tracking kee
 native BSS/rodata alive across GC. Current targets have no instruction/data caches;
 a cache-enabled target requires explicit integration.
 
-The current execution checks cover source, bytecode from both compiler builds,
+Earlier execution checks cover source, bytecode from both compiler builds,
 GC, exceptions, exhaustion and truncated bytecode. RAM launch, stop and output now
 use the shared supervisor and SMP handlers, checked through ARM QEMU and USB/BLE
 on the Inventor F4. Native/Viper source and bytecode, and a separately compiled C
-module with GC also execute over both transports. ARM tests cover code writes,
+module with GC were checked over both transports before the format-7 ABI change;
+new hardware acceptance remains pending. ARM tests cover code writes,
 heap execution, protected-memory access, native loops, allocation exhaustion and
 subsequent successful execution.
 
@@ -59,8 +66,10 @@ references the retained bytes; module resolution, relative packages and native
 loading remain upstream code. Installed programs snapshot the entire map so
 updates cannot change later imports in a running instance. See
 [program format and limits](../../docs/applications.md#named-python-programs).
-Source/bytecode/native imports and installed launches have ARM and F4 USB/BLE
-coverage, including reboot persistence. Writable file I/O and remaining Pybricks hardware bindings
+Source/bytecode imports and installed launches have ARM and F4 USB/BLE
+coverage, including reboot persistence; SDK-native format-7 imports also pass
+bounded F4 USB/BLE checks.
+Writable file I/O and remaining Pybricks hardware bindings
 remain in the [implementation plan](../../docs/python.md).
 
 `files.c` adapts read-only stream operations from `extmod/vfs_rom_file.c` at the

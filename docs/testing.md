@@ -113,6 +113,9 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 build/python-tests/zephyr/zephyr.exe
 uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
 uv run --locked pytest -q -x tests/test_native.py -k python-arm
+uv run --locked west build -b mps2/an386 -s tests/python -d build/python-core-fpu-tests -- \
+  '-DEXTRA_CONF_FILE=arm.conf;../native/fpu.conf'
+uv run --locked pytest -q -x tests/test_native.py -k python-core-fpu-tests
 ```
 
 The build initializes no dependency automatically: populate the manifest's
@@ -120,6 +123,8 @@ MicroPython submodule first. The `mpy_cross` build target uses that same source
 revision. Use a pristine build when changing MicroPython feature selection;
 its current upstream registration generator can otherwise retain disabled
 modules. Compiler checks require local subprocesses and `asyncio` socket pairs.
+The Cortex-M4 hard-float core fixture checks native/Viper exception restoration
+through the full s16–s31 NLR frame; it is ARM emulation, not F4 hardware evidence.
 
 ### Python application integration
 
@@ -140,6 +145,20 @@ matching compiler and upstream `dynruntime.mk` with the `armv7m` target.
 and GC, code/data/kernel memory protection, forced stop, code exhaustion, malformed
 input and another successful run after each failure. These are protected ARM
 checks, not physical fault injection.
+
+For the matching F4 hard-float native ABI, use the M4 fixture and its focused
+admission/import check:
+
+```sh
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-fpu-tests -- \
+  -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=../native/fpu.conf
+uv run --locked pytest -q tests/test_python_fpu.py
+```
+
+This checks format-7 native C import, floating-point exception/GC recovery and
+rejection of old or soft-float native headers through the protected ARM runtime.
+The host compiler command and SDK metadata boundary have a separate fast check:
+`uv run --locked pytest -q tests/test_compiler.py`.
 
 For generic wired-device changes, run
 `uv run --locked pytest -q tests/test_python_pupdevice.py` against that same build.
@@ -314,7 +333,8 @@ alone does not provide that notification in QEMU.
 ```sh
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
 uv run --locked pytest -q tests/test_native.py -k uart-cmsdk
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf
+uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
+  -DCONFIG_BRICKPHYR_PYTHON=y '-DEXTRA_CONF_FILE=host.conf;../native/fpu.conf'
 uv run --locked pytest -q tests/test_python_shell.py
 ```
 
@@ -345,9 +365,10 @@ drain output nor detach its native consumer. Radio calls are synthetic.
 
 ### Pybricks execution adapter
 
-`test_pybricks_execution.py` uses the same dispatcher build and the actual
-pybricksdev serial client/compiler. It checks multi-module uploads, a `main`
-module separate from the entry, stdin/stdout, running status, busy-loop stop,
+`test_pybricks_execution.py` uses the Cortex-M4 hard-float dispatcher build and
+the actual pybricksdev serial client/compiler. It checks multi-module uploads,
+a `main` module separate from the entry, stdin/stdout, running status,
+busy-loop stop,
 repeat/reconnect and recovery after invalid module records. Transport framing
 and malformed-file checks use the production handlers, not a second parser.
 The near-limit package case holds 8 KiB of the synthetic heap while uploading
@@ -357,9 +378,12 @@ installed program after a malformed final record. This isolates transfer memory
 from the separate GC cost of importing the large payload.
 The long-output case checks a complete 4 KiB line through the client's ordinary
 run/output path, exceeding the application's bounded queue.
-The native case checks capability-based ABI selection, client-compiled native/Viper
-code, precompiled imports with a transitive dependency, a dynamic C module and GC.
-A mismatched native header fails before download; the installed program still runs.
+`test_pybricks_bytecode_imports_and_native_sdk_rejection` checks ordinary
+format-6 bytecode imports through the unmodified client and rejection of a
+Brickphyr SDK-native module before download; the installed program still runs.
+Native format-7/Viper/C modules instead use the matching SDK and Brickphyr SMP
+USB/BLE operations. Earlier client-compiled native-6.3 execution checks remain
+historical evidence, not format-7 or F4 hard-float acceptance.
 The client also compiles and executes the public concurrent-timer example through
 the same protocol. Library reference cases run separately in `test_pybricks_tools.py`.
 The required local client changes are listed in
@@ -533,7 +557,8 @@ uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-pr
 uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests
 uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-host-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=host.conf
+uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
+  -DCONFIG_BRICKPHYR_PYTHON=y '-DEXTRA_CONF_FILE=host.conf;../native/fpu.conf'
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t llext-edk
 mkdir -p build/native-smp-sdk

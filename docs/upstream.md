@@ -191,6 +191,17 @@ editor in Brickphyr. Its Unix coverage case checks CR/LF pairing within a sessio
 and independent input after reset; the ARM application test reproduces the
 REPL-to-script transition. This dependency change is not yet published or pinned.
 
+The local MicroPython fork also extends Thumb NLR to save and restore all
+callee-saved FP registers s16–s31; exceptions previously restored only s16–s21.
+The reproduced hard-float regression needs this change for correct native/Viper
+execution. It emits native `.mpy` version 7.0 for the enlarged exception frame,
+while ordinary bytecode still uses version 6 for both generation and reading.
+Version-6.3 native modules are not ABI-compatible and are rejected. Local commit
+`8851047` on `topic/thumb-fpu-context` contains this change; prerequisite `affb6bf`
+also makes dynamic-module builds track headers and compiler/linker tools, avoiding
+stale native binaries after an SDK update. Publication and manifest integration
+remain pending.
+
 ## Python library prerequisites
 
 The Pybricks checkout has local corrections used by the experimental Python
@@ -221,13 +232,17 @@ clock, lifetime and device adaptations remain in Brickphyr.
 
 ## Python client prerequisites
 
-The optional Python profile additionally needs local pybricksdev changes not yet
-included in the manifest pin. Its existing `download()` path now recognizes the
-native-v6.3 capability, selects the official `mpy-cross-v6.3` package and uses the
-`armv7m` target for Prime/Inventor source decorators. The multi-module packager
-includes precompiled modules and package initializers, validates their ABI and
-uses its existing MicroPython disassembler to follow imports. The v5/v6 bytecode
-paths remain available. This does not establish support for older native ABIs.
+The optional Python profile has local pybricksdev corrections not yet included
+in the manifest pin. Its multi-module packager includes precompiled modules and
+package initializers, validates their ABI and follows imports with the existing
+MicroPython disassembler. It still compiles and uploads ordinary format-6
+bytecode through the unmodified Pybricks Code/pybricksdev workflow. Brickphyr no
+longer advertises native-6.3 capability: precompiled native/Viper/C modules use
+the matching Brickphyr SDK compiler and SMP USB/BLE operations instead.
+Local pybricksdev commit `973fe51` selects `armv7emsp` for official Prime native
+compilation when that older capability is present. Both supported official Prime
+F4/H5 builds use the hard-float ABI, so this independently corrects that client;
+it is not the producer for Brickphyr's native format 7.0.
 
 The client also leaves the slot argument absent when `start_user_program(None)`
 requests the hub's current selection. Substituting the client's cached selection
@@ -240,12 +255,13 @@ share `app_data_observable` and `write_app_data`; no transport-specific duplicat
 or private client patch is required. Packet routing and admission have focused
 client checks, and binary exchange/reconnection has Inventor F4 USB/BLE checks.
 
-Client tests cover compiler selection, precompiled imports and rejected headers;
-Brickphyr checks execution with the actual serial client on protected ARM
-emulation. Both repositories' uv locks resolve the added compiler package.
+Client tests cover compiler selection; Brickphyr's protected ARM check covers
+ordinary bytecode imports and rejection of native SDK headers through the actual
+serial client. Both repositories' uv locks resolve the client compiler package.
 Publish the dependency change before moving the shared manifest pin. Both actual
-clients now upload and repeat the hub example over USB/BLE on the Inventor F4;
-native/Viper imports and a dynamic C module also execute through both clients.
+clients upload and repeat format-6 bytecode over USB/BLE on the Inventor F4,
+including ordinary bytecode produced by the Brickphyr SDK. Native/Viper and
+dynamic C format-7 modules pass separately through Brickphyr SMP on both transports.
 Selection immediately after connection and stored execution after software reboot
 have F4 USB/BLE checks. Broader client acceptance remains open.
 

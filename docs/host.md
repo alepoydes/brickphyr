@@ -572,15 +572,13 @@ normalization also needs space for the common file map. Allocation failure
 preserves acknowledged fragments, and starting a new transfer releases the
 incomplete one. Protected ARM checks cover small-program execution under heap
 pressure, rejected growth and subsequent recovery.
-The Cortex-M Python
-profile also advertises native `.mpy` ABI 6.3. The
-[pybricksdev integration](upstream.md#python-client-prerequisites) selects the
-matching compiler and packages imported `.mpy` files. Native/Viper decorators,
-an imported Viper module and a dynamic C module pass through the actual serial
-client on protected ARM emulation and both USB/BLE clients on the Inventor F4,
-including GC and repeated execution.
-Incompatible module headers fail before the client starts a replacement transfer;
-the hub independently validates the received modules.
+The Python profile advertises ordinary format-6 bytecode. Native `.mpy` requires
+the [matching Brickphyr SDK](builds.md#experimental-python-profile), whose enlarged
+FPU exception frame is incompatible with native format 6.3. Upload SDK-native
+modules through Brickphyr SMP; the Pybricks client path remains bytecode-only.
+The actual serial client has protected ARM checks for bytecode imports and
+rejection of SDK-native modules before replacement starts; the previous stored
+program remains runnable. The hub independently validates received modules.
 
 The actual pybricksdev serial client passes upload, imports, input/output, stop,
 repeat and reconnect checks against ARM-emulated firmware. A separate protected

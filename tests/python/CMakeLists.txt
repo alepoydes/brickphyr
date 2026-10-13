@@ -7,6 +7,12 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(python_runtime)
 add_subdirectory(${BRICKPHYR_ROOT}/src/python python)
 target_sources(app PRIVATE main.c)
+if(CONFIG_FPU)
+  target_sources(app PRIVATE fpu.c)
+  target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/micropython
+    ${BRICKPHYR_ROOT}/src/python
+    ${CMAKE_BINARY_DIR})
+endif()
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/include)
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/calculation.mpy
   COMMAND ${CMAKE_BINARY_DIR}/mpy-cross/mpy-cross -s calculation.py

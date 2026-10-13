@@ -108,8 +108,8 @@ def test_native_mpy_rejection_and_exhaustion():
     async def exercise(port):
         async with connection(port=port) as (client, transport):
             try:
-                # MPY v6.3: x86, v7EM on M3, and a different native sub-version.
-                for feature in (7, 27, image[2] ^ 1):
+                # x86, v7EM on M3, and a different native sub-version.
+                for feature in (4, 24, image[2] ^ 1):
                     invalid = image[:2] + bytes([feature]) + image[3:]
                     with pytest.raises(RuntimeError, match="FormattedUpload rejected"):
                         await upload(client, transport, invalid, Format.MPY)

@@ -5,7 +5,13 @@
 #include <string.h>
 #include <zephyr/shell/shell.h>
 #include <brickphyr_abi.h>
+#include <zephyr/sys/byteorder.h>
 
+#ifdef CONFIG_FPU
+static const unsigned char fpu[] = {
+#include <native_fpu.inc>
+};
+#endif
 static const unsigned char hello[] = {
 #include <native_hello.inc>
 };
@@ -57,6 +63,20 @@ const void *native_fixture_hello(size_t *length)
 
 int native_fixture_run(const char *name)
 {
+	if (!strcmp(name, "badfloat")) {
+		unsigned char *changed = k_malloc(sizeof(hello));
+		if (!changed) {
+			return -ENOMEM;
+		}
+		memcpy(changed, hello, sizeof(hello));
+		/* ELF32 e_flags: keep EABI version, invert the explicit float ABI. */
+		uint32_t flags = sys_get_le32(changed + 36) & ~0x600U;
+		flags |= IS_ENABLED(CONFIG_FP_HARDABI) ? 0x200U : 0x400U;
+		sys_put_le32(flags, changed + 36);
+		int err = application_run_native(changed, sizeof(hello));
+		k_free(changed);
+		return err;
+	}
 	if (!strcmp(name, "badabi")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) {
@@ -79,6 +99,9 @@ int native_fixture_run(const char *name)
 		const void *data;
 		size_t length;
 	} images[] = {
+#ifdef CONFIG_FPU
+		{"fpu", fpu, sizeof(fpu)},
+#endif
 		{"hello", hello, sizeof(hello)}, {"counter", counter, sizeof(counter)},
 		{"spin", spin, sizeof(spin)}, {"fault", fault, sizeof(fault)},
 		{"matrix", matrix, sizeof(matrix)}, {"matrix_fault", matrix_fault, sizeof(matrix_fault)},

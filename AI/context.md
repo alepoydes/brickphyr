@@ -77,8 +77,10 @@ reduce firmware memory and execution costs, maximize application capacity, and
 allow a common native binary on compatible SPIKE F4 and Technic builds without
 binding it to Zephyr's internal configuration. Preserve isolation, cleanup and
 service responsiveness; measure adapter costs and both native/Python profiles.
-This direction is not implemented and does not establish Technic support. The
-remaining Python acceptance scope below is retained.
+F4 hard-float execution and a matching SDK compiler have ARM and bounded USB/BLE
+checks. Native `.mpy` requires that SDK; ordinary Pybricks bytecode stays compatible.
+RAM optimization and a portable native ABI remain work, and Technic support is
+not established. The remaining Python acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance
 

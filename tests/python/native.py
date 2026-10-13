@@ -17,8 +17,19 @@ def triangular(n: int) -> int:
     return total
 
 
+@micropython.native
+def recover():
+    try:
+        return 1 // 0
+    except ZeroDivisionError:
+        return 42
+    finally:
+        gc.collect()
+
+
 assert transform(7) == 42
 gc.collect()
 assert triangular(100) == 4950
 assert transform(-3) == 12
+assert recover() == 42
 print("native and viper 42 4950")

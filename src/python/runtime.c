@@ -116,13 +116,22 @@ int python_image_check(const void *program, size_t length, enum application_form
 		return -ENOTSUP;
 	}
 	const uint8_t *header = program;
-	if (length < 4 || header[0] != 'M' || header[1] != MPY_VERSION ||
+	if (length < 4 || header[0] != 'M' ||
 	    header[3] > sizeof(mp_int_t) * 8 - 1) {
 		return -ENOEXEC;
 	}
 	uint8_t arch = MPY_FEATURE_DECODE_ARCH(header[2]);
+	if (!MPY_VERSION_TEST(header[1], arch)) {
+		return -ENOTSUP;
+	}
 	if (arch != MP_NATIVE_ARCH_NONE &&
 	    (!MPY_FEATURE_ARCH_TEST(arch) || MPY_FEATURE_DECODE_SUB_VERSION(header[2]) != MPY_SUB_VERSION)) {
+		return -ENOTSUP;
+	}
+	/* C .mpy modules call float-valued runtime functions. A lower Thumb
+	 * architecture may use the soft ABI even though its instructions run. */
+	if (IS_ENABLED(CONFIG_FP_HARDABI) && arch != MP_NATIVE_ARCH_NONE &&
+	    arch != MPY_FEATURE_ARCH) {
 		return -ENOTSUP;
 	}
 	/* The upstream Thumb feature upper bound also includes v7EM on Cortex-M3. */

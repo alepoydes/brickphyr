@@ -50,6 +50,8 @@ def test_reserved_slot_names():
     ("suite", "success"),
     [
         ("native-app-tests", b"NATIVE PASS:"),
+        ("native-fpu-tests", b"NATIVE PASS:"),
+        ("python-core-fpu-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
@@ -106,13 +108,14 @@ def native_console(build, *, virtual_clock=False):
     # Use the finest instruction clock, paced for host I/O. This is functional
     # device simulation, not the physical CPU's instruction/cycle timing.
     clock = ["-icount", "shift=0,align=off,sleep=on"] if virtual_clock else []
+    cortex_m4 = "CONFIG_CPU_CORTEX_M4=y" in (build / "zephyr/.config").read_text().splitlines()
     process = subprocess.Popen(
         [
             qemu(build),
             "-machine",
-            "mps2-an385",
+            "mps2-an386" if cortex_m4 else "mps2-an385",
             "-cpu",
-            "cortex-m3",
+            "cortex-m4" if cortex_m4 else "cortex-m3",
             "-nographic",
             "-monitor",
             "none",

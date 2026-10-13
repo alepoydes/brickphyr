@@ -356,39 +356,34 @@ def test_pybricks_selected_slot_and_rejected_replacement(tmp_path):
         asyncio.run(exercise(port))
 
 
-def test_pybricks_native_modules(tmp_path):
+def test_pybricks_bytecode_imports_and_native_sdk_rejection(tmp_path):
     source = tmp_path / "program.py"
     source.write_text(
-        "import gc, micropython, native_module\nfrom fast import calculate\n"
-        "@micropython.native\ndef add(a, b): return a + b\n"
-        "gc.collect()\nprint('native result', add(20, 22), calculate(6), native_module.add(30))\n"
+        "from fast import calculate\nprint('bytecode result', calculate(6))\n"
     )
     fast = tmp_path / "fast.py"
     fast.write_text(
-        "import micropython\nfrom constant import value\n"
-        "@micropython.viper\ndef multiply(x: int, y: int) -> int: return x * y\n"
-        "def calculate(x): return multiply(x, value)\n"
+        "from constant import value\ndef calculate(x): return x * value\n"
     )
     (tmp_path / "constant.py").write_text("value = 7\n")
-    (tmp_path / "native_module.mpy").write_bytes(
-        (BUILD / "python-fixtures/native_module.mpy").read_bytes()
-    )
-
     async def exercise(port):
-        native = await compile_file(str(tmp_path), fast.name, (6, 3), ["-march=armv7m"])
+        bytecode = await compile_file(str(tmp_path), fast.name, 6)
         fast.unlink()
-        (tmp_path / "fast.mpy").write_bytes(native)
+        (tmp_path / "fast.mpy").write_bytes(bytecode)
         hub = PybricksHubSerial(port)
         try:
             await hub.connect()
             await asyncio.wait_for(hub.run(str(source), print_output=False), 8)
-            assert hub.output == [b"native C 42 1", b"native result 42 42 42"]
-            # Rejected compilation must not alter the previous stored program.
-            (tmp_path / "fast.mpy").write_bytes(native[:2] + bytes([native[2] ^ 1]) + native[3:])
-            with pytest.raises(ValueError, match="abi minor version"):
+            assert hub.output == [b"bytecode result 42"]
+            # The standard client cannot package SDK-native modules; rejection
+            # must preserve the stored bytecode program.
+            (tmp_path / "fast.mpy").write_bytes(
+                (BUILD / "python-fixtures/native_module.mpy").read_bytes()
+            )
+            with pytest.raises(ValueError, match="abi major version"):
                 await hub.download(str(source))
             await asyncio.wait_for(hub.run(print_output=False), 6)
-            assert hub.output == [b"native C 42 1", b"native result 42 42 42"]
+            assert hub.output == [b"bytecode result 42"]
         finally:
             await hub.disconnect()
 
