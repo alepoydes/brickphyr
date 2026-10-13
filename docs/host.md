@@ -592,7 +592,8 @@ notification-allocation retries. Recovery from sustained physical BLE send failu
 remains unverified. Notifications have no application-level acknowledgment, so
 pausing a Python reader does not establish pressure on the hub while the host
 Bluetooth stack keeps receiving. F4 USB checks also cover byte-for-byte readback of
-multi-module program creation/replacement and a newly stored 30 kB program.
+multi-module program creation/replacement, all five slots filled with 30 kB
+programs, and replacement of a slot while the other four remain stored.
 Application storage fills its existing read cache per flash transaction to reduce metadata
 read overhead without additional cache memory. A final USB upload acknowledgment
 exceeded the client's two-second timeout in one check; its cause remains

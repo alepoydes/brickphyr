@@ -448,6 +448,15 @@ telemetry, Pybricks USB STOP with a stalled reader, finite Python BLE output and
 return to Shell. Full shutdown/reinitialization with pending class transfers is
 outside those checks. Publication and manifest integration remain pending.
 
+Local Zephyr commit `d0debdf4` on `topic/usbd-completion-wakeup` keeps completed
+endpoint buffers on their existing lists and wakes the core through a binary
+semaphore. Completion notifications no longer fill the bus-event queue or return
+an enqueue failure after buffer ownership has transferred. The virtual USB fixture
+fills the bus queue, verifies each completion and its buffer release, then checks
+another control request in both scheduling modes. The old path fails this check.
+F4 verification covers enumeration, USB file readback and finite BLE output after
+installation; it does not establish sustained multi-controller behavior.
+
 ## CMSDK UART test prerequisite
 
 The ARM QEMU fixture for the shared host dispatcher additionally requires the
@@ -531,3 +540,10 @@ request/security/configuration/data/cleanup paths with synthetic security result
 They do not validate controller encryption or physical pairing. Publish these
 corrections before updating the shared manifest; Brickphyr uses the public
 connection and channel APIs, not private host structures.
+
+Local Zephyr commit `5412fc5e` on `topic/l2cap-backpressure-log` lowers expected
+L2CAP fragment backpressure messages from error to debug in LE and Classic paths.
+An outstanding HCI fragment temporarily prevents reuse of its parent buffer;
+fragment completion retries transmission. This condition must not flood the
+firmware error log. A finite Python output stream has byte-for-byte F4 BLE
+verification without diagnostic overflow; Classic has source inspection only.
