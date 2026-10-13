@@ -166,8 +166,10 @@ third-party device compatibility. Reset checks cover transient electrical absenc
 renegotiation, replacement after completion and release on stop. Synthetic
 Force/Tilt/Infrared and Color/Ultrasonic/ColorDistance peers exercise cold
 construction, native conversions and Python results. Color checks include
-custom/shared palettes and captured UART light commands. Physical acceptance of
-these classes remains pending. See
+custom/shared palettes and captured UART light commands. Original LEGO SPIKE
+color and ultrasonic sensors additionally have bounded Inventor F4 USB/BLE
+read, light-write and cleanup checks; see [sensor hardware coverage](ports.md#sensor-hardware-checks)
+for their limits. Physical acceptance of the other classes remains pending. See
 [raw device usage and ownership](ports.md#arbitrary-uart-modes).
 Custom UART checks cover binary/chunked duplex, mutable input/GC, overlapping
 patterns, timeout/overflow recovery and failed cleanup with a synthetic echo peer.

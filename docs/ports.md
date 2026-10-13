@@ -78,9 +78,11 @@ Shell range/float32 output enables Zephyr's floating-point formatter.
 
 Synthetic checks cover recognized and unknown UART peers, all four wire formats,
 optional and malformed metadata, maximum mode/payload sizes, reconnects and
-unchanged ownership/outputs. Physical third-party compatibility and USB/BLE
-inspection on the hub remain unverified. First inspect what a device advertises;
-a matching ID alone does not establish compatibility.
+unchanged ownership/outputs. USB Shell inspection on one Inventor F4 displays
+the modes, formats, ranges and current data of original LEGO ID-61 and ID-62
+sensors. Physical third-party compatibility and BLE Shell inspection remain
+unverified. First inspect what a device advertises; a matching ID alone does not
+establish compatibility.
 
 ## Custom serial devices
 
@@ -339,6 +341,30 @@ Encoder adaptation validates the known ID, negotiated format and absolute-angle
 capability. It extends the BOOST counter without signed overflow, rejects invalid
 absolute values, and uses shortest-angle increments instead of PBIO's quadrant
 crossing test. These are measurement semantics, not a motor controller.
+
+### Sensor hardware checks
+
+On one Robot Inventor F4 (PCB revision unknown), the full Python profile reads
+an original LEGO SPIKE color sensor (ID 61, port C) and ultrasonic sensor
+(ID 62, port D). Both negotiate at 115200 baud and produce default measurements
+without an application selecting their modes. USB Shell exposes their advertised
+metadata and raw packets.
+
+RAM-only Python programs pass through native USB/BLE management with synchronous
+and awaitable reflection, ambient, surface/ambient HSV, matched color, distance
+and presence reads. Sensor light writes and subsequent measurement-mode recovery
+also complete. Application cleanup returns both sensors to unclaimed default
+measurements; connection generations and protocol error counters remain unchanged.
+The connected motors remain unclaimed and coasting throughout these checks.
+
+The USB monitor also captures reflection/white classification when white paper
+is presented and removed, and distance changes when a hand approaches and leaves.
+The bounded 2 Hz recording completes without observation errors or missed polls.
+
+These checks establish communication, mode switching and binding operation.
+Calibrated color/distance accuracy, positive detection of another ultrasonic
+source, perceived light output, other sensor models and third-party compatibility
+remain unverified.
 
 ## External lights
 
@@ -1154,8 +1180,9 @@ positive/negative direct-drive commands, timed speed control, position targets,
 hold and release pass with suspended wheels. The protected native motor example
 also completes and releases its port. These checks establish direction and
 bounded unloaded operation, not controller tuning under load, synchronized axes,
-stopping distance or third-party sensor compatibility. Physical sensor conversion
-and supply checks still need the corresponding devices.
+stopping distance or third-party sensor compatibility. Color/ultrasonic coverage
+is described under [sensor hardware checks](#sensor-hardware-checks); remaining
+sensor conversions and electrical supply behavior need separate acceptance.
 
 An unexpected UART reconnection was observed during a combined application and
 transport sequence; its trigger is still under investigation. Reconnection resets

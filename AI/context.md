@@ -90,7 +90,10 @@ Remaining hub, wired-device, motor, robotics and wireless bindings are required
 work. Generic `PUPDevice.info/read/reset` has ARM and idle-encoder F4 USB/BLE checks.
 Writes and Force/Tilt/Infrared and Color/Ultrasonic/ColorDistance Python classes
 have protected ARM and synthetic UART checks, including shared palettes, sensor
-lights and port cleanup. `Light` and `ColorLightMatrix` additionally have protected
+lights and port cleanup. Original LEGO ColorSensor/UltrasonicSensor also have
+bounded F4 USB/BLE read, light-command and cleanup checks; see
+[sensor hardware coverage](../docs/ports.md#sensor-hardware-checks).
+`Light` and `ColorLightMatrix` additionally have protected
 ARM checks for shared PWM/UART output, stale commands and cleanup. `PFMotor`
 has synthetic UART coverage for IR commands, cleanup and reconnect errors;
 physical PF output and other sensor acceptance remain pending. `DCMotor` has

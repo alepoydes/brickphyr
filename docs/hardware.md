@@ -504,8 +504,12 @@ reporting ID 75 negotiate at 115200 baud, expose their modes and provide moving
 encoders. Positive/negative 150 ms direct commands and 300 ms speed commands
 complete and coast; short position targets and hold also pass with suspended
 wheels. Protected native motor commands complete and release their port over
-both USB and BLE. Physical sensor supply/conversions and other device types
-remain unverified. Recognized motors stay in coast until explicitly commanded.
+both USB and BLE. Original LEGO ID-61 color and ID-62 ultrasonic sensors also
+negotiate and provide default measurements; synchronous/awaitable Python reads,
+light commands and cleanup pass through native USB/BLE management. See
+[sensor hardware coverage](ports.md#sensor-hardware-checks) for limits: calibrated
+accuracy, supply electrical measurements and other device types remain unverified.
+Recognized motors stay in coast until explicitly commanded.
 Python `PUPDevice` reset also renegotiates an idle ID-75 motor over USB/BLE,
 followed by synchronous and awaitable CALIB reads and port release. Force, Tilt
 and Infrared Python classes have synthetic ARM coverage only.
