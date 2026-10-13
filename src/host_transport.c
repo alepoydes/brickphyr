@@ -27,7 +27,6 @@ static uint16_t variant;
 RING_BUF_DECLARE(receive_buffer, 256);
 RING_BUF_DECLARE(transmit_buffer, 256);
 K_SEM_DEFINE(wake, 0, 1);
-K_SEM_DEFINE(shell_closed, 0, 1);
 K_SEM_DEFINE(smp_tx_ready, 0, 1);
 /* Each complete line is consumed synchronously before reading the next one. */
 NET_BUF_POOL_DEFINE(smp_lines, 1, SMP_SHELL_RX_BUF_SIZE, 0, NULL);
@@ -55,7 +54,6 @@ static k_tid_t ble_request_thread;
 static bool ready;
 static bool tx_idle;
 static int first_error;
-static int shell_close_error;
 static bool running;
 static uint32_t generation;
 static uint32_t shell_generation;
@@ -389,7 +387,7 @@ static int cmd_python(const struct shell *shell, size_t argc, char **argv)
 		k_msleep(20);
 	}
 	application_output_stream(false);
-	/* Disconnect must return promptly so teardown can join the Shell. It
+	/* Disconnect must return promptly so teardown can reset the Shell. It
 	 * neither stops Python nor transfers old bytes into the next session. */
 	if (!shell_owner()) {
 		return 0;
@@ -439,14 +437,9 @@ static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(host_mode, NULL, "host_mode pybricks: switch when this port closes.",
 		      cmd_host_mode, 2, 0);
 
-static void shell_uninitialized(const struct shell *shell, int result)
-{
-	shell_close_error = result;
-	k_sem_give(&shell_closed);
-}
-
 static void host_thread(void *a, void *b, void *c)
 {
+	static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
 	struct host_protocol protocol = {0};
 	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
 	size_t reply_length = 0;
@@ -469,17 +462,17 @@ static void host_thread(void *a, void *b, void *c)
 		k_spin_unlock(&lock, key);
 		if (changed) {
 			if (shell_initialized) {
-				shell_uninit(&host_shell, shell_uninitialized);
-				k_sem_take(&shell_closed, K_FOREVER);
-				k_thread_join(host_shell.thread, K_FOREVER);
-				if (shell_close_error) {
+				/* Join accepted commands and clear session state without the
+				 * IRQ-masked permission sweep of thread destruction.
+				 */
+				int err = shell_reset(&host_shell, flags);
+				if (err) {
 					key = k_spin_lock(&lock);
 					if (!first_error) {
-						first_error = shell_close_error;
+						first_error = err;
 					}
 					k_spin_unlock(&lock, key);
 				}
-				shell_initialized = false;
 			}
 			application_session_closed();
 			hub_matrix_session_closed();
@@ -505,11 +498,11 @@ static void host_thread(void *a, void *b, void *c)
 			k_spin_unlock(&lock, key);
 			continue;
 		}
-		if (selected == HOST_SHELL && !shell_initialized) {
-			static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
+		if (selected == HOST_SHELL && (changed || !shell_initialized)) {
 			shell_generation = session_generation;
 			managed_shell = false;
-			int err = shell_init(&host_shell, NULL, flags, false, 0);
+			int err = shell_initialized ? shell_start(&host_shell) :
+				shell_init(&host_shell, NULL, flags, false, 0);
 			if (err) {
 				key = k_spin_lock(&lock);
 				if (!first_error) {

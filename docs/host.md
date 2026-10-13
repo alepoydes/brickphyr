@@ -28,7 +28,14 @@ USB power alone does not acquire ownership.
 
 New-session Shell input is retained through startup, including commands sent
 before the first prompt. Closing a session discards its remaining input; it
-cannot become a command in the next USB or BLE session.
+cannot become a command in the next USB or BLE session. The shared Shell worker
+stays alive between sessions. After accepted commands finish, session reset
+clears history, bypass and terminal settings before admitting the next owner.
+Worker reuse has ARM checks for Shell/REPL detach and reattachment. A bounded
+Inventor F4 check covers 40 USB reconnections with no A/B UART errors or missed
+IMU samples, followed by BLE editing, REPL exit, cross-transport session isolation
+and Pybricks USB identification. This does not establish sustained combined-load
+behavior.
 
 Local transport closure does not acknowledge release by the firmware. While it
 finishes accepted operations or receives the BLE disconnection event, a new

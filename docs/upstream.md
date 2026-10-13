@@ -267,6 +267,16 @@ and clears rejected header prefixes. The default UART transport remains availabl
 its input-expiration timer is specific to that backend and disabled for custom
 receivers. Portable receiver checks cover both configurations.
 
+Reusing the Shell worker between USB/BLE sessions additionally requires the local
+Zephyr `shell_reset()` API (`058846f8` on `topic/shell-session-reset`), not yet
+included in the manifest pin. It schedules
+reset on the Shell worker after accepted commands and bypass callbacks finish,
+clears session state and leaves the transport/thread initialized for
+`shell_start()`. This avoids IRQ-masked thread-permission revocation on every
+disconnect. The caller still owns transport admission and stale-buffer cleanup.
+The focused `tests/subsys/shell/shell_session` fixture checks this boundary through
+the real Shell worker.
+
 The manifest imports zcbor through Zephyr's pinned module list. Host tooling uses
 the locked, unmodified `smpclient` and `smpmgr` packages. The receiver implementation
 and its checks remain in Zephyr.
