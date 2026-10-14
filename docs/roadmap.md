@@ -47,8 +47,9 @@ prehistory/post-event capture use that same channel. Optional control recording
 retains step metadata and applied parameter revisions without per-step allocation.
 An offline streaming reader validates gaps, applied parameters and collection
 outcomes; the CMSIS-DSP IMU example replays recorded steps with the same C routine
-on the host. Integrated robot replay, physical group-drive acceptance and
-automatic actuation correlation remain work; these APIs alone do not complete block 2.
+on the host. Periodic group records now attribute a prior driver outcome to its
+issuing control step. Integrated robot replay and physical group-drive acceptance
+remain work; these APIs alone do not complete block 2.
 
 ## Delivery blocks
 

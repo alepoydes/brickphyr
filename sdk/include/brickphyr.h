@@ -405,6 +405,15 @@ __syscall int bp_record_trigger(uint32_t after);
 __syscall int bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length);
 
+/* Native context after control_wait(). Same motor admission/expiry contract as
+ * group_set(), plus the preceding group's state copied atomically with admission
+ * and its originating control sequence. No allocation, driver wait or queue.
+ * Record the exact input/command and this result with control_record_begin().
+ * Early argument rejection has a zero previous snapshot. Expired live groups
+ * must finish their independent coast before another command is accepted. */
+__syscall int bp_control_motor_group_set(const struct bp_motor_group_command *command,
+	struct bp_control_motor_result *result);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

@@ -669,11 +669,14 @@ record overwritten between fragments, generation changes during collection or
 terminal-status capture, and the example's host decoder. The native probe is
 built with `build/native-smp-tests`; pytest does not rebuild it.
 
-`tests/test_control_record.py` runs the SDK's `control_group` and
-`control_group_coast` examples against synthetic A/B UART motors on ARM. It checks
+`tests/test_control_record.py` runs the SDK's `control_group`,
+`control_group_coast`, `control_actuation` and `control_actuation_coast` examples
+against synthetic A/B UART motors on ARM. It checks
 retention of the original input across command observations, admission/completion
-identity, signed driver output, expiry/coast and recorded input rejection. Build
-those two targets in `build/native-smp-examples` first; the test does not compile.
+identity, signed driver output, expiry/coast and recorded input rejection. The
+periodic cases check 16 command attempts and the final coast observation, with
+the previous outcome's request and originating step matched across records. Build
+these targets in `build/native-smp-examples` first; the test does not compile.
 It collects through the same SMP decoder used by `app record`. The model checks
 protocol and lifecycle behavior, not physical motor response or timing.
 
@@ -807,7 +810,9 @@ pinmux, inverted waveforms, shared-timer phase or physical motor behavior.
 duration expiry, hotplug, cleanup failures and release during blocked output.
 Grouped-command checks cover admission without partial claims, shared absolute
 expiry, partial driver failure, and cancellation during a write without losing
-its completion or first cleanup error. Mixed coast/duty release cancels the peer.
+its completion or first cleanup error. They also check the atomic previous-group
+snapshot on completed replacement, blocked pending replacement and replacement
+after partial failure with a cleanup error. Mixed coast/duty release cancels the peer.
 The LUMP fixture checks drive alongside encoder acquisition and coast on invalid
 data or UART loss. ARM applications exercise individual/group motor syscalls,
 return, forced stop and an invalid buffer fault while driving; the IMU fixture checks inhibited bias

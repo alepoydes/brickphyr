@@ -514,7 +514,9 @@ queued; it is not a duration starting after the driver write. An expired request
 is rejected with `ETIMEDOUT`. The existing port worker checks expiry before each
 member and again before a drive reaches the driver. Expiry of an accepted group
 coasts all members and reports `ETIMEDOUT`. An all-coast command permits a zero
-deadline. This mechanism does not promise zero scheduling/driver delay at expiry;
+deadline. Once a live group's deadline has passed, another group cannot replace
+it until the worker has coasted it; admission returns `ETIMEDOUT` meanwhile.
+This mechanism does not promise zero scheduling/driver delay at expiry;
 its physical latency under combined load remains to be measured.
 
 The existing motor output path applies each member in port order. Successful
@@ -536,8 +538,21 @@ group and its members. `completed_ms` records the latest completed initial-write
 or cleanup phase. Results persist until another group is accepted. Cleanup
 failure retains affected port ownership for an explicit retry.
 
-These two calls are appended in native ABI 1.2. They use small fixed group
-metadata, existing per-port pending commands and the existing worker: no new
+Native ABI 1.7 adds `bp_control_motor_group_set(&command, &result)` for the native
+context after a successful `bp_control_wait()`. It applies the same admission
+rules while copying the previous group's state atomically with the attempt.
+`result.request` identifies a newly accepted command; it is zero on rejection.
+`result.previous` describes the earlier group, even when admission fails after
+the command reaches the group lock. Its `pending` flag still matters: a snapshot
+is not necessarily a completion. `result.previous_sequence` identifies the control
+step that issued `previous.request` through this API; zero means the association
+is unknown. Check the new admission result separately from the previous group's
+operation and cleanup errors. This is one previous snapshot, not a history queue;
+an early argument or unavailable-output rejection returns a zero snapshot.
+Group request IDs do not wrap through zero: exhaustion returns `EOVERFLOW`.
+
+The original set/get calls were appended in native ABI 1.2. All three use fixed
+group metadata, existing per-port pending commands and the existing worker: no new
 thread, queue, driver or per-command allocation. The
 [SDK example](../examples/native/control_group.c) takes a source snapshot and
 commands unloaded A/B motors at opposite 20% duty until a 100 ms absolute limit.
@@ -545,10 +560,14 @@ It also [records the input and command reports](applications.md#recorded-group-c
 the `control_group_coast` target exercises the same path without drive output.
 
 Synthetic port-service checks cover admission, expiry, partial failure and
-cancellation during a driver write; protected ARM checks cover the syscalls and
+cancellation during a driver write, including atomic snapshots on replacement
+and rejection; protected ARM checks cover the syscalls and
 application cleanup. On one Robot Inventor F4 (PCB revision unknown), a RAM-loaded
 native application sends all-coast A/B groups through USB and BLE and verifies
 completion identity and release. This physical check does not energize motors.
+The periodic coast-only example also records 16 commands and a final observation
+over both transports, with all 16 previous outcomes attributed to their issuing
+steps. It does not establish the timing of energized output.
 Grouped drive, measured PWM timing and combined-load expiry latency remain
 unverified. Group metadata occupies 152 bytes in the F4 builds, without adding
 per-port state or changing the Python arena or thread stacks.

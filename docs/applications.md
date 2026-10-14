@@ -102,7 +102,9 @@ The `brickphyr.control-loop/1` example schema contains the existing input record
 and selected port mask. It opts into [control recording](#application-recording),
 which attaches release times, sequence and the applied parameter values. The CLI
 decodes these into JSONL and preserves raw bytes. The example is bounded read-only
-observation; numerical replay and actuation correlation remain application work.
+observation. The separate recorded actuation example below correlates periodic
+commands with their originating steps; robot-specific replay remains application
+work.
 
 Protected M4/QEMU checks cover progress during Python GC/floating-point work,
 whole parameter revisions, skipped periods, return, cross-domain faults, forced
@@ -672,9 +674,50 @@ Protected ARM/SMP checks exercise opposite duties, expiry/coast, the passive
 variant, input rejection and host decoding. One Robot Inventor F4 (PCB revision
 unknown) has checks of the passive variant and identical USB/BLE record retrieval;
 physical group drive and expiry remain unverified. The example adds no resident
-firmware worker or memory reservation. Automatic control-step correlation,
-including attribution of actuation completion to the original input, autonomous
-flash recording and integrated robot replay remain [roadmap work](roadmap.md).
+firmware worker or memory reservation. Autonomous flash recording and integrated
+robot replay remain [roadmap work](roadmap.md).
+
+### Recorded periodic actuation
+
+The [periodic example](../examples/native/control_actuation.c) uses a 20 ms native
+release to capture IMU, battery and A/B port input, then issues one grouped raw
+command. The default `control_actuation.elf` applies opposite 20% duties for its
+first 15 commands and coasts on its sixteenth; clear both mechanisms before use.
+`control_actuation_coast.elf` runs the same 16 steps with passive outputs only:
+
+```sh
+uv run brickphyrdev app run build/native-examples/control_actuation_coast.elf
+uv run brickphyrdev app record actuation.jsonl
+```
+
+Both build from the same source and use `brickphyr.control-actuation/1`: a
+little-endian 312-byte record, 32 retained slots and eight configuration bytes
+containing the requested period in microseconds and step count as two `uint32`
+values. Each of the 16 command records holds the exact input frame, commanded duty/generation,
+absolute deadline, admission error and request ID. The atomic previous-group
+snapshot includes its request, per-port request/generation, applied mask, first
+operation and cleanup errors, and the control sequence that issued it. A final
+seventeenth record reports completion of the last coast under that same step's
+control metadata. `phase` is 0 for an issue and 1 for that final observation.
+The host decoder exposes `input`, `command` and `previous`
+while preserving the raw bytes. A successful admission does not imply that the
+previous command succeeded or that the new output has reached a driver.
+
+Only the immediate previous group is copied on each issue; there is no driver
+event queue. A rejected issue may report that previous group still pending.
+`previous.control_sequence == 0` means its originating step is unknown, and a
+retained result cannot restore an input record lost to ring overwrite. Input and
+group results are separate snapshots: correlate each input port's `completed`
+and `output_generation` with the prior result's per-port request and generation
+before interpreting it as that command's output. Driver
+completion does not measure electrical output or shaft response. The example
+stops after 16 releases; its requested cadence is not a deadline guarantee.
+Protected ARM/SMP checks cover the 17-record sequence, request and origin IDs,
+signed synthetic outputs and final coast. On one Robot Inventor F4 (PCB revision
+unknown), the coast-only path retained 16 commands plus the final observation;
+USB and BLE returned identical records and all 16 prior outcomes matched their
+origin steps. No motors were energized. Physical grouped drive and timing under
+combined load remain open.
 
 ## Installed native files
 

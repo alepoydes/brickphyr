@@ -2398,8 +2398,10 @@ static int motor_connection_error(const struct port *p, enum bp_port_owner owner
 		(p->owner && p->owner != owner) ? -EBUSY : 0;
 }
 
-int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request)
+int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, struct bp_motor_group_state *previous)
 {
+	if (previous) *previous = (struct bp_motor_group_state){0};
 #ifndef CONFIG_BRICKPHYR_MOTORS
 	return -ENOTSUP;
 #else
@@ -2416,9 +2418,14 @@ int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_co
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct bp_motor_group_state *g = &motor_group.value;
+	/* Preserve the old result under the same lock as replacement. A separate
+	 * get/set pair can miss completion between those calls. */
+	if (previous) *previous = *g;
 	int64_t now = k_uptime_get();
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
 		active && command->deadline_ms <= now ? -ETIMEDOUT :
+		g->active && g->deadline_ms <= now ? -ETIMEDOUT :
+		g->request == UINT32_MAX ? -EOVERFLOW :
 		g->pending || (g->active && (motor_group.owner != owner || g->port_mask != command->port_mask)) ? -EBUSY : 0;
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports) && !err; i++) {
 		if (!(command->port_mask & BIT(i))) continue;
@@ -2456,6 +2463,11 @@ int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_co
 	k_spin_unlock(&lock, key);
 	return err;
 #endif
+}
+
+int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request)
+{
+	return hub_motor_group_exchange(owner, command, request, NULL);
 }
 
 int hub_motor_group_get(struct bp_motor_group_state *state)

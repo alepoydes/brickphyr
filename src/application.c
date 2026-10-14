@@ -92,6 +92,8 @@ static struct {
 	struct bp_control_step step;
 	int64_t next_tick;
 	uint32_t period_us;
+	/* Sole native caller; reset only after that context has been joined. */
+	uint32_t motor_request, motor_sequence;
 } control_clock;
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
@@ -1663,6 +1665,34 @@ static inline int z_vrfy_bp_motor_group_get(struct bp_motor_group_state *state)
 	return z_impl_bp_motor_group_get(state);
 }
 #include <zephyr/syscalls/bp_motor_group_get_mrsh.c>
+
+int z_impl_bp_control_motor_group_set(const struct bp_motor_group_command *command,
+	struct bp_control_motor_result *result)
+{
+	*result = (struct bp_control_motor_result){0};
+	if (!native_caller()) return -EPERM;
+	if (!control_clock.step.sequence) return -ENODATA;
+	int err = hub_motor_group_exchange(application_port_owner(), command,
+		&result->request, &result->previous);
+	if (result->previous.request && result->previous.request == control_clock.motor_request) {
+		result->previous_sequence = control_clock.motor_sequence;
+	}
+	if (!err) {
+		control_clock.motor_request = result->request;
+		control_clock.motor_sequence = control_clock.step.sequence;
+	}
+	return err;
+}
+static inline int z_vrfy_bp_control_motor_group_set(const struct bp_motor_group_command *command,
+	struct bp_control_motor_result *result)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
+	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
+	user_memory_check(result, sizeof(*result), __alignof__(*result), true, __func__);
+	struct bp_motor_group_command copy = *command;
+	return z_impl_bp_control_motor_group_set(&copy, result);
+}
+#include <zephyr/syscalls/bp_control_motor_group_set_mrsh.c>
 
 static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length, bool control)
 {

@@ -10,6 +10,8 @@ _LOOP_SCHEMA = "brickphyr.control-loop/1"
 _GROUP_SCHEMA = "brickphyr.control-group/1"
 _GROUP_TAIL = struct.Struct("<3q4I3i2Ii3q3I2iI")
 _GROUP_PORT = struct.Struct("<2I2iq4I2i")
+_ACTUATION_TAIL = struct.Struct("<2q5I3i2I3q3I2iI")
+_ACTUATION_PORT = struct.Struct("<2I2i")
 
 
 def _control_values(data):
@@ -125,6 +127,38 @@ def _step_values(data):
     }
 
 
+def _actuation_values(data):
+    (
+        command_ms, deadline_ms, phase, port_mask, coast_mask, request, previous_sequence,
+        issue_error, duty_a, duty_b, generation_a, generation_b,
+        requested_ms, completed_ms, previous_deadline_ms, previous_request,
+        previous_mask, applied_mask, error, cleanup_error, flags,
+    ) = _ACTUATION_TAIL.unpack_from(data, _CONTROL_RECORD.size)
+    ports = []
+    offset = _CONTROL_RECORD.size + _ACTUATION_TAIL.size
+    for port in range(2):
+        generation, port_request, port_error, port_cleanup = _ACTUATION_PORT.unpack_from(
+            data, offset + port * _ACTUATION_PORT.size
+        )
+        ports.append(dict(generation=generation, request=port_request,
+                          error=port_error, cleanup_error=port_cleanup))
+    return {
+        "input": _control_values(data[:_CONTROL_RECORD.size]),
+        "phase": phase,
+        "command": {"issued_ms": command_ms, "deadline_ms": deadline_ms,
+                    "port_mask": port_mask, "coast_mask": coast_mask,
+                    "request": request, "error": issue_error,
+                    "duty_permille": [duty_a, duty_b],
+                    "generation": [generation_a, generation_b]},
+        "previous": {"control_sequence": previous_sequence, "request": previous_request,
+                     "requested_ms": requested_ms, "completed_ms": completed_ms,
+                     "deadline_ms": previous_deadline_ms, "port_mask": previous_mask,
+                     "applied_mask": applied_mask, "error": error,
+                     "cleanup_error": cleanup_error, "pending": bool(flags & 1),
+                     "active": bool(flags & 2), "ports": ports},
+    }
+
+
 def _loop_values(data):
     if len(data) != _CONTROL_RECORD.size + 8:
         raise RuntimeError("Invalid brickphyr.control-loop/1 record length")
@@ -147,6 +181,10 @@ def control_step(data, parameter_size):
 
 
 _DECODERS = {
+    "brickphyr.control-actuation/1": (
+        _CONTROL_RECORD.size + _ACTUATION_TAIL.size + 2 * _ACTUATION_PORT.size,
+        _actuation_values,
+    ),
     "brickphyr.control-step/1": (216, _step_values),
     _LOOP_SCHEMA: (_CONTROL_RECORD.size + 8, _loop_values),
     _CONTROL_SCHEMA: (_CONTROL_RECORD.size, _control_values),

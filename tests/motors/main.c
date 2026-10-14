@@ -157,8 +157,17 @@ static void group_lifetime(void)
 	/* Same-mask replacement after completion is allowed; zero duty brakes. */
 	command = group_command(0, 350, k_uptime_get() + 60);
 	uint32_t previous = request;
-	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	zassert_ok(hub_motor_group_exchange(BP_PORT_APPLICATION, &command, &request, &before));
 	zassert_not_equal(request, previous);
+	zassert_equal(before.request, previous);
+	zassert_false(before.pending);
+	zassert_equal(before.applied_mask, BIT(0) | BIT(1));
+	for (uint32_t i = 0; i < 2; i++) {
+		zassert_equal(before.ports[i].request, state.ports[i].request);
+		zassert_equal(before.ports[i].generation, state.ports[i].generation);
+	}
+	zassert_ok(hub_motor_group_get(&state));
+	zassert_equal(state.request, request);
 	state = group_settled(request, true);
 	zassert_equal(state.applied_mask, state.port_mask);
 	zassert_equal(motor(0).mode, BP_MOTOR_DUTY);
@@ -188,6 +197,10 @@ static void group_lifetime(void)
 	block_output = true;
 	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
 	zassert_ok(k_sem_take(&output_entered, K_MSEC(50)));
+	struct bp_motor_group_command replacement = group_command(100, -100, k_uptime_get() + 150);
+	zassert_equal(hub_motor_group_exchange(BP_PORT_APPLICATION, &replacement, &rejected, &before), -EBUSY);
+	zassert_equal(before.request, request);
+	zassert_true(before.pending);
 	until = command.deadline_ms + 5 - k_uptime_get();
 	if (until > 0) k_msleep(until);
 	k_sem_give(&output_continue);
@@ -224,6 +237,20 @@ static void group_lifetime(void)
 	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
 	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
 	zassert_equal(pup_test_sensor_supply(0), 0);
+	/* Release repairs the output; the next accepted group returns the failed
+	 * group's outcome before replacing its one retained state slot. */
+	previous = request;
+	command = group_command(0, 0, 0);
+	command.coast_mask = command.port_mask;
+	zassert_ok(hub_motor_group_exchange(BP_PORT_APPLICATION, &command, &request, &before));
+	zassert_equal(before.request, previous);
+	zassert_equal(before.error, -EIO);
+	zassert_equal(before.cleanup_error, -EACCES);
+	zassert_equal(before.ports[0].cleanup_error, -EACCES);
+	zassert_equal(before.applied_mask, BIT(0));
+	state = group_settled(request, false);
+	zassert_ok(state.error);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
 
 	/* A single-member coast cancels the group, but keeps both claims until release. */
 	command = group_command(-200, 300, k_uptime_get() + 150);

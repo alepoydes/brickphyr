@@ -74,3 +74,15 @@ struct bp_motor_group_state {
 		int32_t error, cleanup_error;
 	} ports[BP_PORT_COUNT];
 };
+
+/* Previous group state at admission of a control step's next command. A
+ * successful call binds request to the current control step. previous_sequence
+ * identifies the step which issued previous.request through this API; zero
+ * means no known association in this native context. previous.request==0 means
+ * no previous snapshot. A rejected command leaves request==0 and the existing
+ * association unchanged. The previous result may still be pending on rejection.
+ */
+struct bp_control_motor_result {
+	uint32_t request, previous_sequence;
+	struct bp_motor_group_state previous;
+};

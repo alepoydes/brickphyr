@@ -12,6 +12,7 @@ from test_python_hub import shell
 
 from brickphyrdev import console, recording
 from brickphyrdev.application import Start, Stop, checked, upload
+from brickphyrdev.records import Recording
 from brickphyrdev.telemetry import snapshot
 
 
@@ -105,4 +106,75 @@ def test_group_example_records_input_command_applied_output_and_expiry():
                 await checked(client, Stop())
 
     with native_console(build) as device:
+        asyncio.run(exercise(device))
+
+
+def test_periodic_actuation_retains_previous_completion_and_origin_step():
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+    examples = build.with_name("native-smp-examples")
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                await shell(port, captured, b"pup_peer encoded_motor")
+                await shell(port, captured, b"pup_peer B encoded_motor")
+                async with asyncio.timeout(3):
+                    for name in ("port.A", "port.B"):
+                        while (await snapshot(client, name)).values["phase"] != 7:
+                            await asyncio.sleep(0.005)
+
+                for example, coast in (("control_actuation", False), ("control_actuation_coast", True)):
+                    await upload(client, port, (examples / f"{example}.elf").read_bytes())
+                    await checked(client, Start())
+                    state = await completed(client)
+                    assert state.result == state.fault == state.cleanup == 0, state
+                    output = io.StringIO()
+                    await recording.collect(client, output, "arm-actuation", {"records": 0, "gaps": 0})
+                    log = Recording(io.StringIO(output.getvalue()))
+                    frames = list(log.frames(allow_incomplete=True))
+                    assert len(frames) == 17 and log.gaps == 0
+                    assert [frame.control["sequence"] for frame in frames] == list(range(1, 17)) + [16]
+                    assert all(frame.parameters == b"" for frame in frames)
+                    assert frames[0].values["previous"]["control_sequence"] == 0
+                    matched_outputs = 0
+                    for i, frame in enumerate(frames):
+                        row = frame.values
+                        command, previous = row["command"], row["previous"]
+                        assert command["error"] == 0
+                        assert command["generation"] == row["input"]["port_generation"]
+                        assert row["phase"] == int(i == 16)
+                        assert command["coast_mask"] == (3 if coast or i >= 15 else 0)
+                        assert command["duty_permille"] == ([0, 0] if coast or i >= 15 else [200, -200])
+                        if i:
+                            original = frames[i - 1]
+                            origin_command = original.values["command"]
+                            assert previous["control_sequence"] == original.control["sequence"]
+                            assert previous["request"] == origin_command["request"] != 0
+                            assert previous["port_mask"] == previous["applied_mask"] == 3
+                            assert not previous["pending"]
+                            assert previous["error"] == previous["cleanup_error"] == 0
+                            assert previous["completed_ms"] >= previous["requested_ms"] >= origin_command["issued_ms"]
+                            for member, result in enumerate(previous["ports"]):
+                                assert result["generation"] == origin_command["generation"][member]
+                                assert result["error"] == result["cleanup_error"] == 0
+                                if (row["input"]["completed"][member] == result["request"] and
+                                    row["input"]["output_generation"][member] == result["generation"]):
+                                    matched_outputs += 1
+                                    assert row["input"]["duty_permille"][member] == origin_command["duty_permille"][member]
+                        if i < 16:
+                            assert command["request"] != 0
+                            assert command["request"] != previous["request"]
+                        else:
+                            assert command["request"] == 0 and not previous["active"]
+                    assert matched_outputs > 0
+                    for name in ("motor.A", "motor.B"):
+                        motor = (await snapshot(client, name)).values
+                        assert motor["owner"] == motor["mode"] == motor["cleanup"] == 0
+            finally:
+                await checked(client, Stop())
+
+    # This checks protocol/timing identities in guest time, not deadlines while
+    # the host OS pauses QEMU during another build or process.
+    with native_console(build, virtual_clock=True) as device:
         asyncio.run(exercise(device))

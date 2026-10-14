@@ -99,7 +99,8 @@ optional control metadata retains step identity and applied parameter values.
 Examples include input observations and a correlated group command. Offline
 inspection and a streaming reader validate gaps and applied parameters; an IMU
 example replays recorded FIR steps with the same CMSIS-DSP C routine on the host.
-Automatic actuation correlation and integrated robot replay remain planned work.
+Periodic actuation records also link a prior group outcome to the step that issued
+it. Integrated robot replay remains planned work.
 
 The [build-only native Technic port](../docs/hardware.md#experimental-technic-base)
 remains a secondary goal. UART negotiation, regulated motors and storage are

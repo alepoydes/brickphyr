@@ -11,6 +11,8 @@
 #ifdef CONFIG_BRICKPHYR_PORTS
 int hub_control_port_get(uint32_t port, struct bp_control_port *value);
 int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request);
+int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, struct bp_motor_group_state *previous);
 int hub_motor_group_get(struct bp_motor_group_state *state);
 int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle);
 int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state);
@@ -92,6 +94,8 @@ uint32_t hub_motor_activity(void);
 #else
 static inline int hub_control_port_get(uint32_t port, struct bp_control_port *value) { return -ENOTSUP; }
 static inline int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request) { return -ENOTSUP; }
+static inline int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, struct bp_motor_group_state *previous) { return -ENOTSUP; }
 static inline int hub_motor_group_get(struct bp_motor_group_state *state) { return -ENOTSUP; }
 static inline bool hub_drivebase_uses_gyro(void) { return false; }
 static inline int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle) { return -ENOTSUP; }

@@ -590,6 +590,11 @@ See the [control input contract](applications.md#control-input-frame).
 retain their input, command and driver reports for `brickphyrdev app record`;
 `control_record.elf` records observations without claiming either motor. See
 [application recording](applications.md#application-recording).
+`control_actuation.elf` records 16 periodic A/B grouped commands and their
+preceding group's driver outcome, then a final coast observation. It applies
+opposite 20% duties until that coast, so clear both mechanisms before use.
+`control_actuation_coast.elf` records the same sequence without energizing motors.
+See [recorded periodic actuation](applications.md#recorded-periodic-actuation).
 `motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.
