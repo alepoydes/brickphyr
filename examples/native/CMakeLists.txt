@@ -20,7 +20,7 @@ add_custom_command(OUTPUT application.ld
   DEPFILE application.ld.d
   VERBATIM COMMAND_EXPAND_LISTS)
 add_custom_target(application_layout DEPENDS application.ld)
-set(native_examples hello counter spin fault matrix imu control_frame sound motor)
+set(native_examples hello counter spin fault matrix imu control_frame control_group sound motor)
 set(dsp_library ${LLEXT_EDK_INSTALL_DIR}/lib/libcmsis-dsp.a)
 if(EXISTS ${dsp_library})
   list(APPEND native_examples imu_filter)

@@ -1460,6 +1460,32 @@ static inline int z_vrfy_bp_control_frame_get(uint32_t port_mask, struct bp_cont
 }
 #include <zephyr/syscalls/bp_control_frame_get_mrsh.c>
 
+int z_impl_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)
+{
+	return hub_motor_group_set(BP_PORT_APPLICATION, command, request);
+}
+static inline int z_vrfy_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
+	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
+	struct bp_motor_group_command copy = *command;
+	return z_impl_bp_motor_group_set(&copy, request);
+}
+#include <zephyr/syscalls/bp_motor_group_set_mrsh.c>
+
+int z_impl_bp_motor_group_get(struct bp_motor_group_state *state)
+{
+	return hub_motor_group_get(state);
+}
+static inline int z_vrfy_bp_motor_group_get(struct bp_motor_group_state *state)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
+	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
+	return z_impl_bp_motor_group_get(state);
+}
+#include <zephyr/syscalls/bp_motor_group_get_mrsh.c>
+
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
 	return hub_motor_control(BP_PORT_APPLICATION, port, command);

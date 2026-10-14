@@ -582,6 +582,9 @@ acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
 `control_frame.elf` reads IMU, battery and A/B encoder/output snapshots twice,
 including original timestamps and errors, without claiming or moving devices.
 See the [control input contract](applications.md#control-input-frame).
+`control_group.elf` moves unloaded A/B motors at opposite 20% duty until a
+100 ms absolute deadline. Clear both mechanisms before starting it; see
+[grouped output semantics](ports.md#grouped-raw-motor-commands).
 `motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.

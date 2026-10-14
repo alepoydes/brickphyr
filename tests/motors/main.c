@@ -54,6 +54,10 @@ static K_SEM_DEFINE(output_entered, 0, 1);
 static K_SEM_DEFINE(output_continue, 0, 1);
 static bool block_output;
 static int output_error;
+static uint32_t fail_drive_channel = UINT32_MAX;
+static bool fail_first_coast_after_drive_error;
+static bool count_b_drive;
+static unsigned b_drive_count;
 static int capture_pwm(const struct device *dev, uint32_t channel,
 	uint32_t period, uint32_t pulse, pwm_flags_t flags)
 {
@@ -61,6 +65,14 @@ static int capture_pwm(const struct device *dev, uint32_t channel,
 		block_output = false;
 		k_sem_give(&output_entered);
 		zassert_ok(k_sem_take(&output_continue, K_MSEC(200)));
+	}
+	if (pulse && channel == 3 && count_b_drive) b_drive_count++;
+	if (pulse && channel == fail_drive_channel) {
+		if (fail_first_coast_after_drive_error) {
+			fail_first_coast_after_drive_error = false;
+			pup_test_circuits[0].coast_error = -EACCES;
+		}
+		return -EIO;
 	}
 	return output_error;
 }
@@ -77,6 +89,209 @@ static void release_application(void *a, void *b, void *c)
 	}
 }
 K_THREAD_DEFINE(releaser, 2048, release_application, NULL, NULL, NULL, 5, 0, 0);
+
+static struct bp_motor_group_state group_settled(uint32_t request, bool active)
+{
+	int64_t deadline = k_uptime_get() + 150;
+	struct bp_motor_group_state state;
+	do {
+		zassert_ok(hub_motor_group_get(&state));
+		if (state.request == request && !state.pending && state.active == active) return state;
+		zassert_true(k_uptime_get() < deadline, "Group %u did not settle", request);
+		k_msleep(1);
+	} while (true);
+}
+
+static struct bp_motor_group_command group_command(int32_t a, int32_t b, int64_t deadline)
+{
+	struct bp_motor_group_command command = {
+		.port_mask = BIT(0) | BIT(1), .deadline_ms = deadline,
+	};
+	command.ports[0].generation = motor(0).generation;
+	command.ports[1].generation = motor(1).generation;
+	command.ports[0].duty_permille = a;
+	command.ports[1].duty_permille = b;
+	return command;
+}
+
+static void group_lifetime(void)
+{
+	struct bp_motor_group_command command = group_command(250, -400, k_uptime_get() + 80);
+	struct bp_motor_group_state before, state;
+	before.request = UINT32_MAX;
+	zassert_equal(hub_motor_group_get(&before), -ENODATA);
+	zassert_equal(before.request, 0);
+	unsigned calls = fake_pwm_set_cycles_fake.call_count;
+	uint32_t request = 0;
+	command.ports[1].generation++; /* A valid member cannot be claimed first. */
+	zassert_equal(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request), -ESTALE);
+	state.request = UINT32_MAX;
+	zassert_equal(hub_motor_group_get(&state), -ENODATA);
+	zassert_equal(state.request, before.request);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+	command.ports[1].generation--;
+	command.deadline_ms = k_uptime_get();
+	zassert_equal(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request), -ETIMEDOUT);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls);
+
+	command.deadline_ms = k_uptime_get() + 80;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	state = group_settled(request, true);
+	zassert_ok(state.error);
+	zassert_equal(state.port_mask, BIT(0) | BIT(1));
+	zassert_equal(state.applied_mask, state.port_mask);
+	zassert_equal(state.deadline_ms, command.deadline_ms);
+	zassert_equal(state.ports[0].request, motor(0).request);
+	zassert_equal(state.ports[1].request, motor(1).request);
+	zassert_equal(motor(0).duty, 250);
+	zassert_equal(motor(1).duty, -400);
+	zassert_equal(motor(0).owner, BP_PORT_APPLICATION);
+	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
+	zassert_equal(hub_motor_drive(BP_PORT_APPLICATION, 0, 100, 0), -EBUSY);
+	struct bp_motor_group_command smaller = command;
+	smaller.port_mask = BIT(0);
+	uint32_t rejected = 0;
+	zassert_equal(hub_motor_group_set(BP_PORT_APPLICATION, &smaller, &rejected), -EBUSY);
+	/* Same-mask replacement after completion is allowed; zero duty brakes. */
+	command = group_command(0, 350, k_uptime_get() + 60);
+	uint32_t previous = request;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	zassert_not_equal(request, previous);
+	state = group_settled(request, true);
+	zassert_equal(state.applied_mask, state.port_mask);
+	zassert_equal(motor(0).mode, BP_MOTOR_DUTY);
+	zassert_equal(motor(0).duty, 0);
+	zassert_equal(pup_test_sensor_supply(0), 3);
+	zassert_equal(motor(1).duty, 350);
+	int64_t until = command.deadline_ms + 5 - k_uptime_get();
+	if (until > 0) k_msleep(until);
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ETIMEDOUT);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	command = group_command(0, 0, 0);
+	command.coast_mask = command.port_mask;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	state = group_settled(request, false);
+	zassert_ok(state.error);
+	zassert_equal(state.deadline_ms, 0);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+
+	/* The deadline can pass inside A's driver. B must never receive duty. */
+	command = group_command(600, -500, k_uptime_get() + 50);
+	b_drive_count = 0;
+	count_b_drive = true;
+	block_output = true;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	zassert_ok(k_sem_take(&output_entered, K_MSEC(50)));
+	until = command.deadline_ms + 5 - k_uptime_get();
+	if (until > 0) k_msleep(until);
+	k_sem_give(&output_continue);
+	state = group_settled(request, false);
+	count_b_drive = false;
+	zassert_equal(state.error, -ETIMEDOUT);
+	zassert_equal(b_drive_count, 0);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	/* The deliberately blocked worker also aged passive-device detection. */
+	wait_type(0, 1);
+	wait_type(1, 2);
+
+	/* B fails after A reaches its driver; A's first coast also fails. */
+	command = group_command(200, -300, k_uptime_get() + 150);
+	fail_drive_channel = 3; /* Port B reverse PWM channel in this fixture. */
+	fail_first_coast_after_drive_error = true;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	state = group_settled(request, false);
+	fail_drive_channel = UINT32_MAX;
+	zassert_false(fail_first_coast_after_drive_error);
+	zassert_equal(state.error, -EIO);
+	zassert_equal(state.cleanup_error, -EACCES);
+	zassert_equal(state.ports[0].cleanup_error, -EACCES);
+	zassert_equal(state.applied_mask, BIT(0));
+	zassert_false(motor(0).valid);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	zassert_equal(pup_test_sensor_supply(1), 0);
+	zassert_equal(motor(0).owner, BP_PORT_APPLICATION);
+	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
+	zassert_equal(pup_test_circuits[0].coast_error, 0);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+	zassert_equal(pup_test_sensor_supply(0), 0);
+
+	/* A single-member coast cancels the group, but keeps both claims until release. */
+	command = group_command(-200, 300, k_uptime_get() + 150);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	group_settled(request, true);
+	zassert_ok(hub_motor_coast(BP_PORT_APPLICATION, 0));
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(0).owner, BP_PORT_APPLICATION);
+	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+
+	/* Releasing an already-coasting member still cancels its live peer. */
+	command = group_command(0, 300, k_uptime_get() + 150);
+	command.coast_mask = BIT(0);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	group_settled(request, true);
+	zassert_ok(hub_port_release(BP_PORT_APPLICATION, 0));
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+
+	/* Release cannot free either claim while an original group write is blocked. */
+	command = group_command(700, -700, k_uptime_get() + 150);
+	block_output = true;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	zassert_ok(k_sem_take(&output_entered, K_MSEC(50)));
+	k_sem_give(&release_started);
+	k_msleep(1);
+	zassert_equal(motor(0).owner, BP_PORT_APPLICATION);
+	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
+	zassert_equal(k_sem_take(&release_finished, K_NO_WAIT), -EBUSY);
+	k_sem_give(&output_continue);
+	zassert_ok(k_sem_take(&release_finished, K_MSEC(50)));
+	zassert_ok(release_result);
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+	zassert_equal(state.applied_mask, BIT(0));
+
+	/* Cancellation during A's failed write must retain its first coast error,
+	 * even though the group's follow-up coast succeeds. */
+	command = group_command(300, -300, k_uptime_get() + 150);
+	fail_drive_channel = 0;
+	fail_first_coast_after_drive_error = true;
+	block_output = true;
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	zassert_ok(k_sem_take(&output_entered, K_MSEC(50)));
+	zassert_ok(hub_motor_coast(BP_PORT_APPLICATION, 0));
+	k_sem_give(&output_continue);
+	state = group_settled(request, false);
+	fail_drive_channel = UINT32_MAX;
+	zassert_false(fail_first_coast_after_drive_error);
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(state.cleanup_error, -EACCES);
+	zassert_equal(state.ports[0].cleanup_error, -EACCES);
+	zassert_equal(state.applied_mask, 0);
+	zassert_equal(pup_test_circuits[0].coast_error, 0);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+}
 
 ZTEST(motors, test_lifetime)
 {
@@ -96,6 +311,7 @@ ZTEST(motors, test_lifetime)
 	zassert_equal(hub_motor_drive(BP_PORT_APPLICATION, 5, 500, 0), -ENODEV);
 	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
 	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Rejected commands touched PWM");
+	group_lifetime();
 
 	uint32_t token = hub_motor_activity();
 	drive(BP_PORT_APPLICATION, 0, 250, 0);

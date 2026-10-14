@@ -357,6 +357,14 @@ __syscall int bp_sound_get(struct bp_sound_state *state);
  * Retained values are never relabeled as fresh. No application pointers persist. */
 __syscall int bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *frame);
 
+/* One live raw-output group per hub. Validate the entire group before accepting
+ * any output/claim. Replacing a pending group or changing a live mask is EBUSY.
+ * Fault, expiry or a coast/release of a member cancels and coasts the whole group.
+ * Other individual drive commands cannot interleave with a live group.
+ */
+__syscall int bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request);
+__syscall int bp_motor_group_get(struct bp_motor_group_state *state);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

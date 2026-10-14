@@ -146,6 +146,24 @@ static struct k_spinlock lock;
 static atomic_t stopping;
 static atomic_t activity;
 static uint32_t active_ports; /* lock protects mask; parity token is atomic */
+#ifdef CONFIG_BRICKPHYR_MOTORS
+/* One raw-output group shares the existing port worker and pending commands.
+ * Fixed, small metadata avoids allocation in a controller's first step too. */
+static struct {
+	struct bp_motor_group_state value;
+	enum bp_port_owner owner;
+	bool cancelling;
+} motor_group;
+
+/* Caller holds lock. Completed/cancelled history does not reserve ports. */
+static bool group_member(const struct port *p)
+{
+	return (motor_group.value.active || motor_group.value.pending) &&
+		(motor_group.value.port_mask & BIT(p - ports));
+}
+#else
+static bool group_member(const struct port *p) { ARG_UNUSED(p); return false; }
+#endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Membership/publication uses lock; only the existing port worker computes. */
 struct drivebase {
@@ -775,6 +793,45 @@ static void set_motor_request(struct port *p, uint8_t mode, int32_t duty, uint32
 	if (mode < BP_MOTOR_SPEED) p->motor.command = (struct bp_motor_command){0};
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTORS
+/* Caller holds lock. Never roll a successful PWM write back to its old drive:
+ * an incomplete group always ends in coast, with the original cause retained. */
+static void cancel_motor_group(int error)
+{
+	struct bp_motor_group_state *g = &motor_group.value;
+	if (motor_group.cancelling) return;
+	motor_group.cancelling = true;
+	if (!g->error) g->error = error;
+	g->active = false;
+	g->pending = true;
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (!(g->port_mask & BIT(i))) continue;
+		if (!g->ports[i].error) g->ports[i].error = error == -ETIMEDOUT ? error : -ECANCELED;
+		set_motor_request(&ports[i], BP_MOTOR_COAST, 0, 0);
+	}
+}
+
+/* Called before each member's driver operation and after the final one. */
+static void check_motor_group(void)
+{
+	struct bp_motor_group_state *g = &motor_group.value;
+	if ((!g->active && !g->pending) || motor_group.cancelling) return;
+	int error = atomic_get(&stopping) ? -ESHUTDOWN : 0;
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (!(g->port_mask & BIT(i))) continue;
+		const struct port *p = &ports[i];
+		const struct bp_motor_state *m = &p->motor;
+		int err = m->error ? m->error : p->value.generation != g->ports[i].generation ? -ESTALE :
+			p->owner != motor_group.owner || m->request != g->ports[i].request ? -ECANCELED :
+			output_device_error(&ports[i], false);
+		if (!g->ports[i].error) g->ports[i].error = err;
+		if (!error) error = err;
+	}
+	if (!error && g->active && k_uptime_get() >= g->deadline_ms) error = -ETIMEDOUT;
+	if (error) cancel_motor_group(error);
+}
+#endif
+
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Caller holds lock. An individual command cancels only active paired work;
  * association survives so the same DriveBase can be commanded again. */
@@ -804,8 +861,15 @@ static void cancel_drivebase(struct port *p, int error, bool detach)
 
 static int request_motor(struct port *p, uint8_t mode, int32_t duty, uint32_t duration)
 {
+	if (group_member(p) && mode != BP_MOTOR_COAST) return -EBUSY;
 	int err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 	if (err < 0) return err;
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	if (group_member(p)) {
+		cancel_motor_group(-ECANCELED);
+		return 0;
+	}
+#endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	cancel_drivebase(p, -ECANCELED, false);
 #endif
@@ -1211,6 +1275,13 @@ static __unused int64_t apply_motor(uint32_t port)
 	struct port *p = &ports[port];
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct bp_motor_state *m = &p->motor;
+	int64_t expires = 0;
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	if (group_member(p)) {
+		check_motor_group();
+		if (!motor_group.cancelling) expires = motor_group.value.deadline_ms;
+	}
+#endif
 	int device_error = output_device_error(p, p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
 	bool running = m->mode != BP_MOTOR_COAST && m->valid;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -1322,6 +1393,9 @@ static __unused int64_t apply_motor(uint32_t port)
 #endif
 	bool coast_attempted = !err && output && passive;
 	int output_error = 0;
+	/* Computation/preemption must not turn an expired pending drive into a
+	 * newly energized output. Expiry is also checked for the whole group. */
+	if (!err && output && !passive && expires && k_uptime_get() >= expires) err = -ETIMEDOUT;
 	if (!err && output) err = output_error = passive ? port_output_coast(port) : port_output_drive(port, duty);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	if (!err && frame) {
@@ -1362,6 +1436,20 @@ static __unused int64_t apply_motor(uint32_t port)
 #endif
 	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
 	key = k_spin_lock(&lock);
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	if (group_member(p)) {
+		/* Cancellation can arrive during the driver call. Record its result
+		 * before the replacement coast can overwrite the port's completion. */
+		struct bp_motor_group_state *g = &motor_group.value;
+		if (request == g->ports[port].request && generation == g->ports[port].generation) {
+			if (!err && output) g->applied_mask |= BIT(port);
+			if (!g->ports[port].error) g->ports[port].error = err;
+			if (!g->error) g->error = err;
+		}
+		if (!g->ports[port].cleanup_error) g->ports[port].cleanup_error = cleanup;
+		if (!g->cleanup_error) g->cleanup_error = cleanup;
+	}
+#endif
 	m->completed = request;
 	m->pending = request != m->request;
 	m->valid = !cleanup;
@@ -1421,7 +1509,8 @@ static __unused int64_t apply_motor(uint32_t port)
 		m->duty = err || passive ? 0 : duty;
 		m->applied_ms = k_uptime_get();
 		m->generation = generation;
-		m->deadline_ms = !err && mode == BP_MOTOR_DUTY && duration ? m->applied_ms + duration : 0;
+		m->deadline_ms = !err && mode == BP_MOTOR_DUTY ? expires ? expires :
+			duration ? m->applied_ms + duration : 0 : 0;
 		p->supply = 0;
 	}
 	motor_activity(port, !m->valid || m->control.active || (m->mode != BP_MOTOR_COAST && m->duty));
@@ -1436,6 +1525,42 @@ static __unused int64_t apply_motor(uint32_t port)
 	k_spin_unlock(&lock, key);
 	return deadline;
 }
+
+#ifdef CONFIG_BRICKPHYR_MOTORS
+/* Caller holds lock; also used after shutdown has directly released outputs. */
+static void complete_motor_group(void)
+{
+	struct bp_motor_group_state *g = &motor_group.value;
+	if (!g->pending) return;
+	bool pending = false;
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (!(g->port_mask & BIT(i))) continue;
+		const struct bp_motor_state *m = &ports[i].motor;
+		pending |= m->pending;
+		if (!g->ports[i].cleanup_error) g->ports[i].cleanup_error = m->cleanup_error;
+		if (!g->cleanup_error) g->cleanup_error = m->cleanup_error;
+	}
+	if (!pending) {
+		g->pending = false;
+		g->completed_ms = k_uptime_get();
+	}
+}
+
+static void finish_motor_group(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct bp_motor_group_state *g = &motor_group.value;
+	check_motor_group();
+	uint32_t coast = g->pending && motor_group.cancelling ? g->port_mask : 0;
+	k_spin_unlock(&lock, key);
+	/* Include earlier successful members when a later output failed. These
+	 * calls use the ordinary driver/cleanup path in this same worker pass. */
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) if (coast & BIT(i)) apply_motor(i);
+	key = k_spin_lock(&lock);
+	complete_motor_group();
+	k_spin_unlock(&lock, key);
+}
+#endif
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 static void finish_drivebase(size_t slot)
@@ -1607,6 +1732,9 @@ static void scan(struct k_work *item)
 		int64_t deadline = serial ? 0 : apply_motor(i);
 		if (deadline) next = MIN(next, deadline);
 	}
+#endif
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	finish_motor_group();
 #endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) finish_drivebase(i);
@@ -2105,7 +2233,7 @@ static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t 
 		}
 		/* Even passive observation can be computing outside lock. Keep its
 		 * lease until the worker accepts coast, before admitting a new owner. */
-		if (p->motor.pending || p->motor.control.observing || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
+		if (group_member(p) || p->motor.pending || p->motor.control.observing || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
 		    p->motor.releasing || write_pending(p) || pf_outputs(p)) {
 			p->motor.releasing = true;
 			/* A sensor may need its existing DC supply to transmit IR. Local
@@ -2263,6 +2391,79 @@ static int motor_connection_error(const struct port *p, enum bp_port_owner owner
 	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
 		serial_mode(p) || p->motor.releasing || write_pending(p) || pf_outputs(p) ||
 		(p->owner && p->owner != owner) ? -EBUSY : 0;
+}
+
+int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request)
+{
+#ifndef CONFIG_BRICKPHYR_MOTORS
+	return -ENOTSUP;
+#else
+	if (!command || !request || !command->port_mask || command->port_mask >> BP_PORT_COUNT ||
+	    command->coast_mask & ~command->port_mask || command->deadline_ms < 0 ||
+	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	bool active = command->coast_mask != command->port_mask;
+	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		if (!(command->port_mask & BIT(i))) continue;
+		int32_t duty = command->ports[i].duty_permille;
+		if (duty < -1000 || duty > 1000 || ((command->coast_mask & BIT(i)) && duty)) return -EINVAL;
+		int err = port_output_check(i);
+		if (err) return err;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct bp_motor_group_state *g = &motor_group.value;
+	int64_t now = k_uptime_get();
+	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		active && command->deadline_ms <= now ? -ETIMEDOUT :
+		g->pending || (g->active && (motor_group.owner != owner || g->port_mask != command->port_mask)) ? -EBUSY : 0;
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports) && !err; i++) {
+		if (!(command->port_mask & BIT(i))) continue;
+		struct port *p = &ports[i];
+		err = motor_connection_error(p, owner, command->ports[i].generation);
+		if (!err) err = p->motor.pending || p->motor.control.observing ? -EBUSY : output_device_error(p, false);
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+		if (!err && p->drivebase) err = -EBUSY;
+#endif
+		if (!err && p->motor.cleanup_error) err = p->motor.cleanup_error;
+	}
+	/* Scheduling precedes publication; any rejection above has no side effects. */
+	if (!err) {
+		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
+		if (err >= 0) {
+			*g = (struct bp_motor_group_state){.requested_ms = now, .deadline_ms = active ? command->deadline_ms : 0,
+				.request = g->request + 1, .port_mask = command->port_mask, .pending = true, .active = active};
+			motor_group.owner = owner;
+			motor_group.cancelling = false;
+			for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+				if (!(g->port_mask & BIT(i))) continue;
+				struct port *p = &ports[i];
+				set_motor_request(p, command->coast_mask & BIT(i) ? BP_MOTOR_COAST : BP_MOTOR_DUTY,
+					command->ports[i].duty_permille, 0);
+				p->owner = owner;
+				p->motor.requested_ms = now;
+				p->motor.error = p->motor.cleanup_error = 0;
+				g->ports[i].generation = command->ports[i].generation;
+				g->ports[i].request = p->motor.request;
+			}
+			*request = g->request;
+			err = 0;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+int hub_motor_group_get(struct bp_motor_group_state *state)
+{
+#ifndef CONFIG_BRICKPHYR_MOTORS
+	return -ENOTSUP;
+#else
+	if (!state) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*state = motor_group.value;
+	k_spin_unlock(&lock, key);
+	return state->port_mask ? 0 : -ENODATA;
+#endif
 }
 
 int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation,
@@ -2521,7 +2722,7 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 	int err = atomic_get(&stopping) ? -ESHUTDOWN : 0;
 	for (size_t i = 0; i < 2 && !err; i++) {
 		err = servo_control_error(p[i], setup->generations[i]);
-		if (!err && (p[i]->owner != owner || p[i]->drivebase || p[i]->motor.pending || p[i]->motor.releasing)) err = -EBUSY;
+		if (!err && (p[i]->owner != owner || p[i]->drivebase || p[i]->motor.pending || p[i]->motor.releasing || group_member(p[i]))) err = -EBUSY;
 	}
 	if (!err && p[0]->motor.gear_ratio != p[1]->motor.gear_ratio) err = -EINVAL;
 	int32_t scales[2];
@@ -3182,6 +3383,11 @@ int hub_ports_shutdown(void)
 	atomic_set(&stopping, 1);
 	struct k_work_sync sync;
 	k_work_cancel_delayable_sync(&work, &sync);
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	k_spinlock_key_t group_key = k_spin_lock(&lock);
+	if (motor_group.value.active || motor_group.value.pending) cancel_motor_group(-ESHUTDOWN);
+	k_spin_unlock(&lock, group_key);
+#endif
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		port_uart_stop(i);
 	}
@@ -3234,5 +3440,10 @@ int hub_ports_shutdown(void)
 		v->cleanup_error = cleanup;
 		k_spin_unlock(&lock, key);
 	}
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	group_key = k_spin_lock(&lock);
+	complete_motor_group();
+	k_spin_unlock(&lock, group_key);
+#endif
 	return result;
 }

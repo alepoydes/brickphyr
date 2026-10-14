@@ -492,6 +492,65 @@ above. Protected ARM checks use a synthetic transmitter for command bytes,
 spacing, sensor-mode reuse, eight-output release, unplug errors, stale objects
 and coast-only recovery. Physical PF receiver/motor acceptance remains pending.
 
+## Grouped raw motor commands
+
+`bp_motor_group_set(&command, &request)` accepts one raw-output command for
+selected A–F ports. `port_mask` selects members; `coast_mask` selects passive
+outputs within that mask. Other members use signed physical duty in permille
+(`-1000..1000`); zero duty brakes. Direction, gearing and battery-voltage scaling
+are not applied. Each member must carry its current connection generation.
+
+All members are checked before any claim or command changes. Admission rejects
+stale/disconnected devices, conflicting owners, pending writes and ports with a
+motor observer or DriveBase. One group may be live at a time. A completed live
+group can be replaced with the same membership; pending work or a different
+live mask returns `EBUSY`. An individual drive cannot interleave with a live
+group. Coast or release of any member cancels the whole group with `ECANCELED`.
+Coasting retains each claim until the normal explicit/application release.
+
+Any non-coasting member requires `deadline_ms` in the future on `bp_time_ms()`'s
+monotonic clock. This is an absolute command-validity limit, including time spent
+queued; it is not a duration starting after the driver write. An expired request
+is rejected with `ETIMEDOUT`. The existing port worker checks expiry before each
+member and again before a drive reaches the driver. Expiry of an accepted group
+coasts all members and reports `ETIMEDOUT`. An all-coast command permits a zero
+deadline. This mechanism does not promise zero scheduling/driver delay at expiry;
+its physical latency under combined load remains to be measured.
+
+The existing motor output path applies each member in port order. Successful
+admission is atomic; physical PWM switching is not. If a member fails or its
+identity changes, the worker coasts every member, including earlier successes,
+in the same pass. It does not restore previous drive values. A driver already in
+progress must finish before cleanup can complete. Application stop/fault/return
+joins that cleanup before unload; ordinary host disconnection retains the group.
+
+`bp_motor_group_get(&state)` reads the last accepted request without I/O. Before
+the first request it returns `ENODATA` with zero state. `pending` includes initial
+writes and fault cleanup; `active` marks the drive phase. A cached active flag
+does not extend the absolute deadline. Check both flags before treating the
+group as ended. `applied_mask` records successful original
+writes, even after they have been coasted. Per-member request/generation values
+correlate with the [control input frame](applications.md#control-input-frame).
+The first operation error and first cleanup error remain separate, both for the
+group and its members. `completed_ms` records the latest completed initial-write
+or cleanup phase. Results persist until another group is accepted. Cleanup
+failure retains affected port ownership for an explicit retry.
+
+These two calls are appended in native ABI 1.2. They use small fixed group
+metadata, existing per-port pending commands and the existing worker: no new
+thread, queue, driver or per-command allocation. The
+[SDK example](../examples/native/control_group.c) takes a source snapshot and
+commands unloaded A/B motors at opposite 20% duty until a 100 ms absolute limit.
+
+Synthetic port-service checks cover admission, expiry, partial failure and
+cancellation during a driver write; protected ARM checks cover the syscalls and
+application cleanup. On one Robot Inventor F4 (PCB revision unknown), a RAM-loaded
+native application sends all-coast A/B groups through USB and BLE and verifies
+completion identity and release. This physical check does not energize motors.
+Grouped drive, measured PWM timing and combined-load expiry latency remain
+unverified. Group metadata occupies 152 bytes in the F4 builds, without adding
+per-port state or changing the Python arena or thread stacks.
+
 ## Direct motor drive
 
 `CONFIG_BRICKPHYR_MOTORS` provides duty, brake and coast for passive medium/train

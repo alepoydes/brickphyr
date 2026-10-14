@@ -766,9 +766,12 @@ counts and API calls; it does not emulate STM32
 pinmux, inverted waveforms, shared-timer phase or physical motor behavior.
 `tests/motors` adds the production port service, ownership, Shell commands,
 duration expiry, hotplug, cleanup failures and release during blocked output.
+Grouped-command checks cover admission without partial claims, shared absolute
+expiry, partial driver failure, and cancellation during a write without losing
+its completion or first cleanup error. Mixed coast/duty release cancels the peer.
 The LUMP fixture checks drive alongside encoder acquisition and coast on invalid
-data or UART loss. ARM applications exercise motor syscalls, return, forced stop
-and an invalid buffer fault while driving; the IMU fixture checks inhibited bias
+data or UART loss. ARM applications exercise individual/group motor syscalls,
+return, forced stop and an invalid buffer fault while driving; the IMU fixture checks inhibited bias
 learning during drive.
 
 `tests/motor_control` runs the PBIO computation on ARM with a deliberately simple

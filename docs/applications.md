@@ -202,7 +202,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 214144-byte loader budget in a 233600-byte shared system heap. The Technic native
+and a 214144-byte loader budget in a 233472-byte shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -390,8 +390,8 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native profile provides a 233600-byte heap, including on-demand loader buffers.
-The full Python profile provides 118272 bytes and the core Python profile 148480 bytes;
+The native profile provides a 233472-byte heap, including on-demand loader buffers.
+The full Python profile provides 118144 bytes and the core Python profile 148224 bytes;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 These F4 profiles assign the remaining linker RAM to the shared heap, up to the
 319 KiB firmware RAM boundary; the loader-selector SRAM remains reserved.

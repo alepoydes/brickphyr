@@ -35,3 +35,34 @@ struct bp_control_frame {
 	struct bp_battery_sample battery;
 	struct bp_control_port ports[BP_PORT_COUNT];
 };
+
+/* One bounded raw-output command. Duty is physical signed permille, without
+ * direction/gearing/voltage conversion; zero duty brakes. coast_mask selects
+ * passive outputs and must be a subset of port_mask. Non-coasting commands
+ * require an absolute monotonic deadline_ms, not a duration after application.
+ */
+struct bp_motor_group_command {
+	int64_t deadline_ms;
+	uint32_t port_mask, coast_mask;
+	struct {
+		uint32_t generation;
+		int32_t duty_permille;
+	} ports[BP_PORT_COUNT];
+};
+
+/* Last accepted group, retained until replacement. pending includes output
+ * writes and fault cleanup; active means the group still commands a drive.
+ * applied_mask records successful original writes, even if later coasted.
+ * error and cleanup_error preserve the first cause and failed cleanup separately.
+ * Per-port requests identify the original writes in bp_control_frame_get().
+ */
+struct bp_motor_group_state {
+	int64_t requested_ms, completed_ms, deadline_ms;
+	uint32_t request, port_mask, applied_mask;
+	int32_t error, cleanup_error;
+	uint8_t pending, active;
+	struct {
+		uint32_t generation, request;
+		int32_t error, cleanup_error;
+	} ports[BP_PORT_COUNT];
+};

@@ -33,8 +33,10 @@ host replay: assess and reuse those rather than introducing replacement algorith
 
 The native [control input frame](applications.md#control-input-frame) supplies
 read-only IMU, battery and selected encoder/output snapshots with source times,
-errors and connection identity. Grouped actuation, independent execution and
-cycle recording remain work; this read API alone does not complete block 2.
+errors and connection identity. [Grouped raw output](ports.md#grouped-raw-motor-commands)
+adds whole-request validation, absolute expiry and group coast on failure through
+the same motor worker. Physical group-drive acceptance, independent execution
+and cycle recording remain work; these APIs alone do not complete block 2.
 
 ## Delivery blocks
 
