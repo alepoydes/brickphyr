@@ -26,15 +26,18 @@ claim a port.
 
 The build-only [Technic native profile](builds.md#experimental-technic-base)
 reuses the electrical detector on A–D. E/F are absent and reads return `-ENODEV`;
-indices outside the public A–F range remain `-EINVAL`. This profile has no UART
-negotiation or motor drive. `port A` explicitly reports electrical-only support.
+indices outside the public A–F range remain `-EINVAL`. This profile supports direct
+passive-motor output; UART negotiation and regulated motors remain unavailable.
+`port A` explicitly reports electrical-only device identification.
 Its sensor supply starts after the shared service releases all probe and motor
 pins, and shutdown removes the supply and releases those pins again. Synthetic
 four-port checks do not establish physical Technic behavior.
 
 Private state follows the board's highest enabled port index while public SDK
-numbering remains fixed. UART palettes and write buffers occupy a separate
-internal array that the linker omits when UART operations are disabled.
+numbering remains fixed. Sensor samples, palettes, write buffers, resynchronization,
+custom serial and remote PF output state are compiled into a port only when UART
+operations are enabled. Public snapshot structures retain the same layout across
+profiles; sensor ownership is read from the shared port claim.
 
 ## Device inspection
 

@@ -76,20 +76,30 @@ struct motor_log {
 };
 #endif
 
-static struct port {
-	struct bp_port_state value;
+struct port_uart_state {
 	struct bp_sensor_sample sensor;
-	struct bp_motor_state motor;
-	/* One bit per remote channel/output; no application memory is retained. */
-	uint8_t pf_used, pf_coasting;
+	int64_t reset_deadline;
+	struct bp_sensor_palette palette;
+	struct port_uart_write write;
 	int pf_error;
 	uint32_t pf_generation;
 	enum { SERIAL_OFF, SERIAL_CONFIGURE, SERIAL_ACTIVE, SERIAL_CLOSE, SERIAL_FAILING, SERIAL_FAILED } serial;
 	uint32_t serial_baud;
+	uint32_t measurement, command;
 	uint16_t reset_type;
+	/* One bit per remote channel/output; no application memory is retained. */
+	uint8_t pf_used, pf_coasting;
 	bool reset_start;
-	int64_t reset_deadline;
-	uint32_t motor_duration, motor_generation, zero_generation;
+	uint8_t serial_power;
+};
+
+static struct port {
+	struct bp_port_state value;
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+	struct port_uart_state uart;
+#endif
+	struct bp_motor_state motor;
+	uint32_t motor_duration, motor_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct drivebase *drivebase;
 	struct motor_control controller; /* touched only by the port worker */
@@ -103,26 +113,33 @@ static struct port {
 	struct bp_motor_model_state model_state;
 	struct motor_log log[BP_MOTOR_LOG_COUNT];
 	struct bp_servo_trajectory trajectory;
-	uint32_t settings_revision, settings_applied;
+	uint32_t settings_revision, settings_applied, zero_generation;
 	bool settings_ready;
 	uint32_t geometry_revision, observation_revision;
 	bool observer_reset, observer_rebase;
 #endif
-	uint32_t measurement, command;
 	enum bp_port_owner owner;
-	uint8_t supply, serial_power;
+	uint8_t supply;
 	int64_t next_ms;
 	enum step step;
 	enum group group;
 	uint16_t candidate, previous;
 	uint8_t matches, pin_value, pressed;
 } ports[ARRAY_SIZE(pins)];
-/* No live references remain when UART is disabled, so the linker can omit
- * this storage along with the corresponding operations. */
-static struct {
-	struct bp_sensor_palette palette;
-	struct port_uart_write write;
-} uart_data[ARRAY_SIZE(pins)];
+/* Only UART operations access the optional state. Common cleanup reads
+ * inactive state through these helpers, so it needs no disabled storage. */
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+static struct port_uart_state *uart_state(struct port *p) { return &p->uart; }
+static uint8_t pf_outputs(const struct port *p) { return p->uart.pf_used; }
+static int pf_failure(const struct port *p) { return p->uart.pf_error; }
+static int serial_mode(const struct port *p) { return p->uart.serial; }
+#else
+static struct port_uart_state *uart_state(struct port *p) { ARG_UNUSED(p); return NULL; }
+static uint8_t pf_outputs(const struct port *p) { ARG_UNUSED(p); return 0; }
+static int pf_failure(const struct port *p) { ARG_UNUSED(p); return 0; }
+static int serial_mode(const struct port *p) { ARG_UNUSED(p); return SERIAL_OFF; }
+#endif
+
 static struct k_spinlock lock;
 static atomic_t stopping;
 static atomic_t activity;
@@ -170,7 +187,7 @@ BUILD_ASSERT(CONFIG_SYS_CLOCK_TICKS_PER_SEC % (1000 / CONTROL_MS) == 0);
 
 static void motor_activity(uint32_t port, bool active)
 {
-	active |= ports[port].pf_used != 0;
+	active |= pf_outputs(&ports[port]) != 0;
 	bool before = active_ports != 0;
 	WRITE_BIT(active_ports, port, active);
 	if (before != (active_ports != 0)) atomic_inc(&activity);
@@ -180,12 +197,12 @@ uint32_t hub_motor_activity(void) { return atomic_get(&activity); }
 
 static bool write_pending(const struct port *p)
 {
-	return p->value.write.request != p->value.write.completed;
+	return IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && p->value.write.request != p->value.write.completed;
 }
 
 static bool reset_pending(const struct port *p)
 {
-	return p->value.reset.request != p->value.reset.completed;
+	return IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && p->value.reset.request != p->value.reset.completed;
 }
 
 /* Caller holds lock. Retain the exact result across later connections. */
@@ -195,7 +212,7 @@ static void finish_resync(struct port *p, int error, uint32_t generation)
 		p->value.reset.completed = p->value.reset.request;
 		p->value.reset.error = error;
 		p->value.reset.generation = generation;
-		p->reset_start = false;
+		uart_state(p)->reset_start = false;
 	}
 }
 
@@ -205,13 +222,13 @@ static void finish_write(struct port *p, int error)
 	if (write_pending(p)) {
 		p->value.write.completed = p->value.write.request;
 		p->value.write.error = error;
-		if (p->pf_coasting) {
+		if (uart_state(p)->pf_coasting) {
 			if (error) {
-				if (!p->pf_error) p->pf_error = error;
+				if (!pf_failure(p)) uart_state(p)->pf_error = error;
 			} else {
-				p->pf_used &= ~p->pf_coasting;
+				uart_state(p)->pf_used &= ~uart_state(p)->pf_coasting;
 			}
-			p->pf_coasting = 0;
+			uart_state(p)->pf_coasting = 0;
 		}
 	}
 }
@@ -221,19 +238,19 @@ static void finish_write(struct port *p, int error)
 static uint32_t queue_write(struct port *p, uint8_t mode, const uint8_t *data, uint32_t size)
 {
 	uint32_t selection = PORT_RAW_MODE | mode;
-	if (!p->serial && p->measurement != selection) {
-		p->measurement = selection;
-		p->command++;
+	if (!serial_mode(p) && uart_state(p)->measurement != selection) {
+		uart_state(p)->measurement = selection;
+		uart_state(p)->command++;
 		p->value.selected_mode = mode;
 		p->value.mode_error = -EAGAIN;
-		p->sensor.error = -ENOTSUP;
-		p->sensor.fields = 0;
+		uart_state(p)->sensor.error = -ENOTSUP;
+		uart_state(p)->sensor.fields = 0;
 	}
 	if (!data) return 0;
 	uint32_t token = p->value.write.request + 1;
 	if (!token) token++;
-	uart_data[p - ports].write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
-	memcpy(uart_data[p - ports].write.data, data, size);
+	uart_state(p)->write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
+	memcpy(uart_state(p)->write.data, data, size);
 	p->value.write.request = token;
 	p->value.write.error = -EAGAIN;
 	return token;
@@ -251,17 +268,17 @@ static void pf_data(uint8_t output, uint8_t pwm, uint8_t data[2])
  * is first cancelled/drained through the same UART state machine. */
 static void pf_release(struct port *p)
 {
-	if (!p->motor.releasing || !p->pf_used || p->pf_error || write_pending(p)) return;
-	if (p->pf_generation != p->value.generation || p->value.phase != BP_PORT_READY ||
+	if (!p->motor.releasing || !pf_outputs(p) || pf_failure(p) || write_pending(p)) return;
+	if (uart_state(p)->pf_generation != p->value.generation || p->value.phase != BP_PORT_READY ||
 	    p->value.type_id != LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR) {
-		p->pf_error = -ENODEV;
+		uart_state(p)->pf_error = -ENODEV;
 		return;
 	}
 	uint8_t output = 0;
-	while (!(p->pf_used & BIT(output))) output++;
+	while (!(pf_outputs(p) & BIT(output))) output++;
 	uint8_t data[2];
 	pf_data(output, 0, data);
-	p->pf_coasting = BIT(output);
+	uart_state(p)->pf_coasting = BIT(output);
 	queue_write(p, LEGO_DEVICE_MODE_PUP_COLOR_DISTANCE_SENSOR__IR_TX, data, sizeof(data));
 }
 
@@ -343,18 +360,20 @@ static void drop_claim(struct port *p)
 	cancel_drivebase(p, -ENODEV, true);
 	stop_motor_logs(p, 0);
 #endif
-	p->owner = p->sensor.owner = BP_PORT_UNOWNED;
+	p->owner = BP_PORT_UNOWNED;
 	p->motor.direction = 0;
 	p->motor.max_voltage = 0;
 	p->motor.gear_ratio = 0;
 	p->motor.precision_profile = 0;
 	p->motor.control.observing = false;
-	p->measurement = BP_SENSOR_DEFAULT;
 	p->value.selected_mode = UINT8_MAX;
 	p->value.mode_error = -ENOTSUP;
-	p->command++;
-	p->sensor.error = -EAGAIN;
-	p->sensor.fields = 0;
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		uart_state(p)->measurement = BP_SENSOR_DEFAULT;
+		uart_state(p)->command++;
+		uart_state(p)->sensor.error = -EAGAIN;
+		uart_state(p)->sensor.fields = 0;
+	}
 	motor_activity(p - ports, false);
 }
 
@@ -366,7 +385,7 @@ static void invalidate_motor(uint32_t port, int reason)
 	stop_motor_logs(&ports[port], reason);
 #endif
 	finish_write(&ports[port], reason);
-	if (ports[port].pf_used && !ports[port].pf_error) ports[port].pf_error = reason;
+	if (pf_outputs(&ports[port]) && !pf_failure(&ports[port])) uart_state(&ports[port])->pf_error = reason;
 	struct bp_motor_state *m = &ports[port].motor;
 	m->request++;
 	m->pending = false;
@@ -386,12 +405,12 @@ static void finish_reset(uint32_t port, int cleanup)
 	p->motor.pending = false;
 	p->motor.completed = p->motor.request;
 	p->motor.cleanup_error = cleanup;
-	p->motor.releasing = cleanup != 0 || p->pf_used;
+	p->motor.releasing = cleanup != 0 || pf_outputs(p);
 	if (cleanup) {
 		p->motor.valid = false;
 		if (!p->motor.error) p->motor.error = cleanup;
 		motor_activity(port, true);
-	} else if (!reset_pending(p) && !p->pf_used && !p->serial) {
+	} else if (!reset_pending(p) && !pf_outputs(p) && !serial_mode(p)) {
 		drop_claim(p);
 	}
 	k_spin_unlock(&lock, key);
@@ -475,7 +494,8 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 	/* A request admitted during the preceding UART poll invalidates that
 	 * poll's observation; only the next worker round may start resync.
 	 * An I/O or cleanup failure still fails the accepted request explicitly. */
-	if (p->serial || (p->reset_start && !error)) {
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) &&
+	    (serial_mode(p) || (uart_state(p)->reset_start && !error))) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
@@ -485,9 +505,9 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 		finish_write(p, uart->write.error);
 	}
 	v.write = p->value.write;
-	if (uart && p->command != command) {
-		v.selected_mode = p->measurement & PORT_RAW_MODE ? p->measurement & 0xff : UINT8_MAX;
-		v.mode_error = p->measurement & PORT_RAW_MODE ? -EAGAIN : -ENOTSUP;
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && uart && uart_state(p)->command != command) {
+		v.selected_mode = uart_state(p)->measurement & PORT_RAW_MODE ? uart_state(p)->measurement & 0xff : UINT8_MAX;
+		v.mode_error = uart_state(p)->measurement & PORT_RAW_MODE ? -EAGAIN : -ENOTSUP;
 	}
 	v.generation = p->value.generation;
 	v.changed_ms = p->value.changed_ms;
@@ -508,7 +528,7 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 	 * its own keepalive expires. Only a new handshake or an error completes
 	 * explicit reset; the overall deadline bounds continued detection. */
 	if (reset_pending(p) && (phase == BP_PORT_READY || error)) {
-		int result = error ? error : id != p->reset_type ? -ENODEV : 0;
+		int result = error ? error : id != uart_state(p)->reset_type ? -ENODEV : 0;
 		finish_resync(p, result, result ? 0 : v.generation);
 		if (result && !cleanup) drop_claim(p);
 		else if (!result && p->motor.valid) p->motor.error = 0;
@@ -522,15 +542,16 @@ static void publish(uint32_t port, int error, int cleanup, const struct bp_port_
 		v.sequence += uart ? uart->data_sequence - p->value.data_sequence : 1;
 	}
 	p->value = v;
-	if (sensor && p->command == command) {
-		p->sensor = *sensor;
-	} else if (!sensor) {
-		p->sensor = (struct bp_sensor_sample){.error = v.error ? v.error :
-			phase == BP_PORT_EMPTY ? -ENODEV : -ENOTSUP};
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		if (sensor && uart_state(p)->command == command) {
+			uart_state(p)->sensor = *sensor;
+		} else if (!sensor) {
+			uart_state(p)->sensor = (struct bp_sensor_sample){.error = v.error ? v.error :
+				phase == BP_PORT_EMPTY ? -ENODEV : -ENOTSUP};
+		}
+		uart_state(p)->sensor.type_id = id;
+		uart_state(p)->sensor.generation = v.generation;
 	}
-	p->sensor.type_id = id;
-	p->sensor.generation = v.generation;
-	p->sensor.owner = p->owner;
 	k_spin_unlock(&lock, key);
 }
 
@@ -542,16 +563,19 @@ static int advance(uint32_t port)
 {
 	struct port *p = &ports[port];
 	int value;
-	k_spinlock_key_t reset_key = k_spin_lock(&lock);
-	bool restart = p->reset_start;
-	p->reset_start = false;
-	bool expired = reset_pending(p) && k_uptime_get() >= p->reset_deadline;
-	k_spin_unlock(&lock, reset_key);
-	if (expired) return -ETIMEDOUT;
-	if (restart) {
-		port_uart_stop(port);
-		p->step = START;
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		k_spinlock_key_t reset_key = k_spin_lock(&lock);
+		bool restart = uart_state(p)->reset_start;
+		uart_state(p)->reset_start = false;
+		bool expired = reset_pending(p) && k_uptime_get() >= uart_state(p)->reset_deadline;
+		k_spin_unlock(&lock, reset_key);
+		if (expired) return -ETIMEDOUT;
+		if (restart) {
+			port_uart_stop(port);
+			p->step = START;
+		}
 	}
+
 	switch (p->step) {
 	case UART: {
 		if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
@@ -559,9 +583,9 @@ static int advance(uint32_t port)
 		struct bp_sensor_sample sensor;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		pf_release(p);
-		uint32_t measurement = p->measurement, command = p->command;
-		const struct port_uart_write *write = write_pending(p) ? &uart_data[port].write : NULL;
-		bool cancel = p->motor.releasing && !p->pf_coasting;
+		uint32_t measurement = uart_state(p)->measurement, command = uart_state(p)->command;
+		const struct port_uart_write *write = write_pending(p) ? &uart_state(&ports[port])->write : NULL;
+		bool cancel = p->motor.releasing && !uart_state(p)->pf_coasting;
 		k_spin_unlock(&lock, key);
 		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement, write, cancel));
 		TRY_IO(sensor_supply(port, uart.supply));
@@ -701,7 +725,7 @@ static int advance(uint32_t port)
 #undef TRY_IO
 
 /* Caller holds lock. A light command cannot energize a motor or vice versa. */
-static int output_device_error(const struct port *p, bool light)
+static int output_device_error(struct port *p, bool light)
 {
 	if (p->value.error) return p->value.error;
 	if (k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) return -ETIMEDOUT;
@@ -712,9 +736,10 @@ static int output_device_error(const struct port *p, bool light)
 	     p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_TRAIN)) return 0;
 	if (light) return -ENOTSUP;
 	if (p->value.phase == BP_PORT_NEGOTIATING || p->value.phase == BP_PORT_UART) return -EAGAIN;
-	if (p->value.phase != BP_PORT_READY || !(p->sensor.available & BIT(BP_SENSOR_ANGLE))) return -ENOTSUP;
-	return p->sensor.error ? p->sensor.error :
-		(p->sensor.fields & BP_SENSOR_HAS_ANGLE) ? 0 : -EAGAIN;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
+	if (p->value.phase != BP_PORT_READY || !(uart_state(p)->sensor.available & BIT(BP_SENSOR_ANGLE))) return -ENOTSUP;
+	return uart_state(p)->sensor.error ? uart_state(p)->sensor.error :
+		(uart_state(p)->sensor.fields & BP_SENSOR_HAS_ANGLE) ? 0 : -EAGAIN;
 }
 
 /* The one pending command is firmware-owned. A stop may replace it; another
@@ -770,12 +795,12 @@ static int request_motor(struct port *p, uint8_t mode, int32_t duty, uint32_t du
 }
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-static int control_input_error(const struct port *p)
+static int control_input_error(struct port *p)
 {
-	if (!(p->sensor.fields & BP_SENSOR_HAS_ANGLE)) return -ENOTSUP;
+	if (!(uart_state(p)->sensor.fields & BP_SENSOR_HAS_ANGLE)) return -ENOTSUP;
 	/* Without a new angle over the entire numerical derivative window, the
 	 * reported zero speed would be indistinguishable from missing feedback. */
-	return k_uptime_get() - p->sensor.sample_ms >=
+	return k_uptime_get() - uart_state(p)->sensor.sample_ms >=
 		PBIO_CONFIG_DIFFERENTIATOR_WINDOW_SIZE * CONTROL_MS ? -ETIMEDOUT : 0;
 }
 
@@ -998,7 +1023,7 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 		if (!err) err = p->motor.error ? p->motor.error : control_input_error(p);
 		if (!err && (p->observer_reset || p->observer_rebase || !p->settings_ready ||
 		    p->observation_revision != p->geometry_revision)) err = -EAGAIN;
-		angles[i] = p->sensor.angle_mdeg;
+		angles[i] = uart_state(p)->sensor.angle_mdeg;
 		zeros[i] = p->motor.zero_mdeg;
 		directions[i] = p->motor.direction;
 		if (initializing) initial_settings[i] = p->control_settings;
@@ -1185,7 +1210,7 @@ static __unused int64_t apply_motor(uint32_t port)
 	bool frame = false;
 #endif
 	if (!command_pending && !frame) {
-		if (m->releasing && m->valid && m->mode == BP_MOTOR_COAST && !write_pending(p) && !p->pf_used) {
+		if (m->releasing && m->valid && m->mode == BP_MOTOR_COAST && !write_pending(p) && !pf_outputs(p)) {
 			m->releasing = false;
 			drop_claim(p);
 		}
@@ -1221,7 +1246,7 @@ static __unused int64_t apply_motor(uint32_t port)
 		logging[kind] = frame && p->log[kind].status.active && (kind == BP_MOTOR_LOG || (controlled && !paired));
 		log_revision[kind] = p->log[kind].status.revision;
 	}
-	int64_t angle = p->sensor.angle_mdeg;
+	int64_t angle = uart_state(p)->sensor.angle_mdeg;
 	if (frame && !err) err = device_error;
 	bool overrun = frame && next_frame && k_uptime_get() >= next_frame + CONTROL_MS;
 	if (overrun && !err) err = -ETIMEDOUT;
@@ -1362,7 +1387,7 @@ static __unused int64_t apply_motor(uint32_t port)
 		p->supply = 0;
 	}
 	motor_activity(port, !m->valid || m->control.active || (m->mode != BP_MOTOR_COAST && m->duty));
-	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST && !write_pending(p) && !p->pf_used) {
+	if (!m->pending && m->releasing && !err && mode == BP_MOTOR_COAST && !write_pending(p) && !pf_outputs(p)) {
 		m->releasing = false;
 		drop_claim(p);
 	}
@@ -1431,21 +1456,21 @@ static void serial_advance(uint32_t port)
 {
 	struct port *p = &ports[port];
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	int action = p->serial;
-	uint32_t baud = p->serial_baud;
-	uint8_t power_pin = p->serial_power;
+	int action = serial_mode(p);
+	uint32_t baud = uart_state(p)->serial_baud;
+	uint8_t power_pin = uart_state(p)->serial_power;
 	bool powered = p->value.baudrate && p->supply == power_pin && !p->value.cleanup_error;
 	int err = 0, cleanup = 0;
 	uint32_t completed = 0;
 	if (action == SERIAL_ACTIVE) {
 		/* TX admission and cancellation share this lock. The driver only
 		 * copies a bounded packet and enables IRQs here; no configuration. */
-		err = port_uart_serial_poll(port, write_pending(p) ? &uart_data[port].write : NULL, &completed);
+		err = port_uart_serial_poll(port, write_pending(p) ? &uart_state(&ports[port])->write : NULL, &completed);
 		if (err) {
-			p->serial = action = SERIAL_FAILING;
+			uart_state(p)->serial = action = SERIAL_FAILING;
 			p->value.error = err;
 			finish_write(p, err);
-		} else if (write_pending(p) && completed == uart_data[port].write.request) finish_write(p, 0);
+		} else if (write_pending(p) && completed == uart_state(&ports[port])->write.request) finish_write(p, 0);
 	}
 	k_spin_unlock(&lock, key);
 	if (action == SERIAL_CONFIGURE || action == SERIAL_CLOSE) {
@@ -1471,11 +1496,11 @@ static void serial_advance(uint32_t port)
 		p->value.cleanup_error = p->motor.cleanup_error = cleanup;
 		p->value.failures += p->value.failures != UINT32_MAX;
 		finish_write(p, err);
-		if (p->serial == action) p->serial = SERIAL_FAILED;
+		if (serial_mode(p) == action) uart_state(p)->serial = SERIAL_FAILED;
 	} else if (action == SERIAL_CLOSE) {
 		finish_write(p, -ECANCELED);
-		p->serial = SERIAL_OFF;
-		p->serial_power = 0;
+		uart_state(p)->serial = SERIAL_OFF;
+		uart_state(p)->serial_power = 0;
 		p->value.phase = BP_PORT_DETECTING;
 		p->value.generation++;
 		p->value.changed_ms = p->value.sample_ms;
@@ -1484,8 +1509,8 @@ static void serial_advance(uint32_t port)
 		p->motor.releasing = false;
 		drop_claim(p);
 		p->step = START;
-	} else if (action == SERIAL_CONFIGURE && p->serial == action) {
-		p->serial = SERIAL_ACTIVE;
+	} else if (action == SERIAL_CONFIGURE && serial_mode(p) == action) {
+		uart_state(p)->serial = SERIAL_ACTIVE;
 		p->value.error = p->value.cleanup_error = 0;
 		p->value.baudrate = baud;
 		motor_activity(port, power_pin != 0);
@@ -1503,7 +1528,7 @@ static void scan(struct k_work *item)
 		int64_t started = k_uptime_get();
 		if (started >= ports[i].next_ms) {
 			k_spinlock_key_t key = k_spin_lock(&lock);
-			bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && ports[i].serial != SERIAL_OFF;
+			bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && serial_mode(&ports[i]) != SERIAL_OFF;
 			bool first_failure = !ports[i].value.failures;
 			k_spin_unlock(&lock, key);
 			int err = 0;
@@ -1537,7 +1562,7 @@ static void scan(struct k_work *item)
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!pins[i][P5].port) continue;
 		k_spinlock_key_t key = k_spin_lock(&lock);
-		bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && ports[i].serial != SERIAL_OFF;
+		bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && serial_mode(&ports[i]) != SERIAL_OFF;
 		k_spin_unlock(&lock, key);
 		int64_t deadline = serial ? 0 : apply_motor(i);
 		if (deadline) next = MIN(next, deadline);
@@ -1562,8 +1587,10 @@ static int initialize(void)
 		gpio_pin_configure_dt(&supply, GPIO_OUTPUT_INACTIVE) : -ENODEV;
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		ports[i].value.error = -EAGAIN;
-		ports[i].sensor.error = -EAGAIN;
-		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) port_sensor_palette_default(&uart_data[i].palette);
+		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+			uart_state(&ports[i])->sensor.error = -EAGAIN;
+			port_sensor_palette_default(&uart_state(&ports[i])->palette);
+		}
 		if (!pins[i][P5].port) {
 			continue;
 		}
@@ -1601,7 +1628,7 @@ int hub_port_get(uint32_t port, struct bp_port_state *value)
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*value = ports[port].value;
-	if (!value->cleanup_error) value->cleanup_error = ports[port].pf_error;
+	if (!value->cleanup_error) value->cleanup_error = pf_failure(&ports[port]);
 	k_spin_unlock(&lock, key);
 	/* Longest probe: ten settling intervals. Include tick rounding at
 	 * each wait; longer service starvation must not look like fresh identity. */
@@ -1660,11 +1687,11 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	}
 	uint32_t token = 0;
 	if (!err) {
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		token = queue_write(p, mode, data, size);
 		if (pf_output) {
-			p->pf_used |= pf_output;
-			p->pf_generation = generation;
+			uart_state(p)->pf_used |= pf_output;
+			uart_state(p)->pf_generation = generation;
 			motor_activity(port, true);
 		}
 	}
@@ -1681,7 +1708,7 @@ int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation
 int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
-	if (!data || !request || !size || size > sizeof(uart_data[0].write.data)) return -EINVAL;
+	if (!data || !request || !size || size > sizeof(uart_state(&ports[0])->write.data)) return -EINVAL;
 	return raw_request(owner, port, generation, mode, data, size, request, 0);
 }
 
@@ -1745,7 +1772,7 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
 		p->value.generation != generation ? -ESTALE :
-		reset_pending(p) || p->pf_used ? -EBUSY : p->value.phase != BP_PORT_READY ? -ENODEV :
+		reset_pending(p) || pf_outputs(p) ? -EBUSY : p->value.phase != BP_PORT_READY ? -ENODEV :
 		p->value.error && p->value.error != -EAGAIN ? p->value.error :
 		k_uptime_get() - p->value.sample_ms > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2)) ? -ETIMEDOUT :
 		(p->owner && p->owner != owner) || p->motor.pending || p->motor.releasing || write_pending(p) ||
@@ -1757,22 +1784,22 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 		p->value.reset.request = token;
 		p->value.reset.error = -EAGAIN;
 		p->value.reset.generation = 0;
-		p->reset_type = p->value.type_id;
-		p->reset_start = true;
+		uart_state(p)->reset_type = p->value.type_id;
+		uart_state(p)->reset_start = true;
 		/* Electrical debounce plus the existing bounded UART negotiation. */
-		p->reset_deadline = k_uptime_get() + (MATCH_COUNT + 1) * 10 *
+		uart_state(p)->reset_deadline = k_uptime_get() + (MATCH_COUNT + 1) * 10 *
 			(SETTLE_MS + k_ticks_to_ms_ceil64(2)) + PORT_UART_SYNC_TIMEOUT_MS;
-		p->owner = p->sensor.owner = owner;
-		p->measurement = BP_SENSOR_DEFAULT;
-		p->command++;
+		p->owner = owner;
+		uart_state(p)->measurement = BP_SENSOR_DEFAULT;
+		uart_state(p)->command++;
 		p->value.generation++;
 		p->value.phase = BP_PORT_NEGOTIATING;
 		p->value.error = p->value.mode_error = -EAGAIN;
 		p->value.selected_mode = UINT8_MAX;
 		p->value.length = 0;
-		p->sensor.generation = p->value.generation;
-		p->sensor.error = -EAGAIN;
-		p->sensor.fields = 0;
+		uart_state(p)->sensor.generation = p->value.generation;
+		uart_state(p)->sensor.error = -EAGAIN;
+		uart_state(p)->sensor.fields = 0;
 	}
 	k_spin_unlock(&lock, key);
 	if (!err) *request = token;
@@ -1791,8 +1818,10 @@ int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	*value = ports[port].sensor;
-	struct bp_sensor_palette palette = uart_data[port].palette;
+	*value = uart_state(&ports[port])->sensor;
+	/* The port claim is authoritative for every sensor/motor view. */
+	value->owner = ports[port].owner;
+	struct bp_sensor_palette palette = uart_state(&ports[port])->palette;
 	int64_t updated = ports[port].value.sample_ms;
 	k_spin_unlock(&lock, key);
 	if (!value->error && k_uptime_get() - updated > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) {
@@ -1819,7 +1848,7 @@ int hub_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = palette_device(&ports[port], generation);
-	if (!err) *palette = uart_data[port].palette;
+	if (!err) *palette = uart_state(&ports[port])->palette;
 	k_spin_unlock(&lock, key);
 	return err;
 }
@@ -1841,8 +1870,8 @@ int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port, uint32_t gen
 	int err = palette_device(p, generation);
 	if (!err && (p->motor.releasing || (p->owner && p->owner != owner))) err = -EBUSY;
 	if (!err) {
-		uart_data[port].palette = next;
-		p->owner = p->sensor.owner = owner;
+		uart_state(&ports[port])->palette = next;
+		p->owner = owner;
 	}
 	k_spin_unlock(&lock, key);
 	return err;
@@ -1865,19 +1894,18 @@ static int sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t me
 		generation && p->value.generation != *generation ? -ESTALE :
 		p->motor.releasing || write_pending(p) ? -EBUSY :
 		p->value.phase != BP_PORT_READY ? -EAGAIN :
-		!(p->sensor.available & BIT(measurement)) ? -ENOTSUP :
+		!(uart_state(p)->sensor.available & BIT(measurement)) ? -ENOTSUP :
 		p->owner && p->owner != owner ? -EBUSY : 0;
 	if (!err) {
 		p->owner = owner;
-		p->sensor.owner = owner;
-		if (p->measurement != measurement) {
-			p->measurement = measurement;
-			p->command++;
-			p->sensor.measurement = measurement;
+		if (uart_state(p)->measurement != measurement) {
+			uart_state(p)->measurement = measurement;
+			uart_state(p)->command++;
+			uart_state(p)->sensor.measurement = measurement;
 			p->value.selected_mode = UINT8_MAX;
 			p->value.mode_error = -ENOTSUP;
-			p->sensor.error = -EAGAIN;
-			p->sensor.fields = 0;
+			uart_state(p)->sensor.error = -EAGAIN;
+			uart_state(p)->sensor.fields = 0;
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -1903,7 +1931,7 @@ int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
-		(p->owner && p->owner != owner) || p->serial || p->pf_used || reset_pending(p) ||
+		(p->owner && p->owner != owner) || serial_mode(p) || pf_outputs(p) || reset_pending(p) ||
 		p->motor.pending || p->motor.releasing || write_pending(p) || !p->motor.valid ||
 		p->motor.control.active || p->motor.mode != BP_MOTOR_COAST ? -EBUSY : 0;
 #ifdef CONFIG_BRICKPHYR_PORT_UART
@@ -1912,15 +1940,15 @@ int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32
 	if (!err) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
-			p->serial = SERIAL_CONFIGURE;
-			p->serial_baud = baud;
-			p->serial_power = power_pin;
+			uart_state(p)->serial = SERIAL_CONFIGURE;
+			uart_state(p)->serial_baud = baud;
+			uart_state(p)->serial_power = power_pin;
 			p->owner = owner;
 			uint32_t next = p->value.generation + 1;
 			p->value = (struct bp_port_state){.generation = next, .phase = BP_PORT_SERIAL,
 				.error = -EAGAIN, .sample_ms = k_uptime_get(), .changed_ms = k_uptime_get(),
 				.selected_mode = UINT8_MAX, .mode_error = -ENOTSUP};
-			p->sensor = (struct bp_sensor_sample){.generation = next, .owner = owner, .error = -ENOTSUP};
+			uart_state(p)->sensor = (struct bp_sensor_sample){.generation = next, .error = -ENOTSUP};
 			*generation = next;
 			err = 0;
 		}
@@ -1932,8 +1960,8 @@ int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32
 static int serial_access(struct port *p, enum bp_port_owner owner, uint32_t generation)
 {
 	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
-		!p->serial ? -ENODEV : p->owner != owner ? -EBUSY :
-		p->serial == SERIAL_CLOSE ? -ECANCELED : 0;
+		!serial_mode(p) ? -ENODEV : p->owner != owner ? -EBUSY :
+		serial_mode(p) == SERIAL_CLOSE ? -ECANCELED : 0;
 }
 
 /* baud=0 is the private clear operation, retaining the selected baud. */
@@ -1945,13 +1973,13 @@ int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = serial_access(p, owner, generation);
-	if (!err && (p->serial == SERIAL_CONFIGURE || p->serial == SERIAL_FAILING)) err = -EBUSY;
+	if (!err && (serial_mode(p) == SERIAL_CONFIGURE || serial_mode(p) == SERIAL_FAILING)) err = -EBUSY;
 	if (!err) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
 			finish_write(p, -ECANCELED);
-			if (baud) p->serial_baud = baud;
-			p->serial = SERIAL_CONFIGURE;
+			if (baud) uart_state(p)->serial_baud = baud;
+			uart_state(p)->serial = SERIAL_CONFIGURE;
 			p->value.error = -EAGAIN;
 			err = 0;
 		}
@@ -2001,10 +2029,10 @@ static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t 
 	struct port *p = &ports[port];
 	int err = generation && p->value.generation != *generation ? -ESTALE :
 		p->owner && p->owner != owner ? -EBUSY : 0;
-	if (!err && p->owner && p->serial) {
+	if (!err && p->owner && serial_mode(p)) {
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
-			p->serial = SERIAL_CLOSE;
+			uart_state(p)->serial = SERIAL_CLOSE;
 			if (!p->value.error || p->value.error == -EAGAIN) p->value.error = -ECANCELED;
 			finish_write(p, -ECANCELED);
 		}
@@ -2017,25 +2045,25 @@ static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t 
 		 * to coast the remembered remote addresses. Old Python/native device
 		 * objects remain bound to their original generation. Return the first
 		 * failure even if this retry succeeds. */
-		int pf_error = p->pf_error;
-		if (p->pf_used && pf_error && p->value.phase == BP_PORT_READY &&
+		int pf_error = pf_failure(p);
+		if (pf_outputs(p) && pf_error && p->value.phase == BP_PORT_READY &&
 		    p->value.type_id == LEGO_DEVICE_TYPE_ID_COLOR_DIST_SENSOR &&
 		    (!p->value.error || p->value.error == -EAGAIN) && !write_pending(p)) {
-			p->pf_generation = p->value.generation;
-			p->pf_error = 0;
+			uart_state(p)->pf_generation = p->value.generation;
+			uart_state(p)->pf_error = 0;
 		}
 		if (p->motor.pending || p->motor.mode != BP_MOTOR_COAST || !p->motor.valid ||
-		    p->motor.releasing || write_pending(p) || p->pf_used) {
+		    p->motor.releasing || write_pending(p) || pf_outputs(p)) {
 			p->motor.releasing = true;
 			/* A sensor may need its existing DC supply to transmit IR. Local
 			 * motor outputs are already passive; do not pulse sensor power. */
-			bool passive = p->pf_used && p->motor.valid && !p->motor.pending &&
+			bool passive = pf_outputs(p) && p->motor.valid && !p->motor.pending &&
 				p->motor.mode == BP_MOTOR_COAST;
 			err = atomic_get(&stopping) ? -ESHUTDOWN : passive ? 0 : request_motor(p, BP_MOTOR_COAST, 0, 0);
 			if (err) {
 				p->motor.cleanup_error = err;
 				if (!p->motor.error) p->motor.error = err;
-				if (p->pf_used && !p->pf_error) p->pf_error = err;
+				if (pf_outputs(p) && !pf_failure(p)) uart_state(p)->pf_error = err;
 			}
 		} else {
 			drop_claim(p);
@@ -2077,7 +2105,7 @@ int hub_ports_release(enum bp_port_owner owner)
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool owned = ports[i].owner == owner;
-		if (owned) previous_pf += POPCOUNT(ports[i].pf_used);
+		if (owned) previous_pf += POPCOUNT(pf_outputs(&ports[i]));
 		k_spin_unlock(&lock, key);
 		int err = owned ? hub_port_release(owner, i) : 0;
 		if (!result) result = err;
@@ -2089,12 +2117,12 @@ int hub_ports_release(enum bp_port_owner owner)
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 			if (ports[i].owner != owner) continue;
-			remaining_pf += POPCOUNT(ports[i].pf_used);
+			remaining_pf += POPCOUNT(pf_outputs(&ports[i]));
 			pending |= ports[i].motor.pending;
-			uart_pending |= ports[i].serial == SERIAL_CLOSE || ports[i].serial == SERIAL_CONFIGURE;
+			uart_pending |= serial_mode(&ports[i]) == SERIAL_CLOSE || serial_mode(&ports[i]) == SERIAL_CONFIGURE;
 			uart_pending |= write_pending(&ports[i]);
-			uart_pending |= ports[i].motor.releasing && ports[i].pf_used && !ports[i].pf_error;
-			if (!result) result = ports[i].pf_error;
+			uart_pending |= ports[i].motor.releasing && pf_outputs(&ports[i]) && !pf_failure(&ports[i]);
+			if (!result) result = pf_failure(&ports[i]);
 			if (!ports[i].motor.pending && !result) result = ports[i].motor.cleanup_error;
 		}
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -2138,7 +2166,7 @@ int hub_motor_get(uint32_t port, struct bp_motor_state *value)
 static int motor_connection_error(const struct port *p, enum bp_port_owner owner, uint32_t generation)
 {
 	return atomic_get(&stopping) ? -ESHUTDOWN : p->value.generation != generation ? -ESTALE :
-		p->serial || p->motor.releasing || write_pending(p) || p->pf_used ||
+		serial_mode(p) || p->motor.releasing || write_pending(p) || pf_outputs(p) ||
 		(p->owner && p->owner != owner) ? -EBUSY : 0;
 }
 
@@ -2158,7 +2186,7 @@ int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 		cancel_drivebase(p, -ENODEV, true);
 #endif
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.direction = direction;
 		p->motor.gear_ratio = 0;
 		p->motor.precision_profile = 0;
@@ -2185,10 +2213,10 @@ int hub_motor_observe(enum bp_port_owner owner, uint32_t port, uint32_t generati
 	if (!err) err = p->motor.pending ? -EBUSY : output_device_error(p, false);
 	if (!err) err = control_input_error(p);
 	struct bp_motor_command probe = {.mode = BP_MOTOR_SPEED};
-	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, &probe);
+	if (!err) err = motor_control_check(p->value.type_id, uart_state(p)->sensor.angle_mdeg, &probe);
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.error = p->motor.cleanup_error = 0;
 		start_observation(p);
 		*request = p->motor.request;
@@ -2257,16 +2285,16 @@ int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	if (!err) err = p->motor.pending ? -EBUSY : output_device_error(p, false);
 	if (!err) err = control_input_error(p);
 	struct bp_motor_command probe = {.mode = BP_MOTOR_SPEED};
-	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, &probe);
+	if (!err) err = motor_control_check(p->value.type_id, uart_state(p)->sensor.angle_mdeg, &probe);
 	int64_t zero = generation == p->zero_generation ? p->motor.zero_mdeg : 0;
 	if (!err && setup->reset_angle) {
-		int32_t absolute = p->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE ? p->sensor.absolute_mdeg : 0;
-		if (__builtin_sub_overflow(p->sensor.angle_mdeg, absolute, &zero)) err = -ERANGE;
+		int32_t absolute = uart_state(p)->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE ? uart_state(p)->sensor.absolute_mdeg : 0;
+		if (__builtin_sub_overflow(uart_state(p)->sensor.angle_mdeg, absolute, &zero)) err = -ERANGE;
 	}
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
 		cancel_drivebase(p, -ENODEV, true);
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.direction = setup->direction;
 		p->motor.gear_ratio = setup->gear_ratio;
 		p->motor.precision_profile = setup->precision_profile;
@@ -2337,10 +2365,10 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	if (!err) err = p->owner != owner || !m->gear_ratio || !m->control.observing ? -ENODEV :
 		m->pending ? -EBUSY : m->error ? m->error : output_device_error(p, false);
 	if (!err) err = control_input_error(p);
-	if (!err && absolute && !(p->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE)) err = -ENOTSUP;
+	if (!err && absolute && !(uart_state(p)->sensor.fields & BP_SENSOR_HAS_ABSOLUTE_ANGLE)) err = -ENOTSUP;
 	int64_t zero = 0;
-	int64_t shaft = absolute ? p->sensor.absolute_mdeg : (int64_t)angle * m->gear_ratio * m->direction;
-	if (!err && __builtin_sub_overflow(p->sensor.angle_mdeg, shaft, &zero)) err = -ERANGE;
+	int64_t shaft = absolute ? uart_state(p)->sensor.absolute_mdeg : (int64_t)angle * m->gear_ratio * m->direction;
+	if (!err && __builtin_sub_overflow(uart_state(p)->sensor.angle_mdeg, shaft, &zero)) err = -ERANGE;
 	/* Resetting an active trajectory applies its completion action at the new
 	 * zero; a direct voltage/brake/coast command keeps its current output. */
 	uint8_t mode = m->mode;
@@ -2355,7 +2383,7 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	if (!err) err = request_motor(p, mode, duty, duration);
 	if (!err) {
 		if (mode == BP_MOTOR_POSITION) m->command = (struct bp_motor_command){
-			.mode = mode, .target_mdeg = p->sensor.angle_mdeg, .finish = BP_MOTOR_FINISH_HOLD};
+			.mode = mode, .target_mdeg = uart_state(p)->sensor.angle_mdeg, .finish = BP_MOTOR_FINISH_HOLD};
 		m->zero_mdeg = zero;
 		p->geometry_revision++;
 		p->observer_rebase = true;
@@ -2888,7 +2916,7 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 		raw.finish = BP_MOTOR_FINISH_HOLD;
 		break;
 	}
-	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, &raw);
+	if (!err) err = motor_control_check(p->value.type_id, uart_state(p)->sensor.angle_mdeg, &raw);
 	if (!err) err = request_motor(p, raw.mode, 0, 0);
 	if (!err) {
 		m->command = raw;
@@ -2960,7 +2988,7 @@ int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint3
 		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_DUTY, duty, duration_ms);
 	if (!err) {
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.error = p->motor.cleanup_error = 0;
 	}
 	k_spin_unlock(&lock, key);
@@ -2981,7 +3009,7 @@ int hub_port_light_write(enum bp_port_owner owner, uint32_t port, uint32_t gener
 		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, true);
 	if (!err) err = request_motor(p, brightness ? BP_MOTOR_DUTY : BP_MOTOR_COAST, brightness, 0);
 	if (!err) {
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.error = p->motor.cleanup_error = 0;
 		*request = p->motor.request;
 	}
@@ -3008,11 +3036,11 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
 	err = atomic_get(&stopping) ? -ESHUTDOWN : p->motor.releasing || p->motor.pending || write_pending(p) ||
 		(p->owner && p->owner != owner) ? -EBUSY : output_device_error(p, false);
 	if (!err) err = control_input_error(p);
-	if (!err) err = motor_control_check(p->value.type_id, p->sensor.angle_mdeg, command);
+	if (!err) err = motor_control_check(p->value.type_id, uart_state(p)->sensor.angle_mdeg, command);
 	if (!err) err = request_motor(p, command->mode, 0, 0);
 	if (!err) {
 		p->motor.command = *command;
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		p->motor.error = p->motor.cleanup_error = 0;
 		start_observation(p);
 	}
@@ -3029,12 +3057,12 @@ int hub_motor_coast(enum bp_port_owner owner, uint32_t port)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	err = atomic_get(&stopping) ? -ESHUTDOWN :
-		p->serial || (p->owner && p->owner != owner) ? -EBUSY :
+		serial_mode(p) || (p->owner && p->owner != owner) ? -EBUSY :
 		p->owner && (p->motor.pending || p->motor.mode != BP_MOTOR_COAST ||
 			!p->motor.valid || p->motor.releasing) ? 0 : output_device_error(p, false);
 	if (!err) err = request_motor(p, BP_MOTOR_COAST, 0, 0);
 	if (!err) {
-		p->owner = p->sensor.owner = owner;
+		p->owner = owner;
 		if (!p->motor.releasing) p->motor.error = p->motor.cleanup_error = 0;
 	}
 	k_spin_unlock(&lock, key);
@@ -3058,7 +3086,7 @@ int hub_ports_shutdown(void)
 		invalidate_motor(i, -ESHUTDOWN);
 		int err = release_pins(i);
 		k_spinlock_key_t serial_key = k_spin_lock(&lock);
-		if (!err) ports[i].serial = SERIAL_OFF;
+		if (!err && IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) uart_state(&ports[i])->serial = SERIAL_OFF;
 		k_spin_unlock(&lock, serial_key);
 		finish_reset(i, err);
 		if (!result) {
@@ -3078,12 +3106,14 @@ int hub_ports_shutdown(void)
 		v->pressed = 0;
 		v->length = 0;
 		v->supply = 0;
-		ports[i].sensor.fields = 0;
-		ports[i].sensor.available = 0;
-		ports[i].sensor.type_id = 0;
-		ports[i].sensor.generation = v->generation;
-		if (!ports[i].sensor.error || ports[i].sensor.error == -EAGAIN) {
-			ports[i].sensor.error = cleanup ? cleanup : -ESHUTDOWN;
+		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+			uart_state(&ports[i])->sensor.fields = 0;
+			uart_state(&ports[i])->sensor.available = 0;
+			uart_state(&ports[i])->sensor.type_id = 0;
+			uart_state(&ports[i])->sensor.generation = v->generation;
+			if (!uart_state(&ports[i])->sensor.error || uart_state(&ports[i])->sensor.error == -EAGAIN) {
+				uart_state(&ports[i])->sensor.error = cleanup ? cleanup : -ESHUTDOWN;
+			}
 		}
 		if (!v->error || v->error == -EAGAIN) {
 			v->error = cleanup ? cleanup : -ESHUTDOWN;

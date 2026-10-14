@@ -930,7 +930,7 @@ handling; its final test result distinguishes expected faults from failures.
 These ARM emulation checks do not measure physical syscall latency.
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-12 KiB loader limit and 21 KiB shared heap. Its SRAM starts after a reserved
+13 KiB loader limit and 22 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
 the running program, and successful or failed cleanup returning or retaining
 the loader buffer as required. It also uses a kernel-only main stack and omits

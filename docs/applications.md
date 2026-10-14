@@ -91,7 +91,7 @@ fixed-rate filter or physical IMU performance. The full F4 firmware and matching
 SDK, plus the separately built example, compile with DSP enabled; a focused M4
 QEMU fixture passes through the production native loader. The exported IMU example
 also runs through SMP from RAM and LittleFS with a synthetic register peer and
-Technic's 4 KiB image, 12 KiB loader and 2 KiB application-stack limits. These
+a 4 KiB image limit, 12 KiB loader budget and 2 KiB application stack. These
 checks use an MPS2 memory layout, not Technic's full platform RAM budget.
 Bounded Robot Inventor F4 checks also cover the same SDK-built ELF from RAM and
 LittleFS over USB and BLE, with advancing IMU samples, output and explicit stop.
@@ -138,7 +138,7 @@ MicroPython compiler and runtime described below.
 
 An independently built F4 SDK `hello.elf` passes unchanged in Cortex-M4
 QEMU firmware configurations with different Zephyr syscall IDs and application
-stack sizes, including a 12 KiB native arena after a reserved SRAM prefix.
+stack sizes, including a 13 KiB native arena after a reserved SRAM prefix.
 These checks include constructors, float arithmetic, time/output
 calls, rejection and protected cleanup. They do not establish cross-hub hardware
 compatibility. In the full F4 Python/DSP build, the table/admission change adds
@@ -238,7 +238,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
 and a 192 KiB loader budget in a 211 KiB shared system heap. The Technic native
-profile permits 4 KiB images and a 12 KiB loader budget in a 21 KiB shared heap.
+profile permits 4 KiB images and a 13 KiB loader budget in a 22 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
