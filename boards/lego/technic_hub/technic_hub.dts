@@ -5,6 +5,7 @@
 #include <st/l4/stm32l431r(b-c)tx-pinctrl.dtsi>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/pwm/pwm.h>
+#include "ports.dtsi"
 
 / {
 	model = "LEGO Technic Hub";

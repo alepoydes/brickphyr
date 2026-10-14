@@ -34,7 +34,7 @@ source changes preserve the session and uptime.
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
-| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base, BLE and RAM-native builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management and IMU have synthetic checks; shared native loader has compact ARM checks | No board available; boot, BLE, applications, IMU, recovery and electrical behavior unverified |
+| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base, BLE and RAM-native builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management, IMU and electrical port detection have synthetic checks; shared native loader has compact ARM checks | No board available; boot, BLE, applications, IMU, recovery and electrical behavior unverified |
 | City | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
 | Move | Candidate; severe memory constraints require separate evaluation | None yet | Hardware availability unconfirmed |
 
@@ -91,7 +91,7 @@ and [`mpconfigport.h`](https://github.com/pybricks/pybricks-micropython/blob/a7b
 Zephyr supplies the clock, GPIO keys, timer PWM, MPU and independent watchdog.
 The shared Brickphyr hub loop, power policy and lighting service handle the
 button's two-second shutdown hold and native-mode indication. Four motor bridges
-start in coast and the sensor supply stays off.
+start in coast. The sensor supply stays off until the optional port service starts.
 
 Red PB15/TIM15 CH2 and green PA11/TIM1 CH4 use 10 kHz hardware PWM, sharing the
 reference motor period; blue PA6/TIM16 CH1 uses 1 kHz. This avoids Pybricks'
@@ -105,8 +105,13 @@ builds in the remaining 63 KiB with the same ARMv7E-M hard-float calling convent
 as F4. The optional native profile reuses the protected loader and shared
 application lifecycle with smaller memory budgets and enables the shared IMU
 and telemetry services; the base has no application engine or IMU acquisition.
-Port and motor services, battery observations and persistent storage remain unimplemented
-on this board. The CC2640 is held in reset; no host terminal is available in this
+The native profile also enables the shared electrical detector on A–D, using
+the reference GPIO wiring and PB12 sensor supply. It reports empty/passive
+connections and the UART electrical signature; digital negotiation, sensor
+measurements, motor drive, battery observations and persistent storage remain
+unimplemented on this board. Four-port synthetic GPIO checks cover discovery,
+hotplug, first-error preservation and shutdown; physical wiring and timing are
+unverified. The CC2640 is held in reset; no host terminal is available in this
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a
 different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
 driver or reflash that controller to bypass the integration work.

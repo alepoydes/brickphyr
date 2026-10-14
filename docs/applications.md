@@ -58,8 +58,9 @@ allocator reserves, so it is not the firmware's live working set.
 
 The native ELF interface now has a versioned table independent of firmware
 configuration; Technic has build-only power/UI/watchdog, BLE management and
-RAM-native profiles with shared IMU acquisition and telemetry. Persistent storage
-and port support remain pending. Existing Python
+RAM-native profiles with shared IMU acquisition, telemetry and electrical port
+identification. Persistent storage, UART negotiation and motor support remain
+pending. Existing Python
 acceptance work remains tracked in its owning plan; WASM is outside this milestone.
 
 ## Experimental native profile

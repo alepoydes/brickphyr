@@ -6,6 +6,8 @@
 #include <zephyr/shell/shell_dummy.h>
 #include <zephyr/ztest.h>
 
+#define PORT_COUNT DT_CHILD_NUM_STATUS_OKAY(DT_NODELABEL(hub_ports))
+
 static K_SEM_DEFINE(paused, 0, 1);
 static K_SEM_DEFINE(resume, 0, 1);
 static void pause_workqueue(struct k_work *item)
@@ -45,7 +47,15 @@ ZTEST(ports, test_detection)
 	zassert_equal(snapshot(0).error, -EAGAIN);
 	zassert_equal(hub_port_get(6, &(struct bp_port_state){0}), -EINVAL);
 	zassert_equal(hub_port_get(0, NULL), -EINVAL);
-	/* Six independent circuits are detected concurrently. No test supplies
+	/* Compact boards retain the public A..F numbering and cleanup contract. */
+	for (uint32_t i = PORT_COUNT; i < BP_PORT_COUNT; i++) {
+		zassert_equal(hub_port_get(i, &(struct bp_port_state){0}), -ENODEV);
+		zassert_equal(hub_motor_set_voltage(BP_PORT_APPLICATION, i, 0, 3000), -ENODEV);
+		zassert_ok(hub_port_release(BP_PORT_APPLICATION, i));
+		zassert_ok(hub_motor_close(BP_PORT_APPLICATION, i, 0));
+		zassert_equal(hub_motor_close(BP_PORT_APPLICATION, i, 1), -ESTALE);
+	}
+	/* Independent circuits are detected concurrently. No test supplies
 	 * a result by calling the production debounce/classification functions. */
 	pup_test_circuits[0].kind = MEDIUM_MOTOR;
 	pup_test_circuits[1].kind = TRAIN_MOTOR;
@@ -53,7 +63,7 @@ ZTEST(ports, test_detection)
 	pup_test_circuits[3].kind = UART_DEVICE;
 	pup_test_circuits[4].kind = TOUCH_SWITCH;
 	const uint16_t ids[] = {1, 2, 8, 14, 5, 0};
-	for (uint32_t i = 0; i < 6; i++) {
+	for (uint32_t i = 0; i < PORT_COUNT; i++) {
 		struct bp_port_state value = wait_type(i, ids[i]);
 		zassert_equal(value.failures, 0, "GPIO settling was too short");
 		zassert_equal(value.phase, i == 3 ? BP_PORT_UART : i == 5 ? BP_PORT_EMPTY : BP_PORT_PASSIVE);
@@ -67,11 +77,13 @@ ZTEST(ports, test_detection)
 	zassert_not_null(strstr(output, "type_id=1"));
 	zassert_equal(pup_test_circuits[0].reads, reads, "Observation started GPIO I/O");
 
-	uint32_t generation = snapshot(4).generation;
-	pup_test_circuits[4].pressed = true;
+	uint32_t touch = PORT_COUNT > 4 ? 4 : 1;
+	pup_test_circuits[touch].kind = TOUCH_SWITCH;
+	uint32_t generation = wait_type(touch, 5).generation;
+	pup_test_circuits[touch].pressed = true;
 	k_msleep(20);
-	zassert_equal(snapshot(4).pressed, 1);
-	zassert_equal(snapshot(4).generation, generation, "Press is not a reconnect");
+	zassert_equal(snapshot(touch).pressed, 1);
+	zassert_equal(snapshot(touch).generation, generation, "Press is not a reconnect");
 
 	/* First conflicting completed scan invalidates the old identity; it must
 	 * not remain usable through the entire new-device debounce interval. */
@@ -130,7 +142,7 @@ ZTEST(ports, test_detection)
 	zassert_ok(hub_ports_shutdown());
 	zassert_false(pup_test_supply());
 	reads = 0;
-	for (uint32_t i = 0; i < 6; i++) {
+	for (uint32_t i = 0; i < PORT_COUNT; i++) {
 		zassert_true(pup_test_released(i));
 		zassert_equal(snapshot(i).phase, BP_PORT_OFF);
 		zassert_equal(snapshot(i).error, -ESHUTDOWN);
@@ -139,7 +151,7 @@ ZTEST(ports, test_detection)
 	}
 	k_msleep(50);
 	uint32_t after = 0;
-	for (uint32_t i = 0; i < 6; i++) {
+	for (uint32_t i = 0; i < PORT_COUNT; i++) {
 		after += pup_test_circuits[i].reads;
 	}
 	zassert_equal(reads, after, "GPIO access survived shutdown");

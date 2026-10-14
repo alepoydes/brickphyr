@@ -141,6 +141,7 @@ def test_technic_image():
         "sound-tests",
         "battery-tests",
         "ports-tests",
+        "ports-four-tests",
         "lump-tests",
         "motor-output-tests",
         "motor-tests",

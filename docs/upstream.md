@@ -213,7 +213,7 @@ client, so install the CLI through the documented workspace procedure.
 
 ## Kernel-object sizing prerequisite
 
-The full F4 Python profile requires the local Zephyr `topic/kobject-data-budget`
+The full F4 Python and Technic native profiles require the local Zephyr `topic/kobject-data-budget`
 change, commit `1c7283cb`, adding `CONFIG_KOBJECT_DATA_AREA_SIZE`.
 A nonzero value fixes the RAM reserved for the
 generated kernel-object table; the final linker still rejects overflow. Zero

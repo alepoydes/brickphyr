@@ -619,6 +619,10 @@ static int cmd_port(const struct shell *shell, size_t argc, char **argv)
 		if (all) continue;
 		shell_print(shell, "Updated_ms=%" PRId64 " changed_ms=%" PRId64 " failures=%u cleanup=%d",
 			v.sample_ms, v.changed_ms, v.failures, v.cleanup_error);
+		if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+			shell_print(shell, "Electrical identification only; UART support is disabled");
+			return 0;
+		}
 		if (v.phase == BP_PORT_SERIAL) {
 			shell_print(shell, "Custom UART: baud=%u supply=%u; no LEGO identity or mode metadata", v.baudrate, v.supply);
 			return 0;

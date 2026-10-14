@@ -209,8 +209,11 @@ Use [BLE application commands](host.md#native-applications) for RAM upload,
 start, output and stop. The shared IMU service is available through native calls,
 `observe imu`, `observe imu.calibrated` and `observe imu.orientation`, or
 `uv run brickphyrdev monitor --ble Brickphyr --source imu.calibrated`.
-Calibration is runtime-only. There is no Python, persistent program store or
-port support in this profile. It omits an unused libc malloc arena and floating
+Calibration is runtime-only. The four ports support electrical identification
+through `port`, `port A` and `observe port.A`; native applications read the same
+snapshots with `bp_port_get()`. UART negotiation and motor drive remain disabled.
+There is no Python or persistent program store in this profile.
+It omits an unused libc malloc arena and floating
 point text formatting in the firmware; the system/application heaps and hardware
 float arithmetic remain enabled. Native SDK C-library formatting is linked into
 each application independently. Compilation and the compact ARM fixture establish

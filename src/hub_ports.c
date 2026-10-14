@@ -54,11 +54,17 @@ static const struct gpio_dt_spec supply = GPIO_DT_SPEC_GET(PORTS, vcc_gpios);
 	GPIO_DT_SPEC_GET(node, p5_gpios), GPIO_DT_SPEC_GET(node, p6_gpios), \
 	GPIO_DT_SPEC_GET(node, tx_gpios), GPIO_DT_SPEC_GET(node, rx_gpios), \
 	GPIO_DT_SPEC_GET(node, buffer_gpios)},
-static const struct gpio_dt_spec pins[BP_PORT_COUNT][PIN_COUNT] = {
+static const struct gpio_dt_spec pins[][PIN_COUNT] = {
 	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, PORT_PINS)
 };
 #define CHECK_INDEX(node) BUILD_ASSERT(DT_REG_ADDR(node) < BP_PORT_COUNT);
 DT_FOREACH_CHILD_STATUS_OKAY(PORTS, CHECK_INDEX)
+
+/* Public port numbers stay A..F; storage follows the board's highest index. */
+static bool port_present(uint32_t port)
+{
+	return port < ARRAY_SIZE(pins) && pins[port][P5].port;
+}
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 struct motor_log {
@@ -72,9 +78,7 @@ struct motor_log {
 static struct port {
 	struct bp_port_state value;
 	struct bp_sensor_sample sensor;
-	struct bp_sensor_palette palette;
 	struct bp_motor_state motor;
-	struct port_uart_write write;
 	/* One bit per remote channel/output; no application memory is retained. */
 	uint8_t pf_used, pf_coasting;
 	int pf_error;
@@ -111,7 +115,13 @@ static struct port {
 	enum group group;
 	uint16_t candidate, previous;
 	uint8_t matches, pin_value, pressed;
-} ports[BP_PORT_COUNT];
+} ports[ARRAY_SIZE(pins)];
+/* No live references remain when UART is disabled, so the linker can omit
+ * this storage along with the corresponding operations. */
+static struct {
+	struct bp_sensor_palette palette;
+	struct port_uart_write write;
+} uart_data[ARRAY_SIZE(pins)];
 static struct k_spinlock lock;
 static atomic_t stopping;
 static atomic_t activity;
@@ -135,7 +145,7 @@ static struct drivebase {
 	uint32_t applied, imu_epoch;
 	enum { DRIVE_CONFIG_NONE, DRIVE_CONFIG_BASIC, DRIVE_CONFIG_AXIS } configure;
 	bool initializing, cancelled, detach, frame;
-} drivebases[BP_PORT_COUNT / 2];
+} drivebases[ARRAY_SIZE(pins) / 2];
 static uint32_t drivebase_handle;
 static void cancel_drivebase(struct port *p, int error, bool detach);
 #endif
@@ -221,8 +231,8 @@ static uint32_t queue_write(struct port *p, uint8_t mode, const uint8_t *data, u
 	if (!data) return 0;
 	uint32_t token = p->value.write.request + 1;
 	if (!token) token++;
-	p->write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
-	memcpy(p->write.data, data, size);
+	uart_data[p - ports].write = (struct port_uart_write){.request = token, .mode = mode, .size = size};
+	memcpy(uart_data[p - ports].write.data, data, size);
 	p->value.write.request = token;
 	p->value.write.error = -EAGAIN;
 	return token;
@@ -309,7 +319,7 @@ static int read_motor_log(struct motor_log *log, uint32_t revision, uint32_t row
 static void free_motor_logs(enum bp_port_owner owner)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	for (size_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (size_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		for (size_t kind = 0; kind < BP_MOTOR_LOG_COUNT; kind++) {
 			struct motor_log *log = &ports[i].log[kind];
 			if (log->owner != owner) continue;
@@ -543,12 +553,13 @@ static int advance(uint32_t port)
 	}
 	switch (p->step) {
 	case UART: {
+		if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 		struct bp_port_state uart = {0};
 		struct bp_sensor_sample sensor;
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		pf_release(p);
 		uint32_t measurement = p->measurement, command = p->command;
-		const struct port_uart_write *write = write_pending(p) ? &p->write : NULL;
+		const struct port_uart_write *write = write_pending(p) ? &uart_data[port].write : NULL;
 		bool cancel = p->motor.releasing && !p->pf_coasting;
 		k_spin_unlock(&lock, key);
 		TRY_IO(port_uart_poll(port, &uart, &sensor, measurement, write, cancel));
@@ -1132,7 +1143,7 @@ static void prepare_drivebase(struct drivebase *db, int64_t now)
 }
 #endif
 
-static int64_t apply_motor(uint32_t port)
+static __unused int64_t apply_motor(uint32_t port)
 {
 	struct port *p = &ports[port];
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -1428,12 +1439,12 @@ static void serial_advance(uint32_t port)
 	if (action == SERIAL_ACTIVE) {
 		/* TX admission and cancellation share this lock. The driver only
 		 * copies a bounded packet and enables IRQs here; no configuration. */
-		err = port_uart_serial_poll(port, write_pending(p) ? &p->write : NULL, &completed);
+		err = port_uart_serial_poll(port, write_pending(p) ? &uart_data[port].write : NULL, &completed);
 		if (err) {
 			p->serial = action = SERIAL_FAILING;
 			p->value.error = err;
 			finish_write(p, err);
-		} else if (write_pending(p) && completed == p->write.request) finish_write(p, 0);
+		} else if (write_pending(p) && completed == uart_data[port].write.request) finish_write(p, 0);
 	}
 	k_spin_unlock(&lock, key);
 	if (action == SERIAL_CONFIGURE || action == SERIAL_CLOSE) {
@@ -1484,14 +1495,14 @@ static void serial_advance(uint32_t port)
 static void scan(struct k_work *item)
 {
 	int64_t next = INT64_MAX;
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!pins[i][P5].port) {
 			continue;
 		}
 		int64_t started = k_uptime_get();
 		if (started >= ports[i].next_ms) {
 			k_spinlock_key_t key = k_spin_lock(&lock);
-			bool serial = ports[i].serial != SERIAL_OFF;
+			bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && ports[i].serial != SERIAL_OFF;
 			bool first_failure = !ports[i].value.failures;
 			k_spin_unlock(&lock, key);
 			int err = 0;
@@ -1521,14 +1532,16 @@ static void scan(struct k_work *item)
 	int64_t now = k_uptime_get();
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) prepare_drivebase(&drivebases[i], now);
 #endif
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+#if defined(CONFIG_BRICKPHYR_MOTORS) || defined(CONFIG_BRICKPHYR_PORT_UART)
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!pins[i][P5].port) continue;
 		k_spinlock_key_t key = k_spin_lock(&lock);
-		bool serial = ports[i].serial != SERIAL_OFF;
+		bool serial = IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART) && ports[i].serial != SERIAL_OFF;
 		k_spin_unlock(&lock, key);
 		int64_t deadline = serial ? 0 : apply_motor(i);
 		if (deadline) next = MIN(next, deadline);
 	}
+#endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) finish_drivebase(&drivebases[i]);
 #endif
@@ -1546,10 +1559,10 @@ static int initialize(void)
 #endif
 	int err = gpio_is_ready_dt(&supply) ?
 		gpio_pin_configure_dt(&supply, GPIO_OUTPUT_INACTIVE) : -ENODEV;
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		ports[i].value.error = -EAGAIN;
 		ports[i].sensor.error = -EAGAIN;
-		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) port_sensor_palette_default(&ports[i].palette);
+		if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) port_sensor_palette_default(&uart_data[i].palette);
 		if (!pins[i][P5].port) {
 			continue;
 		}
@@ -1567,7 +1580,7 @@ static int initialize(void)
 	}
 	if (err) {
 		int cleanup = gpio_is_ready_dt(&supply) ? gpio_pin_set_dt(&supply, 0) : 0;
-		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 			publish(i, err, cleanup, NULL, NULL, 0);
 		}
 		return err;
@@ -1582,7 +1595,7 @@ int hub_port_get(uint32_t port, struct bp_port_state *value)
 	if (port >= BP_PORT_COUNT || !value) {
 		return -EINVAL;
 	}
-	if (!pins[port][P5].port) {
+	if (!port_present(port)) {
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -1603,7 +1616,7 @@ int hub_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
-	if (!pins[port][P5].port) return -ENODEV;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	const struct bp_port_state *v = &ports[port].value;
 	int err = atomic_get(&stopping) ? -ESHUTDOWN : v->generation != generation ? -ESTALE :
@@ -1622,6 +1635,7 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
 		return -EINVAL;
 	}
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
@@ -1666,7 +1680,7 @@ int hub_port_select(enum bp_port_owner owner, uint32_t port, uint32_t generation
 int hub_port_write(enum bp_port_owner owner, uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
-	if (!data || !request || !size || size > sizeof(ports[0].write.data)) return -EINVAL;
+	if (!data || !request || !size || size > sizeof(uart_data[0].write.data)) return -EINVAL;
 	return raw_request(owner, port, generation, mode, data, size, request, 0);
 }
 
@@ -1725,6 +1739,7 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (!request || port >= BP_PORT_COUNT ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
@@ -1771,12 +1786,12 @@ int hub_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 	if (port >= BP_PORT_COUNT || !value) {
 		return -EINVAL;
 	}
-	if (!pins[port][P5].port) {
+	if (!port_present(port)) {
 		return -ENODEV;
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*value = ports[port].sensor;
-	struct bp_sensor_palette palette = ports[port].palette;
+	struct bp_sensor_palette palette = uart_data[port].palette;
 	int64_t updated = ports[port].value.sample_ms;
 	k_spin_unlock(&lock, key);
 	if (!value->error && k_uptime_get() - updated > 10 * (SETTLE_MS + k_ticks_to_ms_ceil64(2))) {
@@ -1800,9 +1815,10 @@ int hub_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || !palette) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = palette_device(&ports[port], generation);
-	if (!err) *palette = ports[port].palette;
+	if (!err) *palette = uart_data[port].palette;
 	k_spin_unlock(&lock, key);
 	return err;
 }
@@ -1818,12 +1834,13 @@ int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port, uint32_t gen
 		int err = port_sensor_palette_check(&next);
 		if (err) return err;
 	} else port_sensor_palette_default(&next);
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = palette_device(p, generation);
 	if (!err && (p->motor.releasing || (p->owner && p->owner != owner))) err = -EBUSY;
 	if (!err) {
-		p->palette = next;
+		uart_data[port].palette = next;
 		p->owner = p->sensor.owner = owner;
 	}
 	k_spin_unlock(&lock, key);
@@ -1840,6 +1857,7 @@ static int sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t me
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
 		return -EINVAL;
 	}
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
@@ -1922,6 +1940,7 @@ int hub_uart_configure(enum bp_port_owner owner, uint32_t port, uint32_t generat
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = serial_access(p, owner, generation);
@@ -1944,6 +1963,7 @@ int hub_uart_read(enum bp_port_owner owner, uint32_t port, uint32_t generation, 
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || size > 128 || (!data && size)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = serial_access(p, owner, generation);
@@ -1958,6 +1978,7 @@ int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || !size || size > 32 || !data || !request) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = serial_access(p, owner, generation);
@@ -1973,6 +1994,8 @@ static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t 
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
 		return -EINVAL;
 	}
+	/* An absent port has never been claimed and its generation is zero. */
+	if (!port_present(port)) return generation && *generation ? -ESTALE : 0;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = generation && p->value.generation != *generation ? -ESTALE :
@@ -2037,7 +2060,7 @@ void hub_ports_session_closed(enum bp_port_owner owner)
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	free_motor_logs(owner);
 #endif
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		hub_port_release(owner, i);
 	}
 }
@@ -2050,7 +2073,7 @@ int hub_ports_release(enum bp_port_owner owner)
 #endif
 	int result = 0;
 	uint32_t previous_pf = 0;
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool owned = ports[i].owner == owner;
 		if (owned) previous_pf += POPCOUNT(ports[i].pf_used);
@@ -2063,7 +2086,7 @@ int hub_ports_release(enum bp_port_owner owner)
 		bool pending = false, uart_pending = false;
 		uint32_t remaining_pf = 0;
 		k_spinlock_key_t key = k_spin_lock(&lock);
-		for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+		for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 			if (ports[i].owner != owner) continue;
 			remaining_pf += POPCOUNT(ports[i].pf_used);
 			pending |= ports[i].motor.pending;
@@ -2205,6 +2228,7 @@ int hub_motor_observation_get(uint32_t port, uint32_t generation, uint32_t windo
 #else
 	if (!value || port >= BP_PORT_COUNT || !speed_window_valid(window_ms)) return -EINVAL;
 	pbio_differentiator_t history;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	observation_snapshot(&ports[port], generation, value, &history);
 	k_spin_unlock(&lock, key);
@@ -2271,6 +2295,7 @@ int hub_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct
 	if (port >= BP_PORT_COUNT || !value || !speed_window_valid(window_ms)) return -EINVAL;
 	struct bp_motor_observation observation;
 	pbio_differentiator_t history;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = observation_snapshot(p, generation, &observation, &history);
@@ -2303,6 +2328,7 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 #else
 	if (port >= BP_PORT_COUNT || !request || absolute > 1 ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	struct bp_motor_state *m = &p->motor;
@@ -2364,6 +2390,7 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 	if (!setup || !handle || setup->ports[0] >= BP_PORT_COUNT || setup->ports[1] >= BP_PORT_COUNT ||
 	    setup->ports[0] == setup->ports[1] || setup->spike > 1 ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(setup->ports[0]) || !port_present(setup->ports[1])) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p[2] = {&ports[setup->ports[0]], &ports[setup->ports[1]]};
 	int err = atomic_get(&stopping) ? -ESHUTDOWN : 0;
@@ -2616,6 +2643,7 @@ int hub_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_s
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = servo_control_error(p, generation);
@@ -2640,6 +2668,7 @@ int hub_servo_settings_set(enum bp_port_owner owner, uint32_t port, uint32_t gen
 #else
 	if (port >= BP_PORT_COUNT || !value || !revision ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = servo_control_error(p, generation);
@@ -2674,6 +2703,7 @@ int hub_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = servo_control_error(p, generation);
@@ -2696,6 +2726,7 @@ int hub_servo_model_get(uint32_t port, uint32_t generation, struct bp_motor_mode
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !value) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = servo_control_error(p, generation);
@@ -2721,6 +2752,7 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !down_sample ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
 	uint32_t columns = kind == BP_MOTOR_LOG ? BP_MOTOR_LOG_COLUMNS : BP_CONTROL_LOG_COLUMNS;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
@@ -2754,6 +2786,7 @@ int hub_motor_log_status(enum bp_port_owner owner, uint32_t port, uint32_t gener
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value || stop > 1 ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
@@ -2775,6 +2808,7 @@ int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generat
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value ||
 	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	struct motor_log *log = &p->log[kind];
@@ -2798,6 +2832,7 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	    (command->action != BP_SERVO_TIME && command->duration_ms) ||
 	    ((command->action == BP_SERVO_UNTIL_STALLED || command->action == BP_SERVO_UNTIL_STALLED_TORQUE) &&
 	     (command->finish == BP_MOTOR_FINISH_CONTINUE || command->duty_limit < -1 || command->duty_limit > 1000))) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	struct bp_battery_sample battery;
 	int err = hub_battery_get(&battery);
 	if (!err) err = battery.error;
@@ -2866,6 +2901,7 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t max_voltage)
 {
 	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
 	int err = motor_connection_error(p, owner, generation);
@@ -3009,12 +3045,12 @@ int hub_ports_shutdown(void)
 	atomic_set(&stopping, 1);
 	struct k_work_sync sync;
 	k_work_cancel_delayable_sync(&work, &sync);
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		port_uart_stop(i);
 	}
 	int supply_error = gpio_is_ready_dt(&supply) ? gpio_pin_set_dt(&supply, 0) : -ENODEV;
 	int result = supply_error;
-	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!pins[i][P5].port) {
 			continue;
 		}

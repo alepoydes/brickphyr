@@ -24,6 +24,18 @@ Direct motor drive is available with `CONFIG_BRICKPHYR_MOTORS`; experimental
 speed/position regulation adds `CONFIG_BRICKPHYR_MOTOR_CONTROL`. Reading state does not start I/O, select a mode or
 claim a port.
 
+The build-only [Technic native profile](builds.md#experimental-technic-base)
+reuses the electrical detector on A–D. E/F are absent and reads return `-ENODEV`;
+indices outside the public A–F range remain `-EINVAL`. This profile has no UART
+negotiation or motor drive. `port A` explicitly reports electrical-only support.
+Its sensor supply starts after the shared service releases all probe and motor
+pins, and shutdown removes the supply and releases those pins again. Synthetic
+four-port checks do not establish physical Technic behavior.
+
+Private state follows the board's highest enabled port index while public SDK
+numbering remains fixed. UART palettes and write buffers occupy a separate
+internal array that the linker omits when UART operations are disabled.
+
 ## Device inspection
 
 The same Shell command works through the USB and BLE terminals:
