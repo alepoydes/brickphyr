@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "host_ble_session.h"
 #include "host_protocol.h"
+#include "hub_power.h"
 #ifdef CC2640_GATT
 #include "cc2640_gatt.h"
 #endif
 
 #include <errno.h>
 #include <string.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/att.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
@@ -266,8 +269,16 @@ static int send_smp(const void *data, int length)
 
 ZTEST(ble_only, test_cold_shell_smp_and_reconnect)
 {
+	const struct device *peripheral_uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
+	struct hub_power_state power;
+	zassert_true(device_is_ready(peripheral_uart));
+	zassert_equal(host_transport_init(peripheral_uart, 0), -ENOTSUP);
+	host_connection_changed(true);
+	hub_power_get(&power);
+	zassert_equal(power.transport, HUB_DISCONNECTED);
+	zassert_false(power.connected);
 	zassert_ok(host_transport_init(NULL, 0));
-	/* No USB device, UART IRQ or status query may be needed to start Shell. */
+	/* A UART peripheral does not create a USB management endpoint. */
 #ifdef CC2640_GATT
 	gatt_register();
 #endif

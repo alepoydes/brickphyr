@@ -102,15 +102,16 @@ emulators. It checks literal wire packets, the 255-byte boundary, a ready-line
 release followed immediately by reassertion, malformed input, timeout and first
 error retention. The controller fixture checks literal startup commands and reply
 matching, address readback, malformed responses, timeouts and first-error cleanup
-with a simulated NPI device. The UART-free host fixture checks the shared BLE
-session independently. The full `cc2640_host` fixture runs the production
+with a simulated NPI device. The BLE-only host fixture checks the shared session
+with a peripheral UART enabled: rejected UART initialization cannot acquire USB
+ownership or prevent cold BLE startup. The full `cc2640_host` fixture runs the production
 controller, GATT, event worker and shared Shell/SMP over a simulated NPI queue.
 It covers cold startup, notification backpressure, fragmented standard SMP echo,
 disconnect/reconnect and subscription reset during an accepted command, including
 old-output isolation and release of incomplete/queued packets, without an SPI peripheral.
 These checks do not establish CC2640 radio behavior or physical BLE connectivity.
 
-The optional GATT variant of the UART-free fixture drives raw TI ATT events into
+The optional GATT variant of the BLE-only fixture drives raw TI ATT events into
 the production adapter and the same Shell/SMP path. It checks service and
 characteristic discovery, UUID wire order, handle ranges, read offsets, permission
 errors and subscription state across reconnect. The controller fixture also checks

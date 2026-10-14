@@ -67,6 +67,11 @@ byte transport changes. A terminal remains useful independently of Python, nativ
 or WASM execution. Its application commands use the same lifecycle operations as other
 clients; they do not bypass ownership or admission checks.
 
+Boards with a USB CDC/UART management endpoint enable `BRICKPHYR_HOST_UART`.
+BLE-only boards omit that stream's Pybricks framing and dispatcher state, while
+retaining the shared Shell and BLE Pybricks endpoint. Enabling UART drivers for
+wired devices does not enable a UART management endpoint.
+
 Prefer SMP/MCUmgr for extended management if its existing operations and clients
 fit the actual transfer and settings requirements. Reuse the standard mechanisms
 before adding a small application-management command group. Firmware image update

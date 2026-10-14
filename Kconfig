@@ -69,6 +69,15 @@ config BRICKPHYR_HUB
 	bool
 	default y if BOARD_SPIKE_PRIME_F4 || BOARD_TECHNIC_HUB
 
+config BRICKPHYR_HOST_UART
+	bool "UART management stream" if TEST
+	depends on UART_INTERRUPT_DRIVEN
+	default y if BOARD_SPIKE_PRIME_F4
+	help
+	  Enable the USB CDC/UART transport for the shared Shell and Pybricks
+	  stream dispatcher. BLE management uses the same Shell independently;
+	  UART support for wired devices does not require this endpoint.
+
 config BRICKPHYR_CC2640_NPI
 	bool "CC2640 SPI network-processor transport"
 	depends on DT_HAS_TI_CC2640_NPI_ENABLED

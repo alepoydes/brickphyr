@@ -49,7 +49,7 @@ static void finish_ble_session(void);
 
 static uint8_t stream_mode(void)
 {
-	return ble_shell ? HOST_SHELL : mode;
+	return !IS_ENABLED(CONFIG_BRICKPHYR_HOST_UART) || ble_shell ? HOST_SHELL : mode;
 }
 static k_tid_t ble_request_thread;
 static bool ready;
@@ -159,7 +159,7 @@ static void notify_shell(enum shell_transport_evt event)
 	}
 }
 
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 static void uart_callback(const struct device *dev, void *context)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -210,14 +210,14 @@ static void uart_callback(const struct device *dev, void *context)
 
 static void serial_rx_resume(void)
 {
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 	if (uart) uart_irq_rx_enable(uart);
 #endif
 }
 
 static void serial_tx_resume(void)
 {
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 	if (uart) uart_irq_tx_enable(uart);
 #endif
 }
@@ -225,7 +225,7 @@ static void serial_tx_resume(void)
 /* Called with lock held so a deferred UART callback cannot compete. */
 static int serial_drain(void)
 {
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 	if (uart) {
 		unsigned char stale;
 		int err;
@@ -483,17 +483,25 @@ SHELL_CMD_ARG_REGISTER(host_mode, NULL, "host_mode pybricks: switch when this po
 static void host_thread(void *a, void *b, void *c)
 {
 	static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 	struct host_protocol protocol = {0};
 	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
 	size_t reply_length = 0;
 	uint8_t event_reply[HOST_PROTOCOL_FRAME_MAX];
 	size_t event_length = 0;
+#endif
 	uint32_t session_generation = 0;
 	bool shell_initialized = false;
 
 	for (;;) {
-		k_sem_take(&wake, protocol.subscribed ? K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYBRICKS_EXECUTION) ?
-			20 : HOST_PROTOCOL_STATUS_INTERVAL_MS) : K_FOREVER);
+		k_timeout_t timeout = K_FOREVER;
+#ifdef CONFIG_BRICKPHYR_HOST_UART
+		if (protocol.subscribed) {
+			timeout = K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYBRICKS_EXECUTION) ?
+				20 : HOST_PROTOCOL_STATUS_INTERVAL_MS);
+		}
+#endif
+		k_sem_take(&wake, timeout);
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool changed = session_generation != generation;
 		bool open = occupied;
@@ -522,9 +530,11 @@ static void host_thread(void *a, void *b, void *c)
 			hub_sound_session_closed();
 			hub_ports_session_closed(BP_PORT_TERMINAL);
 			smp_shell_rx_reset(&smp_input, &smp_serial);
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 			host_protocol_reset(&protocol);
 			reply_length = 0;
 			event_length = 0;
+#endif
 			session_generation = current_generation;
 		}
 		if (!open) {
@@ -570,6 +580,7 @@ static void host_thread(void *a, void *b, void *c)
 			continue;
 		}
 		k_spin_unlock(&lock, key);
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 		/* Keep one pending event separate from command replies. Unread stdout
 		 * must not prevent consuming a STOP/input command. Once its reply is
 		 * pending, pause further commands until it can be queued intact. */
@@ -632,6 +643,7 @@ static void host_thread(void *a, void *b, void *c)
 			}
 		}
 		serial_rx_resume();
+#endif
 	}
 }
 
@@ -640,6 +652,9 @@ static struct k_thread host_worker;
 
 int host_transport_init(const struct device *device, uint16_t hub_variant)
 {
+	if (device && !IS_ENABLED(CONFIG_BRICKPHYR_HOST_UART)) {
+		return -ENOTSUP;
+	}
 	uart = device;
 	variant = hub_variant;
 	if (uart && !device_is_ready(uart)) {
@@ -649,7 +664,7 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 	smp_transport.functions.output = smp_output;
 	smp_transport.functions.get_mtu = smp_mtu;
 	if (uart) {
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+#ifdef CONFIG_BRICKPHYR_HOST_UART
 		int err = uart_irq_callback_user_data_set(uart, uart_callback, NULL);
 		if (err) return err;
 #else
