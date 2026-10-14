@@ -52,6 +52,7 @@ EMUL_DT_DEFINE(DT_NODELABEL(hub_leds), emul_init, NULL, NULL, &spi_api, NULL);
 LOG_MODULE_REGISTER(native_test, LOG_LEVEL_INF);
 
 int native_fixture_run(const char *name);
+int native_diagnostics_check(void);
 const void *native_fixture_hello(size_t *length);
 #ifdef NATIVE_CAPACITY_TEST
 const void *native_fixture_capacity(size_t *length);
@@ -155,6 +156,7 @@ int main(void)
 	printk("Native capacity: image %zu, loader %zu, allocated %zu bytes\n",
 		status.image_bytes, status.loader_bytes, status.loaded_bytes);
 #endif
+	CHECK(native_diagnostics_check() == 0);
 #ifdef CONFIG_FPU
 	CHECK(check_fp_context() == 0 && available() == capacity);
 #endif

@@ -580,6 +580,11 @@ app stop
 diagnostics
 ```
 
+`diagnostics` reads and consumes retained firmware warnings and errors; overflow
+counters remain visible. The default build filters at compilation, without
+runtime log-level controls. For a diagnostic build, raise `CONFIG_LOG_MAX_LEVEL`
+and the relevant module's log level in an extra configuration file.
+
 `native_fixture` loads an ELF embedded for board acceptance, not the separately
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
