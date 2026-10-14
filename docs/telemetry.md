@@ -147,6 +147,9 @@ Calibrated and orientation sources use the same processed snapshot. Separate
 requests can see different frames; compare their `sequence` and `epoch` when
 combining them. Acceleration includes gravity. The row-major matrix maps hub
 axes to the inertial frame, and headings are clockwise-positive millidegrees.
+Heading conversion rounds to the nearest integer, with ties away from zero,
+without first rounding the scaled value to `float32`. An unrepresentable heading
+is omitted and reports `-ERANGE` unless the snapshot already has an error.
 Missing data or a calibration change starts a new reference with a different
 `epoch`. `ready` means a bias estimate from the last ten minutes, not proven
 physical rest or absolute heading. Errors retain previous computed values and

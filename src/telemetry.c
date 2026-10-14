@@ -11,6 +11,7 @@
 #include "application.h"
 
 #include <inttypes.h>
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,6 +98,33 @@ static void field(struct observation *out, const char *name, int64_t value)
 	__ASSERT_NO_MSG(out->count < ARRAY_SIZE(out->fields));
 	out->fields[out->count].name = name;
 	out->fields[out->count++].value = value;
+}
+
+static void heading_field(struct observation *out, const char *name, float degrees)
+{
+	/* Scale the exact binary32 significand, then round ties away from zero.
+	 * Multiplying in float would round twice; double pulls software arithmetic
+	 * into single-precision targets just to publish integer millidegrees. */
+	BUILD_ASSERT(FLT_RADIX == 2 && FLT_MANT_DIG == 24);
+	if (!isfinite(degrees)) goto range_error;
+	int exponent;
+	float fraction = frexpf(fabsf(degrees), &exponent);
+	uint64_t magnitude = (uint64_t)(uint32_t)(fraction * 0x1p24f) * 1000;
+	bool negative = signbit(degrees);
+	exponent -= 24;
+	if (exponent >= 0) {
+		uint64_t limit = negative ? BIT64(63) : INT64_MAX;
+		if (exponent >= 64 || magnitude > (limit >> exponent)) goto range_error;
+		magnitude <<= exponent;
+	} else {
+		unsigned int shift = -exponent;
+		magnitude = shift >= 64 ? 0 : (magnitude + BIT64(shift - 1)) >> shift;
+	}
+	field(out, name, negative ? magnitude == BIT64(63) ? INT64_MIN : -(int64_t)magnitude :
+		(int64_t)magnitude);
+	return;
+range_error:
+	if (!out->error) out->error = -ERANGE;
 }
 
 static void capture(enum source source, struct observation *out)
@@ -206,8 +234,8 @@ static void capture(enum source source, struct observation *out)
 				for (size_t i = 0; i < ARRAY_SIZE(elements); i++) {
 					field(out, elements[i], lroundf(value.orientation[i] * 1000000));
 				}
-				field(out, "heading1_mdeg", llround((double)value.heading_1d * 1000));
-				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
+				heading_field(out, "heading1_mdeg", value.heading_1d);
+				heading_field(out, "heading3_mdeg", value.heading_3d);
 			}
 		}
 	} else if (IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL) &&

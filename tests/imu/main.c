@@ -14,6 +14,7 @@
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
+#include <pbio/imu.h>
 #include "hub_imu.h"
 #include "hub_power.h"
 #include "configuration.h"
@@ -148,7 +149,8 @@ static struct bp_imu_state frame(const int16_t data[6])
 	return state;
 }
 
-static void smp_observation(const char *name, const char *field, int64_t expected)
+static void smp_observation(const char *name, const char *field, int64_t expected,
+	int expected_error)
 {
 	/* Exercise the registered production group with the actual SMP payload
 	 * capacity. Transport framing/ownership is checked by tests/host. */
@@ -175,9 +177,17 @@ static void smp_observation(const char *name, const char *field, int64_t expecte
 		writer.zs[0].payload - response, 1, NULL, 0);
 	zassert_true(zcbor_map_start_decode(reader.zs));
 	bool found = false;
+	bool found_error = false;
 	while (!zcbor_array_at_end(reader.zs)) {
 		struct zcbor_string key;
 		zassert_true(zcbor_tstr_decode(reader.zs, &key));
+		if (key.len == 5 && !memcmp(key.value, "error", 5)) {
+			int64_t error;
+			zassert_true(zcbor_int64_decode(reader.zs, &error));
+			zassert_equal(error, expected_error);
+			found_error = true;
+			continue;
+		}
 		if (key.len != 6 || memcmp(key.value, "values", 6)) {
 			zassert_true(zcbor_any_skip(reader.zs, NULL));
 			continue;
@@ -187,7 +197,11 @@ static void smp_observation(const char *name, const char *field, int64_t expecte
 			int64_t value;
 			zassert_true(zcbor_tstr_decode(reader.zs, &key));
 			zassert_true(zcbor_int64_decode(reader.zs, &value));
-			if (key.len == strlen(field) && !memcmp(key.value, field, key.len)) {
+			if (expected_error == -ERANGE) {
+				zassert_false(key.len == 13 && !memcmp(key.value, "heading1_mdeg", 13));
+				zassert_false(key.len == 13 && !memcmp(key.value, "heading3_mdeg", 13));
+			}
+			if (field && key.len == strlen(field) && !memcmp(key.value, field, key.len)) {
 				zassert_equal(value, expected);
 				found = true;
 			}
@@ -195,7 +209,37 @@ static void smp_observation(const char *name, const char *field, int64_t expecte
 		zassert_true(zcbor_map_end_decode(reader.zs));
 	}
 	zassert_true(zcbor_map_end_decode(reader.zs));
-	zassert_true(found);
+	zassert_true(found_error);
+	if (field) zassert_true(found);
+}
+
+static void heading_observations(void)
+{
+	/* Set the production estimator's physical heading, then publish it via
+	 * an actual still IMU frame before reading the registered SMP group. */
+	static const float headings[] = {
+		0x1.fffffep-5f, 0x1p-4f, 0x1.000002p-4f,
+		-0x1.fffffep-5f, -0x1p-4f, -0x1.000002p-4f,
+		0.000499999f, -0.000499999f,
+		16777216.0f, -16777216.0f,
+		0x1p52f, -0x1p52f,
+	};
+	for (size_t i = 0; i < ARRAY_SIZE(headings); i++) {
+		pbio_imu_set_heading(headings[i]);
+		struct bp_imu_state state = frame(raw_frames.still);
+		zassert_equal(state.heading_1d, headings[i]);
+		zassert_equal(state.heading_3d, headings[i]);
+		smp_observation("imu.orientation", "heading1_mdeg",
+			llround((double)state.heading_1d * 1000), 0);
+		state = frame(raw_frames.still);
+		smp_observation("imu.orientation", "heading3_mdeg",
+			llround((double)state.heading_3d * 1000), 0);
+	}
+	pbio_imu_set_heading(0x1p54f);
+	(void)frame(raw_frames.still);
+	smp_observation("imu.orientation", NULL, 0, -ERANGE);
+	pbio_imu_set_heading(0.0f);
+	(void)frame(raw_frames.still);
 }
 
 static void processing(void)
@@ -213,6 +257,7 @@ static void processing(void)
 		zassert_within(state.orientation[4 * i], 1, 0.00001f);
 	}
 	zassert_false(state.ready);
+	heading_observations();
 	uint8_t saved[24], effective[24];
 	zassert_equal(settings_load_one(imu_config[2].name, saved, sizeof(saved)), 12);
 	zassert_equal(sys_get_le32(saved), 0, "RAM update wrote storage");
@@ -311,8 +356,8 @@ static void processing(void)
 	zassert_ok(shell_execute_cmd(shell, "observe imu.orientation"));
 	output = shell_backend_dummy_get_output(shell, &length);
 	zassert_not_null(strstr(output, "m33=1000000"));
-	smp_observation("imu.calibrated", "gz_mdps", 70000);
-	smp_observation("imu.orientation", "m33", 1000000);
+	smp_observation("imu.calibrated", "gz_mdps", 70000, 0);
+	smp_observation("imu.orientation", "m33", 1000000, 0);
 	zassert_equal(transactions, before, "Observations triggered acquisition");
 	k_msleep(6);
 	zassert_ok(hub_imu_get_state(&state));
