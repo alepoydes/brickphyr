@@ -223,14 +223,24 @@ Publication and manifest pinning remain pending.
 
 ## Kernel-object sizing prerequisite
 
-The full F4 Python and Technic native profiles require the local Zephyr `topic/kobject-data-budget`
-change, commit `1c7283cb`, adding `CONFIG_KOBJECT_DATA_AREA_SIZE`.
-A nonzero value fixes the RAM reserved for the
-generated kernel-object table; the final linker still rejects overflow. Zero
-retains upstream's percentage-based sizing. This prevents changes to code
-addresses and gperf output from moving an MPU-aligned stack across a large RAM
-boundary. Both linker generators consume the same generated size. The change
-belongs in Zephyr; publication and manifest pinning remain pending.
+The profiles require local Zephyr commit `76b82abac` on
+`topic/kobject-compact-metadata`.
+Static kernel-object metadata forms a dense mutable array, while gperf generates
+a read-only address-to-metadata index. Permissions, type/initialization checks,
+thread IDs and backing objects for privileged stacks, futexes and system mutexes
+retain their existing interfaces. Hash-table holes and their link-pass sizing
+margin consume flash instead of RAM. Both linker generators consume the same
+generated sizes and reject overflow.
+
+`CONFIG_KOBJECT_DATA_AREA_SIZE`, introduced in `1c7283cb`, remains an optional
+fixed metadata budget. The board profiles use automatic sizing with no additional
+RAM margin; the read-only index has its own percentage reserve.
+`CONFIG_USERSPACE_STACKS_EARLY` optionally places the entire standard stack range
+before initialized data on Cortex-M with power-of-two MPU regions and the GNU
+linker. F4 Python profiles select it to avoid alignment gaps; Technic retains the
+default layout because of its reserved SRAM prefix. The final map must be checked
+for each layout. ARM protection, dynamic-object, futex, system-mutex and application
+checks cover these changes. Publication and manifest pinning remain pending.
 
 ## Syscall diagnostic sizing prerequisite
 

@@ -731,10 +731,11 @@ uv run --locked west build -b spike_prime_f4 -d build/native-profile-apps -t fir
 ```
 
 All three F4 profiles have compilation/package checks and bounded checks on one
-Robot Inventor F4 (PCB revision unknown). The enlarged native-only budgets also
-have USB/BLE checks for a maximum-size RAM image and a stored application with
+Robot Inventor F4 (PCB revision unknown). Native-only USB/BLE checks cover
+a maximum-size RAM image and a stored application with
 80 KiB of writable data; see [native capacity](applications.md#experimental-native-profile).
-Peak-load capacity and the enlarged reduced-Python heap remain to be checked.
+The latest heap enlargement and early user-stack placement have compilation and
+ARM emulation checks only; peak-load capacity on hardware remains to be checked.
 Reduced Python checks cover USB/BLE
 REPL reset/exit, named execution with imports, Shell launch and a temporary BLE
 script. Rejected Pybricks commands preserve the running native Python program

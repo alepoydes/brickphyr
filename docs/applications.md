@@ -237,7 +237,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 192 KiB loader budget in a 211 KiB shared system heap. The Technic native
+and a 196 KiB loader budget in a 215 KiB shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -374,8 +374,8 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 211 KiB heap, including on-demand loader buffers.
-The full Python profile provides 101 KiB and the reduced Python profile 119 KiB;
+The native profile provides a 215 KiB heap, including on-demand loader buffers.
+The full Python profile provides 105344 bytes and the reduced Python profile 135040 bytes;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
@@ -393,13 +393,15 @@ the mount buffers and file caches supplied by Zephyr. Neither path needs a
 separate libc allocator arena. Crypto allocation failures propagate to the
 Bluetooth operation; pairing under combined memory pressure remains unverified.
 
-The full F4 Python profile reserves 4.5 KiB for the generated kernel-object table
-with `CONFIG_KOBJECT_DATA_AREA_SIZE`. Percentage-based sizing can change with
-code addresses alone and push the aligned application stack across another
-16 KiB boundary. The fixed budget keeps that padding available to the shared
-heap; the final linker rejects a table that exceeds it. Changes to the object
-set still require a fresh memory-budget check. Reduced profiles retain Zephyr's
-default sizing. This option requires the [Zephyr sizing change](upstream.md#kernel-object-sizing-prerequisite).
+Static kernel-object permissions and metadata use one RAM entry per object;
+the sparse address lookup table resides in flash. F4 Python profiles place the
+complete userspace stack range directly after the execution arena, before ordinary
+data, avoiding a large alignment gap after BSS. Stack registration, MPU protection,
+privileged syscall stacks and application limits remain unchanged. Recovered RAM
+is assigned to the shared heap. These layouts require the
+[Zephyr sizing changes](upstream.md#kernel-object-sizing-prerequisite).
+ARM emulation checks cover lookup, permissions, protected stacks and application
+lifecycle; physical combined-load acceptance of the enlarged heaps remains pending.
 
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports

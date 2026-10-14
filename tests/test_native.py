@@ -80,6 +80,10 @@ def test_reserved_slot_names():
         ("driver-supervisor-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("syscall-frame-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("upstream-userspace", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("upstream-userspace-dynamic", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("zephyr-kobject-checks", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("kobject-futex-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("kobject-sys-mutex-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("logging-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("main-userspace-tests", b"main_stack: PASS"),
         ("main-supervisor-tests", b"main_stack: PASS"),
@@ -117,7 +121,7 @@ def test_arm_firmware(suite, success):
                     assert b"NATIVE FAIL" not in output, output.decode()
                     # The upstream protection suite deliberately triggers kernel
                     # assertions; its fatal handler and final result own success.
-                    if suite != "upstream-userspace":
+                    if suite not in ("upstream-userspace", "upstream-userspace-dynamic"):
                         assert b"ASSERTION FAIL" not in output, output.decode()
                     assert b"PROJECT EXECUTION FAILED" not in output, output.decode()
                     assert b"main_stack: FAIL" not in output, output.decode()

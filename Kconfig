@@ -346,6 +346,7 @@ config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"
 	depends on BRICKPHYR_NATIVE || (TEST && (ARCH_POSIX || (CPU_CORTEX_M && USERSPACE)))
 	depends on ZCBOR
+	select USERSPACE_STACKS_EARLY if CPU_CORTEX_M && MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT && !CMAKE_LINKER_GENERATOR
 	help
 	  MicroPython core with source compilation, bytecode loading and GC.
 	  Host integration and Pybricks bindings are under development.

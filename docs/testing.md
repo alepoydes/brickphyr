@@ -929,6 +929,30 @@ The protection suite deliberately triggers kernel assertions and checks their
 handling; its final test result distinguishes expected faults from failures.
 These ARM emulation checks do not measure physical syscall latency.
 
+For changes to kernel-object metadata or userspace stack placement, use the
+existing protection suite with early stack placement and the futex/system-mutex
+suites for their generated backing objects:
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/mem_protect -d build/zephyr-kobject-checks -o=-j4 -- \
+  -DCONFIG_USERSPACE_STACKS_EARLY=y -DCONFIG_TEST_HW_STACK_PROTECTION=n -DCONFIG_MINIMAL_LIBC=y
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/futex -d build/kobject-futex-tests -o=-j4
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mutex/sys_mutex -d build/kobject-sys-mutex-tests -o=-j4
+uv run --locked pytest -q tests/test_native.py -k 'zephyr-kobject-checks or kobject-futex-tests or kobject-sys-mutex-tests'
+```
+
+The protection suite checks that every static metadata entry is returned by
+lookup exactly once, alongside existing permission and initialization checks.
+For dynamic thread-ID recycling with the default stack layout, build the
+userspace suite separately:
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace-dynamic -o=-j4 -- \
+  -DCONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=0 -DCONFIG_CURRENT_THREAD_USE_TLS=y \
+  -DCONFIG_TEST_HW_STACK_PROTECTION=n -DCONFIG_DYNAMIC_OBJECTS=y -DCONFIG_HEAP_MEM_POOL_SIZE=8192
+uv run --locked pytest -q tests/test_native.py -k upstream-userspace-dynamic
+```
+
 The native fixtures also check retained warning/error text, copied temporary
 strings, integer arguments, optional float formatting and draining through Shell.
 For Zephyr's shared runtime log packager and constant module references, pair
