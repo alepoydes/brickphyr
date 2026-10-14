@@ -26,6 +26,8 @@ K_MSGQ_DEFINE(outgoing, sizeof(struct frame), 32, 4);
 static K_SEM_DEFINE(advertising_done, 0, 2);
 static K_SEM_DEFINE(command_done, 0, 2);
 static K_SEM_DEFINE(smp_done, 0, 1);
+static K_SEM_DEFINE(smp_block_entered, 0, 1);
+static K_SEM_DEFINE(smp_block_release, 0, 1);
 static K_SEM_DEFINE(block_entered, 0, 1);
 static K_SEM_DEFINE(block_release, 0, 1);
 static atomic_ptr_t worker_wake;
@@ -35,11 +37,12 @@ static size_t first_notification_size;
 static atomic_t reject_next_notification;
 static atomic_t disconnect_on_marker;
 static atomic_t injected_disconnect;
+static atomic_t smp_block_calls;
 static unsigned int service;
 static unsigned int attributes_left;
 static uint16_t service_start;
 static const uint16_t ranges[][2] = {
-	{1, 1}, {2, 8}, {9, 15}, {16, 21}, {22, 27}, {28, 33},
+	{1, 1}, {2, 8}, {9, 15}, {16, 21}, {22, 27}, {28, 33}, {34, 37},
 };
 static const uint8_t address[6] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xba};
 
@@ -255,8 +258,8 @@ static void link_terminated(uint16_t handle)
 	enqueue(event, sizeof(event));
 }
 
-static void att_write(uint16_t connection, uint16_t handle,
-		      const uint8_t *value, size_t length)
+static void att_write_flags(uint16_t connection, uint16_t handle,
+			    const uint8_t *value, size_t length, bool command)
 {
 	uint8_t event[9 + 4 + 20] = {4, 0xff, 0, 0x12, 5, 0, 0, 0, 0};
 	if (length > 20) {
@@ -266,9 +269,36 @@ static void att_write(uint16_t connection, uint16_t handle,
 	event[2] = 10 + length;
 	sys_put_le16(connection, event + 6);
 	event[8] = 4 + length;
+	event[10] = command;
 	sys_put_le16(handle, event + 11);
 	memcpy(event + 13, value, length);
 	enqueue(event, 13 + length);
+}
+
+static void att_write(uint16_t connection, uint16_t handle,
+		      const uint8_t *value, size_t length)
+{
+	att_write_flags(connection, handle, value, length, false);
+}
+
+static void att_write_command(uint16_t connection, uint16_t handle,
+			      const uint8_t *value, size_t length)
+{
+	att_write_flags(connection, handle, value, length, true);
+}
+
+static void discover_smp(uint16_t connection)
+{
+	uint8_t event[] = {4, 0xff, 12, 0x10, 5, 0, 0, 0, 6,
+		34, 0, 37, 0, 0, 0x28};
+	sys_put_le16(connection, event + 6);
+	enqueue(event, sizeof(event));
+}
+
+static void set_smp_subscription(uint16_t connection, bool enabled)
+{
+	const uint8_t value[] = {enabled, 0};
+	att_write(connection, 37, value, sizeof(value));
 }
 
 static void subscribe_shell(uint16_t connection)
@@ -320,6 +350,39 @@ static int smp_probe(struct smp_streamer *stream)
 	return 0;
 }
 
+static int smp_block(struct smp_streamer *stream)
+{
+	ARG_UNUSED(stream);
+	atomic_inc(&smp_block_calls);
+	k_sem_give(&smp_block_entered);
+	return k_sem_take(&smp_block_release, K_SECONDS(1)) ? MGMT_ERR_ETIMEOUT : 0;
+}
+
+/* SMP v1 OS echo, CBOR {"d": "abcdefghijklmnopqrstuvwx"}. Both request
+ * and response exceed one default-MTU ATT value. */
+static const uint8_t ble_echo_request[] = {
+	0x0a, 0, 0, 29, 0, 0, 7, 0,
+	0xa1, 0x61, 'd', 0x78, 24,
+	'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
+	'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+};
+static const uint8_t ble_echo_response[] = {
+	0x0b, 0, 0, 30, 0, 0, 7, 0,
+	0xbf, 0x61, 'r', 0x78, 24,
+	'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
+	'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+	0xff,
+};
+
+static void send_ble_smp(uint16_t connection, const uint8_t *packet, size_t size)
+{
+	for (size_t sent = 0; sent < size;) {
+		size_t count = MIN(size - sent, 20);
+		att_write_command(connection, 36, packet + sent, count);
+		sent += count;
+	}
+}
+
 static uint16_t smp_connection;
 static int send_smp(const void *data, int length)
 {
@@ -363,16 +426,69 @@ static void check_initial_advertising(void)
 		0xf4, 0x89, 0xda, 0x46, 0x80, 0x82, 1, 0, 0xf5, 0xc5};
 	zassert_mem_equal(frame.bytes + 11, service_uuid, sizeof(service_uuid));
 	zassert_ok(k_msgq_get(&outgoing, &frame, K_NO_WAIT));
-	const uint8_t scan_prefix[] = {1, 7, 0xfe, 0, 0, 0, 10, 0x16, 0x50, 0x2a};
-	zassert_true(frame.size >= sizeof(scan_prefix));
-	zassert_mem_equal(frame.bytes, scan_prefix, 3);
-	zassert_equal(frame.bytes[4], 0); /* scan-response data */
-	zassert_mem_equal(frame.bytes + 6, scan_prefix + 6, 4);
+	const uint8_t scan_response[] = {1, 7, 0xfe, 31, 0, 29, 17, 6,
+		0x84, 0xaa, 0x60, 0x74, 0x52, 0x8a, 0x8b, 0x86,
+		0xd3, 0x4c, 0xb7, 0x1d, 0x1d, 0xdc, 0x53, 0x8d,
+		10, 9, 'B', 'r', 'i', 'c', 'k', 'p', 'h', 'y', 'r'};
+	zassert_equal(frame.size, sizeof(scan_response));
+	zassert_mem_equal(frame.bytes, scan_response, sizeof(scan_response));
 	zassert_ok(k_msgq_get(&outgoing, &frame, K_NO_WAIT));
 	const uint8_t discoverable[] = {1, 6, 0xfe, 10, 0, 2,
 		0, 0, 0, 0, 0, 0, 7, 0};
 	zassert_equal(frame.size, sizeof(discoverable));
 	zassert_mem_equal(frame.bytes, discoverable, sizeof(discoverable));
+}
+
+static void expect_outgoing(const uint8_t *expected, size_t length)
+{
+	struct frame frame;
+	zassert_ok(k_msgq_get(&outgoing, &frame, K_SECONDS(1)));
+	zassert_equal(frame.size, length);
+	zassert_mem_equal(frame.bytes, expected, length);
+}
+
+static void expect_smp_echo(uint16_t connection)
+{
+	for (size_t offset = 0; offset < sizeof(ble_echo_response);) {
+		struct frame frame;
+		zassert_ok(k_msgq_get(&outgoing, &frame, K_SECONDS(1)));
+		size_t count = MIN(sizeof(ble_echo_response) - offset, 20);
+		const uint8_t prefix[] = {1, 0x1b, 0xfd, count + 5,
+			(uint8_t)connection, (uint8_t)(connection >> 8), 0, 36, 0};
+		zassert_equal(frame.size, sizeof(prefix) + count);
+		zassert_mem_equal(frame.bytes, prefix, sizeof(prefix));
+		zassert_mem_equal(frame.bytes + sizeof(prefix), ble_echo_response + offset, count);
+		offset += count;
+	}
+}
+
+static void expect_smp_discovery(uint16_t connection)
+{
+	discover_smp(connection);
+	const uint8_t response[] = {1, 0x11, 0xfd, 23,
+		(uint8_t)connection, (uint8_t)(connection >> 8),
+		20, 34, 0, 37, 0,
+		0x84, 0xaa, 0x60, 0x74, 0x52, 0x8a, 0x8b, 0x86,
+		0xd3, 0x4c, 0xb7, 0x1d, 0x1d, 0xdc, 0x53, 0x8d};
+	expect_outgoing(response, sizeof(response));
+	uint8_t characteristic[] = {4, 0xff, 12, 8, 5, 0, 0, 0, 6,
+		34, 0, 37, 0, 3, 0x28};
+	sys_put_le16(connection, characteristic + 6);
+	enqueue(characteristic, sizeof(characteristic));
+	const uint8_t declaration[] = {1, 9, 0xfd, 24,
+		(uint8_t)connection, (uint8_t)(connection >> 8),
+		21, 35, 0, 0x14, 36, 0,
+		0x48, 0x7c, 0x99, 0x74, 0x11, 0x26, 0x9e, 0xae,
+		0x01, 0x4e, 0xce, 0xfb, 0x28, 0x78, 0x2e, 0xda};
+	expect_outgoing(declaration, sizeof(declaration));
+}
+
+static void expect_smp_subscription(uint16_t connection, bool enabled)
+{
+	set_smp_subscription(connection, enabled);
+	const uint8_t response[] = {1, 0x13, 0xfd, 2,
+		(uint8_t)connection, (uint8_t)(connection >> 8)};
+	expect_outgoing(response, sizeof(response));
 }
 
 static void await_notification_text(const char *needle)
@@ -412,7 +528,9 @@ ZTEST(cc2640_host, test_cold_shell_smp_backpressure_and_reconnect)
 	await_notification_text("CC2640 probe");
 	zassert_true(atomic_get(&retried) >= 1);
 
-	static const struct mgmt_handler handlers[] = {{.mh_write = smp_probe}};
+	static const struct mgmt_handler handlers[] = {
+		{.mh_write = smp_probe}, {.mh_write = smp_block},
+	};
 	static struct mgmt_group group = {
 		.mg_handlers = handlers, .mg_handlers_count = ARRAY_SIZE(handlers),
 		.mg_group_id = MGMT_GROUP_ID_PERUSER,
@@ -422,7 +540,6 @@ ZTEST(cc2640_host, test_cold_shell_smp_backpressure_and_reconnect)
 	const uint8_t request[] = {0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 1, 0, 0xa0};
 	zassert_ok(mcumgr_serial_tx_pkt(request, sizeof(request), send_smp));
 	zassert_ok(k_sem_take(&smp_done, K_SECONDS(1)));
-	mgmt_unregister_group(&group);
 
 	/* Reconnection must wait for accepted Shell work, not merely link refs. */
 	const uint8_t block[] = "block\r";
@@ -458,6 +575,74 @@ ZTEST(cc2640_host, test_cold_shell_smp_backpressure_and_reconnect)
 	probe_shell(2);
 	zassert_ok(k_sem_take(&command_done, K_SECONDS(1)));
 	await_notification_text("CC2640 probe");
+
+	/* A fresh link needs only the standard SMP CCC. The earlier Shell
+	 * subscription must not be a prerequisite for management requests. */
+	link_terminated(2);
+	await_status(HOST_BLE_WAITING);
+	zassert_ok(k_sem_take(&advertising_done, K_SECONDS(1)));
+	await_released();
+	k_msgq_purge(&outgoing);
+	link_established(2);
+	await_status(HOST_BLE_CONNECTED);
+	expect_smp_discovery(2);
+	expect_smp_subscription(2, true);
+	/* An unknown nested value must not bypass the bounded CBOR decoder.
+	 * Valid echo data remains present, so accepting it would return an echo. */
+	const uint8_t nested[] = {0x0a, 0, 0, 13, 0, 0, 8, 0,
+		0xa2, 0x61, 'd', 0x61, 'x', 0x61, 'u', 0x81, 0x81, 0x81, 0x81, 0x81, 0x00};
+	send_ble_smp(2, nested, sizeof(nested));
+	const uint8_t invalid_reply[] = {1, 0x1b, 0xfd, 19, 2, 0, 0, 36, 0,
+		0x0b, 0, 0, 6, 0, 0, 8, 0, 0xbf, 0x62, 'r', 'c', 3, 0xff};
+	expect_outgoing(invalid_reply, sizeof(invalid_reply));
+	send_ble_smp(2, ble_echo_request, sizeof(ble_echo_request));
+	expect_smp_echo(2);
+	await_status(HOST_BLE_NATIVE);
+
+	/* The same numeric link can unsubscribe and subscribe again. Even an
+	 * accepted command from the previous CCC generation cannot publish. */
+	const uint8_t held[] = {0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 9, 1, 0xa0};
+	const uint8_t queued[] = {0x0a, 0, 0, 1, 0, MGMT_GROUP_ID_PERUSER, 10, 1, 0xa0};
+	send_ble_smp(2, held, sizeof(held));
+	zassert_ok(k_sem_take(&smp_block_entered, K_SECONDS(1)));
+	send_ble_smp(2, queued, sizeof(queued));
+	att_write_command(2, 36, ble_echo_request, 20);
+	expect_smp_subscription(2, false);
+	expect_smp_subscription(2, true);
+	send_ble_smp(2, ble_echo_request, sizeof(ble_echo_request));
+	k_sem_give(&smp_block_release);
+	expect_smp_echo(2);
+	zassert_equal(atomic_get(&smp_block_calls), 1);
+
+	/* Hold an accepted SMP command, then queue another complete command and
+	 * leave an echo fragment incomplete. Disconnect must retire all three
+	 * before a reused numeric handle can accept a new connection. */
+	send_ble_smp(2, held, sizeof(held));
+	zassert_ok(k_sem_take(&smp_block_entered, K_SECONDS(1)));
+	send_ble_smp(2, queued, sizeof(queued));
+	att_write_command(2, 36, ble_echo_request, 20);
+	link_terminated(2);
+	await_status(HOST_BLE_WAITING);
+	zassert_equal(k_sem_take(&advertising_done, K_MSEC(20)), -EAGAIN,
+		"Advertised while an SMP handler still held the old session");
+	k_sem_give(&smp_block_release);
+	zassert_ok(k_sem_take(&advertising_done, K_SECONDS(1)));
+	await_released();
+	zassert_equal(atomic_get(&smp_block_calls), 2,
+		"Queued old-session SMP request reached its handler");
+	struct frame frame;
+	while (!k_msgq_get(&outgoing, &frame, K_NO_WAIT)) {
+		zassert_false(frame.size >= 9 && frame.bytes[1] == 0x1b &&
+			frame.bytes[2] == 0xfd && sys_get_le16(frame.bytes + 7) == 36,
+			"Old-session SMP notification escaped after disconnect");
+	}
+	link_established(2);
+	await_status(HOST_BLE_CONNECTED);
+	expect_smp_subscription(2, true);
+	send_ble_smp(2, ble_echo_request, sizeof(ble_echo_request));
+	expect_smp_echo(2);
+	zassert_equal(atomic_get(&smp_block_calls), 2);
+	mgmt_unregister_group(&group);
 	host_ble_shutdown();
 	await_status(HOST_BLE_OFF);
 	await_released();

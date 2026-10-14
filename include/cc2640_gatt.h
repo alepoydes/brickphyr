@@ -7,13 +7,13 @@
 
 #define CC2640_ATT_MTU 23
 #define CC2640_GATT_PACKET_MAX (CC2640_ATT_MTU + 6)
-#define CC2640_GATT_SERVICE_COUNT 6
+#define CC2640_GATT_SERVICE_COUNT (6 + IS_ENABLED(CONFIG_BRICKPHYR_CC2640_SMP))
 
 /* One controller database and one accepted management link. Clear subscriptions
  * at each link boundary; retain the handles until the controller is reset. */
 struct cc2640_gatt {
 	uint16_t first[CC2640_GATT_SERVICE_COUNT];
-	uint16_t subscribed[3]; /* Pybricks, legacy NUS, native Shell. */
+	uint16_t subscribed[3 + IS_ENABLED(CONFIG_BRICKPHYR_CC2640_SMP)];
 };
 
 /* Service and attribute indices begin at zero. Attribute zero registers the

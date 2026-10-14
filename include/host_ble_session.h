@@ -13,7 +13,7 @@
  * refer to a later connection, even if the controller reuses its numeric ID.
  * Callbacks for a given link are serialized by its backend. */
 struct host_ble_link;
-enum host_ble_value { HOST_BLE_VALUE_PYBRICKS, HOST_BLE_VALUE_SHELL };
+enum host_ble_value { HOST_BLE_VALUE_PYBRICKS, HOST_BLE_VALUE_SHELL, HOST_BLE_VALUE_SMP };
 
 /* Backend hooks. Ref/unref/MTU are nonblocking and valid under a spinlock.
  * Notify copies/queues bytes without waiting for controller replies; -EAGAIN

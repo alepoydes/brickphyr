@@ -93,8 +93,9 @@ matching, address readback, malformed responses, timeouts and first-error cleanu
 with a simulated NPI device. The UART-free host fixture checks the shared BLE
 session independently. The full `cc2640_host` fixture runs the production
 controller, GATT, event worker and shared Shell/SMP over a simulated NPI queue.
-It covers cold startup, notification backpressure, disconnect/reconnect and old
-output isolation without an SPI peripheral.
+It covers cold startup, notification backpressure, fragmented standard SMP echo,
+disconnect/reconnect and subscription reset during an accepted command, including
+old-output isolation and release of incomplete/queued packets, without an SPI peripheral.
 These checks do not establish CC2640 radio behavior or physical BLE connectivity.
 
 The optional GATT variant of the UART-free fixture drives raw TI ATT events into

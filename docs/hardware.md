@@ -127,14 +127,13 @@ Information registration, with pairing disabled and the validated public factory
 address. It does not erase controller bonds. Its ATT request
 handler supports discovery, reads, subscriptions and shared Pybricks/Shell writes
 at the default MTU of 23 bytes. Synthetic wire checks cover discovery boundaries,
-rejected requests, cold Shell/SMP use and reconnect; SMP here uses the existing
-terminal framing, not a separate CC2640 SMP characteristic.
+rejected requests, cold Shell/SMP use and reconnect.
 The base and NPI-only builds keep the controller in reset at boot. The optional
 [BLE build](builds.md#experimental-technic-base) initializes it and adds an
-advertising/event worker using the shared Shell, serial SMP and Pybricks identity
-session. Its production-path synthetic fixture covers cold startup, notification
-backpressure, disconnect/reconnect and old-output isolation. There is no separate
-SMP BLE characteristic. This remains build-only support: no physical Technic BLE
+advertising/event worker using the shared Shell, standard SMP BLE service and
+Pybricks identity session. Its production-path synthetic fixture covers cold
+startup, notification backpressure, fragmented SMP packets, disconnect/reconnect
+and old-output isolation. This remains build-only support: no physical Technic BLE
 connection, boot or recovery has been checked.
 
 [Builds](builds.md#experimental-technic-base) gives the build command;

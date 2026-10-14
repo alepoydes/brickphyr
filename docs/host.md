@@ -397,6 +397,12 @@ rejects subsequent commands bundled in the current packet, while an already
 entered handler may finish. These paths require
 the pinned [Zephyr changes](upstream.md#smp-prerequisites).
 
+Unknown CBOR fields may contain at most four nested maps/lists when skipped.
+Deeper values return a decode error instead of consuming unbounded C stack.
+`CONFIG_ZCBOR_MAX_RECURSION_DEPTH` controls this limit independently of decoder
+state backups. The [CBOR prerequisite](upstream.md#cbor-stack-bound) describes
+the local dependency changes.
+
 ## USB selection experiment
 
 The required outcome is computer-controlled interface selection without buttons

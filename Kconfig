@@ -10,6 +10,15 @@ config CDC_ACM_SERIAL_ENABLE_AT_BOOT
 config MCUMGR_TRANSPORT_NETBUF_SIZE
 	default 512 if BRICKPHYR_MOTOR_CONTROL && BRICKPHYR_TELEMETRY
 
+config MCUMGR_TRANSPORT_NETBUF_USER_DATA_SIZE
+	default 16 if BRICKPHYR_CC2640_SMP && 64BIT
+	default 8 if BRICKPHYR_CC2640_SMP
+
+# Unknown SMP fields must not bypass the decoder's bounded nesting and exhaust
+# its 2 KiB worker stack. Current management fields need no deeper skipped value.
+config ZCBOR_MAX_RECURSION_DEPTH
+	default 4 if MCUMGR
+
 # Management commands have no acquisition deadline. Keep CBOR/file processing
 # below the 833 Hz IMU and 200 Hz motor service, but above Shell/applications.
 config MCUMGR_TRANSPORT_WORKQUEUE_THREAD_PRIO
@@ -72,6 +81,17 @@ config BRICKPHYR_CC2640_BLE
 	  Run the factory TI peripheral stack on a dedicated worker and expose
 	  the shared Pybricks identity and native Shell/SMP stream. This profile
 	  has synthetic transport checks; physical Technic acceptance is pending.
+
+config BRICKPHYR_CC2640_SMP
+	bool "CC2640 SMP GATT transport"
+	depends on MCUMGR && !BT
+	depends on BRICKPHYR_CC2640_BLE || ZTEST
+	default y if BRICKPHYR_CC2640_BLE
+	select MCUMGR_TRANSPORT_REASSEMBLY
+	help
+	  Expose the standard MCUmgr BLE service through the factory TI stack.
+	  Reuse Zephyr packet reassembly and command processing with the shared
+	  management owner. This is independent of SMP over the Shell stream.
 
 config BRICKPHYR_WATCHDOG
 	bool "System progress watchdog"

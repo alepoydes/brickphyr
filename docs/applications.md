@@ -57,8 +57,8 @@ allocator reserves, so it is not the firmware's live working set.
    capabilities and outstanding physical checks explicitly.
 
 The native ELF interface now has a versioned table independent of firmware
-configuration; Technic has a build-only power/UI/watchdog base, with BLE and
-application loading still pending. Existing Python
+configuration; Technic has build-only power/UI/watchdog and BLE management
+profiles, with native application loading still pending. Existing Python
 acceptance work remains tracked in its owning plan; WASM is outside this milestone.
 
 ## Experimental native profile

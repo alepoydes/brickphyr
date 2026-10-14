@@ -365,6 +365,7 @@ BT_GATT_SERVICE_DEFINE(brickphyr_terminal,
 int host_ble_link_notify(struct host_ble_link *link, enum host_ble_value value,
 			const uint8_t *data, size_t size)
 {
+	if (value != HOST_BLE_VALUE_PYBRICKS && value != HOST_BLE_VALUE_SHELL) return -EINVAL;
 	struct bt_conn *conn = (struct bt_conn *)link;
 	const struct bt_gatt_attr *attr = value == HOST_BLE_VALUE_PYBRICKS ?
 		&pybricks_service.attrs[2] : &brickphyr_terminal.attrs[2];

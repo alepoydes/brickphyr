@@ -18,8 +18,10 @@ uses the TI network-processor interface. Physical endpoint acceptance remains pe
 The optional [Technic BLE profile](builds.md#experimental-technic-base) starts the
 factory CC2640, registers the management services and advertises the Pybricks
 identity. Its native Shell and serial-framed SMP reuse the shared transport and
-session owner; they do not require USB. The ATT MTU is fixed at 23 bytes. SMP
-uses the Shell byte stream, with no separate SMP BLE characteristic. The legacy
+session owner; they do not require USB. The standard SMP BLE service is enabled
+by `CONFIG_BRICKPHYR_CC2640_SMP`; it uses Zephyr's packet queue, fragment
+reassembly and management handlers. The ATT MTU is fixed at 23 bytes, so larger
+SMP packets span several writes or notifications. The legacy
 NUS notification characteristic remains for client discovery, while NUS stdin
 reports unsupported use.
 
@@ -29,7 +31,10 @@ management session until its disconnect and any accepted operation have drained.
 The controller worker bounds command waits and retains the first failure for
 diagnosis. This profile has no native application loading, Python execution,
 program storage or port API. Production-path synthetic checks cover cold startup,
-Shell/SMP, notification backpressure, reconnect and isolation of old output.
+Shell/SMP, fragmented standard SMP requests/replies, notification backpressure,
+reconnect and isolation of old output. Disconnect or subscription cancellation
+discards incomplete and queued packets; an accepted command finishes while its
+old response is discarded. A new subscription cannot inherit that response.
 No physical Technic Hub or CC2640 BLE connection has been tested.
 
 ## Experimental F4 controller

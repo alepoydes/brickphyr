@@ -338,6 +338,33 @@ without blocking Bluetooth RX. Focused Zephyr tests cover admission, malformed
 input, allocation/output failures and exactly-once completion. The callbacks are
 part of the pinned Zephyr integration.
 
+The CC2640 transport additionally uses local Zephyr commit `c8eecf97` on
+`topic/smp-transport-api` for public enqueue and fragment-reassembly APIs,
+not yet included in the manifest pin:
+`smp_rx_req()` in `zephyr/mgmt/mcumgr/transport/smp.h` and
+`smp_reassembly_*()` in `zephyr/mgmt/mcumgr/transport/smp_reassembly.h`.
+These expose the existing implementation for external transports without
+depending on private headers or duplicating its packet assembler. Callers own
+serialized access and packet user-data cleanup. The existing Zephyr reassembly
+fixture exercises the public header; the CC2640 fixture exercises asynchronous
+processing and session lifetime through it.
+
+## CBOR stack bound
+
+Local zcbor commit `f4b3f69` on `topic/bounded-skip` adds the optional
+`ZCBOR_MAX_RECURSION_DEPTH` compile definition to the existing skip algorithm.
+This bounds recursion through unknown maps/lists, which otherwise ignores the
+decoder's state-backup limit. Zephyr commit `22b361ec` exposes its Kconfig option,
+defaulting to zero to preserve the dependency's unbounded default; Brickphyr selects four.
+The 2 KiB SMP worker must accommodate packet dispatch and handlers as well as
+these recursive frames. Increasing the limit requires a new stack budget.
+
+The zcbor unit check covers the boundary, mixed definite/indefinite containers,
+tags and unchanged caller position on failure. The CC2640 fixture checks a
+standard SMP error followed by a valid request on the same session. Neither is
+a physical stack high-water measurement. Publish both dependency changes before
+updating the shared manifest; zcbor remains Zephyr's imported module.
+
 
 ## HCI timeout prerequisite
 

@@ -10,6 +10,7 @@
 
 #include "cc2640_gatt.h"
 #include "host_protocol.h"
+#include "host_cc2640_smp.h"
 
 #include <errno.h>
 #include <string.h>
@@ -17,12 +18,14 @@
 #include <zephyr/bluetooth/att.h>
 #include <zephyr/bluetooth/services/nus.h>
 #include <zephyr/bluetooth/uuid.h>
+#include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
 #include <zephyr/sys/byteorder.h>
 
 enum value_kind { DECLARATION, NAME, APPEARANCE, PARAMETERS,
 	FW_VERSION, PROTOCOL_VERSION, PNP, PYBRICKS_COMMAND, CAPABILITIES,
-	PYBRICKS_CCC, NUS_TX, NUS_CCC, NUS_RX, SHELL_TX, SHELL_CCC, SHELL_RX };
-enum { READ = 0x02, WRITE = 0x08, NOTIFY = 0x10 };
+	PYBRICKS_CCC, NUS_TX, NUS_CCC, NUS_RX, SHELL_TX, SHELL_CCC, SHELL_RX,
+	SMP_PACKET, SMP_CCC };
+enum { READ = 0x02, WRITE_COMMAND = 0x04, WRITE = 0x08, NOTIFY = 0x10 };
 /* Bluetooth Core ATT opcodes. Public Zephyr att.h supplies error codes but does
  * not export these wire constants; no private host-stack header is needed. */
 enum att_opcode {
@@ -73,6 +76,12 @@ static const struct attribute shell[] = {
 	DECL, ATTR128(shell_uuid[1], SHELL_TX, NOTIFY), CCC(SHELL_CCC),
 	DECL, ATTR128(shell_uuid[2], SHELL_RX, WRITE),
 };
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+static const uint8_t smp_uuid[][16] = {{SMP_BT_SVC_UUID_VAL}, {SMP_BT_CHR_UUID_VAL}};
+static const struct attribute smp[] = {
+	DECL, ATTR128(smp_uuid[1], SMP_PACKET, WRITE_COMMAND | NOTIFY), CCC(SMP_CCC),
+};
+#endif
 static const struct {
 	uint16_t uuid16;
 	uint8_t count;
@@ -85,6 +94,9 @@ static const struct {
 	{0, 1 + ARRAY_SIZE(pybricks), pbio_pybricks_service_uuid, pybricks},
 	{0, 1 + ARRAY_SIZE(nus), nus_uuid[0], nus},
 	{0, 1 + ARRAY_SIZE(shell), shell_uuid[0], shell},
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	{0, 1 + ARRAY_SIZE(smp), smp_uuid[0], smp},
+#endif
 };
 BUILD_ASSERT(ARRAY_SIZE(services) == CC2640_GATT_SERVICE_COUNT);
 
@@ -122,7 +134,7 @@ size_t cc2640_gatt_registration(unsigned int service, unsigned int attribute,
 		size_t length = uuid_copy(packet + 4, attr->uuid16, attr->uuid128);
 		/* Notify-only values still need a registered attribute. Actual read
 		 * access is checked against the characteristic's properties below. */
-		packet[4 + length] = (attr->properties & WRITE ? 2 : 0) |
+		packet[4 + length] = (attr->properties & (WRITE | WRITE_COMMAND) ? 2 : 0) |
 			(attr->properties & (READ | NOTIFY) ? 1 : 0);
 		packet[3] = length + 1;
 	}
@@ -157,7 +169,8 @@ static int locate(const struct cc2640_gatt *gatt, uint16_t handle, unsigned int 
 
 static int ccc_index(enum value_kind kind)
 {
-	return kind == PYBRICKS_CCC ? 0 : kind == NUS_CCC ? 1 : kind == SHELL_CCC ? 2 : -1;
+	return kind == PYBRICKS_CCC ? 0 : kind == NUS_CCC ? 1 :
+		kind == SHELL_CCC ? 2 : kind == SMP_CCC ? 3 : -1;
 }
 
 static int read_value(struct cc2640_gatt *gatt, struct host_ble_link *link,
@@ -215,13 +228,20 @@ static int write_value(struct cc2640_gatt *gatt, struct host_ble_link *link,
 	if (service < 0) return BT_ATT_ERR_INVALID_HANDLE;
 	if (!offset) return BT_ATT_ERR_WRITE_NOT_PERMITTED;
 	const struct attribute *attr = &services[service].attributes[offset - 1];
-	if (!(attr->properties & WRITE)) return BT_ATT_ERR_WRITE_NOT_PERMITTED;
+	if (!(attr->properties & (WRITE | WRITE_COMMAND))) return BT_ATT_ERR_WRITE_NOT_PERMITTED;
 	int ccc = ccc_index(attr->kind);
 	int result;
 	if (ccc >= 0) {
 		if (length != 2) return BT_ATT_ERR_INVALID_ATTRIBUTE_LEN;
 		uint16_t enabled = sys_get_le16(value);
 		if (enabled > 1) return BT_ATT_ERR_VALUE_NOT_ALLOWED;
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+		if (ccc == 3) {
+			host_cc2640_smp_subscribe(link, enabled);
+			gatt->subscribed[ccc] = enabled;
+			return 0;
+		}
+#endif
 		result = ccc == 2 ? host_ble_session_shell_subscribe(link, enabled) :
 			host_ble_session_ccc_check(link, enabled);
 		if (result < 0) return -result;
@@ -233,6 +253,10 @@ static int write_value(struct cc2640_gatt *gatt, struct host_ble_link *link,
 		result = host_ble_session_command(link, value, length, 0, false);
 	} else if (attr->kind == SHELL_RX) {
 		result = host_ble_session_shell_input(link, value, length, 0, false);
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	} else if (attr->kind == SMP_PACKET) {
+		result = host_cc2640_smp_receive(link, value, length);
+#endif
 	} else {
 		return BT_ATT_ERR_NOT_SUPPORTED; /* Legacy NUS stdin. */
 	}
@@ -378,6 +402,9 @@ int cc2640_gatt_notification(const struct cc2640_gatt *gatt, uint16_t connection
 	unsigned int service, ccc;
 	if (value == HOST_BLE_VALUE_PYBRICKS) { service = 3; ccc = 0; }
 	else if (value == HOST_BLE_VALUE_SHELL) { service = 5; ccc = 2; }
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	else if (value == HOST_BLE_VALUE_SMP) { service = 6; ccc = 3; }
+#endif
 	else return -EINVAL;
 	if (!gatt->first[service] || !gatt->subscribed[ccc]) return -ENOTCONN;
 	/* TI ATT_HandleValueNoti adds an authentication flag before the handle.

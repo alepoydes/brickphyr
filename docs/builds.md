@@ -174,7 +174,7 @@ Unused initialization routines may be removed by the linker; this profile's size
 is not a full BLE endpoint resource measurement.
 
 The optional BLE profile connects the factory CC2640 to the shared management
-Shell, serial-framed SMP and Pybricks identity endpoint:
+Shell, standard SMP BLE service and Pybricks identity endpoint:
 
 ```sh
 CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b technic_hub -d build/technic-bluetooth -t firmware_package -- \

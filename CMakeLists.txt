@@ -51,6 +51,7 @@ if(CONFIG_BRICKPHYR_CC2640_BLE)
   target_sources(app PRIVATE src/host_cc2640.c src/host_ble_session.c
     src/host_transport.c src/host_protocol.c)
 endif()
+target_sources_ifdef(CONFIG_BRICKPHYR_CC2640_SMP app PRIVATE src/host_cc2640_smp.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_SOUND app PRIVATE src/hub_sound.c src/sound/waveform.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_TELEMETRY app PRIVATE src/telemetry.c)

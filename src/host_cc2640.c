@@ -3,6 +3,7 @@
  * Only this worker performs controller I/O. Callbacks may queue work but never
  * wait for radio replies on the system queue or in the hub's power loop. */
 #include "host_cc2640.h"
+#include "host_cc2640_smp.h"
 #include "cc2640_controller.h"
 #include "cc2640_gatt.h"
 #include "cc2640_npi.h"
@@ -13,6 +14,7 @@
 #include <pbio/protocol.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
 
@@ -72,6 +74,19 @@ static struct {
 	bool pending;
 } notification;
 
+static int subscription(enum host_ble_value value)
+{
+	return value == HOST_BLE_VALUE_PYBRICKS ? 0 : value == HOST_BLE_VALUE_SHELL ? 2 : 3;
+}
+
+static uint32_t output_generation(int ccc)
+{
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	if (ccc == 3) return host_cc2640_smp_generation();
+#endif
+	return link.epoch;
+}
+
 struct host_ble_link *host_ble_link_ref(struct host_ble_link *peer)
 {
 	atomic_inc(&peer->references);
@@ -93,7 +108,8 @@ int host_ble_link_notify(struct host_ble_link *peer, enum host_ble_value value,
 			const uint8_t *data, size_t size)
 {
 	if (!data || !size || size > sizeof(notification.data)) return -EMSGSIZE;
-	if (value != HOST_BLE_VALUE_PYBRICKS && value != HOST_BLE_VALUE_SHELL) return -EINVAL;
+	if (value != HOST_BLE_VALUE_PYBRICKS && value != HOST_BLE_VALUE_SHELL &&
+	    !(IS_ENABLED(CONFIG_BRICKPHYR_CC2640_SMP) && value == HOST_BLE_VALUE_SMP)) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&link_lock);
 	int err = atomic_get(&state) == RADIO_FAILED ? -EIO :
 		peer != &link || !link.active || atomic_get(&link.closing) ? -ENOTCONN :
@@ -102,7 +118,7 @@ int host_ble_link_notify(struct host_ble_link *peer, enum host_ble_value value,
 		memcpy(notification.data, data, size);
 		notification.size = size;
 		notification.value = value;
-		notification.epoch = link.epoch;
+		notification.epoch = output_generation(subscription(value));
 		notification.pending = true;
 		k_sem_give(&wake);
 	}
@@ -137,6 +153,9 @@ static void close_link(void)
 	memset(gatt.subscribed, 0, sizeof(gatt.subscribed));
 	disconnect_sent = false;
 	if (active) {
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+		host_cc2640_smp_subscribe(&link, false);
+#endif
 		host_ble_session_close(&link);
 		host_ble_link_unref(&link);
 	}
@@ -215,25 +234,35 @@ static int command(const uint8_t *data, size_t size)
 
 static int prepare_advertising(void)
 {
-	/* Same legacy discovery layout as F4 without a dedicated SMP service:
-	 * Pybricks service in advertising, PnP and name in the scan response. */
+	/* Same legacy discovery layout as F4: Pybricks in advertising; SMP (or
+	 * PnP without SMP) beside the name in scan response. */
 	uint8_t packet[37] = {1, 7, 0xfe, 23, 1, 21, 2, 1, 6, 17, 6};
 	sys_memcpy_swap(packet + 11, pbio_pybricks_service_uuid, 16);
 	int err = command(packet, 27);
 	if (err) return err;
 	packet[4] = 0;
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	packet[6] = 17;
+	packet[7] = 6;
+	const uint8_t smp_uuid[] = {SMP_BT_SVC_UUID_VAL};
+	memcpy(packet + 8, smp_uuid, sizeof(smp_uuid));
+	const size_t prefix = 24;
+#else
 	packet[6] = 10;
 	packet[7] = 0x16;
 	sys_put_le16(PBIO_GATT_PNP_ID_CHAR_UUID, packet + 8);
 	pbio_pybricks_pnp_id(packet + 10, host_protocol_hub_kind(), host_hub_variant());
+	const size_t prefix = 17;
+#endif
 	uint8_t name[HOST_PROTOCOL_PAYLOAD_MAX - 3];
 	size_t length = host_protocol_read(PBIO_PYBRICKS_READ_SERVICE_GATT,
 		PBIO_GATT_DEVICE_NAME_CHAR_UUID, host_hub_variant(), 20, name);
-	if (!length || length > 18) return -EMSGSIZE;
-	packet[17] = length + 1;
-	packet[18] = 9;
-	memcpy(packet + 19, name, length);
-	packet[5] = 13 + length;
+	if (!length) return -EMSGSIZE;
+	size_t count = MIN(length, sizeof(packet) - prefix - 2);
+	packet[prefix] = count + 1;
+	packet[prefix + 1] = count == length ? 9 : 8; /* complete/shortened name */
+	memcpy(packet + prefix + 2, name, count);
+	packet[5] = prefix - 6 + 2 + count;
 	packet[3] = 2 + packet[5];
 	return command(packet, packet[3] + 4);
 }
@@ -254,7 +283,7 @@ static void fail_radio(const char *operation, int err)
 
 static bool current(const struct transmission *tx)
 {
-	return link.active && !atomic_get(&link.closing) && tx->epoch == link.epoch &&
+	return link.active && !atomic_get(&link.closing) && tx->epoch == output_generation(tx->subscription) &&
 		(tx->subscription < 0 || gatt.subscribed[tx->subscription]);
 }
 
@@ -342,20 +371,24 @@ static void run(void *a, void *b, void *c)
 			int encode_error = 0;
 			k_spinlock_key_t key = k_spin_lock(&link_lock);
 			if (notification.pending) {
-				if (link.active && !atomic_get(&link.closing) && notification.epoch == link.epoch) {
+				int ccc = subscription(notification.value);
+				if (link.active && !atomic_get(&link.closing) && notification.epoch == output_generation(ccc)) {
 					int count = cc2640_gatt_notification(&gatt, link.connection,
 						notification.value, notification.data, notification.size, output.data);
 					if (count > 0) {
 						output.size = count;
-						output.epoch = link.epoch;
+						output.epoch = notification.epoch;
 						output.retry_at = 0;
 						output.expires = now + TX_TIMEOUT_MS;
-						output.subscription = notification.value == HOST_BLE_VALUE_SHELL ? 2 : 0;
+						output.subscription = ccc;
 					} else if (count != -ENOTCONN) encode_error = count;
 				}
 				notification.pending = false;
 			}
 			k_spin_unlock(&link_lock, key);
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+			host_cc2640_smp_tx_ready();
+#endif
 			if (encode_error) { fail_radio("notification", encode_error); continue; }
 		}
 		/* ATT responses take precedence over further notifications. */
@@ -418,6 +451,10 @@ int host_cc2640_init(const struct device *npi, const uint8_t address[6])
 	if (transport) return -EALREADY;
 	int err = host_transport_init(NULL, 0);
 	if (err) return err;
+#ifdef CONFIG_BRICKPHYR_CC2640_SMP
+	err = host_cc2640_smp_init();
+	if (err) return err;
+#endif
 	transport = npi;
 	memcpy(factory_address, address, sizeof(factory_address));
 	cc2640_npi_set_wake(npi, &wake);
