@@ -6,6 +6,11 @@ mainmenu "Brickphyr"
 config NUM_MBOX_ASYNC_MSGS
 	default 0
 
+# A native controller preempts Python, while hardware and management retain
+# their priorities above both application contexts.
+config NUM_PREEMPT_PRIORITIES
+	default 16 if BRICKPHYR_PYTHON
+
 # Crypto temporaries share the system heap instead of a user-mapped libc arena.
 config TF_PSA_CRYPTO_USER_CONFIG_FILE
 	default "brickphyr/crypto_config.h" if BOARD_SPIKE_PRIME_F4 && MBEDTLS_BUILTIN && !MBEDTLS_ENABLE_HEAP

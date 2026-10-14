@@ -166,7 +166,19 @@ def _group_values(data):
     }
 
 
+def _step_values(data):
+    scheduled, started, sequence, skipped, revision, size = struct.unpack_from("<qq4I", data)
+    port_mask, _reserved = struct.unpack_from("<2I", data, 208)
+    return {
+        "scheduled_us": scheduled, "started_us": started,
+        "sequence": sequence, "skipped": skipped,
+        "parameter_revision": revision, "parameter_size": size, "port_mask": port_mask,
+        "input": _control_values(data[32:208]),
+    }
+
+
 _DECODERS = {
+    "brickphyr.control-step/1": (216, _step_values),
     _CONTROL_SCHEMA: (_CONTROL_RECORD.size, _control_values),
     _GROUP_SCHEMA: (_CONTROL_RECORD.size + _GROUP_TAIL.size + 2 * _GROUP_PORT.size,
                     _group_values),

@@ -23,8 +23,10 @@ Reuse proven numerical code without carrying forward obsolete runtime constraint
 One user application owns a set of device claims and component lifetimes. The
 selected extension permits a native control context alongside an optional Python
 context within that application; standalone native and Python operation remain
-supported. This is planned work: the current implementation executes one engine
-at a time. Hardware and management services continue independently. General-purpose
+supported. The implementation supports this shared lifetime with separate protected
+memory and copied parameters; see
+[applications](applications.md#native-control-alongside-python). Hardware and
+management services continue independently. General-purpose
 multi-process scheduling is outside scope; WASM remains a later extension.
 
 One Zephyr system serves all execution engines and host interfaces. Selecting a

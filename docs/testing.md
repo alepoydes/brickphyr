@@ -670,6 +670,22 @@ those two targets in `build/native-smp-examples` first; the test does not compil
 It collects through the same SMP decoder used by `app record`. The model checks
 protocol and lifecycle behavior, not physical motor response or timing.
 
+`tests/test_python_control.py` uses `build/python-fpu-tests` and its native
+`control_probe.elf`. It checks native progress during Python GC/float work,
+complete copied revisions, missed periodic releases, shared return/fault/stop,
+MPU separation and exact system-heap reclamation after clearing retained records.
+The port-service fixture checks that controller ownership excludes Python's
+application owner. Build before running the focused checks:
+
+```sh
+uv run --locked cmake --build build/python-fpu-tests -j4
+uv run --locked pytest -q -x tests/test_python_control.py
+```
+
+These are synthetic M4 execution checks. They do not establish a physical
+control deadline; see [concurrent control](applications.md#native-control-alongside-python)
+for the bounded Inventor F4 evidence and remaining timing work.
+
 The simulator compiles the same application and Zephyr shell. The test opens its
 pseudoterminal with pyserial and checks command echo, help/identity, rejected
 arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,

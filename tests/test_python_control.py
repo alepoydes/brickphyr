@@ -1,0 +1,195 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Independent native controller through the Python application and SMP paths."""
+
+import asyncio
+import re
+import struct
+from pathlib import Path
+
+import cbor2
+
+from brickphyrdev import console, recording
+from brickphyrdev.application import Format, Start, Status, Stop, checked, connection, upload
+from test_native import native_console
+from test_python import completed, output
+
+
+BUILD = Path(__file__).resolve().parents[1] / "build/python-fpu-tests"
+RECORD = struct.Struct("<qqIIIIIfII")
+
+
+def bundle(source):
+    return cbor2.dumps(
+        {
+            "main.py": source.encode(),
+            "controller.elf": (BUILD / "control_probe.elf").read_bytes(),
+        }
+    )
+
+
+async def records(client):
+    info = await checked(client, recording.Info())
+    assert (info.size, info.capacity, info.record_schema) == (48, 16, "fixture.control/1")
+    result = []
+    for index in range(info.first, info.next):
+        response = await checked(
+            client, recording.Record(generation=info.generation, index=index, off=0)
+        )
+        assert len(response.data) == RECORD.size
+        result.append(RECORD.unpack(response.data))
+    return result
+
+
+def test_python_control_runs_during_gc_and_copies_updates():
+    source = """import brickphyr, gc, struct
+def params(value):
+    return struct.pack('<4I', 0, value, (~value) & 0xffffffff, 0)
+try:
+    brickphyr.control_start(b'bad image', params(1))
+    raise AssertionError('invalid controller accepted')
+except OSError:
+    pass
+brickphyr.control_start(open('controller.elf', 'rb').read(), params(7))
+def wait_for(revision, steps):
+    for n in range(20000):
+        state = brickphyr.control_status()
+        if state['applied_revision'] == revision and state['sequence'] >= steps:
+            return state
+        bytearray(64)
+        value = n * 0.125 + 0.5
+        assert value >= 0.5
+        if n % 128 == 0:
+            gc.collect()
+    raise AssertionError('controller did not advance')
+first = wait_for(1, 2)
+assert first['period_us'] == 10000 and first['stack_bytes'] >= 2048
+assert first['loader_bytes'] > 0 and first['loaded_bytes'] > 0
+assert brickphyr.control_update(params(0x12345678)) == 2
+second = wait_for(2, first['sequence'] + 1)
+assert brickphyr.control_update(params(0x87654321)) == 3
+third = wait_for(3, second['sequence'] + 1)
+wait_for(3, third['sequence'] + 3)
+print('controller revisions and GC passed')
+"""
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            try:
+                await upload(client, transport, bundle(source), Format.FILES)
+                await checked(client, Start())
+                status = await completed(client)
+                text = await output(client)
+                assert status.result == 0 and b"controller revisions and GC passed" in text, (
+                    status,
+                    text,
+                )
+                observed = await records(client)
+                assert {row[4] for row in observed} >= {2, 3}, observed
+                for row in observed:
+                    scheduled, started, sequence, skipped, revision, size, value, total, _, reserved = row
+                    assert started >= scheduled and sequence > 0 and size == 16
+                    assert total == sequence * 0.25 and reserved == 0
+                    if revision in (2, 3):
+                        assert value == {2: 0x12345678, 3: 0x87654321}[revision]
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+def test_python_control_overrun_then_return():
+    source = """import brickphyr, struct
+def params(mode):
+    return struct.pack('<4I', mode, 11, (~11) & 0xffffffff, 0)
+brickphyr.control_start(open('controller.elf', 'rb').read(), params(4))
+for n in range(20000):
+    if brickphyr.control_status()['sequence'] >= 5:
+        break
+else:
+    raise AssertionError('controller did not resume after sleep')
+assert brickphyr.control_update(params(1)) == 2
+input()
+"""
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            try:
+                await upload(client, transport, bundle(source), Format.FILES)
+                await checked(client, Start())
+                status = await completed(client)
+                assert status.result == 77, (status, await output(client))
+                observed = await records(client)
+                assert any(row[3] > 0 for row in observed), observed
+                assert any(row[4] == 2 for row in observed), observed
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+def test_python_control_fault_stop_and_heap_recovery():
+    fault_source = """import brickphyr, struct
+private = bytearray(16)
+value = 23
+parameters = struct.pack('<4I', 2, value, (~value) & 0xffffffff, id(private))
+brickphyr.control_start(open('controller.elf', 'rb').read(), parameters)
+input()
+"""
+    spin_source = """import brickphyr, struct
+value = 29
+brickphyr.control_start(open('controller.elf', 'rb').read(),
+    struct.pack('<4I', 3, value, (~value) & 0xffffffff, 0))
+input()
+"""
+
+    async def exercise(port):
+        shell = bytearray()
+        async with console.connection(shell.extend, management=True, port=port) as (
+            transport,
+            client,
+        ):
+            async def heap_allocated():
+                shell.clear()
+                await transport.write(b"kernel heap\r")
+                async with asyncio.timeout(2):
+                    while not shell.endswith(b"brickphyr> "):
+                        await asyncio.sleep(0.005)
+                match = re.search(rb"\r\nallocated:\s+(\d+)", shell)
+                assert match, bytes(shell)
+                return int(match[1])
+
+            baseline = await heap_allocated()
+            try:
+                await upload(client, transport, bundle(fault_source), Format.FILES)
+                await checked(client, Start())
+                fault = await completed(client, state=4)
+                assert fault.fault != 0, fault
+                await checked(client, Stop())
+                await checked(client, recording.Clear())
+                assert await heap_allocated() == baseline
+
+                await upload(client, transport, bundle(spin_source), Format.FILES)
+                await checked(client, Start())
+                async with asyncio.timeout(2):
+                    while (await checked(client, recording.Info())).next < 1:
+                        assert (await checked(client, Status())).state == 1
+                        await asyncio.sleep(0.01)
+                await checked(client, Stop())
+                stopped = await checked(client, Status())
+                assert stopped.state == 3 and stopped.cleanup == 0, stopped
+                await checked(client, recording.Clear())
+                assert await heap_allocated() == baseline
+
+                await upload(client, transport, b"print('Python after controller')\n", Format.PYTHON)
+                await checked(client, Start())
+                returned = await completed(client)
+                assert returned.result == 0 and b"Python after controller" in await output(client)
+                await checked(client, Stop())
+                assert await heap_allocated() == baseline
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))

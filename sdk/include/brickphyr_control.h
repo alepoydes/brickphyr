@@ -4,6 +4,14 @@
 #include <brickphyr_battery.h>
 #include <brickphyr_port.h>
 
+/* Periodic native release. Times use the same monotonic clock as input frames.
+ * skipped counts omitted releases since the previous call, not wakeup jitter.
+ * The copied parameter block and its revision belong to this exact step. */
+struct bp_control_step {
+	int64_t scheduled_us, started_us;
+	uint32_t sequence, skipped, parameter_revision, parameter_size;
+};
+
 /* One port publication, with explicit connection identity for each output.
  * Encoder coordinates are physical shaft millidegrees. sample_ms is parser
  * completion, not the sensor's physical sampling instant. Check error first.

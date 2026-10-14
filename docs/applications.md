@@ -20,13 +20,101 @@ Zephyr syscall numbering are existing foundations, described below. Continue
 measuring loading peaks, stacks, buffers, reachable code and execution costs;
 linked RAM includes allocatable reserves and is not the firmware's live working set.
 
-The current supervisor executes one engine at a time. The selected extension is
-one application with an independently scheduled native controller and optional
-Python orchestration, sharing device claims and a supervised lifetime. Its
-[architecture work](roadmap.md#architecture-work-within-the-blocks) must define
-memory access, bounded data exchange, faults and quiescence before concurrent
-execution is enabled. Preserve standalone native and Python operation; do not
-reuse the same memory region for contexts that will be live together.
+The supervisor runs standalone native or Python applications, or one Python
+application with an independent native controller. Both contexts belong to one
+application lifetime. Their memory is separate; the controller does not depend on
+VM objects or GC. See [concurrent control](#native-control-alongside-python).
+
+## Native control alongside Python
+
+The `brickphyr` Python module uses the existing native ELF loader. Arguments are
+positional:
+
+- `control_start(image, parameters=b"")` copies/links an ELF from a readable
+  buffer and starts its `app_main()` in a separate protected thread. An ELF can
+  be a resource in the ordinary named or RAM Python package. One controller is
+  allowed; another start returns `EBUSY`. A rejected start leaves Python running.
+- `control_update(parameters)` copies a complete replacement and returns its
+  positive revision. The block's size is fixed by `control_start`, at most
+  256 bytes. Updates replace the pending revision; intermediate revisions need
+  not be observed. A controller receives the latest whole block at its next step.
+- `control_status()` returns the last step's sequence, skipped releases,
+  scheduled/start times, applied revision, pending revision, period and native
+  stack/loader/loaded byte counts. The pending revision may be newer than the
+  one applied. Before the first step its timing fields are zero.
+
+Native ABI 1.4 adds `bp_control_wait(period_us, &step, parameters, capacity)`.
+The first call fixes an absolute periodic schedule and releases immediately.
+Periods must be positive and exactly representable by the system tick (100 us on
+F4). Later calls sleep until the next release; late execution skips whole missed
+periods and reports them in `step.skipped`. It never runs a catch-up burst.
+`step.scheduled_us` and `started_us` use the input frame's monotonic timebase;
+their difference includes dispatch delay. `sequence` counts executed steps.
+The same call works in standalone ELF programs with an empty parameter block.
+There is no allocation, formatting, storage or host I/O in this release path.
+
+On F4 Python runs at priority 15 and the controller at 14; Shell/logging remain
+at 13, below acquisition and management services. The controller preempts Python
+and GC, while essential services can still preempt or stop either application
+context. A controller that never yields can starve Python. This priority scheme
+is not a deadline guarantee: application work, interrupts and driver delays must
+be measured for the selected period. Motor command expiry remains enforced by
+the independent port service; a missed step alone does not abort an application.
+Sample-triggered release and bounded background jobs remain planned work.
+
+The controller has its own dynamically allocated stack, MPU domain and loader
+memory. Neither context can access the other's mutable memory; parameter bytes
+are copied by the supervisor. Control ports use a separate owner from Python:
+conflicting writes, motor setup and release return `EBUSY`, while read-only
+snapshots remain available. Singleton hub services such as the matrix and speaker
+still belong to the whole application; coordinate their use in application code.
+
+Return or fault of either context ends the whole application. Explicit stop,
+replacement and Python REPL soft reset also stop both contexts. The supervisor
+joins both before releasing device claims, partitions, code, stacks and thread
+objects. Normal native destructors execute in that context on return; forced stop
+and faults do not rely on them. The first completion supplies the result/fault;
+cleanup errors are reported separately and retain resources for retry. Ordinary
+host disconnection leaves both contexts running. Keep Python alive while its
+controller is needed; independent component restart is not provided.
+
+[The read-only example](../examples/native/control_loop.c) records a 20 ms native
+observation step beside [Python orchestration](../examples/python/control/main.py).
+It records IMU, battery and optionally A/B encoders/output publications, without
+energizing motors. Copy a matching-SDK `control_loop.elf` beside `main.py` in an
+ignored build directory; then use the ordinary application commands:
+
+```sh
+mkdir -p build/control-demo
+cp examples/python/control/main.py build/control-demo/main.py
+cp build/native-examples/control_loop.elf build/control-demo/control_loop.elf
+uv run brickphyrdev app run build/control-demo
+uv run brickphyrdev app input 1
+uv run brickphyrdev app output
+uv run brickphyrdev app stop
+uv run brickphyrdev app record reports/control-step.jsonl
+```
+
+Use the [SDK build procedure](builds.md#experimental-native-sdk) to produce the
+ELF for the installed firmware. `app install build/control-demo --name control`
+retains the same package in flash. Add `--ble Brickphyr` after `app` for Bluetooth.
+The `brickphyr.control-step/1` example schema adds release times, sequence,
+parameter revision and selected port mask to the existing input record; the CLI
+decodes it into JSONL and preserves raw bytes. It is a bounded observation example,
+not automatic recording of arbitrary controllers or numerical replay.
+
+Protected M4/QEMU checks cover progress during Python GC/floating-point work,
+whole parameter revisions, skipped periods, return, cross-domain faults, forced
+stop and reclaimed heap. They do not measure physical scheduling latency.
+On one Robot Inventor F4, a 20 ms read-only controller also runs beside Python
+GC/floating-point work through USB and BLE; parameter updates, exit and subsequent
+standalone execution pass. A short retained USB sample has no skipped releases,
+with dispatch delay up to 5.84 ms and snapshot duration up to 3.53 ms. These are
+observations of that workload, not worst-case bounds or a balancing budget.
+The BLE check establishes concurrent progress; its retained tail was collected
+after the GC workload, so it does not establish BLE-plus-GC timing. The normal
+image has no kernel stack Shell: controller stack high-water and sustained
+combined-load characterization remain open.
 
 ## Experimental native profile
 
@@ -117,21 +205,21 @@ Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
 allocated sections left outside the accepted image format fail admission before
 an application replaces the running one.
 
-On the current ARMv7-M targets, native-only builds allocate the loader's backing
+On the current ARMv7-M targets, native execution allocates the loader's backing
 buffer from the shared system heap when starting an application and release it
 after successful cleanup. The requested size is the validated image's loader
 budget, bounded by the configured execution-memory limit. Native LLEXT allocations
-are aligned and protected individually. Python builds retain a shared, fixed
-execution arena for both engines: Python maps the whole power-of-two, size-aligned
-arena as one MPU partition. That arena has no flash initialization image.
-Both engines initialize their allocations and must accept arbitrary initial contents.
+are aligned and protected individually. Python retains its own fixed, power-of-two,
+size-aligned arena as one MPU partition. Native execution never uses that arena,
+including in Python-enabled builds. The arena has no flash initialization image;
+both engines initialize their allocations and accept arbitrary initial contents.
 
 The native admission budget includes merged ELF region spans, MPU alignment,
 symbol/string tables and loader bookkeeping. It excludes metadata that is only
 streamed or skipped; gaps inside a merged region still require memory. The budget
 is a conservative reservation, not a measurement of the loader's peak usage.
 
-A native-only replacement reserves its new buffer before stopping the old
+A native replacement reserves its new buffer before stopping the old
 application. Insufficient or fragmented heap therefore rejects that start without
 interrupting the running program. This briefly requires space for both buffers;
 explicitly stopping the old program first releases its budget. Cleanup failure
@@ -464,7 +552,7 @@ The additional [Python profile](builds.md#experimental-python-profile) runs sour
 and compatible format-6 bytecode from RAM through the same supervisor and SMP
 operations as native applications. Compilation and execution run in Zephyr user
 mode. Each start initializes fresh interpreter state; normal return, exceptions
-and forced stop release ownership before another engine can use the arena.
+and forced stop join all application contexts before releasing their resources.
 Closing the host connection leaves the program running and its power hold active.
 
 Native/Viper source decorators still compile on the hub. Precompiled native/Viper
@@ -510,8 +598,9 @@ active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
 The native profile provides a 235264-byte heap, including on-demand loader buffers
 and stacks. The full Python profile provides 134272 bytes and the core Python
-profile 164352 bytes; both retain a 64 KiB execution arena and allocate the active
-engine's stack from that heap. These F4 profiles assign available linker RAM to
+profile 164352 bytes; both retain a 64 KiB Python arena. Active stacks and native
+loader buffers, including a concurrent controller, come from that heap.
+These F4 profiles assign available linker RAM to
 the shared heap, below the 319 KiB firmware RAM boundary; the loader-selector
 SRAM remains reserved.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
@@ -558,8 +647,8 @@ lifecycle; physical combined-load acceptance of the enlarged heaps remains pendi
 On one Robot Inventor F4, the full Python image runs native ELF with a 2 KiB
 stack and Python with a 16 KiB stack over USB/BLE. USB checks also cover a
 32 KiB source and a freshly installed native program. Existing files retain
-their contents. These are bounded lifecycle checks, not sustained memory-pressure
-or concurrent-engine acceptance.
+their contents. These standalone checks do not establish sustained memory-pressure
+behavior; the separate concurrent checks are described above.
 
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports
@@ -690,7 +779,7 @@ execution errors. Unsupported native architectures are checked again on import.
 
 Named images use the same LittleFS staging, validation, atomic rename, listing and
 removal as native ELF. Upload/install never starts or stops a program. On launch,
-the complete file set is copied into the shared execution arena alongside the GC
+the complete file set is copied into the Python execution arena alongside the GC
 heap. Later replacement or removal cannot change a running instance's imports,
 even when a module is imported again after removal from `sys.modules`. Validation
 and file loading temporarily require a complete image buffer in the system heap;

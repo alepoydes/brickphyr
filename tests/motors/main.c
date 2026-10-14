@@ -313,6 +313,23 @@ ZTEST(motors, test_lifetime)
 	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Rejected commands touched PWM");
 	group_lifetime();
 
+	/* A live controller group excludes even a disjoint group from another owner;
+	 * application cleanup cannot coast or release the controller's claim. */
+	struct bp_motor_group_command command = group_command(200, 0, k_uptime_get() + 150);
+	command.port_mask = BIT(0);
+	uint32_t request;
+	zassert_ok(hub_motor_group_set(BP_PORT_CONTROLLER, &command, &request));
+	group_settled(request, true);
+	zassert_equal(hub_motor_drive(BP_PORT_APPLICATION, 0, -200, 0), -EBUSY);
+	zassert_equal(hub_port_release(BP_PORT_APPLICATION, 0), -EBUSY);
+	command = group_command(0, 200, k_uptime_get() + 150);
+	command.port_mask = BIT(1);
+	zassert_equal(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request), -EBUSY);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(motor(0).owner, BP_PORT_CONTROLLER);
+	zassert_ok(hub_ports_release(BP_PORT_CONTROLLER));
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+
 	uint32_t token = hub_motor_activity();
 	drive(BP_PORT_APPLICATION, 0, 250, 0);
 	zassert_true(hub_motor_activity() & 1);

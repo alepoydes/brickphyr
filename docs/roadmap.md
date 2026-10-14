@@ -20,14 +20,17 @@ RAM and named stored applications, MicroPython, Shell/SMP over USB/BLE, settings
 power management, and device services. Hard-float execution, FPU context fixes,
 optional CMSIS-DSP and an ABI independent of Zephyr syscall numbering are existing
 foundations. On-demand UART metadata, motor/paired-controller state and the
-native-only loader backing buffer, plus recovered linker space, are completed
-optimizations to preserve. The Python profile still reserves a shared execution arena.
+native loader backing buffer, plus recovered linker space, are completed
+optimizations to preserve. The Python profile still reserves its own fixed
+execution arena.
 The owning [application](applications.md), [hardware](hardware.md) and
 [Python](python.md) documents distinguish implemented behavior from acceptance.
 
-Native and Python execution currently alternate through one application thread
-and arena. Independent native execution alongside Python is new work. Existing
-[monitoring](telemetry.md) reads current snapshots; it does not record every
+Standalone native/Python execution and independent native control beside Python
+use the same supervisor. The concurrent path provides separate memory, periodic
+release and copied parameter revisions; timing acceptance and sample-triggered
+release remain work. Existing [monitoring](telemetry.md) reads current snapshots;
+it does not record every
 control step. Babybot's numerical code and replay provide useful algorithms and
 integration evidence. Its current scheduling, interfaces and recording format
 are not compatibility requirements: evolve them to use the new platform.
@@ -39,9 +42,8 @@ adds whole-request validation, absolute expiry and group coast on failure throug
 the same motor worker. A bounded [application record channel](applications.md#application-recording)
 retains binary records for USB/BLE retrieval with explicit gaps. Its examples
 capture read-only inputs and correlate one group command with its original input
-and later driver reports. Physical group-drive acceptance, independent execution
-and automatic control-step correlation remain work; these APIs alone do not
-complete block 2.
+and later driver reports. Physical group-drive acceptance and automatic actuation
+correlation remain work; these APIs alone do not complete block 2.
 
 ## Delivery blocks
 

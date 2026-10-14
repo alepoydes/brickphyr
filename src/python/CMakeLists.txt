@@ -10,6 +10,9 @@ set(MICROPY_SOURCE_QSTR ${MICROPY_SOURCE_PY}
   ${MICROPY_DIR}/shared/runtime/pyexec.c
   ${MICROPY_DIR}/extmod/modjson.c ${MICROPY_DIR}/extmod/modrandom.c
   ${MICROPY_DIR}/extmod/modselect.c)
+if(CONFIG_BRICKPHYR_NATIVE)
+  list(APPEND MICROPY_SOURCE_QSTR ${CMAKE_CURRENT_SOURCE_DIR}/control.c)
+endif()
 if(CONFIG_BRICKPHYR_PYBRICKS)
   set(pybricks ${WEST_TOPDIR}/pybricks-micropython)
   set(MICROPY_QSTRDEFS_PORT ${pybricks}/bricks/_common/qstrdefs.h)

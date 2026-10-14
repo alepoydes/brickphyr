@@ -376,6 +376,14 @@ __syscall int bp_record_begin(const struct bp_record_spec *spec);
  * Returns 0 on acceptance, ENODATA before begin, EMSGSIZE for a wrong length. */
 __syscall int bp_record_write(const void *data, size_t length);
 
+/* Native context only. The first call starts immediately and fixes the period
+ * for this run. Period must be exactly representable in system ticks. Later
+ * calls wait on that absolute schedule; missed releases are skipped, not replayed.
+ * Copies the latest complete parameter revision at release, without allocation.
+ * Standalone native programs have no parameters (NULL/0). */
+__syscall int bp_control_wait(uint32_t period_us, struct bp_control_step *step,
+	void *parameters, size_t capacity);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

@@ -85,9 +85,11 @@ Resource optimization continues across these blocks. Babybot owns its models
 and learning algorithms. Reuse validated numerical code while adapting the robot's
 orchestration and recording to Brickphyr; its current interfaces are not constraints.
 
-The current application thread and arena serve one engine at a time; concurrent
-native/Python execution is planned work. Hard-float, FPU context fixes, optional
-CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
+Python can start one independent native ELF controller with copied parameter
+revisions, separate MPU memory and a common stop/fault lifetime. Periodic release
+and retained step observations are implemented; measured timing acceptance,
+sample-triggered release and background work remain open. Hard-float, FPU context
+fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
 ordinary compatible Pybricks bytecode remains supported.
 The native [recording channel](../docs/applications.md#application-recording)

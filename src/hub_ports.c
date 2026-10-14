@@ -67,6 +67,11 @@ static bool port_present(uint32_t port)
 	return port < ARRAY_SIZE(pins) && pins[port][P5].port;
 }
 
+static bool owner_valid(enum bp_port_owner owner)
+{
+	return owner == BP_PORT_APPLICATION || owner == BP_PORT_TERMINAL || owner == BP_PORT_CONTROLLER;
+}
+
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 struct motor_log {
 	int32_t *data;
@@ -1839,7 +1844,7 @@ static int raw_request(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	const uint8_t *data, uint32_t size, uint32_t *request, uint8_t pf_output)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
-	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
+	if (port >= BP_PORT_COUNT || !owner_valid(owner)) {
 		return -EINVAL;
 	}
 	if (!port_present(port)) return -ENODEV;
@@ -1945,7 +1950,7 @@ int hub_port_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (!request || port >= BP_PORT_COUNT ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -2036,7 +2041,7 @@ int hub_sensor_palette_set(enum bp_port_owner owner, uint32_t port, uint32_t gen
 	const struct bp_sensor_palette *palette)
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
-	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (port >= BP_PORT_COUNT || !owner_valid(owner)) return -EINVAL;
 	struct bp_sensor_palette next;
 	if (palette) {
 		next = *palette;
@@ -2063,7 +2068,7 @@ static int sensor_configure(enum bp_port_owner owner, uint32_t port, uint32_t me
 		return -ENOTSUP;
 	}
 	if (port >= BP_PORT_COUNT || measurement >= BP_SENSOR_MEASUREMENT_COUNT ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
+	    !owner_valid(owner)) {
 		return -EINVAL;
 	}
 	if (!port_present(port)) return -ENODEV;
@@ -2105,7 +2110,7 @@ int hub_uart_open(enum bp_port_owner owner, uint32_t port, uint32_t baud, uint32
 {
 	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	if (port >= BP_PORT_COUNT || !baud || !generation || power_pin > 2 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_uart_available(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -2199,7 +2204,7 @@ int hub_uart_write(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 
 static int port_release(enum bp_port_owner owner, uint32_t port, const uint32_t *generation)
 {
-	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) {
+	if (port >= BP_PORT_COUNT || !owner_valid(owner)) {
 		return -EINVAL;
 	}
 	/* An absent port has never been claimed and its generation is zero. */
@@ -2277,7 +2282,7 @@ void hub_ports_session_closed(enum bp_port_owner owner)
 
 int hub_ports_release(enum bp_port_owner owner)
 {
-	if (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) return -EINVAL;
+	if (!owner_valid(owner)) return -EINVAL;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	free_motor_logs(owner);
 #endif
@@ -2400,7 +2405,7 @@ int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_co
 #else
 	if (!command || !request || !command->port_mask || command->port_mask >> BP_PORT_COUNT ||
 	    command->coast_mask & ~command->port_mask || command->deadline_ms < 0 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	bool active = command->coast_mask != command->port_mask;
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) {
 		if (!(command->port_mask & BIT(i))) continue;
@@ -2470,7 +2475,7 @@ int hub_motor_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	int32_t direction, uint32_t *request)
 {
 	if (port >= BP_PORT_COUNT || !request || (direction != 1 && direction != -1) ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -2500,7 +2505,7 @@ int hub_motor_observe(enum bp_port_owner owner, uint32_t port, uint32_t generati
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !request ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -2569,7 +2574,7 @@ int hub_servo_setup(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !setup || !request ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) ||
+	    !owner_valid(owner) ||
 	    (setup->direction != 1 && setup->direction != -1) || setup->gear_ratio < 1 ||
 	    setup->precision_profile < 0 || setup->precision_profile > INT32_MAX / 1000 ||
 	    setup->reset_angle > 1) return -EINVAL;
@@ -2652,7 +2657,7 @@ int hub_servo_reset(enum bp_port_owner owner, uint32_t port, uint32_t generation
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !request || absolute > 1 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -2703,7 +2708,7 @@ static int servo_control_error(struct port *p, uint32_t generation)
 
 static struct drivebase *find_drivebase(enum bp_port_owner owner, uint32_t handle)
 {
-	if (!handle || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return NULL;
+	if (!handle || !owner_valid(owner)) return NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
 		struct drivebase *db = drivebases[i];
 		if (db && db->handle == handle && db->owner == owner) return db;
@@ -2715,7 +2720,7 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 {
 	if (!setup || !handle || setup->ports[0] >= BP_PORT_COUNT || setup->ports[1] >= BP_PORT_COUNT ||
 	    setup->ports[0] == setup->ports[1] || setup->spike > 1 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(setup->ports[0]) || !port_present(setup->ports[1])) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p[2] = {&ports[setup->ports[0]], &ports[setup->ports[1]]};
@@ -2925,7 +2930,7 @@ int hub_drivebase_log_status(enum bp_port_owner owner, uint32_t handle, uint32_t
 	uint32_t stop, struct bp_motor_log_status *value)
 {
 	if (axis >= DRIVEBASE_AXES || !value || stop > 1 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct motor_log *log = drivebase_log(owner, handle, axis);
 	if (log) {
@@ -2940,7 +2945,7 @@ int hub_drivebase_log_read(enum bp_port_owner owner, uint32_t handle, uint32_t a
 	uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
 	if (axis >= DRIVEBASE_AXES || !value ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct motor_log *log = drivebase_log(owner, handle, axis);
 	int err = log ? read_motor_log(log, revision, row, value) : -ENODEV;
@@ -3005,7 +3010,7 @@ int hub_servo_settings_set(enum bp_port_owner owner, uint32_t port, uint32_t gen
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !value || !revision ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -3088,7 +3093,7 @@ int hub_motor_log_start(enum bp_port_owner owner, uint32_t port, uint32_t genera
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !down_sample ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	uint32_t columns = kind == BP_MOTOR_LOG ? BP_MOTOR_LOG_COLUMNS : BP_CONTROL_LOG_COLUMNS;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -3123,7 +3128,7 @@ int hub_motor_log_status(enum bp_port_owner owner, uint32_t port, uint32_t gener
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value || stop > 1 ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -3145,7 +3150,7 @@ int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generat
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || kind >= BP_MOTOR_LOG_COUNT || !value ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -3164,7 +3169,7 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	return -ENOTSUP;
 #else
 	if (port >= BP_PORT_COUNT || !command || !request ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL) ||
+	    !owner_valid(owner) ||
 	    command->action > BP_SERVO_UNTIL_STALLED_TORQUE || command->finish > BP_MOTOR_FINISH_BRAKE_SMART ||
 	    command->duration_ms >= PBIO_TRAJECTORY_DURATION_FOREVER_MS ||
 	    (command->action != BP_SERVO_TIME && command->duration_ms) ||
@@ -3238,7 +3243,7 @@ int hub_servo_move(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 
 int hub_motor_set_voltage(enum bp_port_owner owner, uint32_t port, uint32_t generation, int32_t max_voltage)
 {
-	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (port >= BP_PORT_COUNT || !owner_valid(owner)) return -EINVAL;
 	if (!port_present(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	struct port *p = &ports[port];
@@ -3254,7 +3259,7 @@ int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 	int32_t duty, uint32_t coast, uint32_t *request)
 {
 	if (port >= BP_PORT_COUNT || !request || duty < -1000 || duty > 1000 || coast > 1 || (coast && duty) ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	/* Reading the battery snapshot never nests its lock inside the port lock.
@@ -3288,7 +3293,7 @@ int hub_motor_dc(enum bp_port_owner owner, uint32_t port, uint32_t generation,
 int hub_motor_drive(enum bp_port_owner owner, uint32_t port, int32_t duty, uint32_t duration_ms)
 {
 	if (port >= BP_PORT_COUNT || duty < -1000 || duty > 1000 || duration_ms > INT32_MAX ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -3308,7 +3313,7 @@ int hub_port_light_write(enum bp_port_owner owner, uint32_t port, uint32_t gener
 	uint32_t brightness, uint32_t *request)
 {
 	if (port >= BP_PORT_COUNT || brightness > 1000 || !request ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -3332,7 +3337,7 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
 	return -ENOTSUP;
 #else
 	if (!command || port >= BP_PORT_COUNT ||
-	    (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	    !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	struct bp_battery_sample battery;
@@ -3360,7 +3365,7 @@ int hub_motor_control(enum bp_port_owner owner, uint32_t port, const struct bp_m
 
 int hub_motor_coast(enum bp_port_owner owner, uint32_t port)
 {
-	if (port >= BP_PORT_COUNT || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return -EINVAL;
+	if (port >= BP_PORT_COUNT || !owner_valid(owner)) return -EINVAL;
 	int err = port_output_check(port);
 	if (err) return err;
 	k_spinlock_key_t key = k_spin_lock(&lock);

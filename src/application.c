@@ -42,6 +42,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/sys/barrier.h>
+#include <zephyr/sys/kobject.h>
 
 /* A timer wakeup can reset equal-priority time slicing. Control and diagnostics
  * must preempt the application, even when its entry never yields. */
@@ -84,18 +85,42 @@ static struct k_mem_domain application_domain;
 static bool domain_initialized;
 static struct llext *extension;
 static bool loader_initialized;
+/* One native image, standalone or alongside Python, with its own backing. */
+static void *native_memory;
+static struct k_spinlock control_lock;
+static struct {
+	struct bp_control_step step;
+	int64_t next_tick;
+	uint32_t period_us;
+} control_clock;
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
 K_APP_BMEM(python_partition) static uintptr_t python_stack_bottom;
-/* Python maps the whole arena; both engines initialize their own allocations. */
+/* Only Python maps this arena. A controller never receives VM pointers. */
 static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
 	__aligned(APPLICATION_MEMORY_LIMIT)
 	Z_GENERIC_SECTION(.brickphyr_execution);
 K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_memory),
 	K_MEM_PARTITION_P_RW_U_RW);
-#else
-/* LLEXT aligns each mapped allocation inside this on-demand backing buffer. */
-static void *execution_memory;
+static struct native_control {
+	struct k_mem_domain domain;
+	struct k_thread *thread;
+	k_thread_stack_t *stack;
+	size_t stack_size, parameter_size, loader_size;
+	uint32_t revision;
+	bool domain_initialized, started;
+	uint8_t parameters[];
+} *controller;
+static struct {
+	const void *image, *parameters;
+	size_t size, length;
+	int result;
+} control_request;
+static atomic_t control_pending;
+static K_SEM_DEFINE(control_done, 0, 1);
+static int start_controller(void);
+BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
+BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
 #endif
 /* ARMv8-M bounds dynamic regions at app_smem; this earlier arena would require
  * a corresponding region-boundary integration before using that MPU model. */
@@ -104,6 +129,7 @@ static struct application_status status;
 static atomic_t return_value;
 static atomic_t fault_reason;
 static atomic_t active;
+static unsigned int finished_source;
 #define OUTPUT_CAPACITY 1024
 RING_BUF_DECLARE(output, OUTPUT_CAPACITY);
 static struct k_spinlock output_lock;
@@ -127,6 +153,23 @@ static struct bp_record_spec record_request;
 static atomic_t record_pending;
 static int record_result;
 static K_SEM_DEFINE(record_done, 0, 1);
+
+static bool native_caller(void)
+{
+	struct k_thread *thread = k_sched_current_thread_query();
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller && controller->started && thread == controller->thread) return true;
+#endif
+	return atomic_get(&active) && status.format == APPLICATION_NATIVE && thread == &application_thread;
+}
+
+static enum bp_port_owner application_port_owner(void)
+{
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller && k_sched_current_thread_query() == controller->thread) return BP_PORT_CONTROLLER;
+#endif
+	return BP_PORT_APPLICATION;
+}
 
 /* Native logging never waits. Python may leave an unwritten suffix with the VM
  * while a continuous consumer is attached; both use this one bounded queue. */
@@ -1092,7 +1135,7 @@ static inline int z_vrfy_bp_port_get_mode(uint32_t port, uint32_t generation, ui
 
 int z_impl_bp_port_select(uint32_t port, uint32_t generation, uint32_t mode)
 {
-	return hub_port_select(BP_PORT_APPLICATION, port, generation, mode);
+	return hub_port_select(application_port_owner(), port, generation, mode);
 }
 static inline int z_vrfy_bp_port_select(uint32_t port, uint32_t generation, uint32_t mode)
 {
@@ -1103,7 +1146,7 @@ static inline int z_vrfy_bp_port_select(uint32_t port, uint32_t generation, uint
 int z_impl_bp_port_write(uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
-	return hub_port_write(BP_PORT_APPLICATION, port, generation, mode, data, size, request);
+	return hub_port_write(application_port_owner(), port, generation, mode, data, size, request);
 }
 static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint32_t mode,
 	const uint8_t *data, uint32_t size, uint32_t *request)
@@ -1120,7 +1163,7 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 
 int z_impl_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
-	return hub_uart_open(BP_PORT_APPLICATION, port, baud, 0, generation);
+	return hub_uart_open(application_port_owner(), port, baud, 0, generation);
 }
 static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
@@ -1132,7 +1175,7 @@ static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *ge
 
 int z_impl_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
 {
-	return hub_uart_open(BP_PORT_APPLICATION, port, baud, power_pin, generation);
+	return hub_uart_open(application_port_owner(), port, baud, power_pin, generation);
 }
 static inline int z_vrfy_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
 {
@@ -1155,7 +1198,7 @@ static inline int z_vrfy_bp_uart_allow_power(uint32_t allowed) { return z_impl_b
 
 int z_impl_bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud)
 {
-	return baud ? hub_uart_configure(BP_PORT_APPLICATION, port, generation, baud) : -EINVAL;
+	return baud ? hub_uart_configure(application_port_owner(), port, generation, baud) : -EINVAL;
 }
 static inline int z_vrfy_bp_uart_configure(uint32_t port, uint32_t generation, uint32_t baud)
 {
@@ -1165,7 +1208,7 @@ static inline int z_vrfy_bp_uart_configure(uint32_t port, uint32_t generation, u
 
 int z_impl_bp_uart_clear(uint32_t port, uint32_t generation)
 {
-	return hub_uart_configure(BP_PORT_APPLICATION, port, generation, 0);
+	return hub_uart_configure(application_port_owner(), port, generation, 0);
 }
 static inline int z_vrfy_bp_uart_clear(uint32_t port, uint32_t generation)
 {
@@ -1175,7 +1218,7 @@ static inline int z_vrfy_bp_uart_clear(uint32_t port, uint32_t generation)
 
 int z_impl_bp_uart_waiting(uint32_t port, uint32_t generation)
 {
-	return hub_uart_read(BP_PORT_APPLICATION, port, generation, NULL, 0);
+	return hub_uart_read(application_port_owner(), port, generation, NULL, 0);
 }
 static inline int z_vrfy_bp_uart_waiting(uint32_t port, uint32_t generation)
 {
@@ -1185,7 +1228,7 @@ static inline int z_vrfy_bp_uart_waiting(uint32_t port, uint32_t generation)
 
 int z_impl_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
 {
-	return hub_uart_read(BP_PORT_APPLICATION, port, generation, data, size);
+	return hub_uart_read(application_port_owner(), port, generation, data, size);
 }
 static inline int z_vrfy_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
 {
@@ -1202,7 +1245,7 @@ static inline int z_vrfy_bp_uart_read(uint32_t port, uint32_t generation, uint8_
 int z_impl_bp_uart_write(uint32_t port, uint32_t generation,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
-	return hub_uart_write(BP_PORT_APPLICATION, port, generation, data, size, request);
+	return hub_uart_write(application_port_owner(), port, generation, data, size, request);
 }
 static inline int z_vrfy_bp_uart_write(uint32_t port, uint32_t generation,
 	const uint8_t *data, uint32_t size, uint32_t *request)
@@ -1219,7 +1262,7 @@ static inline int z_vrfy_bp_uart_write(uint32_t port, uint32_t generation,
 
 int z_impl_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 {
-	return hub_port_reset(BP_PORT_APPLICATION, port, generation, request);
+	return hub_port_reset(application_port_owner(), port, generation, request);
 }
 static inline int z_vrfy_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 {
@@ -1243,7 +1286,7 @@ static inline int z_vrfy_bp_sensor_get(uint32_t port, struct bp_sensor_sample *v
 
 int z_impl_bp_sensor_configure(uint32_t port, uint32_t measurement)
 {
-	return hub_sensor_configure(BP_PORT_APPLICATION, port, measurement);
+	return hub_sensor_configure(application_port_owner(), port, measurement);
 }
 static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement)
 {
@@ -1253,7 +1296,7 @@ static inline int z_vrfy_bp_sensor_configure(uint32_t port, uint32_t measurement
 
 int z_impl_bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement)
 {
-	return hub_sensor_select(BP_PORT_APPLICATION, port, generation, measurement);
+	return hub_sensor_select(application_port_owner(), port, generation, measurement);
 }
 static inline int z_vrfy_bp_sensor_select(uint32_t port, uint32_t generation, uint32_t measurement)
 {
@@ -1275,7 +1318,7 @@ static inline int z_vrfy_bp_sensor_palette_get(uint32_t port, uint32_t generatio
 
 int z_impl_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette)
 {
-	return hub_sensor_palette_set(BP_PORT_APPLICATION, port, generation, palette);
+	return hub_sensor_palette_set(application_port_owner(), port, generation, palette);
 }
 static inline int z_vrfy_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette)
 {
@@ -1292,7 +1335,7 @@ static inline int z_vrfy_bp_sensor_palette_set(uint32_t port, uint32_t generatio
 int z_impl_bp_sensor_light_write(uint32_t port, uint32_t generation,
 	const struct bp_sensor_light *light, uint32_t *request)
 {
-	return hub_sensor_light_write(BP_PORT_APPLICATION, port, generation, light, request);
+	return hub_sensor_light_write(application_port_owner(), port, generation, light, request);
 }
 static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generation,
 	const struct bp_sensor_light *light, uint32_t *request)
@@ -1308,7 +1351,7 @@ static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generatio
 
 int z_impl_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
 {
-	return hub_port_light_write(BP_PORT_APPLICATION, port, generation, brightness, request);
+	return hub_port_light_write(application_port_owner(), port, generation, brightness, request);
 }
 static inline int z_vrfy_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
 {
@@ -1320,7 +1363,7 @@ static inline int z_vrfy_bp_port_light_write(uint32_t port, uint32_t generation,
 
 int z_impl_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
 {
-	return hub_port_matrix_write(BP_PORT_APPLICATION, port, generation, colors, request);
+	return hub_port_matrix_write(application_port_owner(), port, generation, colors, request);
 }
 static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
 {
@@ -1338,7 +1381,7 @@ static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation
 int z_impl_bp_port_pf_write(uint32_t port, uint32_t generation,
 	const struct bp_pf_command *command, uint32_t *request)
 {
-	return hub_port_pf_write(BP_PORT_APPLICATION, port, generation, command, request);
+	return hub_port_pf_write(application_port_owner(), port, generation, command, request);
 }
 static inline int z_vrfy_bp_port_pf_write(uint32_t port, uint32_t generation,
 	const struct bp_pf_command *command, uint32_t *request)
@@ -1354,7 +1397,7 @@ static inline int z_vrfy_bp_port_pf_write(uint32_t port, uint32_t generation,
 
 int z_impl_bp_sensor_release(uint32_t port)
 {
-	return hub_port_release(BP_PORT_APPLICATION, port);
+	return hub_port_release(application_port_owner(), port);
 }
 static inline int z_vrfy_bp_sensor_release(uint32_t port)
 {
@@ -1362,13 +1405,13 @@ static inline int z_vrfy_bp_sensor_release(uint32_t port)
 }
 #include <zephyr/syscalls/bp_sensor_release_mrsh.c>
 
-int z_impl_bp_port_release(uint32_t port) { return hub_port_release(BP_PORT_APPLICATION, port); }
+int z_impl_bp_port_release(uint32_t port) { return hub_port_release(application_port_owner(), port); }
 static inline int z_vrfy_bp_port_release(uint32_t port) { return z_impl_bp_port_release(port); }
 #include <zephyr/syscalls/bp_port_release_mrsh.c>
 
 int z_impl_bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms)
 {
-	return hub_motor_drive(BP_PORT_APPLICATION, port, duty, duration_ms);
+	return hub_motor_drive(application_port_owner(), port, duty, duration_ms);
 }
 static inline int z_vrfy_bp_motor_drive(uint32_t port, int32_t duty, uint32_t duration_ms)
 {
@@ -1376,7 +1419,7 @@ static inline int z_vrfy_bp_motor_drive(uint32_t port, int32_t duty, uint32_t du
 }
 #include <zephyr/syscalls/bp_motor_drive_mrsh.c>
 
-int z_impl_bp_motor_coast(uint32_t port) { return hub_motor_coast(BP_PORT_APPLICATION, port); }
+int z_impl_bp_motor_coast(uint32_t port) { return hub_motor_coast(application_port_owner(), port); }
 static inline int z_vrfy_bp_motor_coast(uint32_t port) { return z_impl_bp_motor_coast(port); }
 #include <zephyr/syscalls/bp_motor_coast_mrsh.c>
 
@@ -1391,7 +1434,7 @@ static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *valu
 
 int z_impl_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
 {
-	return hub_motor_setup(BP_PORT_APPLICATION, port, generation, direction, request);
+	return hub_motor_setup(application_port_owner(), port, generation, direction, request);
 }
 static inline int z_vrfy_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
 {
@@ -1403,7 +1446,7 @@ static inline int z_vrfy_bp_motor_setup(uint32_t port, uint32_t generation, int3
 
 int z_impl_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
 {
-	return hub_motor_dc(BP_PORT_APPLICATION, port, generation, duty, coast, request);
+	return hub_motor_dc(application_port_owner(), port, generation, duty, coast, request);
 }
 static inline int z_vrfy_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
 {
@@ -1415,7 +1458,7 @@ static inline int z_vrfy_bp_motor_dc(uint32_t port, uint32_t generation, int32_t
 
 int z_impl_bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t max_voltage)
 {
-	return hub_motor_set_voltage(BP_PORT_APPLICATION, port, generation, max_voltage);
+	return hub_motor_set_voltage(application_port_owner(), port, generation, max_voltage);
 }
 static inline int z_vrfy_bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t max_voltage)
 {
@@ -1425,7 +1468,7 @@ static inline int z_vrfy_bp_motor_set_voltage(uint32_t port, uint32_t generation
 
 int z_impl_bp_motor_close(uint32_t port, uint32_t generation)
 {
-	return hub_motor_close(BP_PORT_APPLICATION, port, generation);
+	return hub_motor_close(application_port_owner(), port, generation);
 }
 static inline int z_vrfy_bp_motor_close(uint32_t port, uint32_t generation)
 {
@@ -1435,7 +1478,7 @@ static inline int z_vrfy_bp_motor_close(uint32_t port, uint32_t generation)
 
 int z_impl_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
 {
-	return hub_motor_observe(BP_PORT_APPLICATION, port, generation, request);
+	return hub_motor_observe(application_port_owner(), port, generation, request);
 }
 static inline int z_vrfy_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
 {
@@ -1471,9 +1514,126 @@ static inline int z_vrfy_bp_control_frame_get(uint32_t port_mask, struct bp_cont
 }
 #include <zephyr/syscalls/bp_control_frame_get_mrsh.c>
 
+int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
+	void *parameters, size_t capacity)
+{
+	if (!native_caller()) return -EPERM;
+	int64_t ticks = k_us_to_ticks_ceil64(period_us);
+	if (!period_us || k_ticks_to_us_ceil64(ticks) != period_us) return -EINVAL;
+	if (control_clock.period_us && control_clock.period_us != period_us) return -EINVAL;
+	size_t size = 0;
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller) size = controller->parameter_size;
+#endif
+	if (capacity < size) return -ENOBUFS;
+	int64_t now = k_uptime_ticks();
+	int64_t due = control_clock.period_us ? control_clock.next_tick : now;
+	if (due > now) k_sleep(K_TIMEOUT_ABS_TICKS(due));
+	now = k_uptime_ticks();
+	uint32_t skipped = 0;
+	if (now > due) {
+		int64_t missed = (now - due) / ticks;
+		skipped = MIN(missed, UINT32_MAX);
+		due += missed * ticks;
+	}
+	struct bp_control_step value = {
+		.scheduled_us = k_ticks_to_us_floor64(due), .started_us = control_time_us(),
+		.sequence = control_clock.step.sequence + 1, .skipped = skipped, .parameter_size = size,
+	};
+	k_spinlock_key_t key = k_spin_lock(&control_lock);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller) {
+		if (size) memcpy(parameters, controller->parameters, size);
+		value.parameter_revision = controller->revision;
+	}
+#endif
+	control_clock.period_us = period_us;
+	control_clock.next_tick = due + ticks;
+	control_clock.step = value;
+	k_spin_unlock(&control_lock, key);
+	*step = value;
+	return 0;
+}
+static inline int z_vrfy_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
+	void *parameters, size_t capacity)
+{
+	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
+	if (capacity) user_memory_check(parameters, capacity, 1, true, __func__);
+	return z_impl_bp_control_wait(period_us, step, parameters, capacity);
+}
+#include <zephyr/syscalls/bp_control_wait_mrsh.c>
+
+#ifdef CONFIG_BRICKPHYR_PYTHON
+int z_impl_application_control_start(const void *image, size_t size,
+	const void *parameters, size_t length)
+{
+	if (controller || atomic_get(&control_pending)) return -EBUSY;
+	control_request.image = image;
+	control_request.size = size;
+	control_request.parameters = parameters;
+	control_request.length = length;
+	atomic_set(&control_pending, 1);
+	k_sem_take(&control_done, K_FOREVER);
+	return control_request.result;
+}
+static inline int z_vrfy_application_control_start(const void *image, size_t size,
+	const void *parameters, size_t length)
+{
+	verify_python_thread();
+	if (!size || size > APPLICATION_IMAGE_LIMIT || length > APPLICATION_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	user_memory_check(image, size, 1, false, __func__);
+	if (length) user_memory_check(parameters, length, 1, false, __func__);
+	return z_impl_application_control_start(image, size, parameters, length);
+}
+#include <zephyr/syscalls/application_control_start_mrsh.c>
+
+int z_impl_application_control_update(const void *parameters, size_t length)
+{
+	if (!controller || !controller->started) return -ENODATA;
+	if (length != controller->parameter_size) return -EMSGSIZE;
+	k_spinlock_key_t key = k_spin_lock(&control_lock);
+	int result = -EOVERFLOW;
+	if (controller->revision < INT32_MAX) {
+		if (length) memcpy(controller->parameters, parameters, length);
+		result = ++controller->revision;
+	}
+	k_spin_unlock(&control_lock, key);
+	return result;
+}
+static inline int z_vrfy_application_control_update(const void *parameters, size_t length)
+{
+	verify_python_thread();
+	if (length > APPLICATION_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	if (length) user_memory_check(parameters, length, 1, false, __func__);
+	return z_impl_application_control_update(parameters, length);
+}
+#include <zephyr/syscalls/application_control_update_mrsh.c>
+
+int z_impl_application_control_get(struct application_control_status *value)
+{
+	if (!controller || !controller->started) return -ENODATA;
+	k_spinlock_key_t key = k_spin_lock(&control_lock);
+	value->step = control_clock.step;
+	value->revision = controller->revision;
+	value->period_us = control_clock.period_us;
+	value->stack_bytes = K_THREAD_STACK_LEN(controller->stack_size);
+	value->loader_bytes = controller->loader_size;
+	value->loaded_bytes = extension->alloc_size;
+	k_spin_unlock(&control_lock, key);
+	return 0;
+}
+static inline int z_vrfy_application_control_get(struct application_control_status *value)
+{
+	verify_python_thread();
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
+	return z_impl_application_control_get(value);
+}
+#include <zephyr/syscalls/application_control_get_mrsh.c>
+#endif
+
 int z_impl_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)
 {
-	return hub_motor_group_set(BP_PORT_APPLICATION, command, request);
+	return hub_motor_group_set(application_port_owner(), command, request);
 }
 static inline int z_vrfy_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)
 {
@@ -1508,7 +1668,7 @@ int z_impl_bp_record_begin(const struct bp_record_spec *spec)
 }
 static inline int z_vrfy_bp_record_begin(const struct bp_record_spec *spec)
 {
-	K_OOPS(K_SYSCALL_VERIFY(k_sched_current_thread_query() == &application_thread));
+	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
 	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
 	return z_impl_bp_record_begin(spec);
 }
@@ -1528,7 +1688,7 @@ static inline int z_vrfy_bp_record_write(const void *data, size_t length)
 
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
-	return hub_motor_control(BP_PORT_APPLICATION, port, command);
+	return hub_motor_control(application_port_owner(), port, command);
 }
 static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
@@ -1543,7 +1703,7 @@ static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_c
 int z_impl_bp_servo_setup(uint32_t port, uint32_t generation,
 	const struct bp_servo_setup *setup, uint32_t *request)
 {
-	return hub_servo_setup(BP_PORT_APPLICATION, port, generation, setup, request);
+	return hub_servo_setup(application_port_owner(), port, generation, setup, request);
 }
 static inline int z_vrfy_bp_servo_setup(uint32_t port, uint32_t generation,
 	const struct bp_servo_setup *setup, uint32_t *request)
@@ -1571,7 +1731,7 @@ static inline int z_vrfy_bp_servo_get(uint32_t port, uint32_t generation, uint32
 
 int z_impl_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
 {
-	return hub_servo_reset(BP_PORT_APPLICATION, port, generation, angle, absolute, request);
+	return hub_servo_reset(application_port_owner(), port, generation, angle, absolute, request);
 }
 static inline int z_vrfy_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
 {
@@ -1584,7 +1744,7 @@ static inline int z_vrfy_bp_servo_reset(uint32_t port, uint32_t generation, int3
 int z_impl_bp_servo_move(uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request)
 {
-	return hub_servo_move(BP_PORT_APPLICATION, port, generation, command, request);
+	return hub_servo_move(application_port_owner(), port, generation, command, request);
 }
 static inline int z_vrfy_bp_servo_move(uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request)
@@ -1636,7 +1796,7 @@ static inline int z_vrfy_bp_servo_model_get(uint32_t port, uint32_t generation, 
 
 int z_impl_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
-	return hub_motor_log_status(BP_PORT_APPLICATION, port, generation, kind, stop, value);
+	return hub_motor_log_status(application_port_owner(), port, generation, kind, stop, value);
 }
 static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
@@ -1648,7 +1808,7 @@ static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation,
 
 int z_impl_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
-	return hub_motor_log_read(BP_PORT_APPLICATION, port, generation, kind, revision, row, value);
+	return hub_motor_log_read(application_port_owner(), port, generation, kind, revision, row, value);
 }
 static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
@@ -1660,7 +1820,7 @@ static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, u
 
 int z_impl_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t kind, uint32_t duration_ms, uint32_t down_sample)
 {
-	return hub_motor_log_start(BP_PORT_APPLICATION, port, generation, kind, duration_ms, down_sample);
+	return hub_motor_log_start(application_port_owner(), port, generation, kind, duration_ms, down_sample);
 }
 static inline int z_vrfy_bp_motor_log_start(uint32_t port, uint32_t generation, uint32_t kind, uint32_t duration_ms, uint32_t down_sample)
 {
@@ -1671,7 +1831,7 @@ static inline int z_vrfy_bp_motor_log_start(uint32_t port, uint32_t generation, 
 int z_impl_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *revision)
 {
-	return hub_servo_settings_set(BP_PORT_APPLICATION, port, generation, group, value, revision);
+	return hub_servo_settings_set(application_port_owner(), port, generation, group, value, revision);
 }
 static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *revision)
@@ -1687,7 +1847,7 @@ static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generatio
 
 int z_impl_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
 {
-	return hub_drivebase_open(BP_PORT_APPLICATION, setup, handle);
+	return hub_drivebase_open(application_port_owner(), setup, handle);
 }
 static inline int z_vrfy_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
 {
@@ -1702,7 +1862,7 @@ static inline int z_vrfy_bp_drivebase_open(const struct bp_drivebase_setup *setu
 
 int z_impl_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 {
-	return hub_drivebase_get(BP_PORT_APPLICATION, handle, value);
+	return hub_drivebase_get(application_port_owner(), handle, value);
 }
 static inline int z_vrfy_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 {
@@ -1714,7 +1874,7 @@ static inline int z_vrfy_bp_drivebase_get(uint32_t handle, struct bp_drivebase_s
 
 int z_impl_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
 {
-	return hub_drivebase_command(BP_PORT_APPLICATION, handle, command, request);
+	return hub_drivebase_command(application_port_owner(), handle, command, request);
 }
 static inline int z_vrfy_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
 {
@@ -1729,7 +1889,7 @@ static inline int z_vrfy_bp_drivebase_command(uint32_t handle, const struct bp_d
 
 int z_impl_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
 {
-	return hub_drivebase_settings_set(BP_PORT_APPLICATION, handle, settings, request);
+	return hub_drivebase_settings_set(application_port_owner(), handle, settings, request);
 }
 static inline int z_vrfy_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
 {
@@ -1744,7 +1904,7 @@ static inline int z_vrfy_bp_drivebase_settings_set(uint32_t handle, const struct
 
 int z_impl_bp_drivebase_close(uint32_t handle)
 {
-	return hub_drivebase_close(BP_PORT_APPLICATION, handle);
+	return hub_drivebase_close(application_port_owner(), handle);
 }
 static inline int z_vrfy_bp_drivebase_close(uint32_t handle)
 {
@@ -1754,7 +1914,7 @@ static inline int z_vrfy_bp_drivebase_close(uint32_t handle)
 
 int z_impl_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
 {
-	return hub_drivebase_axis_get(BP_PORT_APPLICATION, handle, axis, value);
+	return hub_drivebase_axis_get(application_port_owner(), handle, axis, value);
 }
 static inline int z_vrfy_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
 {
@@ -1767,7 +1927,7 @@ static inline int z_vrfy_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, s
 int z_impl_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *request)
 {
-	return hub_drivebase_axis_set(BP_PORT_APPLICATION, handle, axis, group, value, request);
+	return hub_drivebase_axis_set(application_port_owner(), handle, axis, group, value, request);
 }
 static inline int z_vrfy_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *request)
@@ -1783,7 +1943,7 @@ static inline int z_vrfy_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, u
 
 int z_impl_bp_drivebase_log_start(uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample)
 {
-	return hub_drivebase_log_start(BP_PORT_APPLICATION, handle, axis, duration_ms, down_sample);
+	return hub_drivebase_log_start(application_port_owner(), handle, axis, duration_ms, down_sample);
 }
 static inline int z_vrfy_bp_drivebase_log_start(uint32_t handle, uint32_t axis, uint32_t duration_ms, uint32_t down_sample)
 {
@@ -1793,7 +1953,7 @@ static inline int z_vrfy_bp_drivebase_log_start(uint32_t handle, uint32_t axis, 
 
 int z_impl_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
 {
-	return hub_drivebase_log_status(BP_PORT_APPLICATION, handle, axis, stop, value);
+	return hub_drivebase_log_status(application_port_owner(), handle, axis, stop, value);
 }
 static inline int z_vrfy_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
 {
@@ -1806,7 +1966,7 @@ static inline int z_vrfy_bp_drivebase_log_status(uint32_t handle, uint32_t axis,
 int z_impl_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value)
 {
-	return hub_drivebase_log_read(BP_PORT_APPLICATION, handle, axis, revision, row, value);
+	return hub_drivebase_log_read(application_port_owner(), handle, axis, revision, row, value);
 }
 static inline int z_vrfy_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value)
@@ -1970,15 +2130,24 @@ static inline int z_vrfy_bp_user_data_write(uint32_t offset, const void *data, s
 }
 #include <zephyr/syscalls/bp_user_data_write_mrsh.c>
 
-/* Completion is a private syscall used by the user-mode trampoline. */
-void z_impl_application_finished(int result)
+/* The first context to complete owns the result, even if cleanup preempts the
+ * other context just as it returns. All memory stays mapped until both join. */
+static void finish_application(int result, unsigned int fault)
 {
-	atomic_set(&return_value, result);
+	k_spinlock_key_t key = k_spin_lock(&control_lock);
+	if (!finished_source) {
+		finished_source = k_sched_current_thread_query() == &application_thread ? 1 : 2;
+		atomic_set(&return_value, result);
+		atomic_set(&fault_reason, fault);
+	}
+	k_spin_unlock(&control_lock, key);
 }
+
+void z_impl_application_finished(int result) { finish_application(result, 0); }
 
 static inline void z_vrfy_application_finished(int result)
 {
-	K_OOPS(K_SYSCALL_VERIFY(k_sched_current_thread_query() == &application_thread));
+	K_OOPS(K_SYSCALL_VERIFY(k_sched_current_thread_query() == &application_thread || native_caller()));
 	z_impl_application_finished(result);
 }
 #include <zephyr/syscalls/application_finished_mrsh.c>
@@ -2012,13 +2181,59 @@ static void python_entry(void *program, void *size, void *format)
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
 	/* A fault may precede initialization of the thread's TLS cache. */
-	if (atomic_get(&active) && k_sched_current_thread_query() == &application_thread &&
+	if (atomic_get(&active) && (k_sched_current_thread_query() == &application_thread || native_caller()) &&
 	    reason != K_ERR_KERNEL_PANIC && esf && !(esf->basic.xpsr & 0x1ffU)) {
-		atomic_set(&fault_reason, reason + 1);
+		finish_application(0, reason + 1);
 		return; /* Zephyr aborts this thread; the supervisor joins before unload. */
 	}
 	k_fatal_halt(reason);
 }
+
+static int clear_domain(struct k_mem_domain *domain)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(domain->partitions); i++) {
+		struct k_mem_partition part = domain->partitions[i];
+		if (part.size) {
+			int err = k_mem_domain_remove_partition(domain, &part);
+			if (err) return err;
+		}
+	}
+	return 0;
+}
+
+/* Domain mappings and live threads must be gone before releasing native code. */
+static int release_native(void)
+{
+	int err = extension ? llext_unload(&extension) : 0;
+	if (!err && loader_initialized) {
+		err = llext_heap_uninit();
+		if (!err) loader_initialized = false;
+	}
+	if (!err) {
+		k_free(native_memory);
+		native_memory = NULL;
+	}
+	return err;
+}
+
+#ifdef CONFIG_BRICKPHYR_PYTHON
+static int release_controller(void)
+{
+	if (!controller) return 0;
+	int err = controller->domain_initialized ? clear_domain(&controller->domain) : 0;
+	if (!err) err = release_native();
+	if (!err && controller->stack) {
+		err = k_thread_stack_free(controller->stack);
+		if (!err) controller->stack = NULL;
+	}
+	if (!err) {
+		if (controller->thread) k_object_free(controller->thread);
+		k_free(controller);
+		controller = NULL;
+	}
+	return err;
+}
+#endif
 
 static int release(void)
 {
@@ -2028,6 +2243,12 @@ static int release(void)
 	k_sem_reset(&record_done);
 	application_record_end();
 	int err = hub_ports_release(BP_PORT_APPLICATION);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	int controller_error = hub_ports_release(BP_PORT_CONTROLLER);
+	if (!err) err = controller_error;
+	atomic_clear(&control_pending);
+	k_sem_reset(&control_done);
+#endif
 	int radio_error = hub_radio_release();
 	if (!err) err = radio_error;
 	int peer_error = hub_ble_peer_release();
@@ -2046,22 +2267,12 @@ static int release(void)
 	int light_error = hub_light_release();
 	if (!err) err = light_error;
 	if (!err && domain_initialized) {
-		for (size_t i = 0; i < ARRAY_SIZE(application_domain.partitions); i++) {
-			struct k_mem_partition part = application_domain.partitions[i];
-			if (part.size && (err = k_mem_domain_remove_partition(&application_domain, &part))) {
-				break;
-			}
-		}
+		err = clear_domain(&application_domain);
 	}
-	if (!err && extension) {
-		err = llext_unload(&extension);
-	}
-	if (!err && loader_initialized) {
-		err = llext_heap_uninit();
-		if (!err) {
-			loader_initialized = false;
-		}
-	}
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (!err) err = release_controller();
+#endif
+	if (!err) err = release_native();
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A queued worker acquires lifecycle before reading the request. Joining
 	 * its caller and clearing pending here also cancels an unstarted copy. */
@@ -2073,11 +2284,6 @@ static int release(void)
 		k_free(code_memory);
 		code_memory = NULL;
 		code_used = code_reserved = 0;
-	}
-#else
-	if (!err) {
-		k_free(execution_memory);
-		execution_memory = NULL;
 	}
 #endif
 	if (!err && application_stack) {
@@ -2102,17 +2308,30 @@ static int reap(bool stop)
 	if (!atomic_get(&active)) {
 		return release();
 	}
-	bool ended = k_thread_join(&application_thread, K_NO_WAIT) == 0;
+	bool primary_ended = k_thread_join(&application_thread, K_NO_WAIT) == 0;
+	bool ended = primary_ended;
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	bool controller_live = controller && controller->started;
+	bool controller_ended = controller_live && k_thread_join(controller->thread, K_NO_WAIT) == 0;
+	ended |= controller_ended;
+#endif
 	if (!ended && !stop) {
 		return -EAGAIN;
 	}
-	if (!ended) {
+	if (!primary_ended) {
 		k_thread_abort(&application_thread);
 		int err = k_thread_join(&application_thread, K_FOREVER);
 		if (err) {
 			return err;
 		}
 	}
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller_live && !controller_ended) {
+		k_thread_abort(controller->thread);
+		int err = k_thread_join(controller->thread, K_FOREVER);
+		if (err) return err;
+	}
+#endif
 	atomic_clear(&active);
 	int result = atomic_get(&return_value);
 	status.result = result;
@@ -2129,7 +2348,7 @@ static int reap(bool stop)
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A soft reset is a complete application lifetime boundary. Recursive
 	 * prepare/reap(true) sees an already joined thread and cannot restart it. */
-	if (!err && ended && !stop && !fault && status.repl &&
+	if (!err && finished_source == 1 && ended && !stop && !fault && status.repl &&
 	    result == PYTHON_RESTART && !shutting_down) {
 		return run_python(NULL, 0, APPLICATION_PYTHON, true, 128);
 	}
@@ -2233,6 +2452,13 @@ void application_poll(void)
 		return;
 	}
 	(void)reap(false);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (atomic_get(&control_pending)) {
+		control_request.result = start_controller();
+		atomic_clear(&control_pending);
+		k_sem_give(&control_done);
+	}
+#endif
 	if (atomic_get(&record_pending)) {
 		record_result = application_record_begin(&record_request);
 		atomic_clear(&record_pending);
@@ -2324,6 +2550,8 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 	(void)z_impl_bp_set_stop_buttons(value.format == APPLICATION_NATIVE ? 0 : 1);
 	atomic_clear(&return_value);
 	atomic_clear(&fault_reason);
+	finished_source = 0;
+	memset(&control_clock, 0, sizeof(control_clock));
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	k_spinlock_key_t input_key = k_spin_lock(&input_lock);
 	ring_buf_reset(&input);
@@ -2364,60 +2592,104 @@ static __noinline int start_native(const void *function, size_t length, size_t h
 			.loader_bytes = heap_size, .loaded_bytes = extension->alloc_size}, false);
 }
 
+/* One LLEXT implementation serves either native context. Backing has already
+ * been reserved; no application can observe a partially linked image. */
+static int load_native(struct llext_loader *loader, size_t heap_size,
+	struct k_mem_domain *domain, const void **function)
+{
+	int err = llext_heap_init(native_memory, heap_size);
+	if (err) return err;
+	loader_initialized = true;
+	struct llext_load_param parameters = LLEXT_LOAD_PARAM_DEFAULT;
+	err = llext_load(loader, "application", &extension, &parameters);
+	if (err) return err;
+	*function = llext_find_sym(&extension->exp_tab, "app_main");
+	uintptr_t pc = (uintptr_t)*function & ~1U;
+	uintptr_t text = (uintptr_t)extension->mem[LLEXT_MEM_TEXT];
+	if (!*function || pc < text || pc - text >= extension->mem_size[LLEXT_MEM_TEXT]) return -ENOEXEC;
+	return llext_add_domain(extension, domain);
+}
+
 /* lifecycle is held and this loader has passed native_image_check. */
 static int run_image(struct llext_loader *loader, size_t length,
 	const struct native_image_requirements *requirements)
 {
 	size_t heap_size = requirements->heap_size;
-#ifndef CONFIG_BRICKPHYR_PYTHON
 	/* Admission must not stop the current program when the shared heap is full. */
 	void *memory = k_malloc(heap_size);
-	if (!memory) {
-		return -ENOMEM;
-	}
-#endif
-	/* Keep the existing native trampoline/exception budget for tiny requests. */
+	if (!memory) return -ENOMEM;
 	int err = prepare(MAX(requirements->stack_size, 2048));
 	if (err) {
-#ifndef CONFIG_BRICKPHYR_PYTHON
 		k_free(memory);
-#endif
 		return err;
 	}
-#ifndef CONFIG_BRICKPHYR_PYTHON
-	execution_memory = memory;
-#endif
-	err = llext_heap_init(execution_memory, heap_size);
-	if (err) {
-		goto failed;
-	}
-	loader_initialized = true;
-	struct llext_load_param parameters = LLEXT_LOAD_PARAM_DEFAULT;
-	err = llext_load(loader, "application", &extension, &parameters);
-	if (err) {
-		goto failed;
-	}
-	const void *function = llext_find_sym(&extension->exp_tab, "app_main");
-	uintptr_t pc = (uintptr_t)function & ~1U;
-	uintptr_t text = (uintptr_t)extension->mem[LLEXT_MEM_TEXT];
-	if (!function || pc < text || pc - text >= extension->mem_size[LLEXT_MEM_TEXT]) {
-		err = -ENOEXEC;
-		goto failed;
-	}
-	err = llext_add_domain(extension, &application_domain);
-	if (err) {
-		goto failed;
-	}
-	err = start_native(function, length, heap_size);
-	if (err) {
-		goto failed;
-	}
-	return 0;
-failed:
-	/* Retain the original loading error; a failed release retains ownership. */
-	(void)release();
+	native_memory = memory;
+	const void *function;
+	err = load_native(loader, heap_size, &application_domain, &function);
+	if (!err) err = start_native(function, length, heap_size);
+	if (err) (void)release();
 	return err;
 }
+
+#ifdef CONFIG_BRICKPHYR_PYTHON
+/* The primary VM is blocked in control_start. lifecycle protects its source
+ * image until this copy/link finishes, or cancels the pending request on stop. */
+static int start_controller(void)
+{
+	struct native_image_requirements requirements;
+	int err = native_image_check_buffer(control_request.image, control_request.size, &requirements);
+	if (err) return err;
+	controller = k_calloc(1, sizeof(*controller) + control_request.length);
+	if (!controller) return -ENOMEM;
+	controller->stack_size = MAX(requirements.stack_size, 2048);
+	controller->loader_size = requirements.heap_size;
+	controller->parameter_size = control_request.length;
+	controller->revision = 1;
+	if (control_request.length) memcpy(controller->parameters, control_request.parameters, control_request.length);
+	struct k_thread *caller = k_current_get();
+	struct k_heap *pool = caller->resource_pool;
+	k_thread_system_pool_assign(caller);
+	controller->stack = k_thread_stack_alloc(controller->stack_size, K_USER);
+	controller->thread = k_object_alloc(K_OBJ_THREAD);
+	k_thread_heap_assign(caller, pool);
+	if (!controller->stack || !controller->thread) {
+		err = -ENOMEM;
+		goto failed;
+	}
+	err = k_mem_domain_init(&controller->domain, 0, NULL);
+	if (err) goto failed;
+	controller->domain_initialized = true;
+	native_memory = k_malloc(requirements.heap_size);
+	if (!native_memory) {
+		err = -ENOMEM;
+		goto failed;
+	}
+	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(control_request.image, control_request.size);
+	const void *function;
+	err = load_native(&loader.loader, requirements.heap_size, &controller->domain, &function);
+	if (err) goto failed;
+	memset(&control_clock, 0, sizeof(control_clock));
+	k_thread_create(controller->thread, controller->stack, controller->stack_size,
+		native_entry, extension, (void *)function, NULL,
+		K_LOWEST_APPLICATION_THREAD_PRIO - 1, K_USER, K_FOREVER);
+	if (IS_ENABLED(CONFIG_THREAD_NAME)) (void)k_thread_name_set(controller->thread, "app-control");
+	k_thread_heap_assign(controller->thread, NULL);
+	err = k_mem_domain_add_thread(&controller->domain, controller->thread);
+	if (err) {
+		k_thread_abort(controller->thread);
+		k_thread_join(controller->thread, K_FOREVER);
+		goto failed;
+	}
+	controller->started = true;
+	k_thread_start(controller->thread);
+	return 0;
+failed:
+	/* A rejected controller leaves Python running and preserves its first error. */
+	int cleanup = release_controller();
+	if (cleanup && !status.cleanup_error) status.cleanup_error = cleanup;
+	return err;
+}
+#endif
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 static int run_python(const void *program, size_t length, enum application_format format,

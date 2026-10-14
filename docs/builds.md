@@ -406,9 +406,9 @@ supervisor, hardware services, management Shell and MPU isolation. Its current
 native profile is incomplete and build-only, a secondary goal after the primary
 SPIKE/Babybot work. Python execution, including `.mpy`, is not planned for this
 hub. The full F4 profile retains native applications and Python, including source
-compilation, REPL and compatible `.mpy` modules. It currently executes one engine
-at a time; independent native control alongside Python is planned work in the
-[platform roadmap](roadmap.md).
+compilation, REPL and compatible `.mpy` modules. It also supports an independently scheduled native controller alongside Python
+with a shared application lifetime; see
+[concurrent control](applications.md#native-control-alongside-python).
 
 The firmware advertises its actual engines and hardware capabilities. Application
 format chooses an installed engine; the original programming language does not.
@@ -620,8 +620,8 @@ and the relevant module's log level in an extra configuration file.
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
-these include the configured system heap and, for Python builds, a shared 64 KiB
-execution arena. Application stacks and native-only loader buffers come from the
+these include the configured system heap and, for Python builds, a dedicated 64 KiB
+Python arena. Application stacks and native loader buffers come from the
 heap on demand and are released after the supervised application is quiescent.
 The loader reports the image size,
 reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
