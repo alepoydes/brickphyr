@@ -17,6 +17,38 @@ struct image {
 	elf_ehdr_t header;
 };
 
+struct region {
+	size_t first, end, alignment;
+};
+
+/* LLEXT groups allocated sections by use. Its copied region includes file
+ * gaps between them, so summing individual sections is not a memory bound. */
+static enum llext_mem region_type(const elf_shdr_t *sh, const char *name)
+{
+	if (!strcmp(name, ".exported_sym")) {
+		return LLEXT_MEM_EXPORT;
+	}
+	switch (sh->sh_type) {
+	case SHT_NOBITS: return LLEXT_MEM_BSS;
+	case SHT_PREINIT_ARRAY: return LLEXT_MEM_PREINIT;
+	case SHT_INIT_ARRAY: return LLEXT_MEM_INIT;
+	case SHT_FINI_ARRAY: return LLEXT_MEM_FINI;
+	default:
+		if (sh->sh_flags & SHF_EXECINSTR) {
+			return LLEXT_MEM_TEXT;
+		}
+		if (sh->sh_flags & SHF_WRITE) {
+			return LLEXT_MEM_DATA;
+		}
+#ifdef CONFIG_LLEXT_RODATA_NO_RELOC
+		if (!strcmp(name, LLEXT_SECTION_RODATA_NO_RELOC)) {
+			return LLEXT_MEM_RODATA_NO_RELOC;
+		}
+#endif
+		return LLEXT_MEM_RODATA;
+	}
+}
+
 static bool range(size_t offset, size_t count, size_t length)
 {
 	return offset <= length && count <= length - offset;
@@ -87,6 +119,7 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 	bool abi = false;
 	bool entry = false;
 	unsigned int symtabs = 0;
+	struct region regions[LLEXT_MEM_COUNT] = {0};
 	/* Header/map/symbol bookkeeping plus allocator metadata. Section alignment
 	 * can consume almost another whole block. This is a bounded allocation
 	 * budget, not a claim about actual occupied bytes in LLEXT's heap. */
@@ -134,11 +167,22 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 				return -ENOTSUP;
 			}
 			if (sh.sh_size) {
-				size_t block = 1U << LOG2CEIL(MAX(32U, MAX(sh.sh_size, sh.sh_addralign)));
-				budget += 2 * block;
+				enum llext_mem type = region_type(&sh, name);
+				struct region *region = &regions[type];
+				if (region->alignment && (type == LLEXT_MEM_BSS ||
+				    type == LLEXT_MEM_PREINIT || type == LLEXT_MEM_INIT || type == LLEXT_MEM_FINI)) {
+					return -ENOTSUP;
+				}
+				size_t first = sh.sh_type == SHT_NOBITS ?
+					sh.sh_offset & (MAX(1U, sh.sh_addralign) - 1) : sh.sh_offset;
+				region->first = region->alignment ? MIN(region->first, first) : first;
+				region->end = MAX(region->end, first + sh.sh_size);
+				region->alignment = MAX(region->alignment, MAX(1U, sh.sh_addralign));
 			}
-		} else {
-			budget += sh.sh_size;
+		} else if (sh.sh_type == SHT_SYMTAB || sh.sh_type == SHT_STRTAB) {
+			/* LLEXT copies symbol/string tables. Relocations are streamed;
+			 * other non-allocated metadata is not retained in its heap. */
+			budget += sh.sh_size + 2 * (MAX(1U, sh.sh_addralign) - 1);
 		}
 		if (budget > HEAP_LIMIT) {
 			return -ENOMEM;
@@ -153,12 +197,17 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 			if (strings.sh_type != SHT_STRTAB) {
 				return -ENOEXEC;
 			}
-			budget += sh.sh_size;
 			for (size_t offset = 0; offset < sh.sh_size; offset += sizeof(elf_sym_t)) {
 				elf_sym_t sym;
 				err = read_at(&image, sh.sh_offset + offset, &sym, sizeof(sym));
 				if (err || (err = name_at(&image, &strings, sym.st_name, name, sizeof(name)))) {
 					return err;
+				}
+				/* The link and export tables coexist at peak, and contain
+				 * only global functions/objects, not every ELF symbol. */
+				if (ELF_ST_BIND(sym.st_info) == STB_GLOBAL &&
+				    (ELF_ST_TYPE(sym.st_info) == STT_FUNC || ELF_ST_TYPE(sym.st_info) == STT_OBJECT)) {
+					budget += 2 * sizeof(struct llext_symbol);
 				}
 				if (sym.st_shndx == SHN_UNDEF) {
 					if (!offset && !name[0]) {
@@ -235,6 +284,15 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 	}
 	if (!abi || !entry || !symtabs) {
 		return -ENOEXEC;
+	}
+	for (unsigned int i = 0; i < ARRAY_SIZE(regions); i++) {
+		const struct region *region = &regions[i];
+		if (!region->alignment) {
+			continue;
+		}
+		size_t span = region->end - ROUND_DOWN(region->first, region->alignment);
+		size_t block = 1U << LOG2CEIL(MAX(32U, MAX(span, region->alignment)));
+		budget += 2 * block;
 	}
 	if (budget > HEAP_LIMIT) {
 		return -ENOMEM;

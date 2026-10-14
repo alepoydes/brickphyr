@@ -153,6 +153,11 @@ execution arena for both engines: Python maps the whole power-of-two, size-align
 arena as one MPU partition. That arena has no flash initialization image.
 Both engines initialize their allocations and must accept arbitrary initial contents.
 
+The native admission budget includes merged ELF region spans, MPU alignment,
+symbol/string tables and loader bookkeeping. It excludes metadata that is only
+streamed or skipped; gaps inside a merged region still require memory. The budget
+is a conservative reservation, not a measurement of the loader's peak usage.
+
 A native-only replacement reserves its new buffer before stopping the old
 application. Insufficient or fragmented heap therefore rejects that start without
 interrupting the running program. This briefly requires space for both buffers;

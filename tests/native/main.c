@@ -169,8 +169,9 @@ int main(void)
 	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
 	CHECK(!status.fault && !status.cleanup_error && available() == capacity);
 #endif
+	size_t hello_budget = 0;
 	for (int i = 0; i < 2; i++) {
-		int err = native_fixture_run("hello");
+		int err = native_fixture_run(i ? "metadata" : "hello");
 		printk("hello load %d\n", err);
 		CHECK(err == 0);
 		k_msleep(60);
@@ -186,8 +187,12 @@ int main(void)
 		CHECK(application_output(output, sizeof(output) - 1) > 0);
 		CHECK(strstr(output, "Hello from a native application."));
 		CHECK(status.cleanup_error == 0 && available() == capacity);
+		if (!i) {
+			hello_budget = status.loader_bytes;
+		} else {
+			CHECK(status.loader_bytes == hello_budget);
+		}
 	}
-	size_t hello_budget = status.loader_bytes;
 	/* A replacement must secure its arena before stopping the old image. */
 	CHECK(native_fixture_run("spin") == 0);
 	application_get_status(&status);
@@ -362,6 +367,11 @@ int main(void)
 	CHECK(native_fixture_run("badreloc") == -ENOTSUP);
 	CHECK(native_fixture_run("badfloat") == -ENOTSUP);
 	CHECK(native_fixture_run("unwind") == -ENOTSUP);
+	if (APPLICATION_MEMORY_LIMIT == 12288) {
+		/* Tiny code sections separated across a 4 KiB image need a full
+		 * MPU region, exceeding this loader's admission budget. */
+		CHECK(native_fixture_run("sparse") == -ENOMEM);
+	}
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING);
 	k_sem_give(&stop_requested);

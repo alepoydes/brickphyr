@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "application.h"
+#include "native_image.h"
 
 #include <errno.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 #include <brickphyr_abi.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/llext/elf.h>
+#include <zephyr/llext/buf_loader.h>
 
 #ifdef CONFIG_FPU
 static const unsigned char fpu[] = {
@@ -81,6 +83,47 @@ const void *native_fixture_hello(size_t *length)
 
 int native_fixture_run(const char *name)
 {
+	if (!strcmp(name, "metadata") || !strcmp(name, "sparse")) {
+		bool sparse = !strcmp(name, "sparse");
+		const unsigned char *original = sparse ? spin : hello;
+		size_t original_size = sparse ? sizeof(spin) : sizeof(hello);
+		size_t length = sparse ? APPLICATION_IMAGE_LIMIT : original_size + 1024;
+		unsigned char *changed = k_malloc(length);
+		if (!changed) {
+			return -ENOBUFS;
+		}
+		memcpy(changed, original, original_size);
+		memset(changed + original_size, 0, length - original_size);
+		elf_ehdr_t *header = (void *)changed;
+		elf_shdr_t *sections = (void *)(changed + header->e_shoff);
+		const char *names = (void *)(changed + sections[header->e_shstrndx].sh_offset);
+		int err = -ENOENT;
+		for (size_t i = 0; i < header->e_shnum; i++) {
+			if (!strcmp(names + sections[i].sh_name, ".comment")) {
+				/* A larger comment is not resident. A second code section
+				 * at the same file boundary makes the whole gap resident. */
+				sections[i].sh_offset = sparse ? length - 4 : original_size;
+				sections[i].sh_size = sparse ? 4 : 1024;
+				if (sparse) {
+					sections[i].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+					sections[i].sh_addralign = 4;
+					sections[i].sh_entsize = 0;
+				}
+				if (sparse) {
+					/* Isolate admission: a later backing-allocation error
+					 * must not pass for rejecting the file's memory cost. */
+					struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(changed, length);
+					size_t heap;
+					err = native_image_check(&loader.loader, length, &heap);
+				} else {
+					err = application_run_native(changed, length);
+				}
+				break;
+			}
+		}
+		k_free(changed);
+		return err;
+	}
 	if (!strcmp(name, "badimport") || !strcmp(name, "badreloc")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) return -ENOMEM;
