@@ -246,6 +246,60 @@ def test_native_smp_and_cli():
             )
 
 
+def test_dsp_sdk_example():
+    from test_python_hub import shell
+    from brickphyrdev import console
+    from brickphyrdev.application import Remove, RunStored, install
+
+    build = Path(__file__).resolve().parents[1] / "build/native-dsp-tests"
+    image = (build.with_name("native-dsp-examples") / "imu_filter.elf").read_bytes()
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            async def sample(expected):
+                data = bytearray()
+                async with asyncio.timeout(3):
+                    while True:
+                        data.extend((await checked(client, Output())).data)
+                        matches = re.findall(rb"imu-dsp seq=(\d+) epoch=(\d+) raw=(-?\d+) filtered=(-?\d+) mdps\n", data)
+                        if any(int(raw) == int(filtered) == expected for _, _, raw, filtered in matches):
+                            break
+                        state = await checked(client, Status())
+                        assert state.state == 1 and state.fault == state.cleanup == 0, (state, data)
+                        await asyncio.sleep(0.01)
+                state = await checked(client, Status())
+                assert state.image == len(image) <= state.limit == 4096
+                assert 0 < state.loaded <= state.heap <= 12288
+                assert state.stack == 2048
+                assert state.dropped == state.fault == state.cleanup == 0
+                return state
+
+            # Registers stand in for an IMU; acquisition, FIR, formatting,
+            # MPU execution and both loaders are the production paths.
+            await shell(port, captured, b"imu_input 0 0 -1000 0 0 -4096")
+            await upload(client, port, image)
+            await checked(client, Start())
+            ram = await sample(70000)
+            await checked(client, Stop())
+            ram_done = await checked(client, Status())
+            assert ram_done.unused > 0 and ram_done.fault == ram_done.cleanup == 0
+            await install(client, image, "imu-filter")
+            await shell(port, captured, b"imu_input 0 0 1000 0 0 -4096")
+            await checked(client, RunStored(name="imu-filter"))
+            stored = await sample(-70000)
+            assert (stored.heap, stored.loaded) == (ram.heap, ram.loaded)
+            await checked(client, Stop())
+            stored_done = await checked(client, Status())
+            assert stored_done.unused > 0 and stored_done.fault == stored_done.cleanup == 0
+            await checked(client, Remove(name="imu-filter"))
+            print(f"DSP example: file {ram.image}, loader {ram.heap}, loaded {ram.loaded}, "
+                  f"stack unused RAM/stored {ram_done.unused}/{stored_done.unused}")
+
+    with native_console(build, virtual_clock=True) as port:
+        asyncio.run(exercise(port))
+
+
 def test_installed_applications():
     from smpclient.requests.file_management import FileClose, FileUpload
 

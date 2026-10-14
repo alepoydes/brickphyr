@@ -617,6 +617,11 @@ uv run --locked cmake --build build/native-dsp-examples --target imu_filter
 The SDK adds `lib/libcmsis-dsp.a` and `LICENSES/CMSIS-DSP.txt` to Zephyr's EDK;
 the EDK supplies the CMSIS-DSP headers and matching F4 hard-float flags. The
 example links the archive normally, so only referenced objects enter its ELF.
+The example build keeps application code at `-O2` and selects the toolchain's
+size-optimized C library with `-Os` at link time. `imu_filter` additionally selects
+Picolibc's integer formatter, including `long long`, because it prints integer
+millidegrees/second. Remove that target's `vfprintf` selection if adding floating
+point format specifiers; DSP arithmetic is unaffected by the formatter choice.
 Other upstream `CONFIG_CMSIS_DSP_*` categories can be selected when an application
 needs their routines. The full Python F4 profile takes the same optional file
 after its Python configuration:
@@ -631,7 +636,10 @@ uv run --locked west build -d build/python-dsp-apps -t brickphyr-sdk
 The `imu_filter.elf` example reads calibrated hub-axis Z angular velocity; its
 sampling and output limits are described in [applications](applications.md#experimental-native-profile).
 The full F4 DSP firmware and matching SDK, and the example built separately from
-that SDK, compile. Physical RAM and stored execution over USB/BLE remain pending.
+that SDK, compile. The exported example also has ARM/QEMU RAM and LittleFS checks
+through SMP with a synthetic IMU and Technic's application limits; see
+[local checks](testing.md#local-checks).
+Physical RAM and stored execution over USB/BLE remain pending.
 
 ## Experimental Python profile
 

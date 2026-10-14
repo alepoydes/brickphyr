@@ -894,6 +894,24 @@ response, the linked native SDK archive and `snprintf` through the production
 loader. This is ARM emulation, not a physical IMU, USB or BLE check. Physical RAM
 and stored USB/BLE acceptance for the optional F4 DSP profile remain pending.
 
+To exercise the separately built `imu_filter.elf`, first prepare
+`build/native-dsp-examples` with the [DSP SDK](builds.md#optional-cmsis-dsp-native-sdk).
+Then build the existing SMP fixture with synthetic IMU registers and compact
+application limits:
+
+```sh
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-dsp-tests -o=-j4 -- \
+  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;dsp.conf' \
+  -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked pytest -q tests/test_native.py::test_dsp_sdk_example
+```
+
+This checks the actual SDK ELF through RAM upload and LittleFS installation,
+positive/negative gyro output, bounded loading, stack use and stop cleanup.
+IMU acquisition, CMSIS-DSP, formatting and protected execution are production
+code. Simulated services use additional MPS2 RAM; this does not establish a
+complete Technic image or physical sensor accuracy.
+
 `tests/native` executes the production loader on an ARM MPU model, checking
 matrix syscalls, repeated invalid calls, misaligned and read-only result buffers,
 and release after stop/fault. Its synthetic SPI peer can delay a write until the

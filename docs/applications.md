@@ -89,8 +89,11 @@ observed samples after the window fills. A missing or slow output reader can dro
 log bytes; application status counts drops. This example does not establish a
 fixed-rate filter or physical IMU performance. The full F4 firmware and matching
 SDK, plus the separately built example, compile with DSP enabled; a focused M4
-QEMU fixture passes through the production native loader. Physical RAM and stored
-execution over USB/BLE remain to be checked.
+QEMU fixture passes through the production native loader. The exported IMU example
+also runs through SMP from RAM and LittleFS with a synthetic register peer and
+Technic's 4 KiB image, 12 KiB loader and 2 KiB application-stack limits. These
+checks use an MPS2 memory layout, not Technic's full platform RAM budget.
+Physical RAM and stored execution over USB/BLE remain to be checked.
 
 ### Portable ELF ABI
 

@@ -30,12 +30,16 @@ foreach(example ${native_examples})
   set_target_properties(${example} PROPERTIES SUFFIX .elf
     LINK_DEPENDS ${PROJECT_BINARY_DIR}/application.ld)
   target_compile_options(${example} PRIVATE ${LLEXT_CFLAGS} -O2 -g0)
-  target_link_options(${example} PRIVATE ${application_link_flags} -nostdlib
+  # Select the toolchain's compact libc archive; application code stays at -O2.
+  target_link_options(${example} PRIVATE ${application_link_flags} -Os -nostdlib
     -r -Wl,--strip-debug -T${PROJECT_BINARY_DIR}/application.ld)
   # Compiler-emitted memory operations execute in the application's domain.
   # Resolve them from the compiler's static C library, never privileged imports.
   if(example STREQUAL "imu_filter")
     target_link_libraries(${example} PRIVATE ${dsp_library})
+    # This example prints integers only, including the full long-long range.
+    # This is Picolibc's integer formatter selection from picolibc.specs.
+    target_link_options(${example} PRIVATE "-Wl,--defsym,vfprintf=__l_vfprintf")
   endif()
   target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
