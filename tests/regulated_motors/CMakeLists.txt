@@ -18,3 +18,4 @@ target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/p
 
 include(${BRICKPHYR_ROOT}/cmake/motor_control.cmake)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_battery.c)
+zephyr_ld_options(-Wl,--wrap=motor_control_observe)

@@ -207,6 +207,15 @@ config BRICKPHYR_MOTOR_CONTROL
 	  system work. Missing encoder/battery input or a missed frame coasts the
 	  motor and reports an error. Physical timing and tuning are experimental.
 
+config HEAP_MEM_POOL_ADD_SIZE_BRICKPHYR_MOTOR_CONTROL
+	int
+	default $(mul,512,$(dt_node_enabled_child_count,$(dt_nodelabel_path,hub_ports))) if BRICKPHYR_MOTOR_CONTROL
+	help
+	  Controller state borrows from the shared heap when observation or
+	  regulation is first requested. Budget 512 bytes per enabled port for
+	  the controller, observer and allocation overhead. No allocation occurs
+	  in control frames; the worker releases state after its lease ends.
+
 config BRICKPHYR_BATTERY
 	bool "Battery voltage, load-current and temperature observations"
 	default y if BOARD_SPIKE_PRIME_F4 || BOARD_TECHNIC_HUB

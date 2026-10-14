@@ -777,8 +777,11 @@ synthetic peers: command ownership, stall, Shell/SMP observations, completion,
 missing encoder input, battery failure, lost frames before/during I/O and release
 during an unfinished PWM operation. It also checks cold observer startup,
 externally moved shaft samples, no idle PWM writes, direct-drive stall and
-observation errors when a coasting encoder stops reporting. Neither fixture
-measures physical tuning,
+observation errors when a coasting encoder stops reporting. Heap exhaustion must
+reject the first observer before ownership or output changes. A test-only linker
+wrapper pauses a real passive observation: release must retain its record and
+exclude a new owner until that frame completes, then reclaim the allocation.
+Neither fixture measures physical tuning,
 motor stopping or service jitter on the hub.
 
 The same numerical fixture covers the drivebase computation with two independent
@@ -788,8 +791,8 @@ configuration, and tank/steering signs. `tests/drivebase` checks the paired port
 worker with two synthetic UART encoders and PWM-driven shafts: ownership,
 settings without motion replacement, individual-motor takeover, hotplug,
 reconstruction, rejected setup and stopping both outputs after one PWM failure.
-It also checks pair heap reclamation and rejects creation under heap exhaustion
-without changing independently running motors.
+It also checks controller/pair heap reclamation, motor close/reopen, and rejects
+pair creation under heap exhaustion without changing independently running motors.
 `tests/test_python_drivebase.py` uses the IMU-enabled protected ARM fixture for
 binding units, gyro reset/configuration exclusion, blocking/awaitable completion,
 rejected replacement, cancellation and supervised cleanup. These checks do not

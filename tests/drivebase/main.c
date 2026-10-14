@@ -246,7 +246,7 @@ static void wait_output(uint32_t port)
 	}
 }
 
-static void connect_motors(void)
+static size_t connect_motors(void)
 {
 	fake_pwm_set_cycles_fake.custom_fake = pwm;
 	zassert_ok(adc_emul_const_raw_value_set(adc, 10, 0));
@@ -265,14 +265,17 @@ static void connect_motors(void)
 	struct bp_battery_sample battery;
 	zassert_ok(hub_battery_get(&battery));
 	zassert_ok(battery.error);
+	size_t heap_before_control = allocated_bytes();
 	configure_motor(0, 1000);
 	configure_motor(1, 1000);
+	return heap_before_control;
 }
 
 ZTEST(drivebase, test_pair_lifetime)
 {
-	connect_motors();
+	size_t heap_before_control = connect_motors();
 	size_t heap_before_pair = allocated_bytes();
+	zassert_true(heap_before_pair > heap_before_control);
 	uint32_t handle = open_pair();
 	zassert_true(allocated_bytes() > heap_before_pair);
 	struct bp_drivebase_state initial;
@@ -335,6 +338,8 @@ ZTEST(drivebase, test_pair_lifetime)
 	wait_released(1);
 	wait_sensor(1);
 	configure_motor(1, 1000);
+	zassert_equal(allocated_bytes(), heap_before_pair,
+		"Reopened motor retained a retired controller or pair");
 	handle = open_pair();
 	zassert_ok(hub_drivebase_close(BP_PORT_APPLICATION, handle));
 	wait_pair_gone(handle);
@@ -474,6 +479,8 @@ ZTEST(drivebase, test_pair_lifetime)
 	zassert_ok(hub_drivebase_close(BP_PORT_APPLICATION, handle));
 	wait_pair_gone(handle);
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(allocated_bytes(), heap_before_control,
+		"Released motors retained controller allocations");
 	k_timer_stop(&encoder);
 }
 ZTEST_SUITE(drivebase, NULL, NULL, NULL, NULL, NULL);

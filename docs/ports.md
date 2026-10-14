@@ -942,6 +942,19 @@ battery observations. Passive motors have no feedback and reject these commands.
 The implementation is experimental: synthetic feedback/lifecycle checks and F4
 compilation do not establish physical tuning or control timing.
 
+The first observation or regulated request allocates a stable controller record
+from the shared heap before accepting the command. Allocation failure returns
+`ENOMEM` without changing ownership, the queued request or motor output. Direct
+duty alone needs no controller allocation. Control frames never allocate; after
+release, the port worker finishes any in-flight individual or paired computation
+before freeing the record. Even a coasting observer retains its lease until the
+worker handles release, so a new owner cannot inherit its unfinished frame.
+Application cleanup waits for that retirement.
+Settings, published observations and saved log rows retain their existing
+lifetimes. The minimum shared-heap contribution includes 512 bytes per enabled
+port for controller state and allocator overhead; see the
+[F4 memory budget](applications.md#experimental-python-profile).
+
 The same USB/BLE Shell accepts:
 
 ```text

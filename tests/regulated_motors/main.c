@@ -3,6 +3,7 @@
  * The shaft stays fixed: this checks commands, stall and cleanup, not tuning. */
 #include "hub_ports.h"
 #include "hub_battery.h"
+#include "control.h"
 #include "wiring.h"
 #include "../lump/captures.h"
 #include <string.h>
@@ -16,6 +17,7 @@
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
 #include <zephyr/ztest.h>
+#include <zephyr/sys/atomic.h>
 
 DEFINE_FFF_GLOBALS;
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(lump_uart));
@@ -26,8 +28,24 @@ static int battery_error;
 static uint32_t battery_raw = 3100;
 static uint32_t pwm_delay;
 static bool block_pwm;
-static K_SEM_DEFINE(pwm_entered, 0, 1);
-static K_SEM_DEFINE(pwm_continue, 0, 1);
+static atomic_t block_observer;
+static K_SEM_DEFINE(worker_entered, 0, 1);
+static K_SEM_DEFINE(worker_continue, 0, 1);
+
+int __real_motor_control_observe(struct motor_control *motor, uint32_t ticks,
+	int64_t measured, bool coast, struct motor_observation *out);
+
+int __wrap_motor_control_observe(struct motor_control *motor, uint32_t ticks,
+	int64_t measured, bool coast, struct motor_observation *out)
+{
+	/* Keep the real computation, but hold one passive frame before it reads
+	 * the controller so release can race the worker outside the port lock. */
+	if (coast && atomic_cas(&block_observer, 1, 0)) {
+		k_sem_give(&worker_entered);
+		zassert_ok(k_sem_take(&worker_continue, K_MSEC(100)));
+	}
+	return __real_motor_control_observe(motor, ticks, measured, coast, out);
+}
 
 static void sent(const struct device *dev, size_t size, void *arg)
 {
@@ -59,8 +77,8 @@ static int pwm(const struct device *dev, uint32_t channel,
 {
 	if (pulse && block_pwm) {
 		block_pwm = false;
-		k_sem_give(&pwm_entered);
-		zassert_ok(k_sem_take(&pwm_continue, K_MSEC(100)));
+		k_sem_give(&worker_entered);
+		zassert_ok(k_sem_take(&worker_continue, K_MSEC(100)));
 	}
 	if (pulse && pwm_delay) {
 		uint32_t delay = pwm_delay;
@@ -75,6 +93,22 @@ static struct bp_motor_state state(void)
 	struct bp_motor_state value;
 	zassert_ok(hub_motor_get(0, &value));
 	return value;
+}
+
+static size_t allocated_bytes(void)
+{
+	struct k_heap *heaps;
+	int count = k_heap_array_get(&heaps);
+	size_t total = 0;
+	for (int i = 0; i < count; i++) {
+		struct sys_memory_stats stats;
+		k_spinlock_key_t key = k_spin_lock(&heaps[i].lock);
+		int err = sys_heap_runtime_stats_get(&heaps[i].heap, &stats);
+		k_spin_unlock(&heaps[i].lock, key);
+		zassert_ok(err);
+		total += stats.allocated_bytes;
+	}
+	return total;
 }
 
 static struct bp_motor_state completed(void)
@@ -196,12 +230,59 @@ ZTEST(regulated_motors, test_control_lifetime)
 	struct bp_port_state port;
 	zassert_ok(hub_port_get(0, &port));
 	uint32_t observe_request;
+	size_t heap_before_control = allocated_bytes();
+	struct bp_motor_state before = state();
+	unsigned int pwm_before = fake_pwm_set_cycles_fake.call_count;
+	/* Force first-use allocation failure before ownership or output changes. */
+	struct heap_filler { struct heap_filler *next; };
+	struct heap_filler *fillers = NULL, *block;
+	while ((block = k_malloc(64)) != NULL) {
+		block->next = fillers;
+		fillers = block;
+	}
+	zassert_not_null(fillers);
+	zassert_equal(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request), -ENOMEM);
+	struct bp_motor_state rejected = state();
+	zassert_equal(rejected.owner, before.owner);
+	zassert_equal(rejected.request, before.request);
+	zassert_equal(rejected.pending, before.pending);
+	zassert_equal(rejected.duty, before.duty);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, pwm_before);
+	while (fillers) {
+		block = fillers;
+		fillers = block->next;
+		k_free(block);
+	}
+	zassert_equal(allocated_bytes(), heap_before_control);
 	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request));
 	zassert_ok(completed().error);
+	zassert_true(allocated_bytes() > heap_before_control);
 	struct bp_motor_observation observation;
 	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
 	zassert_ok(observation.error);
 	zassert_equal(observation.speed_mdeg_s, 0);
+	/* A coasting observer leaves output valid, but close must retire its
+	 * frame before a new owner can reuse the controller. */
+	atomic_set(&block_observer, 1);
+	zassert_ok(k_sem_take(&worker_entered, K_MSEC(100)));
+	struct bp_motor_state passive = state();
+	zassert_equal(passive.mode, BP_MOTOR_COAST);
+	zassert_true(passive.valid && !passive.pending && passive.control.observing);
+	size_t heap_during_observer = allocated_bytes();
+	zassert_true(heap_during_observer > heap_before_control);
+	zassert_ok(hub_port_release(BP_PORT_APPLICATION, 0));
+	zassert_equal(state().owner, BP_PORT_APPLICATION);
+	zassert_equal(hub_motor_observe(BP_PORT_TERMINAL, 0, port.generation, &observe_request), -EBUSY);
+	zassert_equal(allocated_bytes(), heap_during_observer,
+		"Release freed a controller still used by the passive frame");
+	k_sem_give(&worker_continue);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(allocated_bytes(), heap_before_control);
+	ready();
+	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request));
+	zassert_ok(completed().error);
+	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
+	zassert_ok(observation.error);
 	unsigned int writes = fake_pwm_set_cycles_fake.call_count;
 	uint32_t frames = observation.frames;
 	shaft_increment = 10; /* 1 degree per 5 ms; independent synthetic motion. */
@@ -373,14 +454,20 @@ ZTEST(regulated_motors, test_control_lifetime)
 	ready();
 
 	/* Release accepted during a PWM write retains ownership until coast. */
+	size_t heap_before_blocked_control = allocated_bytes();
 	block_pwm = true;
 	zassert_ok(hub_motor_control(BP_PORT_APPLICATION, 0, &command));
-	zassert_ok(k_sem_take(&pwm_entered, K_MSEC(100)));
+	zassert_ok(k_sem_take(&worker_entered, K_MSEC(100)));
+	size_t heap_during_blocked_control = allocated_bytes();
+	zassert_true(heap_during_blocked_control > heap_before_blocked_control);
 	zassert_ok(hub_port_release(BP_PORT_APPLICATION, 0));
 	zassert_equal(state().owner, BP_PORT_APPLICATION);
+	zassert_equal(allocated_bytes(), heap_during_blocked_control);
 	zassert_equal(hub_motor_control(BP_PORT_TERMINAL, 0, &command), -EBUSY);
-	k_sem_give(&pwm_continue);
+	k_sem_give(&worker_continue);
 	value = completed();
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_equal(allocated_bytes(), heap_before_blocked_control);
 	zassert_equal(value.owner, BP_PORT_UNOWNED);
 	zassert_false(value.control.active);
 	zassert_equal(value.mode, BP_MOTOR_COAST);
