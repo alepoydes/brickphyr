@@ -365,7 +365,7 @@ def test_native_service_stacks(backend):
                 while (state := await checked(client, Status())).state == 1:
                     await asyncio.sleep(0.01)
             assert state.state == 2 and state.result == state.cleanup == 0
-            assert 13312 < state.heap <= 15872
+            assert 13312 < state.heap <= 16384
             assert b"Hello from a native application." in (await checked(client, Output())).data
             await upload(client, port, bytes(broken))
             with pytest.raises(RuntimeError, match="Start rejected"):

@@ -944,9 +944,10 @@ These checks preserve message content and access behavior; they do not establish
 physical interrupt latency or the maximum stack use of every driver error path.
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-15.5 KiB loader limit and 24.5 KiB shared heap. Its SRAM starts after a reserved
+16 KiB loader limit and 25 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
-the running program, and successful or failed cleanup returning or retaining
+the running program, read-error propagation through nested ELF lookups,
+and successful or failed cleanup returning or retaining
 the loader buffer as required. It also uses a kernel-only main stack and omits
 the direct driver syscalls above while retaining the protected Brickphyr API:
 
@@ -963,7 +964,7 @@ fixed kernel-object table budget through protected thread creation. Simulated
 peripherals use additional MPS2 RAM; this is not a simulation of the complete
 Technic 64 KiB memory budget. The actual Technic link checks that budget separately.
 
-The RAM-only Shell/SMP service fixture uses Technic's 3 KiB Shell and 2.5 KiB
+The RAM-only Shell/SMP service fixture uses Technic's 2.75 KiB Shell and 2.25 KiB
 SMP worker stacks. Build both backends: standard serial SMP exercises the SMP
 worker, while the production host dispatcher processes serial SMP on the Shell
 thread. With the [Technic SDK](builds.md#experimental-technic-base) extracted into

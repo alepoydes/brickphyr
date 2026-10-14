@@ -2334,17 +2334,23 @@ int application_repl(void)
 }
 #endif
 
+/* The linker's section cache is needed only for loading, not admission. */
+static __noinline int run_native_buffer(const void *image, size_t length, size_t heap)
+{
+	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(image, length);
+	return run_image(&loader.loader, length, heap);
+}
+
 int application_run_native(const void *image, size_t length)
 {
 	if (!image || !length) {
 		return -EINVAL;
 	}
-	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(image, length);
 	size_t heap_size;
-	int err = native_image_check(&loader.loader, length, &heap_size);
+	int err = native_image_check_buffer(image, length, &heap_size);
 	if (!err) {
 		k_mutex_lock(&lifecycle, K_FOREVER);
-		err = run_image(&loader.loader, length, heap_size);
+		err = run_native_buffer(image, length, heap_size);
 		k_mutex_unlock(&lifecycle);
 	}
 	return err;
@@ -2385,20 +2391,30 @@ int application_write_upload(const char *path)
 	return err;
 }
 
+static int read_file(void *context, size_t offset, void *data, size_t size)
+{
+	struct fs_file_t *file = context;
+	int err = fs_seek(file, offset, FS_SEEK_SET);
+	if (err) return err;
+	ssize_t count = fs_read(file, data, size);
+	return count < 0 ? count : count == size ? 0 : -ENOEXEC;
+}
+
 /* The caller's store lock preserves the file during both admission and loading.
  * Native ELF keeps its streaming loader; Python snapshots its complete namespace. */
 static int read_stored(const char *path, size_t length, void **image, size_t *heap)
 {
 	*image = NULL;
-	struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
-	int err = loader.loader.prepare(&loader.loader);
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	int err = fs_open(&file, path, FS_O_READ);
 	if (err) {
 		return err;
 	}
 	uint8_t magic[4];
-	err = length < sizeof(magic) ? -ENOEXEC : loader.loader.read(&loader.loader, magic, sizeof(magic));
+	err = length < sizeof(magic) ? -ENOEXEC : read_file(&file, 0, magic, sizeof(magic));
 	if (!err && !memcmp(magic, "\x7f" "ELF", sizeof(magic))) {
-		err = native_image_check(&loader.loader, length, heap);
+		err = native_image_check(read_file, &file, length, heap);
 	} else if (!err) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (length > APPLICATION_IMAGE_LIMIT) {
@@ -2406,10 +2422,7 @@ static int read_stored(const char *path, size_t length, void **image, size_t *he
 		} else if (!(*image = k_malloc(length))) {
 			err = -ENOMEM;
 		} else {
-			err = loader.loader.seek(&loader.loader, 0);
-			if (!err) {
-				err = loader.loader.read(&loader.loader, *image, length);
-			}
+			err = read_file(&file, 0, *image, length);
 			if (!err) {
 				err = python_image_check(*image, length, APPLICATION_FILES);
 			}
@@ -2418,8 +2431,8 @@ static int read_stored(const char *path, size_t length, void **image, size_t *he
 		err = -ENOEXEC;
 #endif
 	}
-	loader.loader.finalize(&loader.loader);
-	return err;
+	int closed = fs_close(&file);
+	return err ? err : closed;
 }
 
 int application_check_file(const char *path, size_t length)
@@ -2446,7 +2459,7 @@ static __noinline int stored_size(const char *path, size_t *length)
 	return 0;
 }
 
-/* Admission uses its own loader; their caches must not share a stack lifetime. */
+/* Keep the linker's cache off the file admission and Python paths. */
 static __noinline int run_native_file(const char *path, size_t length, size_t heap)
 {
 	struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
@@ -2480,20 +2493,6 @@ int application_run_file(const char *path, int program_id)
 }
 #endif
 
-/* The ELF buffer loader carries a 512-byte cache. Keep that stack frame off
- * the Python package/namespace validation path. */
-static __noinline int check_native_upload(void)
-{
-	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(upload, upload_size);
-	return native_image_check(&loader.loader, upload_size, &upload_heap);
-}
-
-static __noinline int run_native_upload(void)
-{
-	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(upload, upload_size);
-	return run_image(&loader.loader, upload_size, upload_heap);
-}
-
 static int complete_upload(void)
 {
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -2522,7 +2521,7 @@ static int complete_upload(void)
 		return err;
 	}
 #endif
-	return check_native_upload();
+	return native_image_check_buffer(upload, upload_size, &upload_heap);
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -2662,7 +2661,7 @@ int application_run_uploaded(bool retain)
 		} else
 #endif
 		{
-			err = run_native_upload();
+			err = run_native_buffer(upload, upload_size, upload_heap);
 		}
 		if (!err && !retain) {
 			/* The temporary buffer loader copies all retained sections. */

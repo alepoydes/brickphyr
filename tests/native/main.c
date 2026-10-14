@@ -360,6 +360,7 @@ int main(void)
 	CHECK(native_fixture_run("spin") == 0);
 	k_msleep(20);
 	CHECK(native_fixture_run("truncated") == -ENOEXEC);
+	CHECK(native_fixture_run("read_error") == 0);
 	CHECK(native_fixture_run("badabi") == -EPROTONOSUPPORT);
 	CHECK(native_fixture_run("missingcap") == -ENOTSUP);
 	CHECK(native_fixture_run("bigstack") == -ENOMEM);

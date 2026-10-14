@@ -203,8 +203,8 @@ The artifacts are `build/technic-native/zephyr/firmware.zip` and
 `build/technic-native/zephyr/brickphyr-sdk.tar.xz`. Use the
 [SDK example build](#experimental-native-sdk) with this archive, or reuse an
 F4 SDK ELF whose required services and memory fit. This profile reserves a
-24.5 KiB shared heap and 2 KiB application stack; the on-demand loader budget is
-limited to 15.5 KiB and uploads to 4 KiB. The upload and loaded program coexist
+25 KiB shared heap and 2 KiB application stack; the on-demand loader budget is
+limited to 16 KiB and uploads to 4 KiB. The upload and loaded program coexist
 during loading; replacement briefly also retains the old loader buffer.
 Use [BLE application commands](host.md#native-applications) for RAM upload,
 start, output and stop. The shared IMU service is available through native calls,

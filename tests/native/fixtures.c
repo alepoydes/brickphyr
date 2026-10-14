@@ -8,7 +8,6 @@
 #include <brickphyr_abi.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/llext/elf.h>
-#include <zephyr/llext/buf_loader.h>
 
 #ifdef CONFIG_FPU
 static const unsigned char fpu[] = {
@@ -81,8 +80,39 @@ const void *native_fixture_hello(size_t *length)
 	return hello;
 }
 
+struct image_reader {
+	size_t calls, fail_at;
+};
+
+static int read_image(void *context, size_t offset, void *data, size_t size)
+{
+	struct image_reader *reader = context;
+	if (reader->calls++ == reader->fail_at) return -EIO;
+	memcpy(data, hello + offset, size);
+	return 0;
+}
+
 int native_fixture_run(const char *name)
 {
+	if (!strcmp(name, "read_error")) {
+		struct image_reader reader = {.fail_at = SIZE_MAX};
+		size_t heap;
+		int err = native_image_check(read_image, &reader, sizeof(hello), &heap);
+		if (err) return err;
+		/* Interrupt each read of a valid ELF, including nested symbol and
+		 * relocation lookups. Keep the actual I/O error and no accepted budget. */
+		size_t calls = reader.calls;
+		for (size_t i = 0; i < calls; i++) {
+			reader = (struct image_reader){.fail_at = i};
+			heap = SIZE_MAX;
+			err = native_image_check(read_image, &reader, sizeof(hello), &heap);
+			if (err != -EIO || heap != SIZE_MAX) {
+				printk("Admission read %u: error %d, heap %u\n", (unsigned)i, err, (unsigned)heap);
+				return -EINVAL;
+			}
+		}
+		return 0;
+	}
 	if (!strcmp(name, "metadata") || !strcmp(name, "sparse")) {
 		bool sparse = !strcmp(name, "sparse");
 		const unsigned char *original = sparse ? spin : hello;
@@ -112,9 +142,8 @@ int native_fixture_run(const char *name)
 				if (sparse) {
 					/* Isolate admission: a later backing-allocation error
 					 * must not pass for rejecting the file's memory cost. */
-					struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(changed, length);
 					size_t heap;
-					err = native_image_check(&loader.loader, length, &heap);
+					err = native_image_check_buffer(changed, length, &heap);
 				} else {
 					err = application_run_native(changed, length);
 				}

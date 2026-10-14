@@ -4,6 +4,7 @@
 #include <brickphyr.h>
 #include <errno.h>
 #include <string.h>
+#include <zephyr/llext/llext.h>
 #include <zephyr/sys/util.h>
 
 /* The SDK emits ELF32 ARM relocatable objects. Bound parser work and
@@ -12,7 +13,8 @@
 #define SECTION_LIMIT 64
 
 struct image {
-	struct llext_loader *loader;
+	native_image_read_fn read;
+	void *context;
 	size_t length;
 	elf_ehdr_t header;
 };
@@ -59,8 +61,7 @@ static int read_at(struct image *image, size_t offset, void *data, size_t length
 	if (!range(offset, length, image->length)) {
 		return -ENOEXEC;
 	}
-	int err = image->loader->seek(image->loader, offset);
-	return err ? err : image->loader->read(image->loader, data, length);
+	return image->read(image->context, offset, data, length);
 }
 
 static int section(struct image *image, unsigned int index, elf_shdr_t *header)
@@ -83,12 +84,12 @@ static int name_at(struct image *image, const elf_shdr_t *strings, size_t offset
 	return err ? err : memchr(name, 0, length) ? 0 : -ENOEXEC;
 }
 
-int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_size)
+int native_image_check(native_image_read_fn read, void *context, size_t length, size_t *heap_size)
 {
 	if (length > APPLICATION_IMAGE_LIMIT) {
 		return -EFBIG;
 	}
-	struct image image = {.loader = loader, .length = length};
+	struct image image = {.read = read, .context = context, .length = length};
 	elf_ehdr_t *header = &image.header;
 	int err = read_at(&image, 0, header, sizeof(*header));
 	if (err) {
@@ -192,7 +193,7 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 			if (++symtabs != 1 || sh.sh_entsize != sizeof(elf_sym_t) ||
 			    sh.sh_size % sizeof(elf_sym_t) ||
 			    (err = section(&image, sh.sh_link, &strings))) {
-				return -ENOEXEC;
+				return err ? err : -ENOEXEC;
 			}
 			if (strings.sh_type != SHT_STRTAB) {
 				return -ENOEXEC;
@@ -230,9 +231,9 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 					return -ENOTSUP; /* Cortex-M executes Thumb code only. */
 				}
 				elf_shdr_t target;
-				if (section(&image, sym.st_shndx, &target) ||
+				if ((err = section(&image, sym.st_shndx, &target)) ||
 				    !range(sym.st_value & ~1U, sym.st_size, target.sh_size)) {
-					return -ENOEXEC;
+					return err ? err : -ENOEXEC;
 				}
 				if (!strcmp(name, "app_main")) {
 					if (entry || ELF_ST_TYPE(sym.st_info) != STT_FUNC ||
@@ -246,9 +247,10 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 		} else if (sh.sh_type == SHT_REL) {
 			elf_shdr_t target, symbols;
 			if (sh.sh_entsize != sizeof(elf_rel_t) || sh.sh_size % sizeof(elf_rel_t) ||
-			    section(&image, sh.sh_info, &target) || section(&image, sh.sh_link, &symbols) ||
+			    (err = section(&image, sh.sh_info, &target)) ||
+			    (err = section(&image, sh.sh_link, &symbols)) ||
 			    symbols.sh_type != SHT_SYMTAB || symbols.sh_entsize != sizeof(elf_sym_t)) {
-				return -ENOEXEC;
+				return err ? err : -ENOEXEC;
 			}
 			for (size_t offset = 0; offset < sh.sh_size; offset += sizeof(elf_rel_t)) {
 				elf_rel_t rel;
@@ -299,4 +301,15 @@ int native_image_check(struct llext_loader *loader, size_t length, size_t *heap_
 	}
 	*heap_size = budget;
 	return 0;
+}
+
+static int read_buffer(void *context, size_t offset, void *data, size_t size)
+{
+	memcpy(data, (const uint8_t *)context + offset, size);
+	return 0;
+}
+
+int native_image_check_buffer(const void *data, size_t length, size_t *heap_size)
+{
+	return native_image_check(read_buffer, (void *)data, length, heap_size);
 }

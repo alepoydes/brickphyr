@@ -138,7 +138,7 @@ MicroPython compiler and runtime described below.
 
 An independently built F4 SDK `hello.elf` passes unchanged in Cortex-M4
 QEMU firmware configurations with different Zephyr syscall IDs and application
-stack sizes, including a 15.5 KiB native arena after a reserved SRAM prefix.
+stack sizes, including a 16 KiB native arena after a reserved SRAM prefix.
 These checks include constructors, float arithmetic, time/output
 calls, rejection and protected cleanup. They do not establish cross-hub hardware
 compatibility. In the full F4 Python/DSP build, the table/admission change adds
@@ -238,7 +238,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
 and a 192 KiB loader budget in a 211 KiB shared system heap. The Technic native
-profile permits 4 KiB images and a 15.5 KiB loader budget in a 24.5 KiB shared heap.
+profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
@@ -267,10 +267,11 @@ system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 byt
 for the stored workload, measured with a 210944-byte heap. These counts include
 the reserved loader buffer; they do not measure its internal live allocations.
 Both workloads return system-heap allocation to the 960-byte idle baseline.
-Stored-image admission and linking keep their loader caches and file metadata
-in separate stack frames. In the instrumented stored-workload check this reduces
-Shell's observed high-water use from 3640 to 3056 bytes. Keep the 4096-byte Shell
-stack: other commands, failure paths and interrupt timing can use more stack.
+ELF admission reads bounded offsets directly from RAM or a locked file, without
+allocating a linker context. Only actual linking needs LLEXT's section cache;
+file metadata lives in a separate stack frame. File errors retain their original
+cause, including when closing the file also fails. The F4 Shell retains its
+4096-byte stack for storage, Python and other commands.
 
 Earlier board checks verified repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
