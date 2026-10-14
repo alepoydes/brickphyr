@@ -76,6 +76,8 @@ def test_reserved_slot_names():
         ("python-core-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-slots-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("uart-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("uart-supervisor-tests", b"PROJECT EXECUTION SUCCESSFUL"),
     ],
 )
 def test_arm_firmware(suite, success):

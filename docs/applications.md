@@ -186,6 +186,12 @@ device handles or raw flash service. Essential system threads preempt a busy
 application independently of time slicing. This is not a claim that the privileged
 ELF parser or kernel withstand every malicious image.
 
+The F4 and Technic board profiles omit direct Zephyr UART syscalls: UART devices
+belong to privileged management and port services. Native and Python UART
+operations still use the shared, validated Brickphyr service. This removes unused
+driver entry points without changing the application ABI or disabling the UART
+driver. See the [Zephyr prerequisite](upstream.md#supervisor-owned-uart-prerequisite).
+
 Typed result structures and PCM buffers require their natural C alignment.
 Calls to a service omitted from the build retain their ABI slots and can return
 `-ENOTSUP` without inspecting application buffers. For enabled services, syscall

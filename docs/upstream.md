@@ -627,6 +627,23 @@ before and after disabling TX interrupts on `mps2/an385`. That case and
 Brickphyr's shared-dispatcher REPL tests pass on ARM QEMU. Publication and manifest
 integration remain pending.
 
+## Supervisor-owned UART prerequisite
+
+The F4 and Technic board profiles require local Zephyr commit `b5f71207` on
+`topic/uart-userspace`, pending publication and manifest integration. It adds
+`CONFIG_UART_USERSPACE`, enabled by default with user mode, to retain or omit
+direct UART syscall handlers and dispatch entries. Supervisor APIs and drivers
+remain available; configurations without user mode retain their existing exports.
+
+Brickphyr disables this option because its privileged management and port
+services own the UART devices. Applications use the versioned Brickphyr API.
+The upstream MPS2/QEMU fixture checks both configurations: direct user access
+works with device permission by default, faults when disabled even with that
+permission, and supervisor access still works. Brickphyr's protected native
+fixture checks admission, calls and cleanup with the option disabled. F4 and
+Technic package builds cover integration; this change has no physical UART
+acceptance of its own.
+
 ## Speaker DMA prerequisite
 
 The speaker profile requires local Zephyr commit `c26d83f5` on `topic/dma-stop`,
