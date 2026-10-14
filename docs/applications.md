@@ -682,10 +682,17 @@ reports omitted ready edges; its rate need not equal the sensor's configured rat
 On one Robot Inventor F4 (PCB revision unknown), the example completes both
 standalone and alongside Python repeatedly allocating 1 KiB and collecting garbage.
 Both runs finish without application or cleanup errors; the concurrent run's
-retained 32 records match over USB and BLE. Each retained tail reports two skipped
-source edges while the host polls application status. These bounded checks do not
-establish an uninterrupted 833 Hz control rate or a combined-load deadline. Motors
-remain passive and stored applications are preserved.
+retained 32 records match over USB and BLE. Consumer omissions are reported
+explicitly. Motors remain passive and stored applications are preserved.
+
+A separate bounded 2048-step read-only workload observes uninterrupted IMU acquisition
+but omitted consumer samples during USB management. After transport batching,
+with Python allocation/GC and four cached-source queries at a requested 20 Hz
+refresh, observed edge-to-step delay reaches 3.94 ms. The monitor completes 80
+requests per second; its BLE counterpart completes far fewer requests and is not
+an equal-load comparison. These checks do not establish an uninterrupted 833 Hz
+control rate or a combined-load deadline. Acquisition continuity alone does not
+prove that the controller consumed every sample.
 
 ### Recorded group command
 

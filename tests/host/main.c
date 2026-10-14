@@ -27,6 +27,7 @@ static const struct shell *observed_shell;
 static K_SEM_DEFINE(probe_entered, 0, 1);
 static K_SEM_DEFINE(probe_continue, 0, 1);
 static unsigned int probes;
+static int send_smp(const void *data, int length);
 
 static int cmd_probe(const struct shell *shell, size_t argc, char **argv)
 {
@@ -402,6 +403,37 @@ ZTEST(host, test_smp_short_response_wakes_once)
 	smp_packet_free(packet);
 	/* The complete response is shorter than the 256-byte TX ring. */
 	zassert_equal(atomic_get(&ble_ready_wakes), 1);
+	/* Encode a real two-line echo whose complete reply still fits the TX ring.
+	 * A larger echo then forces the producer to wake the consumer for space. */
+	for (size_t length = 100; length <= 200; length += 100) {
+		uint8_t request[8 + 5 + 200] = {
+			0x0a, 0, 0, 0, 0, 0, 0, 0, 0xa1, 0x61, 'd', 0x78, 0,
+		};
+		sys_put_be16((uint16_t)(5 + length), request + 2);
+		request[12] = (uint8_t)length;
+		memset(request + 13, 'A', length);
+		atomic_set(&ble_ready_wakes, 0);
+		zassert_ok(mcumgr_serial_tx_pkt(request, 13 + length, send_smp));
+		packet = receive_smp();
+		zassert_equal(packet->data[0], 0x0b);
+		zcbor_state_t state[4];
+		struct zcbor_string text;
+		zcbor_new_decode_state(state, ARRAY_SIZE(state), packet->data + 8,
+			packet->len - 8, 1, NULL, 0);
+		zassert_true(zcbor_map_start_decode(state));
+		zassert_true(zcbor_tstr_expect_lit(state, "r"));
+		zassert_true(zcbor_tstr_decode(state, &text));
+		zassert_equal(text.len, length);
+		zassert_mem_equal(text.value, request + 13, length);
+		smp_packet_free(packet);
+		if (length == 100) {
+			zassert_equal(atomic_get(&ble_ready_wakes), 1,
+				"A complete multiline response must wake once");
+		} else {
+			zassert_true(atomic_get(&ble_ready_wakes) > 1,
+				"Full-ring backpressure did not wake the consumer");
+		}
+	}
 	host_ble_release(false);
 	terminal_session = 0;
 	wait_idle();
@@ -464,6 +496,9 @@ static int blocking_management(struct smp_streamer *stream)
 static int send_smp(const void *data, int length)
 {
 	send(data, length);
+	/* The cooperative producer must let Shell consume each serial line before
+	 * a larger request exhausts the bounded receive ring. */
+	if (length && ((const uint8_t *)data)[length - 1] == '\n') k_msleep(1);
 	return 0;
 }
 

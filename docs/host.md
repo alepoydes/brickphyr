@@ -191,9 +191,12 @@ in [the firmware handler](../src/application_mgmt.c) and
 [the client](../brickphyrdev/application.py).
 
 Shell and SMP can share a serial channel through Zephyr's existing SMP transport.
-SMP output wakes the shared stream at each complete serial line or when its
-existing transmit buffer fills. Individual Base64 fragments do not each start a
-transfer; short replies still flush without waiting for another request.
+SMP output wakes the shared stream when a complete packet has been encoded or
+its existing transmit buffer fills. Serial lines and Base64 fragments do not
+each start a transfer; short replies still flush without waiting for another
+request. The UART adapter offers the available contiguous bytes to its driver,
+which determines how much fits in its FIFO; USB packet boundaries do not limit
+that copy. The standard SMP codec and wire format are unchanged.
 This is not automatic multiplexing with the Pybricks USB protocol. Over Bluetooth,
 GATT characteristic addresses distinguish services without guessing payloads;
 that does not relax the single-management-session rule.

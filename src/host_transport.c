@@ -196,7 +196,10 @@ static void uart_callback(const struct device *dev, void *context)
 	}
 	if (uart_irq_tx_ready(dev)) {
 		uint8_t *data;
-		uint32_t length = ble_shell ? 0 : ring_buf_get_claim(&transmit_buffer, &data, 64);
+		/* The driver accepts as much contiguous data as its FIFO can hold.
+		 * A USB packet size is not the UART API's transfer limit. */
+		uint32_t length = ble_shell ? 0 : ring_buf_get_claim(&transmit_buffer, &data,
+			ring_buf_capacity_get(&transmit_buffer));
 		int sent = length ? uart_fifo_fill(dev, data, length) : 0;
 		if (!ble_shell) {
 			ring_buf_get_finish(&transmit_buffer, sent);
@@ -211,8 +214,12 @@ static void uart_callback(const struct device *dev, void *context)
 		first_error = complete;
 	}
 	tx_idle = complete > 0 && (ble_shell || ring_buf_is_empty(&transmit_buffer));
+	/* The active Shell receives FIFO events above. Only session transitions
+	 * and the binary dispatcher need the management queue as well. */
+	bool dispatch = !running || !occupied || stream_mode() != HOST_SHELL ||
+		generation != shell_generation;
 	k_spin_unlock(&lock, key);
-	wake_host();
+	if (dispatch) wake_host();
 	k_sem_give(&smp_tx_ready);
 }
 
@@ -335,10 +342,10 @@ static int smp_write(const void *data, int length)
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool valid = occupied && generation == shell_generation;
 		size_t sent = valid ? ring_buf_put(&transmit_buffer, bytes, length) : 0;
-		/* The serial codec emits four-byte Base64 fragments. Waking CDC for
-		 * each fragment preempts this producer and sends tiny USB packets.
-		 * Flush a complete serial line, or a full buffer before waiting. */
-		bool flush = sent && (bytes[sent - 1] == '\n' || !ring_buf_space_get(&transmit_buffer));
+		/* The serial codec emits four-byte Base64 fragments. Only wake the
+		 * driver when the ring fills; smp_output flushes the completed packet.
+		 * Line boundaries need no separate transfer on the shared byte stream. */
+		bool flush = sent && !ring_buf_space_get(&transmit_buffer);
 		if (sent) {
 			if (!ble_shell) {
 				tx_idle = false;
@@ -363,6 +370,7 @@ static int smp_write(const void *data, int length)
 static int smp_output(struct net_buf *packet)
 {
 	int result = mcumgr_serial_tx_pkt(packet->data, packet->len, smp_write);
+	if (!result) output_ready();
 	smp_packet_free(packet);
 	return result ? MGMT_ERR_EUNKNOWN : MGMT_ERR_EOK;
 }

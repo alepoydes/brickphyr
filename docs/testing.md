@@ -1277,8 +1277,10 @@ required. No check inspects source contents.
 The host test first acquires BLE ownership without preceding USB status requests.
 Cold-session cases send SMP or a text command before the first Shell prompt;
 the text case also verifies that a closed session cannot supply that command.
-A short SMP echo checks complete-line flushing with one transport wake, exposing
-the regression that woke the transport for every four-byte Base64 fragment.
+Short and multiline SMP echoes that fit the transmit ring each require one
+transport wake; a larger echo verifies progress across full-ring backpressure.
+The standard codec and decoded payload checks cover packet batching without
+changing serial framing.
 It also drives the production BLE ownership entry points: USB/BLE
 exclusion, power inhibition, rejected USB input and fresh-open requirements. This
 simulates ownership transitions, not radio traffic. The optional Bluetooth profile
