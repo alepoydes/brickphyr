@@ -534,6 +534,15 @@ F4 compilation, ARM application/transport checks and the standalone MCUmgr
 request-lifetime fixture cover the change; physical stack high-water measurements
 remain pending. Publication and manifest integration remain pending.
 
+Local Zephyr commit `c851d866` on `topic/kernel-main-stack` adds
+`CONFIG_MAIN_THREAD_USERSPACE`, enabled by default. Brickphyr disables it because
+its main thread supervises the hub and never enters user mode. This removes an
+unused privileged-stack reservation without reducing the main stack or disabling
+its guard. Other threads retain user-mode support. The focused ARM fixture checks
+the default main-thread transition and the kernel-only variant with a separate
+user thread; Brickphyr's compact native lifecycle fixture checks integration.
+Publication and manifest integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in

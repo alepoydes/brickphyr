@@ -899,12 +899,23 @@ uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/userspace_ac
 uv run --locked pytest -q tests/test_native.py -k 'driver-userspace or driver-supervisor'
 ```
 
+The main-thread stack has a separate ARM check: the default supports entering
+user mode, while the kernel-only option keeps main privileged and still permits
+a separate user thread to execute syscalls. Both enable hardware stack guards:
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-userspace-tests
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-supervisor-tests -- \
+  -DCONFIG_MAIN_THREAD_USERSPACE=n -DEXTRA_CPPFLAGS=-DTEST_MAIN_THREAD_USERSPACE_DISABLED=1
+uv run --locked pytest -q tests/test_native.py -k 'main-userspace or main-supervisor'
+```
+
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-12 KiB loader limit and 20 KiB shared heap. Its SRAM starts after a reserved
+12 KiB loader limit and 21 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
 the running program, and successful or failed cleanup returning or retaining
-the loader buffer as required. It also omits the direct driver syscalls above while
-retaining the protected Brickphyr API:
+the loader buffer as required. It also uses a kernel-only main stack and omits
+the direct driver syscalls above while retaining the protected Brickphyr API:
 
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-compact-tests -- \

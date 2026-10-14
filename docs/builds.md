@@ -202,8 +202,8 @@ uv run --locked west build -d build/technic-native -t brickphyr-sdk
 The artifacts are `build/technic-native/zephyr/firmware.zip` and
 `build/technic-native/zephyr/brickphyr-sdk.tar.xz`. Use the
 [SDK example build](#experimental-native-sdk) with this archive, or reuse an
-F4 SDK ELF whose required services and memory fit. This profile reserves an
-20 KiB shared heap and 2 KiB application stack; the on-demand loader budget is
+F4 SDK ELF whose required services and memory fit. This profile reserves a
+21 KiB shared heap and 2 KiB application stack; the on-demand loader budget is
 limited to 12 KiB and uploads to 4 KiB. The upload and loaded program coexist
 during loading; replacement briefly also retains the old loader buffer.
 Use [BLE application commands](host.md#native-applications) for RAM upload,

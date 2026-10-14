@@ -78,6 +78,8 @@ def test_reserved_slot_names():
         ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("driver-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("driver-supervisor-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("main-userspace-tests", b"main_stack: PASS"),
+        ("main-supervisor-tests", b"main_stack: PASS"),
     ],
 )
 def test_arm_firmware(suite, success):
@@ -112,6 +114,7 @@ def test_arm_firmware(suite, success):
                     assert b"NATIVE FAIL" not in output, output.decode()
                     assert b"ASSERTION FAIL" not in output, output.decode()
                     assert b"PROJECT EXECUTION FAILED" not in output, output.decode()
+                    assert b"main_stack: FAIL" not in output, output.decode()
         finally:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=3)
