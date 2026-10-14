@@ -539,8 +539,8 @@ or cleanup phase. Results persist until another group is accepted. Cleanup
 failure retains affected port ownership for an explicit retry.
 
 Native ABI 1.7 adds `bp_control_motor_group_set(&command, &result)` for the native
-context after a successful `bp_control_wait()`. It applies the same admission
-rules while copying the previous group's state atomically with the attempt.
+context after a successful periodic or IMU-triggered control wait. It applies the
+same admission rules while copying the previous group's state atomically with the attempt.
 `result.request` identifies a newly accepted command; it is zero on rejection.
 `result.previous` describes the earlier group, even when admission fails after
 the command reaches the group lock. Its `pending` flag still matters: a snapshot

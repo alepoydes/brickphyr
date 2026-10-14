@@ -22,6 +22,9 @@ static const int32_t signs[] = DT_PROP(DT_NODELABEL(hub_imu), axis_signs);
  * published snapshot under a separate short lock; applications own no lock. */
 static K_MUTEX_DEFINE(processing_lock);
 static struct k_spinlock snapshot_lock;
+/* One protected native controller can wait; readers do not consume this signal.
+ * Publication owns no pointer or resource from the waiting application. */
+static K_SEM_DEFINE(sample_changed, 0, 1);
 static struct bp_imu_state published = {.error = -EINPROGRESS, .raw.error = -EINPROGRESS};
 static struct bp_imu_state current = {.error = -EINPROGRESS, .raw.error = -EINPROGRESS};
 static imu_processing_frame_t application_frame = {.base = {.m11 = 1, .m22 = 1, .m33 = 1}};
@@ -91,6 +94,7 @@ static void publish(void)
 	frame_published.heading_3d = heading_3d;
 	memcpy(frame_published.settings.values, selected, sizeof(selected));
 	k_spin_unlock(&snapshot_lock, key);
+	k_sem_give(&sample_changed);
 }
 
 static int16_t raw_threshold(float threshold, float scale)
@@ -205,6 +209,34 @@ int hub_imu_get_state(struct bp_imu_state *state)
 	k_spin_unlock(&snapshot_lock, key);
 	check_age(state);
 	return 0;
+}
+
+int hub_imu_wait_state(uint32_t sequence, bool previous, uint32_t timeout_ms,
+	struct bp_imu_state *state)
+{
+	if (!state || !timeout_ms || timeout_ms > INT32_MAX) return -EINVAL;
+	int64_t deadline = k_uptime_ticks() + k_ms_to_ticks_ceil64(timeout_ms);
+	for (;;) {
+		k_spinlock_key_t key = k_spin_lock(&snapshot_lock);
+		*state = published;
+		k_spin_unlock(&snapshot_lock, key);
+		/* Startup has no observation yet. Other processing/acquisition errors
+		 * are returned as published, before an age check can obscure them. */
+		bool starting = !state->raw.sample_us &&
+			(state->error == -EINPROGRESS || state->error == -EAGAIN);
+		if (state->error && !starting) return state->error;
+		if (!state->error && (!previous || state->raw.sequence != sequence)) {
+			check_age(state);
+			if (!state->error) return 0;
+		}
+		/* A stale successful sample is not a new step. Keep one absolute
+		 * deadline across stale signals/configuration-only publications. A
+		 * publish between the copy and take leaves a token, so no wake is lost. */
+		if (k_sem_take(&sample_changed, K_TIMEOUT_ABS_TICKS(deadline))) {
+			state->error = -ETIMEDOUT;
+			return -ETIMEDOUT;
+		}
+	}
 }
 
 int hub_imu_get_application(struct bp_imu_application_state *state)

@@ -2,12 +2,17 @@
 #pragma once
 
 #include <errno.h>
+#include <stdbool.h>
 #include <brickphyr_imu.h>
 
 #ifdef CONFIG_BRICKPHYR_IMU
 /* Bounded copy. No I/O, allocation or configuration, including on first use. */
 int hub_imu_get(struct bp_imu_sample *sample);
 int hub_imu_get_state(struct bp_imu_state *state);
+/* Sole native control waiter. Copy the latest fresh, distinct publication;
+ * coalesce notifications, never hold a processing lock while sleeping. */
+int hub_imu_wait_state(uint32_t sequence, bool previous, uint32_t timeout_ms,
+	struct bp_imu_state *state);
 int hub_imu_configure(const struct bp_imu_command *command);
 int hub_imu_get_application(struct bp_imu_application_state *state);
 /* Bounded DriveBase reset at a motor-frame boundary. EAGAIN makes no change
@@ -18,6 +23,8 @@ int hub_imu_shutdown(void);
 #else
 static inline int hub_imu_get(struct bp_imu_sample *sample) { return -ENOTSUP; }
 static inline int hub_imu_get_state(struct bp_imu_state *state) { return -ENOTSUP; }
+static inline int hub_imu_wait_state(uint32_t sequence, bool previous, uint32_t timeout_ms,
+	struct bp_imu_state *state) { return -ENOTSUP; }
 static inline int hub_imu_configure(const struct bp_imu_command *command) { return -ENOTSUP; }
 static inline int hub_imu_get_application(struct bp_imu_application_state *state) { return -ENOTSUP; }
 static inline int hub_imu_try_heading(float heading) { return -ENOTSUP; }

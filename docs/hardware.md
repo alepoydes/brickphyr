@@ -414,6 +414,10 @@ on the next usable frame, increments `epoch`, and retains learned bias. Calibrat
 changes likewise start a new reference; compare angles only within one epoch.
 Readers copy the coherent snapshot under a short lock; no application can hold
 the processing lock. No extra sample queue or processing thread is introduced.
+Native [sample-triggered control](applications.md#native-control-alongside-python)
+can sleep on publication of a distinct fresh sample. It uses one coalescing signal
+and preserves the exact triggering observation; ordinary snapshot readers do not
+consume that signal or change acquisition.
 
 Stationary detection and bias averaging retain Pybricks' bounded sample windows.
 `stationary` means low variation, and `ready` means bias was learned within the

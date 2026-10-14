@@ -41,7 +41,8 @@ positional:
 - `control_status()` returns the last step's sequence, skipped releases,
   scheduled/start times, applied revision, pending revision, period and native
   stack/loader/loaded byte counts. The pending revision may be newer than the
-  one applied. Before the first step its timing fields are zero.
+  one applied. Before the first step its timing fields are zero. A positive
+  sequence with `period_us == 0` identifies sample-triggered execution.
 
 Native ABI 1.4 adds `bp_control_wait(period_us, &step, parameters, capacity)`.
 The first call fixes an absolute periodic schedule and releases immediately.
@@ -53,6 +54,33 @@ their difference includes dispatch delay. `sequence` counts executed steps.
 The same call works in standalone ELF programs with an empty parameter block.
 There is no allocation, formatting, storage or host I/O in this release path.
 
+Native ABI 1.8 adds `bp_control_imu_wait(port_mask, timeout_ms, &step, &frame,
+parameters, capacity)` as an alternative. The first successful wait selects the
+release mode for that native context; switching between periodic and IMU waits
+returns `EINVAL`. The sample wait returns the latest fresh, distinct IMU
+publication together with cached battery and selected port observations. The
+first call may use an already available fresh sample. Later calls sleep until
+its raw sequence changes; they do not poll or replay an accumulated sample queue.
+The returned frame retains the exact IMU observation which released the step,
+even if acquisition advances while the other sources are copied.
+
+`scheduled_us` is that observation's data-ready edge, so the difference to
+`started_us` includes acquisition, processing, input copying and dispatch delay.
+`skipped` counts intervening raw ready edges since the preceding successful step
+(zero for the first), including samples lost by acquisition or skipped by a slow
+controller. Check the IMU epoch before integrating across discontinuities. The
+frame's capture interval includes time spent waiting; its individual source
+timestamps keep their existing meanings. Parameters and recording metadata use
+the same release boundary as periodic execution.
+
+The timeout is finite, from 1 to `INT32_MAX` milliseconds. A stale successful
+publication waits for new data until that deadline. Initialization without a
+sample also waits; published acquisition/processing failures return their error.
+Timeout returns `ETIMEDOUT`. A failed call does not advance the step or apply new
+parameters, and the caller chooses whether to retry or stop. Stop/fault handling
+can abort the sleeping context without leaving application memory in the IMU
+worker. Independent motor expiry remains necessary while waiting or recovering.
+
 On F4 Python runs at priority 15 and the controller at 14; Shell/logging remain
 at 13, below acquisition and management services. The controller preempts Python
 and GC, while essential services can still preempt or stop either application
@@ -60,7 +88,7 @@ context. A controller that never yields can starve Python. This priority scheme
 is not a deadline guarantee: application work, interrupts and driver delays must
 be measured for the selected period. Motor command expiry remains enforced by
 the independent port service; a missed step alone does not abort an application.
-Sample-triggered release and bounded background jobs remain planned work.
+Bounded background jobs and measured combined-load timing remain planned work.
 
 The controller has its own dynamically allocated stack, MPU domain and loader
 memory. Neither context can access the other's mutable memory; parameter bytes
@@ -431,7 +459,7 @@ does not erase it. This configuration is not a mutable parameter store.
 Native ABI 1.6 adds optional `bp_control_record_begin(&spec, config, length)`.
 Use it instead of the ordinary begin operation before the first control wait.
 Each `bp_record_write` then automatically retains the latest successful
-`bp_control_wait` step: release/start times, sequence, missed releases and the
+control wait step: release/start times, sequence, missed releases and the
 parameter block delivered at that boundary. Until the first successful wait after
 begin, writes return `ENODATA`. Several records may describe one step. The payload and
 configuration formats still belong to the application; step metadata is separate.
@@ -635,6 +663,29 @@ passes with the native controller running alongside Python; later controller
 progress leaves the frozen records unchanged.
 These checks do not establish lossless streaming at arbitrary rates or a control
 deadline under combined load.
+
+`control_sample.elf` builds the same observation source using IMU-triggered
+control waits. It records 40 distinct samples, retaining the last 32 with their
+automatic step metadata. Its four configuration bytes are the little-endian
+`uint32` wait timeout, 100 ms. No ports are claimed or driven. For example:
+
+```sh
+uv run brickphyrdev app run build/native-examples/control_sample.elf
+uv run brickphyrdev app record reports/control-samples.jsonl
+uv run brickphyrdev record-info reports/control-samples.jsonl --allow-gaps
+```
+
+The initial eight records are explicitly reported as overwritten when collection
+starts after completion. A slow controller consumes the newest fresh sample and
+reports omitted ready edges; its rate need not equal the sensor's configured rate.
+
+On one Robot Inventor F4 (PCB revision unknown), the example completes both
+standalone and alongside Python repeatedly allocating 1 KiB and collecting garbage.
+Both runs finish without application or cleanup errors; the concurrent run's
+retained 32 records match over USB and BLE. Each retained tail reports two skipped
+source edges while the host polls application status. These bounded checks do not
+establish an uninterrupted 833 Hz control rate or a combined-load deadline. Motors
+remain passive and stored applications are preserved.
 
 ### Recorded group command
 

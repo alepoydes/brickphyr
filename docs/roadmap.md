@@ -28,8 +28,8 @@ The owning [application](applications.md), [hardware](hardware.md) and
 
 Standalone native/Python execution and independent native control beside Python
 use the same supervisor. The concurrent path provides separate memory, periodic
-release and copied parameter revisions; timing acceptance and sample-triggered
-release remain work. Existing [monitoring](telemetry.md) reads current snapshots;
+or IMU-triggered release and copied parameter revisions; measured timing acceptance
+remains work. Existing [monitoring](telemetry.md) reads current snapshots;
 it does not record every
 control step. Babybot's numerical code and replay provide useful algorithms and
 integration evidence. Its current scheduling, interfaces and recording format

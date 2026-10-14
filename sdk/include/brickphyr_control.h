@@ -4,8 +4,9 @@
 #include <brickphyr_battery.h>
 #include <brickphyr_port.h>
 
-/* Periodic native release. Times use the same monotonic clock as input frames.
- * skipped counts omitted releases since the previous call, not wakeup jitter.
+/* Native release. Times use the same monotonic clock as input frames.
+ * skipped counts omitted periodic releases or IMU raw edges between successful
+ * sample releases, not wakeup jitter. The first sample release has skipped=0.
  * The copied parameter block and its revision belong to this exact step. */
 struct bp_control_step {
 	int64_t scheduled_us, started_us;
@@ -29,7 +30,8 @@ struct bp_control_port {
 };
 
 /* Read-only input for one control step. Sources retain their own times and
- * errors; capture_start_us/end_us timestamp this read, not the physical samples.
+ * errors; capture_start_us/end_us timestamp this read, including a sample wait
+ * when requested, not the physical samples.
  * capture_resolution_us reports their quantization (1 us on F4; system-tick
  * resolution on targets without a 64-bit hardware cycle counter).
  * Each source is coherent, but they are not a simultaneous hardware latch.

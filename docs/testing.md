@@ -696,6 +696,16 @@ These are synthetic M4 execution checks. They do not establish a physical
 control deadline; see [concurrent control](applications.md#native-control-alongside-python)
 for the bounded Inventor F4 evidence and remaining timing work.
 
+`tests/test_control_imu.py` uses the already-built `build/python-imu-tests` and
+its `control_imu_probe.elf`. The production acquisition and release paths run on
+ARM with synthetic I2C registers/ready edges. Checks cover distinct triggering
+samples, edge-to-step identity, skipped edges, copied Python parameter revisions,
+I/O failure, timeout without a new step, stop during a long wait and fresh
+control identity after restart. Guest virtual time separates these functional
+checks from pauses in host scheduling. The IMU fixture uses the F4 512-byte SMP
+budget because the full peripheral discovery reply exceeds 384 bytes. Build
+the fixture separately; these checks neither rebuild nor establish board timing.
+
 The simulator compiles the same application and Zephyr shell. The test opens its
 pseudoterminal with pyserial and checks command echo, help/identity, rejected
 arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,

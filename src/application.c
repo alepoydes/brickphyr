@@ -94,6 +94,8 @@ static struct {
 	uint32_t period_us;
 	/* Sole native caller; reset only after that context has been joined. */
 	uint32_t motor_request, motor_sequence;
+	uint32_t imu_sequence;
+	bool imu_triggered;
 } control_clock;
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
@@ -1521,6 +1523,31 @@ static inline int z_vrfy_bp_control_frame_get(uint32_t port_mask, struct bp_cont
 }
 #include <zephyr/syscalls/bp_control_frame_get_mrsh.c>
 
+static size_t control_parameter_size(void)
+{
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller) return controller->parameter_size;
+#endif
+	return 0;
+}
+
+static void control_release(struct bp_control_step *step, void *parameters,
+	uint32_t period_us, int64_t next_tick)
+{
+	k_spinlock_key_t key = k_spin_lock(&control_lock);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller) {
+		if (step->parameter_size) memcpy(parameters, controller->parameters, step->parameter_size);
+		step->parameter_revision = controller->revision;
+	}
+#endif
+	control_clock.period_us = period_us;
+	control_clock.next_tick = next_tick;
+	control_clock.step = *step;
+	k_spin_unlock(&control_lock, key);
+	application_record_step(step, parameters);
+}
+
 int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	void *parameters, size_t capacity)
 {
@@ -1528,11 +1555,9 @@ int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	if (control_clock.step.sequence == UINT32_MAX) return -EOVERFLOW;
 	int64_t ticks = k_us_to_ticks_ceil64(period_us);
 	if (!period_us || k_ticks_to_us_ceil64(ticks) != period_us) return -EINVAL;
-	if (control_clock.period_us && control_clock.period_us != period_us) return -EINVAL;
-	size_t size = 0;
-#ifdef CONFIG_BRICKPHYR_PYTHON
-	if (controller) size = controller->parameter_size;
-#endif
+	if (control_clock.imu_triggered ||
+	    (control_clock.period_us && control_clock.period_us != period_us)) return -EINVAL;
+	size_t size = control_parameter_size();
 	if (capacity < size) return -ENOBUFS;
 	int64_t now = k_uptime_ticks();
 	int64_t due = control_clock.period_us ? control_clock.next_tick : now;
@@ -1548,18 +1573,7 @@ int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 		.scheduled_us = k_ticks_to_us_floor64(due), .started_us = control_time_us(),
 		.sequence = control_clock.step.sequence + 1, .skipped = skipped, .parameter_size = size,
 	};
-	k_spinlock_key_t key = k_spin_lock(&control_lock);
-#ifdef CONFIG_BRICKPHYR_PYTHON
-	if (controller) {
-		if (size) memcpy(parameters, controller->parameters, size);
-		value.parameter_revision = controller->revision;
-	}
-#endif
-	control_clock.period_us = period_us;
-	control_clock.next_tick = due + ticks;
-	control_clock.step = value;
-	k_spin_unlock(&control_lock, key);
-	application_record_step(&value, parameters);
+	control_release(&value, parameters, period_us, due + ticks);
 	*step = value;
 	return 0;
 }
@@ -1571,6 +1585,43 @@ static inline int z_vrfy_bp_control_wait(uint32_t period_us, struct bp_control_s
 	return z_impl_bp_control_wait(period_us, step, parameters, capacity);
 }
 #include <zephyr/syscalls/bp_control_wait_mrsh.c>
+
+int z_impl_bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
+	struct bp_control_step *step, struct bp_control_frame *frame,
+	void *parameters, size_t capacity)
+{
+	if (!native_caller()) return -EPERM;
+	if (control_clock.period_us) return -EINVAL;
+	if (control_clock.step.sequence == UINT32_MAX) return -EOVERFLOW;
+	size_t size = control_parameter_size();
+	if (capacity < size) return -ENOBUFS;
+	int err = control_frame_imu_wait(port_mask, control_clock.imu_sequence,
+		control_clock.imu_triggered, timeout_ms, frame);
+	if (err) return err;
+	struct bp_control_step value = {
+		.scheduled_us = frame->imu.raw.sample_us, .started_us = control_time_us(),
+		.sequence = control_clock.step.sequence + 1,
+		.skipped = control_clock.imu_triggered ? frame->imu.raw.sequence - control_clock.imu_sequence - 1 : 0,
+		.parameter_size = size,
+	};
+	control_clock.imu_sequence = frame->imu.raw.sequence;
+	control_clock.imu_triggered = true;
+	control_release(&value, parameters, 0, 0);
+	*step = value;
+	return 0;
+}
+static inline int z_vrfy_bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
+	struct bp_control_step *step, struct bp_control_frame *frame,
+	void *parameters, size_t capacity)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
+	if (port_mask >> BP_PORT_COUNT || !timeout_ms || timeout_ms > INT32_MAX) return -EINVAL;
+	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
+	user_memory_check(frame, sizeof(*frame), __alignof__(*frame), true, __func__);
+	if (capacity) user_memory_check(parameters, capacity, 1, true, __func__);
+	return z_impl_bp_control_imu_wait(port_mask, timeout_ms, step, frame, parameters, capacity);
+}
+#include <zephyr/syscalls/bp_control_imu_wait_mrsh.c>
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 int z_impl_application_control_start(const void *image, size_t size,

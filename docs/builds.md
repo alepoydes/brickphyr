@@ -590,6 +590,10 @@ See the [control input contract](applications.md#control-input-frame).
 retain their input, command and driver reports for `brickphyrdev app record`;
 `control_record.elf` records observations without claiming either motor. See
 [application recording](applications.md#application-recording).
+`control_sample.elf` builds the same recording example with IMU-triggered
+releases, retaining the exact sample and automatic control-step metadata. It
+observes 40 distinct publications with a 100 ms per-wait timeout; it drives
+neither motor. A stopped sensor fails the run instead of duplicating old data.
 `control_actuation.elf` records 16 periodic A/B grouped commands and their
 preceding group's driver outcome, then a final coast observation. It applies
 opposite 20% duties until that coast, so clear both mechanisms before use.

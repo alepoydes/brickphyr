@@ -377,7 +377,8 @@ __syscall int bp_record_begin(const struct bp_record_spec *spec);
 __syscall int bp_record_write(const void *data, size_t length);
 
 /* Native context only. The first call starts immediately and fixes the period
- * for this run. Period must be exactly representable in system ticks. Later
+ * for this run; it cannot follow an IMU-triggered release. Period must be exactly
+ * representable in system ticks. Later
  * calls wait on that absolute schedule; missed releases are skipped, not replayed.
  * Copies the latest complete parameter revision at release, without allocation.
  * Standalone native programs have no parameters (NULL/0). */
@@ -397,7 +398,7 @@ __syscall int bp_record_begin_config(const struct bp_record_spec *spec,
 __syscall int bp_record_trigger(uint32_t after);
 
 /* Opt in to automatic association of each record_write() with the latest
- * successful control_wait(): step timing, sequence and the parameters actually
+ * successful control_wait() or control_imu_wait(): timing, sequence and parameters
  * delivered at that boundary. Begin before the first wait to record it.
  * Metadata and retained parameter revisions share the 32768-byte budget with
  * payload/config; identical revisions share storage. No allocation during steps.
@@ -405,7 +406,7 @@ __syscall int bp_record_trigger(uint32_t after);
 __syscall int bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length);
 
-/* Native context after control_wait(). Same motor admission/expiry contract as
+/* Native context after either control wait. Same motor admission/expiry contract as
  * group_set(), plus the preceding group's state copied atomically with admission
  * and its originating control sequence. No allocation, driver wait or queue.
  * Record the exact input/command and this result with control_record_begin().
@@ -413,6 +414,20 @@ __syscall int bp_control_record_begin(const struct bp_record_spec *spec,
  * must finish their independent coast before another command is accepted. */
 __syscall int bp_control_motor_group_set(const struct bp_motor_group_command *command,
 	struct bp_control_motor_result *result);
+
+/* Native sample-triggered release, as an alternative to control_wait(). The
+ * first successful wait fixes the release mode for this run. Wait up to
+ * timeout_ms (1..INT32_MAX) for a fresh distinct IMU sample; coalesce missed
+ * samples instead of replaying them. The frame retains that exact IMU snapshot
+ * and cached battery/selected port inputs; its capture interval includes waiting.
+ * scheduled_us is the data-ready edge; skipped counts intervening raw edges.
+ * Copy the latest complete parameters at this boundary, as control_wait() does.
+ * An error creates no step and does not change parameters/step. Acquisition or
+ * wait errors leave an IMU diagnostic in frame; early argument rejection does
+ * not populate it. No allocation, I/O or polling by this caller. */
+__syscall int bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
+	struct bp_control_step *step, struct bp_control_frame *frame,
+	void *parameters, size_t capacity);
 
 #include <zephyr/syscalls/brickphyr.h>
 #endif
