@@ -2118,7 +2118,6 @@ int application_interrupt(void)
 
 int application_shutdown(void)
 {
-	hub_power_request_shutdown();
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	shutting_down = true;
 	int err = reap(true);
@@ -2171,6 +2170,9 @@ void application_buttons(uint32_t buttons)
 /* lifecycle is held; neither engine may replace a thread before it is joined. */
 static int prepare(void)
 {
+	if (shutting_down) {
+		return -ESHUTDOWN;
+	}
 	int err = reap(true);
 	if (err) {
 		return err;

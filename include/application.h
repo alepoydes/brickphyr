@@ -61,6 +61,8 @@ void application_discard_upload(void);
 /* Nonblocking; call after accepted operations have finished at session close. */
 void application_session_closed(void);
 int application_stop(void);
+/* Close application admission and quiesce resources without requesting power-off.
+ * Reboot/DFU callers must retain power and their connection until reset. */
 int application_shutdown(void);
 void application_poll(void);
 /* Called by the hub UI with zero while the connection menu consumes buttons. */

@@ -171,8 +171,9 @@ explicitly; it does not save settings.
 
 `reboot` restarts Brickphyr. `reboot dfu` enters the existing second-stage loader
 for installation through Pybricks. These are privileged diagnostic commands;
-application shutdown quiesces application-owned devices before the same final
-power operation.
+they close application admission and quiesce application-owned devices before
+reset. This preparation retains power and the management connection; it must not
+request the hub's separate power-off sequence.
 
 USB disconnection alone is not proof that battery power was cut. The
 [USB-powered off state](#inactivity-shutdown) describes charging and button restart;

@@ -22,18 +22,16 @@
 /* Reserved SRAM survives reset and is not initialized by Zephyr or its allocator. */
 static volatile uint32_t *const boot_request = (void *)DT_REG_ADDR(DT_NODELABEL(boot_request));
 
-/* Pybricks/MicroPython mboot ABI: magic in r0, vector table in r1. */
+/* Pybricks/MicroPython mboot ABI: magic in r0, vector table in r1.
+ * Called before Zephyr switches stacks or masks interrupts. Preserve the
+ * loader's interrupt mask: a SysTick may already be pending, and mboot must
+ * initialize its RAM before servicing it. */
 static __attribute__((naked, noreturn)) void enter_mboot(uint32_t magic, uint32_t vector)
 {
 	__asm__ volatile (
-		"movs r2, #0\n"
-		"msr control, r2\n"
-		"isb\n"
-		"msr basepri, r2\n"
 		"ldr r2, [r1]\n"
 		"msr msp, r2\n"
 		"ldr r2, [r1, #4]\n"
-		"cpsie i\n"
 		"bx r2\n"
 	);
 }
@@ -72,21 +70,27 @@ void hub_power_release(void)
 	LL_GPIO_ResetOutputPin(GPIOA, BIT(DT_GPIO_HOG_PIN_BY_IDX(DT_NODELABEL(power_hold), 0)));
 }
 
-void board_early_init_hook(void)
+/* STM32F4 has no SoC reset hook. Enter the existing loader at that boundary,
+ * before Zephyr changes FPU, exception and interrupt-controller state. The
+ * ordinary board hook runs after those changes.
+ * Only the reserved SRAM and core registers are available here. */
+void soc_reset_hook(void)
 {
 	bool dfu = boot_request[0] == DFU_REQUEST && boot_request[1] == ~DFU_REQUEST;
 
 	boot_request[0] = 0;
 	boot_request[1] = 0;
 	if (dfu) {
-		/* Before clocks, device IRQs or scheduler start; undo core setup only. */
 		SysTick->CTRL = 0;
-		MPU->CTRL = 0;
 		SCB->VTOR = MBOOT_ADDRESS;
 		__DSB();
 		__ISB();
 		enter_mboot(0x70ad0000, MBOOT_ADDRESS);
 	}
+}
+
+void board_early_init_hook(void)
+{
 	const uint32_t pin = BIT(DT_GPIO_HOG_PIN_BY_IDX(DT_NODELABEL(power_hold), 0));
 
 	/* Hold battery power before device initialization or waiting for USB. */

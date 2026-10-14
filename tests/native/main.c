@@ -436,9 +436,20 @@ int main(void)
 	CHECK(!hub_power_update(0, true, now));
 	CHECK(native_fixture_run("counter") == 0);
 	CHECK(!hub_power_update(0, false, now + 2000));
-	CHECK(application_stop() == 0);
-	CHECK(hub_power_update(0, false, k_uptime_get() + 2000));
+	/* Reboot/DFU cleanup must reject new apps without sending the hub loop
+	 * into power-off or revoking the connection executing the reset command. */
+	CHECK(hub_power_connection(HUB_USB));
+	CHECK(application_shutdown() == 0);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_STOPPED && !status.cleanup_error);
+	CHECK(!hub_power_update(0, false, now + 3000));
+	CHECK(hub_power_connection(HUB_USB));
 	CHECK(native_fixture_run("hello") == -ESHUTDOWN);
+	CHECK(application_upload(APPLICATION_NATIVE, 0, size, image, 128, &next) == -ESHUTDOWN);
+	CHECK(available() == capacity);
+	CHECK(hub_power_connection(HUB_DISCONNECTED));
+	CHECK(hub_power_update(0, false, k_uptime_get() + 2000));
+	CHECK(!hub_power_application(true));
 	printk("NATIVE PASS: lifecycle, MPU fault, forced stop, invalid image, power\n");
 	return 0;
 }

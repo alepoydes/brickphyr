@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 config BOARD_SPIKE_PRIME_F4
+	select SOC_RESET_HOOK
 	select BOARD_EARLY_INIT_HOOK
 	select BT_HCI_SETUP if BT
