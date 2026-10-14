@@ -222,6 +222,16 @@ addresses and gperf output from moving an MPU-aligned stack across a large RAM
 boundary. Both linker generators consume the same generated size. The change
 belongs in Zephyr; publication and manifest pinning remain pending.
 
+## Syscall diagnostic sizing prerequisite
+
+The local Zephyr `topic/syscall-memory-logging` change, commit `ab368896`, shares
+the error formatter for user-memory checks. Range and permission validation remains inline, as do
+compile-time and runtime log filters. Callers retain their existing fatal-error
+or error-return behavior, and the message identifies the originating syscall.
+This removes repeated formatting code without changing successful validation.
+Existing ARM userspace and thread API tests exercise denied reads/writes and
+successful copies. Publication and manifest pinning remain pending.
+
 ## Crypto configuration prerequisite
 
 The local TF-PSA-Crypto `topic/config-header-order` branch, commit `11672770f`,
