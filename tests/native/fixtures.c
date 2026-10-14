@@ -18,6 +18,18 @@ static const unsigned char dsp[] = {
 #include <native_dsp.inc>
 };
 #endif
+#ifdef NATIVE_CAPACITY_TEST
+/* Legal trailing padding exercises a maximum-size upload independently of
+ * code density; the actual application has a 64 KiB BSS. */
+static const unsigned char capacity[APPLICATION_IMAGE_LIMIT] = {
+#include <native_capacity.inc>
+};
+const void *native_fixture_capacity(size_t *length)
+{
+	*length = sizeof(capacity);
+	return capacity;
+}
+#endif
 static const unsigned char hello[] = {
 #include <native_hello.inc>
 };

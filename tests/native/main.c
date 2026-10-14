@@ -53,6 +53,9 @@ LOG_MODULE_REGISTER(native_test, LOG_LEVEL_INF);
 
 int native_fixture_run(const char *name);
 const void *native_fixture_hello(size_t *length);
+#ifdef NATIVE_CAPACITY_TEST
+const void *native_fixture_capacity(size_t *length);
+#endif
 static uint32_t test_buttons = 5;
 uint32_t hub_buttons(void) { return test_buttons; } /* Synthetic input. */
 int storage_status(void) { return -ENOTSUP; }
@@ -132,6 +135,26 @@ int main(void)
 	k_free(dirty);
 	LOG_WRN("Synthetic diagnostic before application unload");
 	struct application_status status;
+#ifdef NATIVE_CAPACITY_TEST
+	/* Load a real 64 KiB user BSS into dirty backing before other applications
+	 * can establish prerequisites. The maximum upload must coexist with it. */
+	size_t large_size, large_next;
+	const void *large = native_fixture_capacity(&large_size);
+	CHECK(application_upload(APPLICATION_NATIVE, 0, large_size, large, large_size, &large_next) == 0);
+	CHECK(large_next == large_size);
+	CHECK(application_run_uploaded(false) == 0);
+	int64_t capacity_deadline = k_uptime_get() + 500;
+	do {
+		k_sleep(K_TICKS(1));
+		application_get_status(&status);
+		CHECK(k_uptime_get() < capacity_deadline);
+	} while (status.state == APPLICATION_RUNNING);
+	CHECK(status.state == APPLICATION_RETURNED && !status.result && !status.cleanup_error);
+	CHECK(!status.upload_size);
+	CHECK(available() == capacity);
+	printk("Native capacity: image %zu, loader %zu, allocated %zu bytes\n",
+		status.image_bytes, status.loader_bytes, status.loaded_bytes);
+#endif
 #ifdef CONFIG_FPU
 	CHECK(check_fp_context() == 0 && available() == capacity);
 #endif

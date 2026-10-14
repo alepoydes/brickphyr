@@ -838,9 +838,15 @@ ARM fixture selection without an implicit rebuild:
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-fpu-tests -- \
   -DDTC_OVERLAY_FILE=app.overlay \
-  '-DEXTRA_CONF_FILE=fpu.conf;../../boards/spike_prime_f4_dsp.conf'
+  '-DEXTRA_CONF_FILE=fpu.conf;../../boards/spike_prime_f4_dsp.conf;capacity.conf' \
+  -DNATIVE_CAPACITY_TEST=ON
 uv run --locked pytest -q -x tests/test_native.py -k native-fpu-tests
 ```
+
+The same run uses F4 native memory limits to exercise a 64 KiB padded RAM upload
+and a 64 KiB user BSS together, starting from dirty heap memory and verifying
+reclamation on exit. The capacity application checks every byte from user mode.
+This is a loader/MPU capacity check, not a physical peripheral-load measurement.
 
 A separate ABI acceptance uses one `hello.elf` built by the exported F4 SDK
 in both M4 configurations. Export the SDK and build `build/native-examples` as

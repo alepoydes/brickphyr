@@ -584,7 +584,9 @@ diagnostics
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
-these include a shared 64 KiB execution arena and the configured system heap. The loader reports the image size,
+these include the configured system heap and, for Python builds, a shared 64 KiB
+execution arena. Native-only builds obtain loader memory from the heap on demand.
+The loader reports the image size,
 reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
 the receive buffer is then released. File loading reserves no ELF receive buffer
 and reports the same loader/loaded allocation for the same image.
@@ -700,8 +702,10 @@ uv run --locked west build -b spike_prime_f4 -d build/native-profile-apps -t fir
   -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
 ```
 
-All three F4 profiles have compilation/package checks and bounded checks on one
-Robot Inventor F4 (PCB revision unknown). Reduced Python checks cover USB/BLE
+All three F4 profiles have compilation/package checks. Earlier configurations
+have bounded checks on one Robot Inventor F4 (PCB revision unknown); acceptance
+of the enlarged memory budgets on hardware remains pending.
+Reduced Python checks cover USB/BLE
 REPL reset/exit, named execution with imports, Shell launch and a temporary BLE
 script. Rejected Pybricks commands preserve the running native Python program
 and its output. The native-only profile runs a matching-SDK C example over USB

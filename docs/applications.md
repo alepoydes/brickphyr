@@ -207,8 +207,8 @@ remains available without a host, including during LLEXT's deferred-log flush.
 
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
-builds, reserves the execution arena. The F4 native profile permits 32 KiB of ELF
-and a 64 KiB loader budget in a 158 KiB shared system heap. The Technic native
+builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
+and a 192 KiB loader budget in a 206 KiB shared system heap. The Technic native
 profile permits 4 KiB images and a 12 KiB loader budget in an 18 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -219,6 +219,12 @@ are additional firmware RAM. `app status`
 reports the image, reserved loader budget, LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
+
+A protected ARM check loads a 64 KiB padded ELF containing a 64 KiB zero-initialized
+array, verifies every byte through the application, and reclaims its memory on exit.
+The upload and loader buffers coexist during startup. Padding exercises transfer
+capacity, not 64 KiB of executable code. This uses the native F4 budgets with
+synthetic peripherals; physical combined-load acceptance remains pending.
 
 Earlier board checks verified repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
@@ -320,9 +326,9 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 158 KiB heap, including on-demand loader buffers,
-and the full Python profile 98 KiB;
-the latter retains its 16 KiB MPU-aligned stack and 64 KiB execution arena.
+The native profile provides a 206 KiB heap, including on-demand loader buffers.
+The full Python profile provides 98 KiB and the reduced Python profile 116 KiB;
+both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
 Getters reconstruct the fixed 288-byte public structure in caller-owned memory;
