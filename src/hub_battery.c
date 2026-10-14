@@ -6,16 +6,25 @@
 #include "hub_battery.h"
 #include <math.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 
 #define BATTERY DT_NODELABEL(hub_battery)
 #define PERIOD_MS 10
 #define SETTLE_MS 1000
 #define STALE_MS (4 * PERIOD_MS)
+#define HAS_TEMPERATURE DT_PROP_HAS_NAME(BATTERY, io_channels, temperature)
+BUILD_ASSERT(DT_PROP(BATTERY, current_raw_offset) >= 0 && DT_PROP(BATTERY, current_raw_offset) < 4096);
 static const struct adc_dt_spec current = ADC_DT_SPEC_GET_BY_NAME(BATTERY, current);
 static const struct adc_dt_spec voltage = ADC_DT_SPEC_GET_BY_NAME(BATTERY, voltage);
+#if HAS_TEMPERATURE
 static const struct adc_dt_spec temperature = ADC_DT_SPEC_GET_BY_NAME(BATTERY, temperature);
 static int temperature_init_error;
+#endif
+#if DT_NODE_HAS_PROP(BATTERY, chemistry_gpios)
+static const struct gpio_dt_spec chemistry = GPIO_DT_SPEC_GET(BATTERY, chemistry_gpios);
+BUILD_ASSERT(UTIL_CAT(BP_BATTERY_, DT_STRING_UPPER_TOKEN(BATTERY, chemistry)) == BP_BATTERY_UNKNOWN);
+#endif
 /* PBIO battery.c's fixed-point moving average, scaled for our 10 ms cadence
  * instead of 5 ms: 64 samples retain the nominal 640 ms time constant.
  * Thresholds/hysteresis are from lib/pbio/sys/battery.c at the same revision. */
@@ -26,7 +35,7 @@ static atomic_t stopping;
 static struct bp_battery_sample sample = {
 	.error = -EINPROGRESS,
 	.type = UTIL_CAT(BP_BATTERY_, DT_STRING_UPPER_TOKEN(BATTERY, chemistry)),
-	.temperature_error = -EINPROGRESS,
+	.temperature_error = HAS_TEMPERATURE ? -EINPROGRESS : -ENOTSUP,
 };
 static void acquire(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(work, acquire);
@@ -41,6 +50,7 @@ static int read_channel(const struct adc_dt_spec *channel, uint16_t *raw)
 	return !err && *raw >= BIT(channel->resolution) ? -ERANGE : err;
 }
 
+#if HAS_TEMPERATURE
 static int read_temperature(uint16_t *raw, int32_t *mdegc)
 {
 	int err = read_channel(&temperature, raw);
@@ -63,6 +73,7 @@ static int read_temperature(uint16_t *raw, int32_t *mdegc)
 	*mdegc = (kelvin - 273.15f) * 1000.0f;
 	return 0;
 }
+#endif
 
 static void acquire(struct k_work *item)
 {
@@ -80,7 +91,7 @@ static void acquire(struct k_work *item)
 	if (!err) {
 		/* Preserve PBIO's integer rounding: scale current before correcting
 		 * the voltage drop in the hub's measurement path. */
-		current_ma = (uint64_t)current_raw *
+		current_ma = ((uint64_t)current_raw + DT_PROP(BATTERY, current_raw_offset)) *
 			DT_PROP(BATTERY, current_full_scale_ma) / BIT(current.resolution);
 		voltage_mv = (uint64_t)voltage_raw *
 			DT_PROP(BATTERY, voltage_full_scale_mv) / BIT(voltage.resolution) +
@@ -114,6 +125,7 @@ static void acquire(struct k_work *item)
 		sample.sequence++;
 	}
 	k_spin_unlock(&lock, key);
+#if HAS_TEMPERATURE
 	/* Keep thermistor errors separate from the pair used by motor control. */
 	if (!temperature_init_error) {
 		uint16_t raw;
@@ -135,6 +147,7 @@ static void acquire(struct k_work *item)
 		}
 		k_spin_unlock(&lock, key);
 	}
+#endif
 	if (!atomic_get(&stopping)) {
 		k_work_schedule(&work, K_MSEC(PERIOD_MS));
 	}
@@ -142,25 +155,39 @@ static void acquire(struct k_work *item)
 
 static int initialize(void)
 {
-	int err = !adc_is_ready_dt(&current) || !adc_is_ready_dt(&voltage) ? -ENODEV :
-		current.resolution != 12 || voltage.resolution != 12 ? -EINVAL :
-		adc_channel_setup_dt(&current);
+	int err = 0;
+#if DT_NODE_HAS_PROP(BATTERY, chemistry_gpios)
+	/* Pybricks samples the battery connector once at boot, without a pull. */
+	err = !gpio_is_ready_dt(&chemistry) ? -ENODEV : gpio_pin_configure_dt(&chemistry, GPIO_INPUT);
+	if (!err) {
+		int value = gpio_pin_get_dt(&chemistry);
+		if (value < 0) err = value;
+		else sample.type = value ? BP_BATTERY_ALKALINE : BP_BATTERY_LI_ION;
+	}
+#endif
+	if (!err) {
+		err = !adc_is_ready_dt(&current) || !adc_is_ready_dt(&voltage) ? -ENODEV :
+			current.resolution != 12 || voltage.resolution != 12 ? -EINVAL :
+			adc_channel_setup_dt(&current);
+	}
 	if (!err) {
 		err = adc_channel_setup_dt(&voltage);
 	}
 	if (err) {
 		sample.error = err;
-		sample.temperature_error = err;
+		if (HAS_TEMPERATURE) sample.temperature_error = err;
 		sample.failures = 1;
 		sample.read_ms = k_uptime_get();
 		return err;
 	}
+#if HAS_TEMPERATURE
 	temperature_init_error = !adc_is_ready_dt(&temperature) ? -ENODEV :
 		temperature.resolution != 12 ? -EINVAL : adc_channel_setup_dt(&temperature);
 	if (temperature_init_error) {
 		sample.temperature_error = temperature_init_error;
 		sample.temperature_failures = 1;
 	}
+#endif
 	/* Pybricks suppresses low readings for one second after power-on.
 	 * Expose settling instead of fabricating a minimum battery voltage. */
 	k_work_schedule(&work, K_MSEC(SETTLE_MS));

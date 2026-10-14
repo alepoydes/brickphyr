@@ -19,10 +19,11 @@ struct bp_battery_sample {
 	uint32_t sequence, failures;
 	int32_t error;
 	uint16_t voltage_raw, current_raw;
-	/* Chemistry is a board property, independent of acquisition errors.
+	/* Chemistry comes from board configuration or its boot-time connector input.
 	 * Temperature has its own validity: a failed thermistor must not invalidate
 	 * the voltage/current pair used by motor control. Retain its last valid
-	 * value and timestamp on failure. Negative Celsius values are supported. */
+	 * value and timestamp on failure. An absent thermistor reports -ENOTSUP;
+	 * negative Celsius values are supported. */
 	uint32_t type;
 	int32_t temperature_mdegc, temperature_error;
 	int64_t temperature_ms;

@@ -607,6 +607,7 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery -d build/battery-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/battery_technic -d build/battery-technic-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/ports -d build/ports-four-tests -- -DEXTRA_DTC_OVERLAY_FILE=four.overlay
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/lump -d build/lump-tests
@@ -814,6 +815,10 @@ ADC work. The ARM native fixture also exercises the real SDK and a writable but
 misaligned result buffer: rejection must precede the snapshot lock, and subsequent
 privileged reads must work. The SMP fixture reads the same service through group 66. These tests do
 not emulate STM32 registers, validate physical readings or prove its IRQ timeout.
+`tests/battery_technic` reuses the Technic board coefficients and the same service
+with emulated ADC/GPIO. It checks boot-time alkaline selection, current offset,
+voltage correction, unsupported temperature and alkaline low/critical thresholds.
+Both fixtures run virtual time, so filter settling does not add real-time waits.
 The separate Zephyr F4 timeout fixture masks the ADC IRQ and checks timeout,
 late-interrupt buffer lifetime, retry and asynchronous reads; its image is built
 but has not yet run on physical hardware. See [the prerequisite](upstream.md#adc-timeout-prerequisite).

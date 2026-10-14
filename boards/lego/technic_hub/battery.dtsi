@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/* Pybricks technic_hub/platform.c and pbdrvconfig.h at a7b1b04ae.
+ * Physical ADC channels, not indices into PBIO's DMA buffer. The MCU's
+ * internal temperature channel is not a battery thermistor.
+ */
+/ {
+	hub_battery: battery {
+		compatible = "lego,adc-battery";
+		io-channels = <&adc1 3>, <&adc1 2>;
+		io-channel-names = "current", "voltage";
+		chemistry = "unknown";
+		chemistry-gpios = <&gpioa 12 GPIO_ACTIVE_HIGH>;
+		current-raw-offset = <20>;
+		current-full-scale-ma = <4178>;
+		voltage-full-scale-mv = <9618>;
+		voltage-correction-microohms = <750000>;
+	};
+};
+
+&adc1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 641)>;
+		zephyr,resolution = <12>;
+	};
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 641)>;
+		zephyr,resolution = <12>;
+	};
+};

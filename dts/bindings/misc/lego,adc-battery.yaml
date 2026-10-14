@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-description: LEGO battery voltage, load current and 103AT thermistor measurements
+description: LEGO battery voltage, load current and optional 103AT thermistor
 compatible: "lego,adc-battery"
 include: base.yaml
 properties:
@@ -7,12 +7,19 @@ properties:
     required: true
   io-channel-names:
     required: true
-    description: Separate 12-bit ADC inputs named current, voltage and temperature.
+    description: Separate 12-bit inputs named current and voltage, and optional temperature.
   chemistry:
     type: string
     required: true
     enum: [unknown, alkaline, li-ion]
-    description: Battery chemistry fixed by the board's battery connector.
+    description: Fixed battery chemistry; use unknown when chemistry-gpios selects it.
+  chemistry-gpios:
+    type: phandle-array
+    description: Optional connector input sampled at boot; active means alkaline, inactive Li-ion.
+  current-raw-offset:
+    type: int
+    default: 0
+    description: Nonnegative 12-bit offset added before scaling load current.
   current-full-scale-ma:
     type: int
     required: true

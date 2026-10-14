@@ -213,6 +213,9 @@ start, output and stop. The shared IMU service is available through native calls
 Calibration is runtime-only. The four ports support electrical identification
 through `port`, `port A` and `observe port.A`; native applications read the same
 snapshots with `bp_port_get()`. UART negotiation and motor drive remain disabled.
+Battery voltage/current and connector-selected chemistry use `bp_battery_get()`,
+`observe battery` and the BLE monitor; battery temperature is unsupported. See
+[the board coefficients and limitations](hardware.md#hub-battery).
 There is no Python or persistent program store in this profile.
 It omits an unused libc malloc arena and floating
 point text formatting in the firmware; the system/application heaps and hardware

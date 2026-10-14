@@ -140,6 +140,7 @@ def test_technic_image():
         "imu-failure-tests",
         "sound-tests",
         "battery-tests",
+        "battery-technic-tests",
         "ports-tests",
         "ports-four-tests",
         "lump-tests",

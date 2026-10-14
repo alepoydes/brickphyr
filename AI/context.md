@@ -91,6 +91,8 @@ detector shares the F4 service and has synthetic GPIO checks; UART negotiation,
 motor drive and storage remain absent.
 The native profile reuses IMU acquisition/orientation and telemetry, with a
 synthetic register-peer check of its distinct mounting axes.
+Technic profiles also reuse battery acquisition/protection, with synthetic
+ADC/GPIO checks of board scaling, chemistry selection and absent thermistor.
 The remaining Python acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance

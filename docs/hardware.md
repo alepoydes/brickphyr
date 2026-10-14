@@ -108,10 +108,12 @@ and telemetry services; the base has no application engine or IMU acquisition.
 The native profile also enables the shared electrical detector on A–D, using
 the reference GPIO wiring and PB12 sensor supply. It reports empty/passive
 connections and the UART electrical signature; digital negotiation, sensor
-measurements, motor drive, battery observations and persistent storage remain
+measurements, motor drive and persistent storage remain
 unimplemented on this board. Four-port synthetic GPIO checks cover discovery,
 hotplug, first-error preservation and shutdown; physical wiring and timing are
-unverified. The CC2640 is held in reset; no host terminal is available in this
+unverified. All Technic profiles enable the shared
+[battery observations and protection](#hub-battery), with synthetic ADC/GPIO
+checks and no physical battery evidence. The CC2640 is held in reset; no host terminal is available in this
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a
 different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
 driver or reflash that controller to bypass the integration work.
@@ -632,6 +634,24 @@ Current-offset variation of tens of milliamps is known in the source; these are
 not calibrated laboratory measurements. Current is not signed charging current,
 and no state-of-charge percentage is inferred. Charging control remains separate.
 
+The build-only Technic port uses the same service with PC1/ADC1 channel 2 for
+voltage and PC2/channel 3 for current. Its reference coefficients are 9618 mV
+and 4178 mA per 4096 counts, a 20-count current offset added before scaling, and
+3/4 Ω voltage correction. PA12 is sampled at boot without a pull: high selects
+alkaline thresholds, low selects Li-ion. A failed connector read prevents valid
+battery observations and low-voltage protection instead of guessing a chemistry.
+Its 20 MHz synchronous ADC
+clock and 640.5-cycle sampling time follow the reference; Zephyr encodes that
+sample-time choice as 641 ticks.
+Technic has no battery thermistor or charger in this port. Temperature reports
+`-ENOTSUP` without incrementing a failure counter; the internal MCU temperature
+channel is not used as battery temperature. The reference warns of nonlinear
+current readings below roughly 100 mA and voltage overestimation under high B/D
+port load, since the voltage correction models the A/C measurement path.
+Synthetic ADC/GPIO checks cover alkaline selection, scaling, offset, absent
+temperature and alkaline thresholds. Physical classification, accuracy and
+shutdown under battery load remain unverified on Technic.
+
 Temperature reuses the reference 103AT conversion: a 2.4 kΩ series and 7.5 kΩ
 parallel network, 10 kΩ at 25 °C and beta 3435 K. The cached result is signed
 millidegrees Celsius. Zero ADC input and readings implying nonpositive thermistor
@@ -639,8 +659,8 @@ resistance return `-ERANGE`. A thermistor failure retains its last valid value
 and timestamp, with its own error and saturating failure count; it does not
 invalidate voltage/current observations or stop a motor using those observations.
 
-The existing system workqueue takes three single-channel conversions, current,
-voltage, then temperature, without DMA or a new thread. This avoids depending on CPU service of
+The existing system workqueue takes single-channel conversions for current,
+voltage and, when present, temperature, without DMA or a new thread. This avoids depending on CPU service of
 back-to-back results at the ADC's full conversion rate. A new pair is requested
 10 ms after the preceding attempt, matching the reference's nominal polling
 period; scheduling can lengthen it. There is no sample history or allocation.

@@ -6,6 +6,7 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/pwm/pwm.h>
 #include "ports.dtsi"
+#include "battery.dtsi"
 
 / {
 	model = "LEGO Technic Hub";
@@ -68,6 +69,14 @@
 	apb2-prescaler = <1>;
 };
 &iwdg { status = "okay"; };
+
+&adc1 {
+	status = "okay";
+	pinctrl-0 = <&adc1_in2_pc1 &adc1_in3_pc2>;
+	pinctrl-names = "default";
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+};
 
 &i2c1 {
 	status = "okay";

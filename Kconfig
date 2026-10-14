@@ -206,13 +206,15 @@ config BRICKPHYR_MOTOR_CONTROL
 
 config BRICKPHYR_BATTERY
 	bool "Battery voltage, load-current and temperature observations"
-	default y if BOARD_SPIKE_PRIME_F4
+	default y if BOARD_SPIKE_PRIME_F4 || BOARD_TECHNIC_HUB
 	depends on DT_HAS_LEGO_ADC_BATTERY_ENABLED
 	select ADC
-	select REQUIRES_FULL_LIBC
+	select GPIO if $(dt_nodelabel_has_prop,hub_battery,chemistry-gpios)
+	select REQUIRES_FULL_LIBC if $(dt_nodelabel_array_prop_has_val,hub_battery,io-channel-names,temperature)
 	help
 	  Shared native/Shell/SMP snapshots from Zephyr ADC, using the board's
-	  Pybricks scaling. No charging control or state-of-charge estimate.
+	  Pybricks scaling and optional pack thermistor. No charging control or
+	  state-of-charge estimate.
 
 config BRICKPHYR_CHARGER
 	bool "Prime hub battery charger"
