@@ -310,6 +310,11 @@ async def execute(args):
         client,
         transport,
     ):
+        if args.command == "record-clear":
+            from .recording import Clear
+
+            await checked(client, Clear())
+            return
         if args.command == "list":
             async for entry in files(client):
                 print(f"{entry.name}\t{entry.size}")
@@ -357,4 +362,9 @@ async def execute(args):
 
 
 def run(args):
+    if args.command == "record":
+        from . import recording
+
+        recording.run(args)
+        return
     asyncio.run(execute(args))

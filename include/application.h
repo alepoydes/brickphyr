@@ -61,6 +61,8 @@ void application_discard_upload(void);
 /* Nonblocking; call after accepted operations have finished at session close. */
 void application_session_closed(void);
 int application_stop(void);
+/* Discard retained records only after the application has terminated. */
+int application_clear_recording(void);
 /* Close application admission and quiesce resources without requesting power-off.
  * Reboot/DFU callers must retain power and their connection until reset. */
 int application_shutdown(void);

@@ -88,6 +88,9 @@ native/Python execution is planned work. Hard-float, FPU context fixes, optional
 CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
 ordinary compatible Pybricks bytecode remains supported.
+The native [recording channel](../docs/applications.md#application-recording)
+retains bounded application-defined binary records for USB/BLE collection;
+control-step correlation and numerical replay remain planned work.
 
 The [build-only native Technic port](../docs/hardware.md#experimental-technic-base)
 remains a secondary goal. UART negotiation, regulated motors and storage are

@@ -654,6 +654,14 @@ I/O, claims or controller allocation. The SDK's
 [F4 USB/BLE evidence](applications.md#control-input-frame); simulated checks do
 not establish control-loop latency.
 
+`tests/test_native.py::test_native_recording` uploads the native recording probe
+to the already-built ARM/SMP fixture. It checks whole-record rejection,
+overflow gaps, fragmented retrieval, retention across forced stop/disconnect,
+repeat reads and generation invalidation. `tests/test_recording.py` covers a
+record overwritten between fragments, generation changes during collection or
+terminal-status capture, and the example's host decoder. The native probe is
+built with `build/native-smp-tests`; pytest does not rebuild it.
+
 The simulator compiles the same application and Zephyr shell. The test opens its
 pseudoterminal with pyserial and checks command echo, help/identity, rejected
 arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,

@@ -185,6 +185,58 @@ def native_console(build, *, virtual_clock=False):
         process.stdout.close()
 
 
+def test_native_recording():
+    from brickphyrdev import recording
+    import io
+    import json
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            await upload(client, transport, (build / "record_probe.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (meta := await checked(client, recording.Info())).next != 8:
+                    state = await checked(client, Status())
+                    assert state.state == 1, state
+            assert (meta.size, meta.capacity, meta.first, meta.active) == (600, 3, 5, True)
+            with pytest.raises(RuntimeError, match="16"):
+                await checked(client, recording.Clear())
+            await checked(client, Stop())
+            # Retention and read-only cursors survive host disconnection.
+        async with connection(port=port) as (client, transport):
+            output = io.StringIO()
+            counts = {"records": 0, "gaps": 0}
+            await recording.collect(client, output, "arm", counts)
+            events = [json.loads(line) for line in output.getvalue().splitlines()]
+            assert {"type": "gap", "from": 0, "to": 5} in events
+            records = [event for event in events if event["type"] == "record"]
+            assert [event["index"] for event in records] == [5, 6, 7]
+            for record in records:
+                assert bytes.fromhex(record["data"]) == bytes((record["index"] + i) % 256 for i in range(600))
+            repeated = await checked(client, recording.Record(generation=meta.generation, index=5, off=256))
+            assert repeated.data == bytes.fromhex(records[0]["data"])[256:512]
+            assert not repeated.active
+            await checked(client, recording.Clear())
+            cleared = await checked(client, recording.Info())
+            assert cleared.size == 0 and cleared.generation != meta.generation
+            stale = await checked(client, recording.Record(generation=meta.generation, index=5, off=0))
+            assert not stale.data and stale.generation == cleared.generation
+            # A new run starts at zero; it cannot inherit the old tail.
+            await upload(client, transport, (build / "record_probe.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (again := await checked(client, recording.Info())).next != 8:
+                    await asyncio.sleep(0)
+            assert again.generation != meta.generation
+            await checked(client, Stop())
+            await checked(client, recording.Clear())
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
 def test_native_smp_and_cli():
     build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
     examples = build.with_name("native-smp-examples")

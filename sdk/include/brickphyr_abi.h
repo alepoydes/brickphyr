@@ -5,15 +5,15 @@
 
 #define BP_ABI_MAGIC 0x31415042U /* BPA1 */
 #define BP_ABI_MAJOR 1
-#define BP_ABI_MINOR 2
+#define BP_ABI_MINOR 3
 
 /* ELF EABI5, little endian, Thumb, 32-bit pointers and AAPCS. */
 #if defined(__ARM_ARCH_7EM__) && defined(__ARM_PCS_VFP) && (__ARM_FP == 4)
 #define BP_ABI_ARCH 1U /* ARMv7E-M, FPv4-SP-D16, hard float */
-#define BRICKPHYR_ABI "bp1.2-armv7em-hf"
+#define BRICKPHYR_ABI "bp1.3-armv7em-hf"
 #elif defined(__ARM_ARCH_7M__) && !defined(__ARM_PCS_VFP)
 #define BP_ABI_ARCH 2U /* ARMv7-M, software float; simulator fixture */
-#define BRICKPHYR_ABI "bp1.2-armv7m-sf"
+#define BRICKPHYR_ABI "bp1.3-armv7m-sf"
 #else
 #error Unsupported Brickphyr native architecture
 #endif

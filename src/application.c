@@ -23,6 +23,7 @@
 #include "hub_charger.h"
 #include "hub_ports.h"
 #include "control_frame.h"
+#include "application_record.h"
 #include "uart_settings.h"
 #include "hub_power.h"
 #include "hub_reset.h"
@@ -117,6 +118,10 @@ static struct k_spinlock button_lock;
 static uint32_t stop_buttons;
 static uint32_t observed_buttons;
 static bool stop_pressed;
+static struct bp_record_spec record_request;
+static atomic_t record_pending;
+static int record_result;
+static K_SEM_DEFINE(record_done, 0, 1);
 
 /* Native logging never waits. Python may leave an unwritten suffix with the VM
  * while a continuous consumer is attached; both use this one bounded queue. */
@@ -1486,6 +1491,35 @@ static inline int z_vrfy_bp_motor_group_get(struct bp_motor_group_state *state)
 }
 #include <zephyr/syscalls/bp_motor_group_get_mrsh.c>
 
+int z_impl_bp_record_begin(const struct bp_record_spec *spec)
+{
+	/* Allocation belongs to the supervisor. Aborting this caller must not
+	 * strand a just-allocated buffer or a lock in the application's thread. */
+	record_request = *spec;
+	atomic_set(&record_pending, 1);
+	k_sem_take(&record_done, K_FOREVER);
+	return record_result;
+}
+static inline int z_vrfy_bp_record_begin(const struct bp_record_spec *spec)
+{
+	K_OOPS(K_SYSCALL_VERIFY(k_sched_current_thread_query() == &application_thread));
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	return z_impl_bp_record_begin(spec);
+}
+#include <zephyr/syscalls/bp_record_begin_mrsh.c>
+
+int z_impl_bp_record_write(const void *data, size_t length)
+{
+	return application_record_write(data, length);
+}
+static inline int z_vrfy_bp_record_write(const void *data, size_t length)
+{
+	if (length > 1024) return -EMSGSIZE;
+	if (length) user_memory_check(data, length, 1, false, __func__);
+	return z_impl_bp_record_write(data, length);
+}
+#include <zephyr/syscalls/bp_record_write_mrsh.c>
+
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
 	return hub_motor_control(BP_PORT_APPLICATION, port, command);
@@ -1982,6 +2016,11 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 
 static int release(void)
 {
+	/* Caller has joined the application. Retain its bounded record tail even
+	 * after a fault; cancellation prevents allocation from an abandoned begin. */
+	atomic_clear(&record_pending);
+	k_sem_reset(&record_done);
+	application_record_end();
 	int err = hub_ports_release(BP_PORT_APPLICATION);
 	int radio_error = hub_radio_release();
 	if (!err) err = radio_error;
@@ -2093,6 +2132,16 @@ int application_stop(void)
 	return err;
 }
 
+int application_clear_recording(void)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	(void)reap(false);
+	int err = atomic_get(&active) ? -EBUSY : 0;
+	if (!err) application_record_clear();
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+
 #ifdef CONFIG_BRICKPHYR_PYTHON
 int application_input(const void *data, size_t length)
 {
@@ -2171,6 +2220,11 @@ void application_poll(void)
 		return;
 	}
 	(void)reap(false);
+	if (atomic_get(&record_pending)) {
+		record_result = application_record_begin(&record_request);
+		atomic_clear(&record_pending);
+		k_sem_give(&record_done);
+	}
 	expire_upload();
 	k_mutex_unlock(&lifecycle);
 }
@@ -2252,6 +2306,7 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 		output_dropped = 0;
 	}
 	k_spin_unlock(&output_lock, key);
+	application_record_reset();
 	k_thread_create(&application_thread, application_stack,
 			K_THREAD_STACK_SIZEOF(application_stack), entry, first, second, third,
 			K_LOWEST_APPLICATION_THREAD_PRIO, K_USER, K_FOREVER);

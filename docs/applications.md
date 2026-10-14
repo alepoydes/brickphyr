@@ -202,7 +202,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 214144-byte loader budget in a 233472-byte shared system heap. The Technic native
+and a 214144-byte loader budget in a 233216-byte shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -308,6 +308,75 @@ and battery snapshots over USB or BLE. USB traffic can extend a capture beyond
 5 ms even with batched SMP transmission. That experiment is not an admission
 budget for a controller; independent scheduled execution remains planned work.
 
+## Application recording
+
+Native ABI 1.3 adds `bp_record_begin(&spec)` and `bp_record_write(data, length)`.
+An application configures one fixed-size binary record format before periodic
+work. `spec` names its schema and version, record size (1–1024 bytes) and retained
+record count. The total buffer may not exceed 32768 bytes. The supervisor
+allocates it from the shared system heap while the caller waits; a failed
+allocation reports `ENOMEM`. A second successful configuration in the same run
+is rejected. Applications that do not record allocate no recording buffer.
+
+Each write copies one complete record and returns without allocation, transport
+work or waiting for a reader. Wrong lengths are rejected before modifying the
+buffer. When full, the buffer replaces its oldest record. Monotonic 64-bit record
+numbers expose the missing interval; sequence exhaustion returns `EOVERFLOW`.
+The application owns the binary schema and must include the measurements,
+commands, parameter revisions and times needed to interpret its calculation.
+The firmware does not infer those values from a later sensor read.
+
+Return, fault and forced stop freeze the retained tail for retrieval. Normal
+host disconnect does not stop recording. Starting another application, Python
+soft reset or explicit clearing discards it and changes the recording generation.
+A rejected image does not clear a running application's records. The retained
+buffer consumes heap until replacement or clearing, even after application exit;
+clear it before admitting a large replacement when memory is constrained.
+Records are volatile and do not survive firmware reset or loss of power.
+
+The same SMP operations retrieve records over USB and BLE. Reads do not consume
+them and can be repeated. Large records use bounded fragments; every response
+reports the current generation and retained index range. A client must discard
+a partial record if it was overwritten, and must not combine generations.
+Generations identify runs within one boot, not persistent experiment identities.
+
+```sh
+uv run brickphyrdev app run build/native-examples/control_record.elf
+uv run brickphyrdev app record control.jsonl
+uv run brickphyrdev app --ble Brickphyr record control-again.jsonl
+uv run brickphyrdev app record-clear
+```
+
+Use the matching SDK to build that example. `app record` creates a new JSONL
+file, refusing to overwrite an existing one before connecting. It collects the
+retained tail and follows a live application until it ends or the user interrupts
+collection. It does not stop that application. Session metadata identifies the
+firmware, board, ABI and application status; each record retains its exact binary
+bytes as hex. Explicit gap events mark missing record ranges. A final event
+distinguishes completed collection from cancellation or transport failure, and
+completed collection includes the application's result, fault and cleanup status.
+Clearing a live application's recording returns `EBUSY`.
+
+The read-only [example](../examples/native/control_record.c) records 40 observations
+of the IMU, battery and ports A/B, retaining the last 32 in 5632 bytes. Its
+`brickphyr.control-input/1` schema is a 176-byte little-endian layout; the CLI
+also decodes its vectors, source errors/times, connection generations and last
+driver-confirmed motor outputs into JSON values. It neither claims nor drives
+motors. Its requested 20 ms observation interval is illustrative, not a control
+deadline. Collection begun after completion reports the first eight observations
+as a gap. Arbitrary disconnection cannot preserve an unbounded history in RAM.
+
+The example has bounded checks on one Robot Inventor F4 (PCB revision unknown):
+live USB collection retains all 40 observations, and USB/BLE retrieve identical
+retained tails after completion. No motors are energized. ARM/SMP checks cover
+fragmented records, overwrite, forced stop, reconnect and explicit clearing.
+These checks do not establish lossless streaming at arbitrary rates or a control
+deadline under combined load.
+
+This channel is the first recording boundary. Automatic control-step/command
+correlation, parameter-value metadata, event-triggered prehistory, autonomous
+flash recording and numerical replay remain [roadmap work](roadmap.md).
+
 ## Installed native files
 
 The F4 profile mounts a separate 224 KiB LittleFS partition at `/apps`. It shares
@@ -394,8 +463,8 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native profile provides a 233472-byte heap, including on-demand loader buffers.
-The full Python profile provides 118144 bytes and the core Python profile 148224 bytes;
+The native profile provides a 233216-byte heap, including on-demand loader buffers.
+The full Python profile provides 117888 bytes and the core Python profile 147968 bytes;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 These F4 profiles assign the remaining linker RAM to the shared heap, up to the
 319 KiB firmware RAM boundary; the loader-selector SRAM remains reserved.

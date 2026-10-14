@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #define __ZEPHYR_SUPERVISOR__
 #include "application.h"
+#include "application_record.h"
 #include "native_image.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
@@ -122,6 +123,52 @@ static int discard_write(struct smp_streamer *stream)
 {
 	application_discard_upload();
 	return MGMT_ERR_EOK;
+}
+
+static bool record_position(zcbor_state_t *zs, const struct application_record_info *info)
+{
+	return number(zs, "generation", info->generation) &&
+		zcbor_tstr_put_lit(zs, "first") && zcbor_uint64_put(zs, info->first) &&
+		zcbor_tstr_put_lit(zs, "next") && zcbor_uint64_put(zs, info->next) &&
+		zcbor_tstr_put_lit(zs, "active") && zcbor_bool_put(zs, info->active);
+}
+
+static int record_info_read(struct smp_streamer *stream)
+{
+	struct application_record_info info;
+	application_record_info(&info);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = record_position(zs, &info) && number(zs, "size", info.spec.size) &&
+		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
+		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_read(struct smp_streamer *stream)
+{
+	uint32_t generation = 0, offset = UINT32_MAX;
+	uint64_t index = UINT64_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
+		ZCBOR_MAP_DECODE_KEY_DECODER("off", zcbor_uint32_decode, &offset),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || offset == UINT32_MAX || index == UINT64_MAX) return MGMT_ERR_EINVAL;
+	uint8_t data[256];
+	struct application_record_info info;
+	int length = application_record_read(generation, index, offset, data, sizeof(data), &info);
+	if (length < 0) return result(stream, length);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
+		zcbor_bstr_encode_ptr(zs, data, length);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_clear_write(struct smp_streamer *stream)
+{
+	return result(stream, application_clear_recording());
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -251,6 +298,8 @@ static const struct mgmt_handler handlers[] = {
 	[12] = {.mh_write = repl_write},
 #endif
 	[13] = {.mh_read = stream_read},
+	[14] = {.mh_read = record_info_read, .mh_write = record_clear_write},
+	[15] = {.mh_read = record_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

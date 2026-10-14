@@ -36,8 +36,10 @@ The native [control input frame](applications.md#control-input-frame) supplies
 read-only IMU, battery and selected encoder/output snapshots with source times,
 errors and connection identity. [Grouped raw output](ports.md#grouped-raw-motor-commands)
 adds whole-request validation, absolute expiry and group coast on failure through
-the same motor worker. Physical group-drive acceptance, independent execution
-and cycle recording remain work; these APIs alone do not complete block 2.
+the same motor worker. A bounded [application record channel](applications.md#application-recording)
+retains binary records for USB/BLE retrieval with explicit gaps and a read-only
+input example. Physical group-drive acceptance, independent execution and
+control-step/command correlation remain work; these APIs alone do not complete block 2.
 
 ## Delivery blocks
 

@@ -19,6 +19,7 @@
 #include <brickphyr_drivebase.h>
 #include <brickphyr_system.h>
 #include <brickphyr_control.h>
+#include <brickphyr_record.h>
 
 #if defined(__ZEPHYR__) && !defined(LL_EXTENSION_BUILD)
 #include <zephyr/toolchain.h>
@@ -364,6 +365,16 @@ __syscall int bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *
  */
 __syscall int bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request);
 __syscall int bp_motor_group_get(struct bp_motor_group_state *state);
+
+/* Configure once per application run, before periodic work. The supervisor
+ * allocates the bounded recording while this caller waits. Exit/stop freezes
+ * its tail for host retrieval; replacement or explicit host clear discards it.
+ * Host disconnect neither stops nor clears recording. */
+__syscall int bp_record_begin(const struct bp_record_spec *spec);
+/* Copy one complete record, without allocation, waiting or transport work.
+ * Full buffers overwrite the oldest record; host cursors expose every gap.
+ * Returns 0 on acceptance, ENODATA before begin, EMSGSIZE for a wrong length. */
+__syscall int bp_record_write(const void *data, size_t length);
 
 #include <zephyr/syscalls/brickphyr.h>
 #endif
