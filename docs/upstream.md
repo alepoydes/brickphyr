@@ -211,6 +211,16 @@ fetches the pinned pybricksdev sibling checkout; uv installs it as an editable
 dependency. The released upstream Python package does not yet supply this CDC
 client, so install the CLI through the documented workspace procedure.
 
+## Devicetree resource sizing prerequisite
+
+The UART heap budget requires local Zephyr commit `79ed2a6b` on
+`topic/kconfig-child-count`. Its Kconfig helper counts immediate enabled
+devicetree children, so per-port memory follows the board description instead
+of a duplicated port count. The upstream Kconfig fixture covers enabled and
+disabled children, nested nodes and missing paths; Brickphyr's four/six-port
+LUMP fixtures check complete mode tables within their derived heap budgets.
+Publication and manifest pinning remain pending.
+
 ## Kernel-object sizing prerequisite
 
 The full F4 Python and Technic native profiles require the local Zephyr `topic/kobject-data-budget`

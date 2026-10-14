@@ -167,13 +167,13 @@ config BRICKPHYR_PORT_UART
 
 config HEAP_MEM_POOL_ADD_SIZE_BRICKPHYR_PORT_UART
 	int
-	default 32768 if BRICKPHYR_PORT_UART
+	default $(add,2048,$(mul,5120,$(dt_node_enabled_child_count,$(dt_nodelabel_path,hub_ports)))) if BRICKPHYR_PORT_UART
 	help
 	  Mode descriptions use the shared heap only while a UART device is
-	  connected. Budget six ports with sixteen modes and all optional wire
-	  payloads, including allocation and negotiation-growth overhead. Ordinary
-	  devices allocate only their advertised payloads. No allocation occurs
-	  on the DATA path.
+	  connected. Budget 5 KiB per enabled port for sixteen modes and all
+	  optional wire payloads, plus 2 KiB for allocator/negotiation growth.
+	  Ordinary devices allocate only their advertised payloads. No allocation
+	  occurs on the DATA path.
 
 config BRICKPHYR_MOTORS
 	bool "Powered Up direct motor drive"

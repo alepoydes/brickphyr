@@ -31,3 +31,10 @@ and opaque INFO fields, then sends all four numeric wire formats. The actual
 show the same bytes and values as the native snapshot without SELECT, ownership
 or H-bridge changes. Boundary cases include 16 modes, 32-byte opaque payloads,
 duplicate or short metadata, overlong units and reconnects without optional fields.
+
+The mode-memory check fills every configured port with sixteen complete modes,
+then reconnects with shorter payloads and verifies reclamation. The four-port
+variant uses `../ports/four.overlay` and the corresponding devicetree-derived
+heap minimum, without overriding heap size. Run `lump::test_mode_memory_lifetime`
+and `lump::test_mode_payload_allocation_failure` for that capacity boundary;
+the six-port fixture owns the full protocol suite.

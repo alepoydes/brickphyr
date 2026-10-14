@@ -171,10 +171,10 @@ ZTEST(lump, test_invalid_metadata)
 ZTEST(lump, test_mode_memory_lifetime)
 {
 	size_t before = allocated_bytes();
-	/* Six 16-mode peers each advertise maximum optional wire payloads. INFO
-	 * arrives in both orders; the second connection has short and absent INFO
+	/* Interleave INFO across all ports to exercise simultaneous heap growth.
+	 * Each has sixteen modes; the second connection has short and absent INFO
 	 * to check expansion into a fresh, zero-tailed public mode. */
-	static struct lump peers[BP_PORT_COUNT];
+	static struct lump peers[DT_CHILD_NUM_STATUS_OKAY(DT_NODELABEL(hub_ports))];
 	uint8_t type[34], modes[34], id = 201;
 	const uint8_t counts[] = {7, 0, 15, 0};
 	const uint8_t combinations[32] = {
@@ -194,24 +194,33 @@ ZTEST(lump, test_mode_memory_lifetime)
 			zassert_ok(parse_bytes(&peers[port], type, type_size));
 			zassert_ok(parse_bytes(&peers[port], modes, modes_size));
 			zassert_equal(peers[port].num_modes, 16);
-			for (uint8_t index = 0; index < 16; index++) {
-				uint8_t name[] = {'M', 'A' + index, 0, 0};
+		}
+		for (uint8_t index = 0; index < 16; index++) {
+			uint8_t name[] = {'M', 'A' + index, 0, 0};
+			for (size_t port = 0; port < ARRAY_SIZE(peers); port++) {
 				zassert_ok(parse_info(&peers[port], index, LUMP_INFO_NAME, name, sizeof(name)));
-				bool reverse = (port + index) & 1;
-				if (!reverse) zassert_ok(parse_info(&peers[port], index,
-					LUMP_INFO_MODE_COMBOS, combinations, sizeof(combinations)));
-				for (size_t n = 0; n < ARRAY_SIZE(extra); n++) {
-					size_t field = reverse ? ARRAY_SIZE(extra) - 1 - n : n;
+			}
+			for (size_t n = 0; n <= ARRAY_SIZE(extra); n++) {
+				for (size_t port = 0; port < ARRAY_SIZE(peers); port++) {
+					size_t field = (port + index) & 1 ? ARRAY_SIZE(extra) - n : n;
+					if (!field) {
+						zassert_ok(parse_info(&peers[port], index, LUMP_INFO_MODE_COMBOS,
+							combinations, sizeof(combinations)));
+						continue;
+					}
+					field--;
 					if (round && field == 2 && index == 15) continue;
 					size_t length = round ? (1U << field) : sizeof(extra[field]);
 					zassert_ok(parse_info(&peers[port], index, LUMP_INFO_UNK7 + field,
 						extra[field], length));
 				}
-				if (reverse) zassert_ok(parse_info(&peers[port], index,
-					LUMP_INFO_MODE_COMBOS, combinations, sizeof(combinations)));
+			}
+			for (size_t port = 0; port < ARRAY_SIZE(peers); port++) {
 				zassert_ok(parse_info(&peers[port], index, LUMP_INFO_FORMAT,
 					format, sizeof(format)));
 			}
+		}
+		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) {
 			zassert_ok(lump_receive(&peers[port], LUMP_SYS_ACK));
 			zassert_equal(peers[port].phase, LUMP_ACK);
 			for (uint8_t index = 0; index < 16; index++) {
@@ -231,8 +240,8 @@ ZTEST(lump, test_mode_memory_lifetime)
 				}
 			}
 		}
-		printk("Six 16-mode peers, round %zu: %zu allocated bytes\n", round,
-			allocated_bytes() - before);
+		printk("%zu 16-mode peers, round %zu: %zu allocated bytes\n", ARRAY_SIZE(peers),
+			round, allocated_bytes() - before);
 		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) lump_reset(&peers[port]);
 		zassert_equal(allocated_bytes(), before, "Disconnected peers retained metadata");
 	}

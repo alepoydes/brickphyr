@@ -88,6 +88,10 @@ bounded strings and payloads. It allocates the advertised number of modes from
 the shared system heap during negotiation. Combination masks and uninterpreted
 INFO payloads use separate packed storage per mode, grown only for bytes actually
 advertised; the getter expands them into the unchanged public structure.
+The UART contribution to the minimum heap budget follows enabled devicetree ports:
+5 KiB per port for complete mode tables, plus 2 KiB for allocator and growth
+overhead. This is 32 KiB for six ports and 22 KiB for four; it does not reserve
+that memory separately from other heap users.
 Disconnect, restart, failure and shutdown release both allocations. Internal baud changes retain the table. Publication
 occurs after negotiation, and reset invalidates readers before freeing storage.
 An allocation failure reports `-ENOMEM` and fails that negotiation; it does not
@@ -96,7 +100,7 @@ and getters perform no device I/O.
 Shell range/float32 output enables Zephyr's floating-point formatter.
 
 Synthetic checks cover recognized and unknown UART peers, all four wire formats,
-optional and malformed metadata, six maximum-size tables and their reclamation,
+optional and malformed metadata, four/six maximum-size tables and their reclamation,
 out-of-order INFO, allocation failure, maximum mode/payload sizes, reconnects and unchanged ownership/outputs. USB Shell inspection on one Inventor F4 displays
 the modes, formats, ranges and current data of original LEGO ID-61 and ID-62
 sensors. Physical third-party compatibility and BLE Shell inspection remain
