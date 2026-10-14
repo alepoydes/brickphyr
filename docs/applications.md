@@ -239,7 +239,14 @@ A protected ARM check loads a 64 KiB padded ELF containing a 64 KiB zero-initial
 array, verifies every byte through the application, and reclaims its memory on exit.
 The upload and loader buffers coexist during startup. Padding exercises transfer
 capacity, not 64 KiB of executable code. This uses the native F4 budgets with
-synthetic peripherals; physical combined-load acceptance remains pending.
+synthetic peripherals. On a Robot Inventor F4, the native-only profile also runs
+that maximum-size RAM upload over USB and BLE. A separately compiled stored ELF
+runs with 64 KiB BSS plus 16 KiB initialized writable data over both transports.
+Both verify their complete data regions, return without application or cleanup
+errors, and leave existing stored files unchanged across the profile switch.
+Their reported loaded allocations are 66258 and 83037 bytes; loader reservations
+are 136864 and 170291 bytes. These synthetic memory workloads establish neither
+allocator peak usage nor capacity under maximum peripheral/communication load.
 
 Earlier board checks verified repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
