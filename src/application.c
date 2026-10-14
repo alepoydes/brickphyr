@@ -153,6 +153,7 @@ static struct {
 	struct bp_record_spec spec;
 	const void *config;
 	size_t length;
+	bool control;
 } record_request;
 static atomic_t record_pending;
 static int record_result;
@@ -1522,6 +1523,7 @@ int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	void *parameters, size_t capacity)
 {
 	if (!native_caller()) return -EPERM;
+	if (control_clock.step.sequence == UINT32_MAX) return -EOVERFLOW;
 	int64_t ticks = k_us_to_ticks_ceil64(period_us);
 	if (!period_us || k_ticks_to_us_ceil64(ticks) != period_us) return -EINVAL;
 	if (control_clock.period_us && control_clock.period_us != period_us) return -EINVAL;
@@ -1555,6 +1557,7 @@ int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	control_clock.next_tick = due + ticks;
 	control_clock.step = value;
 	k_spin_unlock(&control_lock, key);
+	application_record_step(&value, parameters);
 	*step = value;
 	return 0;
 }
@@ -1661,16 +1664,21 @@ static inline int z_vrfy_bp_motor_group_get(struct bp_motor_group_state *state)
 }
 #include <zephyr/syscalls/bp_motor_group_get_mrsh.c>
 
-int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
+static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length, bool control)
 {
 	/* Allocation belongs to the supervisor. Aborting this caller must not
 	 * strand a just-allocated buffer or a lock in the application's thread. */
 	record_request.spec = *spec;
 	record_request.config = config;
 	record_request.length = length;
+	record_request.control = control;
 	atomic_set(&record_pending, 1);
 	k_sem_take(&record_done, K_FOREVER);
 	return record_result;
+}
+int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
+{
+	return record_begin(spec, config, length, false);
 }
 static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -1682,6 +1690,21 @@ static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spe
 	return z_impl_bp_record_begin_config(spec, config, length);
 }
 #include <zephyr/syscalls/bp_record_begin_config_mrsh.c>
+
+int z_impl_bp_control_record_begin(const struct bp_record_spec *spec, const void *config, size_t length)
+{
+	return record_begin(spec, config, length, true);
+}
+static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *spec,
+	const void *config, size_t length)
+{
+	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (length > 1024) return -EMSGSIZE;
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	if (length) user_memory_check(config, length, 1, false, __func__);
+	return z_impl_bp_control_record_begin(spec, config, length);
+}
+#include <zephyr/syscalls/bp_control_record_begin_mrsh.c>
 
 int z_impl_bp_record_begin(const struct bp_record_spec *spec)
 {
@@ -2492,8 +2515,12 @@ void application_poll(void)
 	}
 #endif
 	if (atomic_get(&record_pending)) {
+		size_t parameter_size = 0;
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		if (record_request.control && controller) parameter_size = controller->parameter_size;
+#endif
 		record_result = application_record_begin(&record_request.spec,
-			record_request.config, record_request.length);
+			record_request.config, record_request.length, record_request.control, parameter_size);
 		atomic_clear(&record_pending);
 		k_sem_give(&record_done);
 	}

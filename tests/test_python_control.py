@@ -30,13 +30,20 @@ def bundle(source):
 async def records(client):
     info = await checked(client, recording.Info())
     assert (info.size, info.capacity, info.record_schema) == (48, 16, "fixture.control/1")
+    assert info.control and info.parameter_size == 16
     result = []
     for index in range(info.first, info.next):
         response = await checked(
             client, recording.Record(generation=info.generation, index=index, off=0)
         )
         assert len(response.data) == RECORD.size
-        result.append(RECORD.unpack(response.data))
+        row = RECORD.unpack(response.data)
+        assert response.step == response.data[:32]
+        parameters = await checked(client, recording.Parameters(generation=info.generation, index=index))
+        assert parameters.revision == row[4]
+        _, value, inverse, _ = struct.unpack('<4I', parameters.data)
+        assert value == row[6] and inverse == (~value & 0xffffffff)
+        result.append(row)
     return result
 
 
@@ -61,7 +68,7 @@ def wait_for(revision, steps):
         if n % 128 == 0:
             gc.collect()
     raise AssertionError('controller did not advance')
-first = wait_for(1, 2)
+first = wait_for(1, 18)
 assert first['period_us'] == 10000 and first['stack_bytes'] >= 2048
 assert first['loader_bytes'] > 0 and first['loaded_bytes'] > 0
 assert brickphyr.control_update(params(0x12345678)) == 2
@@ -91,6 +98,26 @@ print('controller revisions and GC passed')
                     assert total == sequence * 0.25 and reserved == 0
                     if revision in (2, 3):
                         assert value == {2: 0x12345678, 3: 0x87654321}[revision]
+                # Fill and recycle the bounded pool with distinct revisions,
+                # after the first run exercised shared-revision ring overwrite.
+                churn = """import brickphyr, struct
+from pybricks.tools import wait
+def params(value):
+    return struct.pack('<4I', 0, value, (~value) & 0xffffffff, 0)
+brickphyr.control_start(open('controller.elf', 'rb').read(), params(1))
+for revision in range(1, 25):
+    if revision > 1:
+        assert brickphyr.control_update(params(revision)) == revision
+    while brickphyr.control_status()['applied_revision'] < revision:
+        wait(1)
+"""
+                await upload(client, transport, bundle(churn), Format.FILES)
+                await checked(client, Start())
+                status = await completed(client)
+                assert status.result == status.fault == status.cleanup == 0, status
+                observed = await records(client)
+                assert observed[-1][4] == 24 and len({row[4] for row in observed}) == 16
+                assert all(row[4] == row[6] for row in observed)
             finally:
                 await checked(client, Stop())
 

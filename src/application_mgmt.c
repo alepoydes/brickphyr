@@ -143,6 +143,8 @@ static int record_info_read(struct smp_streamer *stream)
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && number(zs, "size", info.spec.size) &&
 		number(zs, "config_size", info.config_size) &&
+		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
+		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
 		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
@@ -162,11 +164,40 @@ static int record_read(struct smp_streamer *stream)
 	    !generation || offset == UINT32_MAX || index == UINT64_MAX) return MGMT_ERR_EINVAL;
 	uint8_t data[256];
 	struct application_record_info info;
-	int length = application_record_read(generation, index, offset, data, sizeof(data), &info);
+	struct bp_control_step step;
+	BUILD_ASSERT(sizeof(step) == 32);
+	int length = application_record_read(generation, index, offset, data, sizeof(data), &info, &step);
 	if (length < 0) return result(stream, length);
+	/* The 32-byte step replaces payload room within the existing SMP budget.
+	 * Trim only after the atomic read identifies this generation's format. */
+	if (info.control) length = MIN(length, 224);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
-		zcbor_bstr_encode_ptr(zs, data, length);
+		zcbor_bstr_encode_ptr(zs, data, length) && zcbor_tstr_put_lit(zs, "step") &&
+		zcbor_bstr_encode_ptr(zs, (void *)&step, info.control && length ? sizeof(step) : 0);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_parameters_read(struct smp_streamer *stream)
+{
+	uint32_t generation = 0, revision;
+	uint64_t index = UINT64_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || index == UINT64_MAX) return MGMT_ERR_EINVAL;
+	uint8_t data[256];
+	struct application_record_info info;
+	int length = application_record_parameters_read(generation, index, data, &info, &revision);
+	if (length < 0) return result(stream, length);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = number(zs, "generation", info.generation) && number(zs, "revision", revision) &&
+		zcbor_tstr_put_lit(zs, "first") && zcbor_uint64_put(zs, info.first) &&
+		zcbor_tstr_put_lit(zs, "next") && zcbor_uint64_put(zs, info.next) &&
+		zcbor_tstr_put_lit(zs, "data") && zcbor_bstr_encode_ptr(zs, data, length);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
@@ -338,6 +369,7 @@ static const struct mgmt_handler handlers[] = {
 	[14] = {.mh_read = record_info_read, .mh_write = record_clear_write},
 	[15] = {.mh_read = record_read},
 	[16] = {.mh_read = record_config_read, .mh_write = record_trigger_write},
+	[17] = {.mh_read = record_parameters_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

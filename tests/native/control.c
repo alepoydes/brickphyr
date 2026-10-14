@@ -18,7 +18,7 @@ int app_main(void)
 	const struct bp_record_spec spec = {
 		.size = sizeof(record), .capacity = 16, .schema = "fixture.control/1",
 	};
-	int err = bp_record_begin(&spec);
+	int err = bp_control_record_begin(&spec, NULL, 0);
 	if (err) return err;
 	bool delayed = false;
 	for (;;) {

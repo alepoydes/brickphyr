@@ -43,8 +43,9 @@ the same motor worker. A bounded [application record channel](applications.md#ap
 retains binary records for USB/BLE retrieval with explicit gaps. Its examples
 capture read-only inputs and correlate one group command with its original input
 and later driver reports. Immutable experiment configuration and triggered
-prehistory/post-event capture use that same channel. Numerical replay and automatic
-parameter-revision records remain work. Physical group-drive acceptance and automatic actuation
+prehistory/post-event capture use that same channel. Optional control recording
+retains step metadata and applied parameter revisions without per-step allocation.
+Numerical replay tools, physical group-drive acceptance and automatic actuation
 correlation remain work; these APIs alone do not complete block 2.
 
 ## Delivery blocks

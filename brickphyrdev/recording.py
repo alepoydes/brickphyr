@@ -14,6 +14,8 @@ from .smp import checked, connection
 
 _CONTROL_SCHEMA = "brickphyr.control-input/1"
 _CONTROL_RECORD = struct.Struct("<8q10i6I2q4i4I")
+_CONTROL_STEP = struct.Struct("<qq4I")
+_LOOP_SCHEMA = "brickphyr.control-loop/1"
 _GROUP_SCHEMA = "brickphyr.control-group/1"
 _GROUP_TAIL = struct.Struct("<3q4I3i2Ii3q3I2iI")
 _GROUP_PORT = struct.Struct("<2I2iq4I2i")
@@ -33,6 +35,8 @@ class InfoResponse(message.ReadResponse):
     trigger: int | None = None
     after: int = 0
     reason: int | None = None
+    control: bool = False
+    parameter_size: int = 0
 
 
 class Info(application._Group, message.ReadRequest):
@@ -56,6 +60,7 @@ class RecordResponse(message.ReadResponse):
     trigger: int | None = None
     after: int = 0
     reason: int | None = None
+    step: bytes = b""
 
 
 class Record(application._Group, message.ReadRequest):
@@ -88,13 +93,31 @@ class Trigger(application._Group, message.WriteRequest):
     after: int
 
 
+class ParametersResponse(message.ReadResponse):
+    _GROUP_ID = application.GROUP
+    _COMMAND_ID = 17
+    generation: int
+    first: int
+    next: int
+    revision: int
+    data: bytes
+
+
+class Parameters(application._Group, message.ReadRequest):
+    _COMMAND_ID = 17
+    _Response = ParametersResponse
+    generation: int
+    index: int
+
+
 def _range(first, next):
     if not 0 <= first <= next < 1 << 64:
         raise RuntimeError("Invalid recording index range")
 
 
 def _identity(info):
-    return info.size, info.capacity, info.record_schema, info.config_size
+    return (info.size, info.capacity, info.record_schema, info.config_size,
+            info.control, info.parameter_size)
 
 
 def _metadata(reply, capacity, *, config_size=0):
@@ -243,8 +266,30 @@ def _step_values(data):
     }
 
 
+def _loop_values(data):
+    if len(data) != _CONTROL_RECORD.size + 8:
+        raise RuntimeError("Invalid brickphyr.control-loop/1 record length")
+    port_mask, _reserved = struct.unpack_from("<2I", data, _CONTROL_RECORD.size)
+    return {"input": _control_values(data[:_CONTROL_RECORD.size]),
+            "port_mask": port_mask}
+
+
+def _control_step(data, parameter_size):
+    if len(data) != _CONTROL_STEP.size:
+        raise RuntimeError("Invalid control step metadata length")
+    scheduled, started, sequence, skipped, revision, size = _CONTROL_STEP.unpack(data)
+    if size != parameter_size:
+        raise RuntimeError("Control step parameter size differs from recording")
+    return {
+        "scheduled_us": scheduled, "started_us": started,
+        "sequence": sequence, "skipped": skipped,
+        "parameter_revision": revision, "parameter_size": size,
+    }
+
+
 _DECODERS = {
     "brickphyr.control-step/1": (216, _step_values),
+    _LOOP_SCHEMA: (_CONTROL_RECORD.size + 8, _loop_values),
     _CONTROL_SCHEMA: (_CONTROL_RECORD.size, _control_values),
     _GROUP_SCHEMA: (_CONTROL_RECORD.size + _GROUP_TAIL.size + 2 * _GROUP_PORT.size,
                     _group_values),
@@ -262,6 +307,8 @@ async def collect(client, log, session, counts, *, after=None):
         info.size * info.capacity + info.config_size > 32768
     ):
         raise RuntimeError("Invalid recording size or capacity")
+    if not 0 <= info.parameter_size <= 256 or not info.control and info.parameter_size:
+        raise RuntimeError("Invalid recording control parameter size")
     trigger, trigger_after, reason = _metadata(
         info, info.capacity, config_size=info.config_size
     )
@@ -351,6 +398,8 @@ async def collect(client, log, session, counts, *, after=None):
                 "trigger": trigger,
                 "after": trigger_after,
                 "reason": reason,
+                "control": info.control,
+                "parameter_size": info.parameter_size,
             },
         },
     )
@@ -358,12 +407,15 @@ async def collect(client, log, session, counts, *, after=None):
     first, next, active = info.first, info.next, info.active
     index = 0
     partial = bytearray()
+    partial_step = None
+    last_sequence = last_revision = cached_revision = None
     while True:
         if index < first:
             monitor.write_log(log, {"type": "gap", "from": index, "to": first})
             counts["gaps"] += 1
             index = first
             partial.clear()
+            partial_step = None
         if not active and index >= next:
             status = await checked(client, application.Status())
             terminal_info = await checked(client, Info())
@@ -412,22 +464,61 @@ async def collect(client, log, session, counts, *, after=None):
         if index < first:
             continue  # Discard the partial record before the next request.
         if index >= next:
-            if reply.data:
+            if reply.data or reply.step:
                 raise RuntimeError("Recording data outside retained range")
             if active:
                 await asyncio.sleep(0.02)
             continue
-        if not reply.data or len(reply.data) > 256 or len(reply.data) > info.size - len(partial):
+        if info.control:
+            step = _control_step(reply.step, info.parameter_size)
+            if partial_step is None:
+                partial_step = reply.step
+            elif reply.step != partial_step:
+                raise RuntimeError("Control step changed between record fragments")
+        elif reply.step:
+            raise RuntimeError("Unexpected control step on ordinary recording")
+        limit = 224 if info.control else 256
+        if not reply.data or len(reply.data) > limit or len(reply.data) > info.size - len(partial):
             raise RuntimeError("Invalid recording fragment")
         partial.extend(reply.data)
         if len(partial) == info.size:
+            if info.control:
+                sequence, revision = step["sequence"], step["parameter_revision"]
+                if (last_sequence is not None and sequence < last_sequence or
+                    last_revision is not None and revision < last_revision):
+                    raise RuntimeError("Control step sequence or revision moved backwards")
+                if revision != cached_revision:
+                    params = await checked(client, Parameters(generation=generation, index=index))
+                    if params.generation != generation:
+                        raise RuntimeError(
+                            f"Recording generation changed from {generation} to {params.generation}"
+                        )
+                    _range(params.first, params.next)
+                    if params.first < first or params.next < next:
+                        raise RuntimeError("Recording index range moved backwards")
+                    first, next = params.first, params.next
+                    if index < first:
+                        continue  # The record and its parameter snapshot were overwritten.
+                    if index >= next or params.revision != revision or (
+                        len(params.data) != info.parameter_size
+                    ):
+                        raise RuntimeError("Invalid retained control parameters")
+                    monitor.write_log(log, {
+                        "type": "parameters", "revision": revision, "data": params.data.hex(),
+                    })
+                    cached_revision = revision
             record = {"type": "record", "index": index, "data": partial.hex()}
+            if info.control:
+                record["control"] = step
             if decoder:
                 record["values"] = decoder[1](partial)
             monitor.write_log(log, record)
             counts["records"] += 1
+            if info.control:
+                last_sequence, last_revision = sequence, revision
             index += 1
             partial.clear()
+            partial_step = None
 
 
 async def _record(args, log):

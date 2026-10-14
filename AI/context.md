@@ -95,8 +95,9 @@ ordinary compatible Pybricks bytecode remains supported.
 The native [recording channel](../docs/applications.md#application-recording)
 retains bounded application-defined binary records for USB/BLE collection;
 immutable configuration and triggered prehistory/post-event capture are supported;
-examples include input observations and a correlated group command. Automatic
-control-step recording and numerical replay remain planned work.
+optional control metadata retains step identity and applied parameter values.
+Examples include input observations and a correlated group command. Automatic
+actuation correlation and numerical replay tools remain planned work.
 
 The [build-only native Technic port](../docs/hardware.md#experimental-technic-base)
 remains a secondary goal. UART negotiation, regulated motors and storage are

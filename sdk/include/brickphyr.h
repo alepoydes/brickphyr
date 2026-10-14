@@ -396,6 +396,15 @@ __syscall int bp_record_begin_config(const struct bp_record_spec *spec,
  * This is an application event, not a power-loss/reset recorder. */
 __syscall int bp_record_trigger(uint32_t after);
 
+/* Opt in to automatic association of each record_write() with the latest
+ * successful control_wait(): step timing, sequence and the parameters actually
+ * delivered at that boundary. Begin before the first wait to record it.
+ * Metadata and retained parameter revisions share the 32768-byte budget with
+ * payload/config; identical revisions share storage. No allocation during steps.
+ * Record schema still owns the payload/config formats. */
+__syscall int bp_control_record_begin(const struct bp_record_spec *spec,
+	const void *config, size_t length);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

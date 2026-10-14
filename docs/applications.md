@@ -98,10 +98,11 @@ uv run brickphyrdev app record reports/control-step.jsonl
 Use the [SDK build procedure](builds.md#experimental-native-sdk) to produce the
 ELF for the installed firmware. `app install build/control-demo --name control`
 retains the same package in flash. Add `--ble Brickphyr` after `app` for Bluetooth.
-The `brickphyr.control-step/1` example schema adds release times, sequence,
-parameter revision and selected port mask to the existing input record; the CLI
-decodes it into JSONL and preserves raw bytes. It is a bounded observation example,
-not automatic recording of arbitrary controllers or numerical replay.
+The `brickphyr.control-loop/1` example schema contains the existing input record
+and selected port mask. It opts into [control recording](#application-recording),
+which attaches release times, sequence and the applied parameter values. The CLI
+decodes these into JSONL and preserves raw bytes. The example is bounded read-only
+observation; numerical replay and actuation correlation remain application work.
 
 Protected M4/QEMU checks cover progress during Python GC/floating-point work,
 whole parameter revisions, skipped periods, return, cross-domain faults, forced
@@ -116,8 +117,10 @@ no skipped 20 ms releases in those short runs. BLE completes fewer telemetry
 requests, so its timing cannot be treated as an equal-load USB comparison.
 A synthetic Babybot predictor compiled unchanged for the SDK and desktop also
 produces matching recorded float32 results in standalone and concurrent execution,
-including a parameter revision. This establishes bounded numerical portability;
-it does not establish physical feedback control or complete robot replay.
+including parameter revisions. With control recording, the retained 64 of 96
+steps also reproduce from their captured model and three applied revisions after
+ring overwrite; USB/BLE retrieve identical records. This establishes bounded
+numerical portability, not physical feedback control or complete robot replay.
 Controller stack high-water and sustained combined-load characterization remain
 open; the normal image has no kernel stack Shell.
 
@@ -421,8 +424,30 @@ to 1024 bytes of immutable experiment configuration together with the buffer;
 configuration and records share the 32768-byte allocation limit. The record
 schema defines the configuration's binary format too. Use it for model values,
 initial state, units and configuration identity needed for replay. Ring overwrite
-does not erase it. Later parameter changes belong in application records, with
-their revisions; the configuration is not a mutable parameter store.
+does not erase it. This configuration is not a mutable parameter store.
+
+Native ABI 1.6 adds optional `bp_control_record_begin(&spec, config, length)`.
+Use it instead of the ordinary begin operation before the first control wait.
+Each `bp_record_write` then automatically retains the latest successful
+`bp_control_wait` step: release/start times, sequence, missed releases and the
+parameter block delivered at that boundary. Until the first successful wait after
+begin, writes return `ENODATA`. Several records may describe one step. The payload and
+configuration formats still belong to the application; step metadata is separate.
+
+Parameter values are copied on revision changes and shared by records with the
+same revision. They survive until the last referring record is overwritten, even
+if the revision's first record has already gone. Pending Python updates are not
+substituted for applied values. Application changes to its private parameter copy
+or other internal state must be recorded in the payload when needed for replay.
+Standalone native execution has revision zero and an empty delivered parameter
+block; put its application-defined constants in the configuration.
+
+The control mode preallocates bounded metadata, parameter slots and staging space
+within the same 32768-byte limit. An over-budget request returns `EINVAL` before
+allocation. Eviction/reuse takes constant work without scanning the ring, and no
+allocator, transport or storage operation runs in a control step. Ordinary
+recordings reserve none of these optional buffers. Control step sequence exhaustion
+returns `EOVERFLOW`; it does not silently wrap to a previous sequence.
 
 Each write copies one complete record and returns without allocation, transport
 work or waiting for a reader. Wrong lengths are rejected before modifying the
@@ -493,6 +518,13 @@ it does not mean the application stopped. If the application ends first,
 `application-end` includes the trigger boundary, requested count and incomplete
 capture status. Collection never silently combines configurations from different runs.
 
+For control recordings, each JSONL `record` also has a `control` object with the
+step fields above. A `parameters` event precedes the first collected record using
+each revision and holds its exact bytes as hex. The collector fetches each observed
+revision once; it discards an incomplete record if its parameter snapshot was
+overwritten before retrieval and reports the gap. A replay must use these values
+and the application schema, not current hub settings or a later sensor read.
+
 The read-only [example](../examples/native/control_record.c) records 40 observations
 of the IMU, battery and ports A/B, retaining the last 32 in 5632 bytes. Its
 `brickphyr.control-input/1` schema is a 176-byte little-endian layout; the CLI
@@ -508,6 +540,8 @@ retained tails after completion. No motors are energized. ARM/SMP checks cover
 fragmented records, overwrite, forced stop, reconnect and explicit clearing.
 Protected ARM checks also cover copied configuration, native triggering,
 preserved prehistory, post-trigger writes, continued execution and early stop.
+Control recording checks cover applied parameter values across ring overwrite,
+shared revision retention, slot recycling and memory release after stop/fault.
 On the same F4, `control_loop` retains its period configuration and identical
 USB/BLE event captures while continuing execution. A BLE immediate capture also
 passes with the native controller running alongside Python; later controller
@@ -554,8 +588,8 @@ variant, input rejection and host decoding. One Robot Inventor F4 (PCB revision
 unknown) has checks of the passive variant and identical USB/BLE record retrieval;
 physical group drive and expiry remain unverified. The example adds no resident
 firmware worker or memory reservation. Automatic control-step correlation,
-automatic capture of later parameter values, autonomous flash recording and
-numerical replay remain [roadmap work](roadmap.md).
+including attribution of actuation completion to the original input, autonomous
+flash recording and numerical replay remain [roadmap work](roadmap.md).
 
 ## Installed native files
 
