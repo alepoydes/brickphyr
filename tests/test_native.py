@@ -80,6 +80,7 @@ def test_reserved_slot_names():
         ("driver-supervisor-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("syscall-frame-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("upstream-userspace", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("logging-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("main-userspace-tests", b"main_stack: PASS"),
         ("main-supervisor-tests", b"main_stack: PASS"),
     ],

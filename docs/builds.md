@@ -587,7 +587,9 @@ diagnostics
 
 `diagnostics` reads and consumes retained firmware warnings and errors; overflow
 counters remain visible. The default build filters at compilation, without
-runtime log-level controls. For a diagnostic build, raise `CONFIG_LOG_MAX_LEVEL`
+runtime log-level controls. It shares Zephyr's runtime message packager to reduce
+flash use; formatting arguments costs more at the warning/error call site, while
+output remains deferred. For a diagnostic build, raise `CONFIG_LOG_MAX_LEVEL`
 and the relevant module's log level in an extra configuration file.
 
 `native_fixture` loads an ELF embedded for board acceptance, not the separately

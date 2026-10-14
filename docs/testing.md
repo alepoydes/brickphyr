@@ -929,6 +929,20 @@ The protection suite deliberately triggers kernel assertions and checks their
 handling; its final test result distinguishes expected faults from failures.
 These ARM emulation checks do not measure physical syscall latency.
 
+The native fixtures also check retained warning/error text, copied temporary
+strings, integer arguments, optional float formatting and draining through Shell.
+For Zephyr's shared runtime log packager and constant module references, pair
+them with its protected logging/filter checks:
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/subsys/logging/log_core_additional -d build/logging-userspace-tests -- \
+  -DCONF_FILE=log_user.conf
+uv run --locked pytest -q tests/test_native.py -k 'logging-userspace-tests or native-compact-tests or native-fpu-tests'
+```
+
+These checks preserve message content and access behavior; they do not establish
+physical interrupt latency or the maximum stack use of every driver error path.
+
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
 13 KiB loader limit and 22 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving

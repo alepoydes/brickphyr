@@ -555,6 +555,14 @@ also makes syscall and EDK generation depend on the generator script, so an
 incremental build cannot retain handlers from its previous implementation.
 Publication and manifest integration remain pending.
 
+Local Zephyr commit `4ba9447c` on `topic/log-module-pointers` makes each logging
+module's source pointers constant. The objects containing runtime filters remain
+mutable. This lets the compiler replace the pointers with direct addresses,
+avoiding per-file RAM cells when shared runtime message packaging is enabled.
+Zephyr's ARM userspace logging/filter suite and Brickphyr's protected native
+fixtures cover access, deferred message contents and integration. Publication
+and manifest integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in
