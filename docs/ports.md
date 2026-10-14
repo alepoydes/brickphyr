@@ -1324,6 +1324,11 @@ stopping distance or third-party sensor compatibility. Color/ultrasonic coverage
 is described under [sensor hardware checks](#sensor-hardware-checks); remaining
 sensor conversions and electrical supply behavior need separate acceptance.
 
-An unexpected UART reconnection was observed during a combined application and
-transport sequence; its trigger is still under investigation. Reconnection resets
-the encoder origin, so those transitions are not yet a verified operating mode.
+The full F4 image also requires the
+[thread-permission cleanup correction](upstream.md#native-loader-prerequisites).
+Without it, thread termination can mask interrupts longer than one 115200-baud
+byte and overrun the UART hardware even when the service worker is on time.
+Bounded native/Python return, concurrent controller completion under Python GC,
+and forced-stop checks retain both ID-75 port connections with the correction.
+This does not establish an interrupt-latency bound for all firmware operations or
+sustained combined load. Any reconnection still resets the encoder origin.

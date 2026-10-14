@@ -534,15 +534,16 @@ interrupt at that boundary during a real context switch and checks deferred
 delivery; it fails before the correction and passes after it. This fault was
 also captured on the Inventor F4 during native application execution.
 
-Local Zephyr commit `85e1a648` on `topic/object-permission-cleanup` additionally
-batches permission locking when clearing a departed thread's access to static
-objects. The scheduler already masks interrupts during thread termination;
-reacquiring the same object lock for every entry unnecessarily extends that
-interval. Dynamic objects retain their existing reclamation and lock ordering.
-The upstream userspace suite passes on ARM QEMU with dynamic objects both disabled
-and enabled, including a check that a surviving thread keeps its grant and a
-reused thread cannot regain the departed owner's access. Publication and manifest
-integration remain pending.
+Local Zephyr commit `85e1a648` on `topic/object-permission-cleanup` batches locking
+when clearing a departed thread's access to static objects. Commit `52240c5a`
+on `topic/object-permission-latency` extends that batching to dynamic-object builds
+and thread-ID allocation/reuse. The full F4 image needs both corrections:
+the scheduler masks interrupts during thread termination, and reacquiring the
+same lock for every static object can overrun an active UART. Dynamic objects
+retain their existing reclamation and lock ordering. ARM QEMU checks cover
+static grants with dynamic objects disabled, plus retained grants, thread-ID
+reuse and last-owner dynamic reclamation with them enabled. Publication and
+manifest integration remain pending.
 
 Local Zephyr commit `3fa06829` on `topic/user-stack-placement` places the
 MPU-aligned user-stack group before ordinary `.noinit` objects. This avoids the
