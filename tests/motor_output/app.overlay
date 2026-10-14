@@ -1,7 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../ports/ports.dtsi"
 #include "../ports/motor-pwm.dtsi"
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/pwm/stm32_pwm.h>
+/ {
+	/* Reuse Zephyr's fake driver with a binding that carries output flags. */
+	paired_pwm: paired-pwm {
+		compatible = "vnd,pup-test-pwm", "zephyr,fake-pwm";
+		#pwm-cells = <3>;
+		frequency = <12000000>;
+	};
+};
 &hub_ports {
+	/* Same compare channel, separate main/N enables as on Technic. */
+	port@4 {
+		pwms = <&paired_pwm 8 100000 STM32_PWM_COMPLEMENTARY>,
+		       <&paired_pwm 8 100000 PWM_POLARITY_INVERTED>;
+	};
 	/* F deliberately has no PWM: unsupported commands must not touch GPIO. */
 	port@5 { /delete-property/ pwms; };
 };

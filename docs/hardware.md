@@ -107,8 +107,10 @@ application lifecycle with smaller memory budgets and enables the shared IMU
 and telemetry services; the base has no application engine or IMU acquisition.
 The native profile also enables the shared electrical detector on A–D, using
 the reference GPIO wiring and PB12 sensor supply. It reports empty/passive
-connections and the UART electrical signature; digital negotiation, sensor
-measurements, motor drive and persistent storage remain
+connections and the UART electrical signature. It also enables the shared
+direct motor service for passive medium/train motors on A–D: signed duty,
+brake, coast, duration expiry and ownership cleanup. Digital negotiation,
+UART sensor measurements, regulated motors and persistent storage remain
 unimplemented on this board. Four-port synthetic GPIO checks cover discovery,
 hotplug, first-error preservation and shutdown; physical wiring and timing are
 unverified. All Technic profiles enable the shared
@@ -117,6 +119,17 @@ checks and no physical battery evidence. The CC2640 is held in reset; no host te
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a
 different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
 driver or reflash that controller to bypass the integration work.
+
+Each motor uses the main and complementary outputs of one timer channel:
+TIM15 CH1 for A, TIM1 CH2 for B, CH1 for C and CH3 for D. Normal outputs use
+inverted polarity; complementary outputs retain normal polarity, matching the
+reference CCxP/CCxNP setup. Both legs start as low GPIOs. The shared output
+adapter disconnects and disables both PWM outputs before changing direction,
+then muxes only the driven leg; the other leg is high GPIO. All use the same
+10 kHz period as the LEDs sharing TIM1/TIM15. The Technic package builds with
+these mappings; a synthetic PWM check covers shared-channel selection, flags
+and coast on reversal. Physical pin behavior, waveforms and motor operation
+remain unverified.
 
 The optional [CC2640 transport profile](builds.md#experimental-technic-base)
 adds a Zephyr SPI/GPIO port of Pybricks' NPI framing, ready handshake and reset

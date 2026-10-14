@@ -212,7 +212,9 @@ start, output and stop. The shared IMU service is available through native calls
 `uv run brickphyrdev monitor --ble Brickphyr --source imu.calibrated`.
 Calibration is runtime-only. The four ports support electrical identification
 through `port`, `port A` and `observe port.A`; native applications read the same
-snapshots with `bp_port_get()`. UART negotiation and motor drive remain disabled.
+snapshots with `bp_port_get()`. Passive medium/train motors additionally use the
+shared [direct motor commands](ports.md#direct-motor-drive) and native API on A–D.
+UART negotiation, encoder motor drive and regulated control remain disabled.
 Battery voltage/current and connector-selected chemistry use `bp_battery_get()`,
 `observe battery` and the BLE monitor; battery temperature is unsupported. See
 [the board coefficients and limitations](hardware.md#hub-battery).

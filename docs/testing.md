@@ -752,7 +752,9 @@ by a fresh center press with USB left attached, then repeat on battery power.
 `tests/motor_output` exercises the private H-bridge adapter through Zephyr GPIO
 and the fake PWM driver: direction, smallest/full duty, steady updates without
 GPIO changes, brake, coast, sensor supply, rejected commands and cleanup after
-injected errors. The fixture records timer counts; it does not emulate STM32
+injected errors. A main/complementary pair sharing one compare channel checks
+output flags and disabling both legs before reversal. The fixture records timer
+counts and API calls; it does not emulate STM32
 pinmux, inverted waveforms, shared-timer phase or physical motor behavior.
 `tests/motors` adds the production port service, ownership, Shell commands,
 duration expiry, hotplug, cleanup failures and release during blocked output.

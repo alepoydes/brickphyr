@@ -87,8 +87,9 @@ Its CC2640 transport, controller, GATT adapter and shared Shell/SMP endpoint hav
 synthetic checks through the production worker. No Technic board has been available
 for boot, BLE, applications or recovery acceptance. The shared native loader has
 ARM checks with Technic's smaller application budgets. Its four-port electrical
-detector shares the F4 service and has synthetic GPIO checks; UART negotiation,
-motor drive and storage remain absent.
+detector shares the F4 service and has synthetic GPIO checks. Direct passive-motor
+output reuses the same service with main/complementary PWM mappings and synthetic
+selection/coast checks; UART negotiation, regulated motors and storage remain absent.
 The native profile reuses IMU acquisition/orientation and telemetry, with a
 synthetic register-peer check of its distinct mounting axes.
 Technic profiles also reuse battery acquisition/protection, with synthetic
