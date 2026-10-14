@@ -303,6 +303,10 @@ expected stale output-generation indication without acquiring the motors.
 Stored programs remain unchanged. The read is preemptible: capture duration is
 observable, but no control-loop deadline or simultaneous-sampling guarantee is
 provided. Sensor accuracy and sustained combined-load timing remain unverified.
+A bounded read-only probe also runs while the host requests cached IMU, encoder
+and battery snapshots over USB or BLE. USB traffic can extend a capture beyond
+5 ms even with batched SMP transmission. That experiment is not an admission
+budget for a controller; independent scheduled execution remains planned work.
 
 ## Installed native files
 

@@ -80,7 +80,8 @@ Follow the [platform roadmap](../docs/roadmap.md): complete SPIKE services and
 acceptance, then add timed observations/actuation, independent native control
 alongside Python, cycle recording/replay and bounded background computation.
 Resource optimization continues across these blocks. Babybot owns its models
-and learning algorithms; reuse its existing numerical core and recording tools.
+and learning algorithms. Reuse validated numerical code while adapting the robot's
+orchestration and recording to Brickphyr; its current interfaces are not constraints.
 
 The current application thread and arena serve one engine at a time; concurrent
 native/Python execution is planned work. Hard-float, FPU context fixes, optional

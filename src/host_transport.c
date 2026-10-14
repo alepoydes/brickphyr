@@ -335,13 +335,17 @@ static int smp_write(const void *data, int length)
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		bool valid = occupied && generation == shell_generation;
 		size_t sent = valid ? ring_buf_put(&transmit_buffer, bytes, length) : 0;
+		/* The serial codec emits four-byte Base64 fragments. Waking CDC for
+		 * each fragment preempts this producer and sends tiny USB packets.
+		 * Flush a complete serial line, or a full buffer before waiting. */
+		bool flush = sent && (bytes[sent - 1] == '\n' || !ring_buf_space_get(&transmit_buffer));
 		if (sent) {
 			if (!ble_shell) {
 				tx_idle = false;
 			}
 		}
 		k_spin_unlock(&lock, key);
-		if (sent) {
+		if (flush) {
 			output_ready();
 		}
 		if (!valid) {

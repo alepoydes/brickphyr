@@ -22,6 +22,7 @@
 static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(test_uart));
 static unsigned int calls;
 static uint32_t terminal_session;
+static atomic_t ble_ready_wakes;
 static const struct shell *observed_shell;
 static K_SEM_DEFINE(probe_entered, 0, 1);
 static K_SEM_DEFINE(probe_continue, 0, 1);
@@ -43,7 +44,7 @@ static int cmd_probe(const struct shell *shell, size_t argc, char **argv)
 }
 SHELL_CMD_ARG_REGISTER(probe, NULL, "Exercise the shared Shell.", cmd_probe, 1, 1);
 
-static void ble_output_ready(void) {}
+static void ble_output_ready(void) { atomic_inc(&ble_ready_wakes); }
 
 
 static int cmd_mark(const struct shell *shell, size_t argc, char **argv)
@@ -342,10 +343,13 @@ static struct net_buf *receive_smp(void)
 
 	while (k_uptime_get() < deadline) {
 		uint8_t byte;
-		if (!uart_emul_get_tx_data(uart, &byte, 1)) {
+		size_t received = terminal_session ? host_ble_shell_peek(terminal_session, &byte, 1) :
+			uart_emul_get_tx_data(uart, &byte, 1);
+		if (!received) {
 			k_msleep(1);
 			continue;
 		}
+		if (terminal_session) host_ble_shell_consume(terminal_session, received);
 		zassert_true(length < sizeof(line));
 		line[length++] = byte;
 		if (byte == '\n') {
@@ -379,6 +383,28 @@ ZTEST(host, test_smp_before_shell_prompt)
 	zassert_equal(packet->data[0], 0x0b);
 	smp_packet_free(packet);
 	close_session();
+}
+
+ZTEST(host, test_smp_short_response_wakes_once)
+{
+	char output[512];
+	wait_idle();
+	zassert_ok(host_interface_select(HOST_SHELL));
+	zassert_ok(host_ble_acquire());
+	zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
+	receive_until("brickphyr> ", output, sizeof(output));
+	atomic_set(&ble_ready_wakes, 0);
+	const char echo[] = "\x06\tABcKAAANAAAAAKFhZGlicmlja3BoeXJYww==\n";
+	send(echo, sizeof(echo) - 1);
+	struct net_buf *packet = receive_smp();
+	zassert_equal(packet->data[0], 0x0b);
+	zassert_true(packet->len < 64, "Response must fit one short serial line");
+	smp_packet_free(packet);
+	/* The complete response is shorter than the 256-byte TX ring. */
+	zassert_equal(atomic_get(&ble_ready_wakes), 1);
+	host_ble_release(false);
+	terminal_session = 0;
+	wait_idle();
 }
 
 ZTEST(host, test_text_before_shell_prompt)

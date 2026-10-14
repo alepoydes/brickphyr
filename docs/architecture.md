@@ -15,6 +15,10 @@ The firmware contains device support, execution engines, and application lifecyc
 management. Robot-specific estimation, planning, balancing, and learning remain
 applications. In particular, babybot is a separate repository consuming an SDK
 and an installed firmware, not a component compiled into Brickphyr.
+Its current implementation is an evolving integration workload, not the platform's
+interface specification. Develop Brickphyr's execution and observation contracts
+for the robot's needs; adapt Babybot's orchestration and data formats to use them.
+Reuse proven numerical code without carrying forward obsolete runtime constraints.
 
 One user application owns a set of device claims and component lifetimes. The
 selected extension permits a native control context alongside an optional Python
