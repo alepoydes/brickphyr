@@ -210,7 +210,8 @@ static void capture(enum source source, struct observation *out)
 				field(out, "heading3_mdeg", llround((double)value.heading_3d * 1000));
 			}
 		}
-	} else if (source >= CONTROL_A && source <= CONTROL_F) {
+	} else if (IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL) &&
+		   source >= CONTROL_A && source <= CONTROL_F) {
 		struct bp_motor_state value;
 		out->error = hub_motor_get(source - CONTROL_A, &value);
 		if (!out->error) {
@@ -239,7 +240,8 @@ static void capture(enum source source, struct observation *out)
 				field(out, "dc_stalled", sample.stalled);
 			}
 		}
-	} else if (source >= MOTOR_A && source <= MOTOR_F) {
+	} else if (IS_ENABLED(CONFIG_BRICKPHYR_MOTORS) &&
+		   source >= MOTOR_A && source <= MOTOR_F) {
 		struct bp_motor_state value;
 		out->error = hub_motor_get(source - MOTOR_A, &value);
 		if (!out->error) {

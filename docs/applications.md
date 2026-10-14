@@ -93,7 +93,14 @@ QEMU fixture passes through the production native loader. The exported IMU examp
 also runs through SMP from RAM and LittleFS with a synthetic register peer and
 Technic's 4 KiB image, 12 KiB loader and 2 KiB application-stack limits. These
 checks use an MPS2 memory layout, not Technic's full platform RAM budget.
-Physical RAM and stored execution over USB/BLE remain to be checked.
+Bounded Robot Inventor F4 checks also cover the same SDK-built ELF from RAM and
+LittleFS over USB and BLE, with advancing IMU samples, output and explicit stop.
+The first run after a software reboot needs no preliminary IMU reads. Application
+fault, cleanup and output-drop counters remain zero; existing stored files are
+preserved. The 3936-byte ELF reports 3288 loaded bytes and uses 672 bytes of its
+application stack in these runs. Its 10214-byte loader reservation is an admission
+budget, not a measured peak heap allocation. Sensor accuracy, fixed-rate timing
+and sustained combined load remain unverified.
 
 ### Portable ELF ABI
 

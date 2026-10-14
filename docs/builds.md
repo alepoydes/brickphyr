@@ -639,7 +639,10 @@ The full F4 DSP firmware and matching SDK, and the example built separately from
 that SDK, compile. The exported example also has ARM/QEMU RAM and LittleFS checks
 through SMP with a synthetic IMU and Technic's application limits; see
 [local checks](testing.md#local-checks).
-Physical RAM and stored execution over USB/BLE remain pending.
+The same SDK-built ELF has bounded Robot Inventor F4 RAM and stored-program
+checks over USB/BLE, including output and explicit stop. See
+[the native profile](applications.md#experimental-native-profile) for measured
+application size, stack use and the remaining sensor/timing limits.
 
 ## Experimental Python profile
 

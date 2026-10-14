@@ -891,8 +891,10 @@ Technic 64 KiB memory budget. The actual Technic link checks that budget separat
 
 The focused M4 QEMU check passes. Its DSP fixture checks a four-tap FIR impulse
 response, the linked native SDK archive and `snprintf` through the production
-loader. This is ARM emulation, not a physical IMU, USB or BLE check. Physical RAM
-and stored USB/BLE acceptance for the optional F4 DSP profile remain pending.
+loader. This is ARM emulation, not a physical IMU, USB or BLE check. Separate,
+bounded Robot Inventor F4 checks cover the exported IMU example from RAM and
+LittleFS over USB/BLE; see [the native profile](applications.md#experimental-native-profile)
+for evidence and limitations.
 
 To exercise the separately built `imu_filter.elf`, first prepare
 `build/native-dsp-examples` with the [DSP SDK](builds.md#optional-cmsis-dsp-native-sdk).
