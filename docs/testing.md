@@ -662,6 +662,14 @@ record overwritten between fragments, generation changes during collection or
 terminal-status capture, and the example's host decoder. The native probe is
 built with `build/native-smp-tests`; pytest does not rebuild it.
 
+`tests/test_control_record.py` runs the SDK's `control_group` and
+`control_group_coast` examples against synthetic A/B UART motors on ARM. It checks
+retention of the original input across command observations, admission/completion
+identity, signed driver output, expiry/coast and recorded input rejection. Build
+those two targets in `build/native-smp-examples` first; the test does not compile.
+It collects through the same SMP decoder used by `app record`. The model checks
+protocol and lifecycle behavior, not physical motor response or timing.
+
 The simulator compiles the same application and Zephyr shell. The test opens its
 pseudoterminal with pyserial and checks command echo, help/identity, rejected
 arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,

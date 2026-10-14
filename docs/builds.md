@@ -585,6 +585,10 @@ See the [control input contract](applications.md#control-input-frame).
 `control_group.elf` moves unloaded A/B motors at opposite 20% duty until a
 100 ms absolute deadline. Clear both mechanisms before starting it; see
 [grouped output semantics](ports.md#grouped-raw-motor-commands).
+`control_group_coast.elf` uses the same code with passive outputs only. Both
+retain their input, command and driver reports for `brickphyrdev app record`;
+`control_record.elf` records observations without claiming either motor. See
+[application recording](applications.md#application-recording).
 `motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.

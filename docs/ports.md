@@ -541,6 +541,8 @@ metadata, existing per-port pending commands and the existing worker: no new
 thread, queue, driver or per-command allocation. The
 [SDK example](../examples/native/control_group.c) takes a source snapshot and
 commands unloaded A/B motors at opposite 20% duty until a 100 ms absolute limit.
+It also [records the input and command reports](applications.md#recorded-group-command);
+the `control_group_coast` target exercises the same path without drive output.
 
 Synthetic port-service checks cover admission, expiry, partial failure and
 cancellation during a driver write; protected ARM checks cover the syscalls and

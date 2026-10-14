@@ -373,9 +373,47 @@ fragmented records, overwrite, forced stop, reconnect and explicit clearing.
 These checks do not establish lossless streaming at arbitrary rates or a control
 deadline under combined load.
 
-This channel is the first recording boundary. Automatic control-step/command
-correlation, parameter-value metadata, event-triggered prehistory, autonomous
-flash recording and numerical replay remain [roadmap work](roadmap.md).
+### Recorded group command
+
+The [group example](../examples/native/control_group.c) records its original A/B
+input, one paired command and subsequent driver observations. `control_group.elf`
+drives A/B at opposite 20% duty with a 100 ms absolute expiry; clear both
+mechanisms before running it. `control_group_coast.elf` builds the same code with
+passive outputs only and can check the recording path without energizing motors:
+
+```sh
+uv run brickphyrdev app run build/native-examples/control_group_coast.elf
+uv run brickphyrdev app record group.jsonl
+uv run brickphyrdev app --ble Brickphyr record group-again.jsonl
+uv run brickphyrdev app record-clear
+```
+
+Its `brickphyr.control-group/1` records are 384 bytes each, with four retained
+slots (1536 bytes). The first 176 bytes use the input schema above and remain
+unchanged throughout the command. Later fields contain the requested duties,
+connection generations, deadline, admission result, group state and per-port
+driver outputs. The CLI decodes these into `input`, command fields, `group` and
+`ports` while preserving the binary bytes. `phase` identifies the command attempt
+(0), observed active output (1), completion (2) or failed wait (3). Invalid source
+input is recorded before returning without sending a motor command.
+
+Group and output reads are separate snapshots. Match the command and group
+request IDs, then each port's `completed`/`generation` against its
+`group_request`/`group_generation`; a later coast has a different completion ID.
+Check admission, read, output and cleanup errors before interpreting successful
+output. The sample's 1 ms polling may miss an intermediate phase under load; an
+absent applied observation is not evidence that no output occurred. Driver
+completion timestamps do not measure physical voltage or shaft response.
+This is one command experiment, not a scheduled controller or a lossless trace
+of every driver transition.
+
+Protected ARM/SMP checks exercise opposite duties, expiry/coast, the passive
+variant, input rejection and host decoding. One Robot Inventor F4 (PCB revision
+unknown) has checks of the passive variant and identical USB/BLE record retrieval;
+physical group drive and expiry remain unverified. The example adds no resident
+firmware worker or memory reservation. Automatic control-step correlation,
+parameter-value metadata, event-triggered prehistory, autonomous flash recording
+and numerical replay remain [roadmap work](roadmap.md).
 
 ## Installed native files
 
