@@ -314,9 +314,12 @@ F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
 The native profile provides a 94 KiB heap and the full Python profile 98 KiB;
 the latter retains its 16 KiB MPU-aligned stack and 64 KiB execution arena.
-Actual port metadata occupies 288 bytes per advertised mode plus allocation
-overhead on F4. Six sixteen-mode devices therefore consume about 27 KiB; the
-unoccupied capacity is available to uploads, executable code and other shared
+On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
+and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
+Getters reconstruct the fixed 288-byte public structure in caller-owned memory;
+DATA handling does not allocate. Six fully populated sixteen-mode devices still
+need about 28 KiB including allocator overhead; ordinary descriptions cost much
+less. Unoccupied capacity is available to uploads, executable code and other shared
 allocations. These are heap capacities, not increases to Python's GC arena.
 Heap contention or fragmentation can reject a new device or an application
 allocation. Physical combined-load acceptance of this layout remains pending.

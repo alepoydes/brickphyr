@@ -33,6 +33,50 @@ static int parse_bytes(struct lump *l, const uint8_t *bytes, size_t count)
 	return result;
 }
 
+static size_t allocated_bytes(void)
+{
+	struct k_heap *heaps;
+	int count = k_heap_array_get(&heaps);
+	size_t total = 0;
+	for (int i = 0; i < count; i++) {
+		struct sys_memory_stats stats;
+		k_spinlock_key_t key = k_spin_lock(&heaps[i].lock);
+		int err = sys_heap_runtime_stats_get(&heaps[i].heap, &stats);
+		k_spin_unlock(&heaps[i].lock, key);
+		zassert_ok(err);
+		total += stats.allocated_bytes;
+	}
+	return total;
+}
+
+static size_t make_packet(uint8_t frame[35], uint8_t type, uint8_t mode,
+	uint8_t info, const uint8_t *data, size_t size)
+{
+	uint8_t exponent = 0;
+	size_t padded = 1;
+	while (padded < size) {
+		padded *= 2;
+		exponent++;
+	}
+	frame[0] = type | (exponent << 3) | (mode & 7);
+	size_t pos = 1;
+	if (type == LUMP_MSG_TYPE_INFO) {
+		frame[pos++] = info | (mode >= 8 ? LUMP_INFO_MODE_PLUS_8 : 0);
+	}
+	for (size_t i = 0; i < padded; i++) frame[pos++] = i < size ? data[i] : 0;
+	uint8_t checksum = 0xff;
+	for (size_t i = 0; i < pos; i++) checksum ^= frame[i];
+	frame[pos++] = checksum;
+	return pos;
+}
+
+static int parse_info(struct lump *l, uint8_t mode, uint8_t info,
+	const uint8_t *data, size_t size)
+{
+	uint8_t frame[35];
+	return parse_bytes(l, frame, make_packet(frame, LUMP_MSG_TYPE_INFO, mode, info, data, size));
+}
+
 ZTEST(lump, test_captured_metadata)
 {
 	const struct { const uint8_t *bytes; size_t count; uint8_t id, modes; } cases[] = {
@@ -43,13 +87,17 @@ ZTEST(lump, test_captured_metadata)
 	for (size_t i = 0; i < ARRAY_SIZE(cases); i++) {
 		static struct lump l;
 		lump_reset(&l);
+		size_t before = allocated_bytes();
 		zassert_ok(parse_bytes(&l, cases[i].bytes, cases[i].count), "capture %zu", i);
 		zassert_equal(l.phase, LUMP_ACK);
 		zassert_equal(l.id, cases[i].id);
 		zassert_equal(l.num_modes, cases[i].modes);
 		zassert_equal(l.baud, 115200);
 		zassert_equal(l.sequence, 0);
+		printk("Captured ID %u, %u modes: %zu allocated bytes\n", l.id, l.num_modes,
+			allocated_bytes() - before);
 		lump_reset(&l);
+		zassert_equal(allocated_bytes(), before);
 	}
 	static struct lump l;
 	lump_reset(&l);
@@ -122,11 +170,22 @@ ZTEST(lump, test_invalid_metadata)
 
 ZTEST(lump, test_mode_memory_lifetime)
 {
-	/* All six maximum-size peers must fit, and reconnect must return their
-	 * memory. This exercises the actual shared allocator, not size arithmetic. */
+	size_t before = allocated_bytes();
+	/* Six 16-mode peers each advertise maximum optional wire payloads. INFO
+	 * arrives in both orders; the second connection has short and absent INFO
+	 * to check expansion into a fresh, zero-tailed public mode. */
 	static struct lump peers[BP_PORT_COUNT];
 	uint8_t type[34], modes[34], id = 201;
 	const uint8_t counts[] = {7, 0, 15, 0};
+	const uint8_t combinations[32] = {
+		1, 0, 3, 0, 5, 0, 7, 0, 9, 0, 11, 0, 13, 0, 15, 0,
+		17, 0, 19, 0, 21, 0, 23, 0, 25, 0, 27, 0, 29, 0, 0x12, 0x34,
+	};
+	uint8_t extra[6][32];
+	for (size_t i = 0; i < ARRAY_SIZE(extra); i++) {
+		for (size_t n = 0; n < sizeof(extra[i]); n++) extra[i][n] = 0x20 * (i + 1) + n;
+	}
+	const uint8_t format[] = {1, LUMP_DATA_TYPE_DATA8, 3, 0};
 	int type_size = lump_command(type, LUMP_CMD_TYPE, &id, 1);
 	int modes_size = lump_command(modes, LUMP_CMD_MODES, counts, sizeof(counts));
 	for (size_t round = 0; round < 2; round++) {
@@ -135,12 +194,102 @@ ZTEST(lump, test_mode_memory_lifetime)
 			zassert_ok(parse_bytes(&peers[port], type, type_size));
 			zassert_ok(parse_bytes(&peers[port], modes, modes_size));
 			zassert_equal(peers[port].num_modes, 16);
+			for (uint8_t index = 0; index < 16; index++) {
+				uint8_t name[] = {'M', 'A' + index, 0, 0};
+				zassert_ok(parse_info(&peers[port], index, LUMP_INFO_NAME, name, sizeof(name)));
+				bool reverse = (port + index) & 1;
+				if (!reverse) zassert_ok(parse_info(&peers[port], index,
+					LUMP_INFO_MODE_COMBOS, combinations, sizeof(combinations)));
+				for (size_t n = 0; n < ARRAY_SIZE(extra); n++) {
+					size_t field = reverse ? ARRAY_SIZE(extra) - 1 - n : n;
+					if (round && field == 2 && index == 15) continue;
+					size_t length = round ? (1U << field) : sizeof(extra[field]);
+					zassert_ok(parse_info(&peers[port], index, LUMP_INFO_UNK7 + field,
+						extra[field], length));
+				}
+				if (reverse) zassert_ok(parse_info(&peers[port], index,
+					LUMP_INFO_MODE_COMBOS, combinations, sizeof(combinations)));
+				zassert_ok(parse_info(&peers[port], index, LUMP_INFO_FORMAT,
+					format, sizeof(format)));
+			}
+			zassert_ok(lump_receive(&peers[port], LUMP_SYS_ACK));
+			zassert_equal(peers[port].phase, LUMP_ACK);
+			for (uint8_t index = 0; index < 16; index++) {
+				struct bp_port_mode mode;
+				lump_mode_get(&peers[port].modes[index], &mode);
+				zassert_equal(mode.num_combinations, 16);
+				zassert_equal(mode.combinations[0], 1);
+				zassert_equal(mode.combinations[15], 0x3412);
+				for (size_t field = 0; field < ARRAY_SIZE(extra); field++) {
+					size_t length = round ? (1U << field) : sizeof(extra[field]);
+					if (round && field == 2 && index == 15) length = 0;
+					zassert_equal(mode.extra_length[field], length);
+					zassert_mem_equal(mode.extra[field], extra[field], length);
+					for (size_t tail = length; tail < sizeof(mode.extra[field]); tail++) {
+						zassert_equal(mode.extra[field][tail], 0);
+					}
+				}
+			}
 		}
+		printk("Six 16-mode peers, round %zu: %zu allocated bytes\n", round,
+			allocated_bytes() - before);
 		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) lump_reset(&peers[port]);
+		zassert_equal(allocated_bytes(), before, "Disconnected peers retained metadata");
 	}
-	void *reclaimed = k_malloc(ARRAY_SIZE(peers) * 16 * sizeof(struct bp_port_mode));
-	zassert_not_null(reclaimed, "Disconnected peers retained their mode storage");
-	k_free(reclaimed);
+}
+
+ZTEST(lump, test_mode_payload_allocation_failure)
+{
+	size_t before = allocated_bytes();
+	/* Keep one payload live, exhaust the real shared heap, and force the next
+	 * INFO insertion to grow it. A failed realloc must leave that payload
+	 * intact; reset must then permit a fresh negotiation. */
+	static struct lump peer;
+	uint8_t type[34], modes[34], id = 201, count = 0;
+	const uint8_t name[] = {'N', 0};
+	const uint8_t first[] = {0xa5};
+	const uint8_t second[32] = {0x31, 0x72, 0xb4, 0xd8};
+	const uint8_t format[] = {1, LUMP_DATA_TYPE_DATA8, 3, 0};
+	int type_size = lump_command(type, LUMP_CMD_TYPE, &id, 1);
+	int modes_size = lump_command(modes, LUMP_CMD_MODES, &count, 1);
+	lump_reset(&peer);
+	zassert_ok(parse_bytes(&peer, type, type_size));
+	zassert_ok(parse_bytes(&peer, modes, modes_size));
+	zassert_ok(parse_info(&peer, 0, LUMP_INFO_NAME, name, sizeof(name)));
+	zassert_ok(parse_info(&peer, 0, LUMP_INFO_UNK7, first, sizeof(first)));
+	void *guard = k_malloc(1);
+	zassert_not_null(guard);
+	void *held[64];
+	size_t held_count = 0;
+	for (size_t size = 16384; size; size >>= 1) {
+		void *block;
+		while ((block = k_malloc(size)) != NULL) {
+			zassert_true(held_count < ARRAY_SIZE(held), "Heap exhaustion exceeded fixture bound");
+			held[held_count++] = block;
+		}
+	}
+	zassert_is_null(k_malloc(1));
+	zassert_equal(parse_info(&peer, 0, LUMP_INFO_UNK8, second, sizeof(second)), -ENOMEM);
+	struct bp_port_mode mode;
+	lump_mode_get(&peer.modes[0], &mode);
+	zassert_equal(mode.extra_length[0], 1);
+	zassert_equal(mode.extra[0][0], first[0]);
+	zassert_equal(mode.extra_length[1], 0);
+	lump_reset(&peer);
+	k_free(guard);
+	for (size_t i = 0; i < held_count; i++) k_free(held[i]);
+	zassert_ok(parse_bytes(&peer, type, type_size));
+	zassert_ok(parse_bytes(&peer, modes, modes_size));
+	zassert_ok(parse_info(&peer, 0, LUMP_INFO_NAME, name, sizeof(name)));
+	zassert_ok(parse_info(&peer, 0, LUMP_INFO_UNK8, second, sizeof(second)));
+	zassert_ok(parse_info(&peer, 0, LUMP_INFO_FORMAT, format, sizeof(format)));
+	zassert_ok(lump_receive(&peer, LUMP_SYS_ACK));
+	lump_mode_get(&peer.modes[0], &mode);
+	zassert_equal(mode.extra_length[0], 0);
+	zassert_equal(mode.extra_length[1], sizeof(second));
+	zassert_mem_equal(mode.extra[1], second, sizeof(second));
+	lump_reset(&peer);
+	zassert_equal(allocated_bytes(), before, "Failed growth retained metadata");
 }
 
 static const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lump_uart));
@@ -307,22 +456,8 @@ static void smp_snapshot(const char *field, int64_t expected)
  * meaningful units and boundaries rather than duplicate conversion formulas. */
 static void packet(uint8_t type, uint8_t mode, uint8_t info, const uint8_t *data, size_t size)
 {
-	uint8_t frame[35], exponent = 0;
-	size_t padded = 1;
-	while (padded < size) {
-		padded *= 2;
-		exponent++;
-	}
-	frame[0] = type | (exponent << 3) | (mode & 7);
-	size_t pos = 1;
-	if (type == LUMP_MSG_TYPE_INFO) {
-		frame[pos++] = info | (mode >= 8 ? LUMP_INFO_MODE_PLUS_8 : 0);
-	}
-	for (size_t i = 0; i < padded; i++) frame[pos++] = i < size ? data[i] : 0;
-	uint8_t checksum = 0xff;
-	for (size_t i = 0; i < pos; i++) checksum ^= frame[i];
-	frame[pos++] = checksum;
-	feed(frame, pos);
+	uint8_t frame[35];
+	feed(frame, make_packet(frame, type, mode, info, data, size));
 }
 
 static void begin_sensor(uint8_t id, size_t count)

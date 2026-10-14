@@ -15,12 +15,65 @@ BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->unit) == LUMP_MAX_UOM_SIZE + 1);
 BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->combinations) == LUMP_MAX_MSG_SIZE);
 BUILD_ASSERT(sizeof(((struct bp_port_mode *)0)->extra[0]) == LUMP_MAX_MSG_SIZE);
 BUILD_ASSERT(ARRAY_SIZE(((struct bp_port_mode *)0)->extra) == LUMP_INFO_UNK12 - LUMP_INFO_UNK7 + 1);
+BUILD_ASSERT(sizeof(((struct lump_mode *)0)->flags) == sizeof(((struct bp_port_mode *)0)->flags));
 BUILD_ASSERT(sizeof(float) == 4);
+
+void lump_free_modes(struct lump *l)
+{
+	for (size_t mode = 0; mode < l->num_modes; mode++) k_free(l->modes[mode].payload);
+	k_free(l->modes);
+	l->modes = NULL;
+	l->num_modes = 0;
+}
 
 void lump_reset(struct lump *l)
 {
-	k_free(l->modes);
+	lump_free_modes(l);
 	*l = (struct lump){.baud = 115200};
+}
+
+void lump_mode_get(const struct lump_mode *m, struct bp_port_mode *value)
+{
+	*value = (struct bp_port_mode){.other_info = m->other_info,
+		.present = m->present, .num_values = m->num_values, .data_type = m->data_type,
+		.digits = m->digits, .decimals = m->decimals,
+		.input_mapping = m->input_mapping, .output_mapping = m->output_mapping,
+		.num_combinations = m->lengths[0] / 2};
+	memcpy(value->raw, m->raw, sizeof(m->raw));
+	memcpy(value->percent, m->percent, sizeof(m->percent));
+	memcpy(value->si, m->si, sizeof(m->si));
+	memcpy(value->name, m->name, sizeof(m->name));
+	memcpy(value->unit, m->unit, sizeof(m->unit));
+	memcpy(value->flags, m->flags, sizeof(m->flags));
+	for (size_t i = 0; i < value->num_combinations; i++) {
+		value->combinations[i] = sys_get_le16(m->payload + 2 * i);
+	}
+	size_t offset = m->lengths[0];
+	for (size_t i = 0; i < ARRAY_SIZE(value->extra); i++) {
+		uint8_t length = m->lengths[i + 1];
+		value->extra_length[i] = length;
+		if (length) memcpy(value->extra[i], m->payload + offset, length);
+		offset += length;
+	}
+}
+
+static int store_payload(struct lump_mode *m, uint8_t index, const uint8_t *data, size_t length)
+{
+	if (m->lengths[index]) return -EBADMSG;
+	size_t offset = 0, size = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(m->lengths); i++) {
+		if (i < index) offset += m->lengths[i];
+		size += m->lengths[i];
+	}
+	uint8_t *payload = k_realloc(m->payload, size + length);
+	if (!payload) return -ENOMEM;
+	/* INFO messages need not arrive in order. Insertion keeps lengths enough
+	 * to locate every field, without per-field pointers or reserved arrays. */
+	memmove(payload + offset + length, payload + offset, size - offset);
+	memcpy(payload + offset, data, length);
+	m->payload = payload;
+	m->lengths[index] = length;
+	return 0;
 }
 
 static size_t padded(size_t size)
@@ -154,7 +207,7 @@ static int parse(struct lump *l)
 	if (mode >= l->num_modes) {
 		return -EBADMSG;
 	}
-	struct bp_port_mode *m = &l->modes[mode];
+	struct lump_mode *m = &l->modes[mode];
 	if (type == LUMP_MSG_TYPE_DATA) {
 		if (l->phase != LUMP_DATA) {
 			return -EBADMSG;
@@ -235,20 +288,16 @@ static int parse(struct lump *l)
 		m->present |= BP_PORT_MODE_UNIT;
 		break;
 	}
-	case LUMP_INFO_MODE_COMBOS:
+	case LUMP_INFO_MODE_COMBOS: {
 		if (length < 2 || (m->present & BP_PORT_MODE_COMBINATIONS)) return -EBADMSG;
-		m->num_combinations = length / 2;
-		for (size_t i = 0; i < m->num_combinations; i++) {
-			m->combinations[i] = sys_get_le16(data + 2 * i);
-		}
+		int err = store_payload(m, 0, data, length);
+		if (err) return err;
 		m->present |= BP_PORT_MODE_COMBINATIONS;
 		break;
+	}
 	default:
 		if (info >= LUMP_INFO_UNK7 && info <= LUMP_INFO_UNK12) {
-			uint8_t index = info - LUMP_INFO_UNK7;
-			if (m->extra_length[index]) return -EBADMSG;
-			m->extra_length[index] = length;
-			memcpy(m->extra[index], data, length);
+			return store_payload(m, info - LUMP_INFO_UNK7 + 1, data, length);
 		} else {
 			m->other_info += m->other_info != UINT16_MAX;
 		}

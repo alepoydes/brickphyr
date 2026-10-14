@@ -85,8 +85,10 @@ for the duration of the display.
 
 The UART parser owns the only metadata table: at most 16 modes per port, with
 bounded strings and payloads. It allocates the advertised number of modes from
-the shared system heap during negotiation, and releases them on disconnect,
-restart, failure or shutdown. Internal baud changes retain the table. Publication
+the shared system heap during negotiation. Combination masks and uninterpreted
+INFO payloads use separate packed storage per mode, grown only for bytes actually
+advertised; the getter expands them into the unchanged public structure.
+Disconnect, restart, failure and shutdown release both allocations. Internal baud changes retain the table. Publication
 occurs after negotiation, and reset invalidates readers before freeing storage.
 An allocation failure reports `-ENOMEM` and fails that negotiation; it does not
 publish incomplete metadata. No allocation occurs for DATA packets or getters,
@@ -95,7 +97,7 @@ Shell range/float32 output enables Zephyr's floating-point formatter.
 
 Synthetic checks cover recognized and unknown UART peers, all four wire formats,
 optional and malformed metadata, six maximum-size tables and their reclamation,
-maximum mode/payload sizes, reconnects and unchanged ownership/outputs. USB Shell inspection on one Inventor F4 displays
+out-of-order INFO, allocation failure, maximum mode/payload sizes, reconnects and unchanged ownership/outputs. USB Shell inspection on one Inventor F4 displays
 the modes, formats, ranges and current data of original LEGO ID-61 and ID-62
 sensors. Physical third-party compatibility and BLE Shell inspection remain
 unverified. First inspect what a device advertises; a matching ID alone does not

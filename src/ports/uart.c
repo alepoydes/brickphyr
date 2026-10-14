@@ -33,7 +33,7 @@ DT_FOREACH_CHILD_STATUS_OKAY(PORTS, MAY_DECLARE)
 static const struct {
 	const struct device *uart;
 	const struct pinctrl_dev_config *pins;
-} config[BP_PORT_COUNT] = {
+} config[] = {
 #define UART_CONFIG(node) COND_CODE_1(DT_NODE_HAS_PROP(node, uart), \
 	([DT_REG_ADDR(node)] = {DEVICE_DT_GET(DT_PHANDLE(node, uart)), PIN_CONFIG(node)},), ())
 	DT_FOREACH_CHILD_STATUS_OKAY(PORTS, UART_CONFIG)
@@ -59,17 +59,18 @@ static struct link {
 	int64_t write_ready_ms;
 	enum { WRITE_WAIT, WRITE_TX, WRITE_SETTLE, WRITE_DONE } writing;
 	enum phase phase;
-} links[BP_PORT_COUNT];
+} links[ARRAY_SIZE(config)];
 /* The parser owns the sole metadata copy. Publish only after negotiation;
  * invalidate under this lock before resetting it. No UART I/O holds the lock. */
 static struct k_spinlock metadata_lock;
-static bool metadata_ready[BP_PORT_COUNT];
+static bool metadata_ready[ARRAY_SIZE(config)];
 
 int port_uart_get_mode(uint32_t port, uint32_t mode, struct bp_port_mode *value)
 {
+	if (!port_uart_available(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&metadata_lock);
 	int err = !metadata_ready[port] ? -EAGAIN : mode >= links[port].lump.num_modes ? -EINVAL : 0;
-	if (!err) *value = links[port].lump.modes[mode];
+	if (!err) lump_mode_get(&links[port].lump.modes[mode], value);
 	k_spin_unlock(&metadata_lock, key);
 	return err;
 }
@@ -161,7 +162,7 @@ failed:
 
 bool port_uart_available(uint32_t port)
 {
-	return port < BP_PORT_COUNT && config[port].uart;
+	return port < ARRAY_SIZE(config) && config[port].uart;
 }
 
 void port_uart_report_error(uint32_t port)
@@ -178,7 +179,7 @@ void port_uart_report_error(uint32_t port)
 
 static void stop_uart(uint32_t port)
 {
-	if (port >= BP_PORT_COUNT) return;
+	if (port >= ARRAY_SIZE(links)) return;
 	k_spinlock_key_t snapshot_key = k_spin_lock(&metadata_lock);
 	metadata_ready[port] = false;
 	k_spin_unlock(&metadata_lock, snapshot_key);
@@ -193,13 +194,11 @@ static void stop_uart(uint32_t port)
 
 void port_uart_stop(uint32_t port)
 {
-	if (port >= BP_PORT_COUNT) return;
+	if (port >= ARRAY_SIZE(links)) return;
 	stop_uart(port);
 	/* Metadata is unpublished and the worker has stopped parsing. Retain
 	 * phase/error counters for diagnostics, but return the storage now. */
-	k_free(links[port].lump.modes);
-	links[port].lump.modes = NULL;
-	links[port].lump.num_modes = 0;
+	lump_free_modes(&links[port].lump);
 	links[port].lump.length = 0;
 }
 
@@ -291,6 +290,7 @@ static int transmit(uint32_t port, const uint8_t *bytes, size_t count)
 
 int port_uart_serial_waiting(uint32_t port)
 {
+	if (!port_uart_available(port)) return -ENODEV;
 	struct link *l = &links[port];
 	unsigned int key = irq_lock();
 	int result = l->error ? l->error : ring_buf_size_get(&l->rx);
@@ -300,6 +300,7 @@ int port_uart_serial_waiting(uint32_t port)
 
 int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size)
 {
+	if (!port_uart_available(port)) return -ENODEV;
 	struct link *l = &links[port];
 	unsigned int key = irq_lock();
 	int result = l->error ? l->error : ring_buf_get(&l->rx, data, size);
@@ -309,6 +310,7 @@ int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size)
 
 int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write, uint32_t *completed)
 {
+	if (!port_uart_available(port)) return -ENODEV;
 	struct link *l = &links[port];
 	unsigned int key = irq_lock();
 	int err = l->error;
@@ -370,6 +372,7 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	struct bp_sensor_sample *sensor, uint32_t measurement,
 	const struct port_uart_write *write, bool cancel)
 {
+	if (!port_uart_available(port)) return -ENODEV;
 	struct link *l = &links[port];
 	int64_t now = k_uptime_get();
 	unsigned int key = irq_lock();
