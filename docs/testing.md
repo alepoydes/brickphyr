@@ -845,6 +845,22 @@ not compatibility with physical Technic hardware. The lifecycle fixture also
 rejects unsupported ABI/capabilities/stack sizes, imports and import relocations
 without stopping the current program. No test rebuilds firmware implicitly.
 
+The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
+12 KiB execution arena and 6 KiB system heap. Its SRAM starts after a reserved
+1 KiB prefix, checking that native arena placement needs no whole-arena alignment:
+
+```sh
+uv run --locked west build -b mps2/an386 -s tests/native -d build/native-compact-tests -- \
+  '-DDTC_OVERLAY_FILE=app.overlay;compact.overlay' \
+  '-DEXTRA_CONF_FILE=fpu.conf;compact.conf' \
+  -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
+uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[native-compact-tests-NATIVE PASS:]'
+```
+
+This retains the production loader, MPU and lifecycle checks. Simulated
+peripherals use additional MPS2 RAM; this is not a simulation of the complete
+Technic 64 KiB memory budget. The actual Technic link checks that budget separately.
+
 The focused M4 QEMU check passes. Its DSP fixture checks a four-tap FIR impulse
 response, the linked native SDK archive and `snprintf` through the production
 loader. This is ARM emulation, not a physical IMU, USB or BLE check. Physical RAM

@@ -34,7 +34,7 @@ source changes preserve the session and uptime.
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
-| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base and optional BLE builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management endpoint has synthetic transport, controller and host checks | No board available; boot, BLE, recovery and electrical behavior unverified |
+| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base, BLE and RAM-native builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management endpoint has synthetic checks; shared native loader has compact ARM checks | No board available; boot, BLE, applications, recovery and electrical behavior unverified |
 | City | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
 | Move | Candidate; severe memory constraints require separate evaluation | None yet | Hardware availability unconfirmed |
 
@@ -83,8 +83,8 @@ evidence; do not fill gaps with plausible constants.
 
 ## Experimental Technic base
 
-The four-port Control+/Technic Hub has a build-only base, not yet an application
-platform. Its STM32L431RC, 80 MHz MSI/PLL clock, PC12 power hold, PC14 active-low
+The four-port Control+/Technic Hub has a build-only port with optional BLE and
+RAM-native profiles. Its STM32L431RC, 80 MHz MSI/PLL clock, PC12 power hold, PC14 active-low
 button and RGB pin assignments follow the pinned Pybricks
 [`technic_hub/platform.c`](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/platform/technic_hub/platform.c)
 and [`mpconfigport.h`](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/bricks/technichub/mpconfigport.h).
@@ -102,7 +102,9 @@ no separate Bluetooth button/light; requests for that light return `-ENODEV`.
 
 The base reserves the first 1 KiB of SRAM for the factory loader handoff and
 builds in the remaining 63 KiB with the same ARMv7E-M hard-float calling convention
-as F4. Native application loading is not enabled yet. IMU, port and
+as F4. The optional native profile reuses the protected loader and shared
+application lifecycle with smaller memory budgets; the base has no application
+engine. IMU, port and
 motor services, battery observations and persistent storage remain unimplemented
 on this board. The CC2640 is held in reset; no host terminal is available in this
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a

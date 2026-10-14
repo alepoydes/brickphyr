@@ -82,10 +82,11 @@ checks. Native `.mpy` requires that SDK; ordinary Pybricks bytecode stays compat
 Port metadata now allocates only advertised modes, sharing reclaimed heap with
 applications. A versioned native ELF API replaces configuration-specific syscall
 IDs; cross-hub hardware acceptance and further memory optimization remain work.
-Technic has a [build-only power/UI/watchdog base and optional BLE profile](../docs/hardware.md#experimental-technic-base).
+Technic has [build-only power/UI/watchdog, BLE and RAM-native profiles](../docs/hardware.md#experimental-technic-base).
 Its CC2640 transport, controller, GATT adapter and shared Shell/SMP endpoint have
 synthetic checks through the production worker. No Technic board has been available
-for boot, BLE or recovery acceptance; applications and ports are not enabled.
+for boot, BLE, applications or recovery acceptance. The shared native loader has
+ARM checks with Technic's smaller application budgets; storage and ports remain absent.
 The remaining Python acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance

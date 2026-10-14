@@ -189,6 +189,27 @@ reset at boot; this profile initializes it. It does not enable native applicatio
 Python, ports or persistent program storage. See the
 [Technic BLE boundary](bluetooth.md#experimental-technic-controller).
 
+Add the native profile to enable protected RAM applications through the same
+Shell/SMP handlers:
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b technic_hub -d build/technic-native -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/technic_hub_bluetooth.conf;boards/technic_hub_native.conf' \
+  -DDTC_OVERLAY_FILE=boards/technic_hub_npi.overlay
+uv run --locked west build -d build/technic-native -t brickphyr-sdk
+```
+
+The artifacts are `build/technic-native/zephyr/firmware.zip` and
+`build/technic-native/zephyr/brickphyr-sdk.tar.xz`. Use the
+[SDK example build](#experimental-native-sdk) with this archive, or reuse an
+F4 SDK ELF whose required services and memory fit. This profile reserves a
+12 KiB execution arena, 6 KiB system heap and 2 KiB application stack; uploads
+are limited to 4 KiB. The upload and loaded program coexist during loading.
+Use [BLE application commands](host.md#native-applications) for RAM upload,
+start, output and stop. There is no Python, persistent program store, IMU or
+port support in this profile. Compilation and the compact ARM fixture establish
+build fit and shared loader behavior, not physical Technic operation.
+
 ### Diagnostic shell
 
 The F4 firmware starts in the experimental Pybricks identification interface.

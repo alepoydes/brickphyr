@@ -29,8 +29,10 @@ The `bluetooth` Shell command reports radio state and accepts asynchronous
 `on`/`off` requests; shutdown is terminal until reboot. A connection owns the
 management session until its disconnect and any accepted operation have drained.
 The controller worker bounds command waits and retains the first failure for
-diagnosis. This profile has no native application loading, Python execution,
-program storage or port API. Production-path synthetic checks cover cold startup,
+diagnosis. The BLE-only profile has no application engine; adding the
+[native profile](builds.md#experimental-technic-base) enables RAM application
+loading through the shared handlers. Neither profile provides Python, persistent
+program storage or port APIs. Production-path synthetic checks cover cold startup,
 Shell/SMP, fragmented standard SMP requests/replies, notification backpressure,
 reconnect and isolation of old output. Disconnect or subscription cancellation
 discards incomplete and queued packets; an accepted command finishes while its

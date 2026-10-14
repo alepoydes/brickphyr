@@ -10,8 +10,8 @@ enum application_format { APPLICATION_NATIVE, APPLICATION_PYTHON, APPLICATION_MP
 	/* Internal transfer format, normalized to FILES before admission. */
 	APPLICATION_PYBRICKS };
 
-#define APPLICATION_IMAGE_LIMIT (32 * 1024)
-#define APPLICATION_MEMORY_LIMIT (64 * 1024)
+#define APPLICATION_IMAGE_LIMIT CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE
+#define APPLICATION_MEMORY_LIMIT CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE
 
 struct application_status {
 	enum application_state state;

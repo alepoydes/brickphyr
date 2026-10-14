@@ -125,8 +125,9 @@ static int check_fp_context(void)
 int main(void)
 {
 	/* Cold entry must work with arbitrary arena contents, just as reuse does. */
-	extern struct k_mem_partition execution_partition;
-	memset((void *)execution_partition.start, 0xa5, execution_partition.size);
+	extern uint8_t __brickphyr_execution_start[], __brickphyr_execution_end[];
+	memset(__brickphyr_execution_start, 0xa5,
+		__brickphyr_execution_end - __brickphyr_execution_start);
 	LOG_WRN("Synthetic diagnostic before application unload");
 	struct application_status status;
 	size_t capacity = available();

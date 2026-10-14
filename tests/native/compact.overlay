@@ -1,0 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Match Technic's reserved SRAM prefix without pretending its peripherals or
+ * total RAM usage are simulated by the MPS2 fixture. */
+&sram0 { reg = <0x20000400 0x3ffc00>; };

@@ -57,12 +57,15 @@ static bool domain_initialized;
 static struct llext *extension;
 static bool loader_initialized;
 /* Each engine initializes its allocations; the arena need not be zero at boot.
- * Put it before other RAM sections to avoid wasting an MPU-sized alignment gap,
- * without storing its empty contents in flash. */
+ * Only Python maps the whole arena. Native LLEXT aligns each mapped allocation,
+ * so arena-size alignment would waste RAM on boards with a reserved SRAM prefix. */
 static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
-	__aligned(APPLICATION_MEMORY_LIMIT) Z_GENERIC_SECTION(.brickphyr_execution);
+	__aligned(IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ? APPLICATION_MEMORY_LIMIT : 8)
+	Z_GENERIC_SECTION(.brickphyr_execution);
+#ifdef CONFIG_BRICKPHYR_PYTHON
 K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_memory),
 	K_MEM_PARTITION_P_RW_U_RW);
+#endif
 /* ARMv8-M bounds dynamic regions at app_smem; this earlier arena would require
  * a corresponding region-boundary integration before using that MPU model. */
 BUILD_ASSERT(!IS_ENABLED(CONFIG_MPU_REQUIRES_NON_OVERLAPPING_REGIONS));

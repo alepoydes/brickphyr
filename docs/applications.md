@@ -57,13 +57,15 @@ allocator reserves, so it is not the firmware's live working set.
    capabilities and outstanding physical checks explicitly.
 
 The native ELF interface now has a versioned table independent of firmware
-configuration; Technic has build-only power/UI/watchdog and BLE management
-profiles, with native application loading still pending. Existing Python
+configuration; Technic has build-only power/UI/watchdog, BLE management and
+RAM-native profiles. Persistent storage and port support remain pending. Existing Python
 acceptance work remains tracked in its owning plan; WASM is outside this milestone.
 
 ## Experimental native profile
 
-The opt-in F4 profile runs one ARM ELF32 relocatable C image through Zephyr LLEXT.
+The opt-in F4 and Technic profiles run one ARM ELF32 relocatable C image through
+Zephyr LLEXT. Technic support is build-only; see its
+[profile limits](builds.md#experimental-technic-base).
 The SDK emits calls through a versioned, read-only firmware API table. Its resident
 wrappers enter the existing Zephyr syscall verifiers; applications do not embed
 Zephyr syscall numbers. Only `bp_api_v1` may be imported. TLS, other unresolved
@@ -93,7 +95,7 @@ execution over USB/BLE remain to be checked.
 `.brickphyr.abi` carries a 20-byte, little-endian record: the `BPA1` magic,
 16-bit major/minor versions, then 32-bit architecture, required-capability mask
 and stack requirement. Version 1 uses fixed-width public structures, 32-bit
-pointers and ARM EABI5/AAPCS. F4 uses ARMv7E-M Thumb with FPv4-SP-D16 hard float;
+pointers and ARM EABI5/AAPCS. F4 and Technic use ARMv7E-M Thumb with FPv4-SP-D16 hard float;
 the ARMv7-M software-float fixture is a distinct architecture, not interchangeable.
 
 `BRICKPHYR_APPLICATION()` declares the current ABI, no mandatory optional
@@ -122,9 +124,10 @@ the supported interface; MPU permissions and syscall verifiers provide isolation
 This ELF contract is separate from native `.mpy`, which still needs the matching
 MicroPython compiler and runtime described below.
 
-An independently built F4 SDK `hello.elf` passes unchanged in two Cortex-M4
+An independently built F4 SDK `hello.elf` passes unchanged in Cortex-M4
 QEMU firmware configurations with different Zephyr syscall IDs and application
-stack sizes. These checks include constructors, float arithmetic, time/output
+stack sizes, including a 12 KiB native arena after a reserved SRAM prefix.
+These checks include constructors, float arithmetic, time/output
 calls, rejection and protected cleanup. They do not establish cross-hub hardware
 compatibility. In the full F4 Python/DSP build, the table/admission change adds
 1784 bytes of linked flash and no linked RAM: 783001 bytes flash and 324352 bytes
@@ -136,11 +139,14 @@ Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
 allocated sections left outside the accepted image format fail admission before
 an application replaces the running one.
 
-On the current ARMv7-M targets, the shared execution arena occupies aligned RAM
+On the current ARMv7-M targets, the shared execution arena occupies RAM
 without a flash initialization image. Native loading and Python GC initialize
 their own allocations; neither may assume the arena is zero on first use or
 after another program. This removes 64 KiB of empty image content without reducing
-application memory or changing its MPU permissions.
+F4 application memory or changing its MPU permissions. Native LLEXT allocations
+are aligned and protected individually; the arena itself needs only allocator
+alignment. Python still requires a power-of-two arena aligned to its size because
+it maps the whole arena as one MPU partition.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
 bounded output, read-only buttons, optional
@@ -186,9 +192,13 @@ a 1024-byte queue with counted overflow; writing never waits for a reader. The
 `diagnostics` command separately drains a bounded firmware log queue. Its backend
 remains available without a host, including during LLEXT's deferred-log flush.
 
-The initial admission limits are 32 KiB of ELF and 64 KiB of loader allocation.
-A linker-aligned 64 KiB execution arena serves the one active engine; a separate
-64 KiB system heap supplies uploads and firmware allocations. Python reuses that
+`CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
+`CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` reserves the execution arena.
+The F4 defaults are 32 KiB of ELF and a 64 KiB arena; its separate 64 KiB system
+heap supplies uploads and firmware allocations. The Technic native profile uses
+a 4 KiB image limit, 12 KiB arena and 6 KiB system heap. An image limit does not
+reserve upload space or guarantee that the loaded image fits; another retained
+upload or firmware allocation can leave insufficient heap. Python reuses the
 same arena when enabled. Alignment, symbols and scratch space count against the
 loader budget; small images with large BSS can still exceed it. The native-only
 application stack is 2048 bytes; compiler-generated privileged stacks and guards

@@ -298,6 +298,22 @@ config BRICKPHYR_APPLICATION_STACK_SIZE
 	  Shared by execution engines. Python compilation and exception reporting
 	  require more stack than the minimal native entry; measure high-water use.
 
+config BRICKPHYR_APPLICATION_IMAGE_SIZE
+	int "Maximum uploaded application bytes"
+	default 32768
+	range 1024 65536
+	help
+	  Admission limit, not a reservation. A RAM upload also needs this much
+	  free system heap while the execution arena holds the loaded program.
+
+config BRICKPHYR_APPLICATION_MEMORY_SIZE
+	int "Application execution arena bytes"
+	default 65536
+	range 8192 262144
+	help
+	  Shared native loader/Python heap arena. Native allocations have separate
+	  MPU regions; Python maps the whole arena and requires a power-of-two size.
+
 config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"
 	depends on BRICKPHYR_NATIVE || (TEST && (ARCH_POSIX || (CPU_CORTEX_M && USERSPACE)))
