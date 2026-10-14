@@ -463,6 +463,13 @@ the MPU object suite passes its three applicable checks and skips eight images
 requiring more memory partitions. Brickphyr additionally exercises linked
 soft-float helpers and repeated protected loading on the Inventor F4.
 
+Local Zephyr commit `c619d22b` on `topic/llext-header-cleanup` frees an owned
+section-header table when loading fails. Without it, a loader unable to expose
+the table in place leaks that allocation after a read or later load error.
+An ARM regression injects repeated section-read failures and checks that each
+attempt reaches the original I/O error rather than exhausting the loader heap;
+the relocatable LLEXT suite also passes. This correction is pending publication.
+
 Installed application support additionally requires local Zephyr commit `d1fdd0b7`
 (on the same branch): `fs_mgmt_file_close()` exposes the standard file group's
 existing transfer cleanup. An application can close an incomplete transfer before
