@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#define __ZEPHYR_SUPERVISOR__
 #include "application.h"
 #include "native_image.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE

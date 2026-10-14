@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#define __ZEPHYR_SUPERVISOR__
 #include "port_uart.h"
 #include "lump.h"
 #include "sensor.h"

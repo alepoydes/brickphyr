@@ -3,6 +3,7 @@
 /* Scaling ported from lib/pbio/drv/battery/battery_adc.c at a7b1b04ae.
  * Acquisition uses Zephyr ADC; board coefficients live in devicetree.
  * See docs/hardware.md, Hub battery, for provenance and validity limits. */
+#define __ZEPHYR_SUPERVISOR__
 #include "hub_battery.h"
 #include <math.h>
 #include <zephyr/drivers/adc.h>
@@ -129,7 +130,7 @@ static void acquire(struct k_work *item)
 	/* Keep thermistor errors separate from the pair used by motor control. */
 	if (!temperature_init_error) {
 		uint16_t raw;
-		int32_t mdegc;
+		int32_t mdegc = 0;
 		started = k_uptime_get();
 		err = read_temperature(&raw, &mdegc);
 		completed = k_uptime_get();

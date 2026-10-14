@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#define __ZEPHYR_SUPERVISOR__
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>

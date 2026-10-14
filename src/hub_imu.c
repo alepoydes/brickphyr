@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#define __ZEPHYR_SUPERVISOR__
 #include "hub_imu.h"
 #include "hub_imu_internal.h"
 #include <lsm6ds3tr_c_reg.h>

@@ -192,6 +192,14 @@ operations still use the shared, validated Brickphyr service. This removes unuse
 driver entry points without changing the application ABI or disabling the UART
 driver. See the [Zephyr prerequisite](upstream.md#supervisor-owned-uart-prerequisite).
 
+Service files that run exclusively in privileged threads, workqueues or driver
+callbacks declare `__ZEPHYR_SUPERVISOR__` before their includes. Zephyr can then
+call kernel implementations directly without checking the caller's CPU mode at
+each call. This annotation is local to those files: the resident native API and
+Python retain their user-mode syscall wrappers, and `application.c` retains mode
+checks because it also contains the user-thread entry functions. Application
+buffer validation, resource ownership and MPU protection are unchanged.
+
 Typed result structures and PCM buffers require their natural C alignment.
 Calls to a service omitted from the build retain their ABI slots and can return
 `-ENOTSUP` without inspecting application buffers. For enabled services, syscall

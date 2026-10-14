@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#define __ZEPHYR_SUPERVISOR__
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/input/input.h>

@@ -6,6 +6,7 @@
  * DC direction/voltage semantics follow lib/pbio/src/dcmotor.c there.
  * Zephyr GPIO and a single delayed work item replace the PBIO scheduler.
  * See docs/ports.md for provenance, settling and identification limits. */
+#define __ZEPHYR_SUPERVISOR__
 #include "hub_ports.h"
 #include "port_uart.h"
 #include "uart_settings.h"

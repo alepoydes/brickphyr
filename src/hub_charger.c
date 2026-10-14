@@ -4,6 +4,7 @@
  * a7b1b04ae. Zephyr PWM/ADC and the shared TLC latch replace PBIO processes.
  * A configured host grants the standard preset; CDP/DCP grants the charging
  * preset. VBUS alone grants none. */
+#define __ZEPHYR_SUPERVISOR__
 #include "hub_charger.h"
 #include "host_usb_power.h"
 #include "input_resistor_ladder.h"

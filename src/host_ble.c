@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#define __ZEPHYR_SUPERVISOR__
 #include "host_protocol.h"
 #include "host_ble_session.h"
 #include "host_transport.h"

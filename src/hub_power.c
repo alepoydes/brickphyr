@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#define __ZEPHYR_SUPERVISOR__
 #include "hub_power.h"
 #include "hub_battery.h"
 #include "configuration.h"

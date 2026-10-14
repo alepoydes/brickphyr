@@ -2,6 +2,7 @@
 // Copyright (c) 2019-2022 The Pybricks Authors
 /* Selected H-bridge behavior from motor_driver_hbridge_pwm.c at a7b1b04ae.
  * Zephyr GPIO, PWM and pinctrl replace PBIO I/O. See docs/ports.md. */
+#define __ZEPHYR_SUPERVISOR__
 #include "output.h"
 #include <brickphyr_port.h>
 #include <errno.h>
