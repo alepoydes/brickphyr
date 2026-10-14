@@ -2019,10 +2019,10 @@ ZTEST(python_ble, test_disabled_adapter_preserves_native_output)
 static void report_stack(const struct k_thread *thread, void *unused)
 {
 	const char *name = k_thread_name_get((k_tid_t)thread);
-	if (name && !strcmp(name, "pybricks_store")) {
+	if (name && (!strcmp(name, "pybricks_store") || !strcmp(name, "mcumgr smp"))) {
 		size_t space;
 		zassert_ok(k_thread_stack_space_get(thread, &space));
-		printk("Pybricks store stack: %zu bytes unused\n", space);
+		printk("%s stack: %zu bytes unused\n", name, space);
 	}
 }
 

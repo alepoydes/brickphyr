@@ -18,6 +18,7 @@
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zephyr/mgmt/mcumgr/transport/smp.h>
 #include <zephyr/mgmt/mcumgr/transport/smp_shell.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/ring_buffer.h>
@@ -27,7 +28,8 @@ static const struct device *uart;
 static uint16_t variant;
 RING_BUF_DECLARE(receive_buffer, 256);
 RING_BUF_DECLARE(transmit_buffer, 256);
-K_SEM_DEFINE(wake, 0, 1);
+static void host_work_run(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(host_work, host_work_run);
 K_SEM_DEFINE(smp_tx_ready, 0, 1);
 /* Each complete line is consumed synchronously before reading the next one. */
 NET_BUF_POOL_DEFINE(smp_lines, 1, SMP_SHELL_RX_BUF_SIZE, 0, NULL);
@@ -64,6 +66,13 @@ static bool managed_shell;
 static const struct shell host_shell;
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
+
+static void wake_host(void)
+{
+	/* Stream admission/teardown and binary requests share one management queue.
+	 * Shell commands retain their worker so reset can join an entered command. */
+	k_work_reschedule_for_queue(smp_get_wq(), &host_work, K_NO_WAIT);
+}
 
 /* Caller holds lock. Old USB output gates a USB switch, not BLE admission. */
 static bool ble_available(void)
@@ -203,7 +212,7 @@ static void uart_callback(const struct device *dev, void *context)
 	}
 	tx_idle = complete > 0 && (ble_shell || ring_buf_is_empty(&transmit_buffer));
 	k_spin_unlock(&lock, key);
-	k_sem_give(&wake);
+	wake_host();
 	k_sem_give(&smp_tx_ready);
 }
 
@@ -481,175 +490,175 @@ static int cmd_host_mode(const struct shell *shell, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(host_mode, NULL, "host_mode pybricks: switch when this port closes.",
 		      cmd_host_mode, 2, 0);
 
-static void host_thread(void *a, void *b, void *c)
+static void host_work_run(struct k_work *work)
 {
 	static const struct shell_backend_config_flags flags = SHELL_DEFAULT_BACKEND_CONFIG_FLAGS;
 #ifdef CONFIG_BRICKPHYR_HOST_UART
-	struct host_protocol protocol = {0};
-	uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
-	size_t reply_length = 0;
-	uint8_t event_reply[HOST_PROTOCOL_FRAME_MAX];
-	size_t event_length = 0;
+	static struct host_protocol protocol;
+	static uint8_t reply[HOST_PROTOCOL_FRAME_MAX];
+	static size_t reply_length;
+	static uint8_t event_reply[HOST_PROTOCOL_FRAME_MAX];
+	static size_t event_length;
 #endif
-	uint32_t session_generation = 0;
-	bool shell_initialized = false;
+	static uint32_t session_generation;
+	static bool shell_initialized;
 
-	for (;;) {
-		k_timeout_t timeout = K_FOREVER;
-#ifdef CONFIG_BRICKPHYR_HOST_UART
-		if (protocol.subscribed) {
-			timeout = K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYBRICKS_EXECUTION) ?
-				20 : HOST_PROTOCOL_STATUS_INTERVAL_MS);
-		}
-#endif
-		k_sem_take(&wake, timeout);
-		k_spinlock_key_t key = k_spin_lock(&lock);
-		bool changed = session_generation != generation;
-		bool open = occupied;
-		uint8_t selected = stream_mode();
-		uint32_t current_generation = generation;
-		if (changed) {
-			running = false;
-		}
-		k_spin_unlock(&lock, key);
-		if (changed) {
-			if (shell_initialized) {
-				/* Join accepted commands and clear session state without the
-				 * IRQ-masked permission sweep of thread destruction.
-				 */
-				int err = shell_reset(&host_shell, flags);
-				if (err) {
-					key = k_spin_lock(&lock);
-					if (!first_error) {
-						first_error = err;
-					}
-					k_spin_unlock(&lock, key);
-				}
-			}
-			application_session_closed();
-			hub_matrix_session_closed();
-			hub_sound_session_closed();
-			hub_ports_session_closed(BP_PORT_TERMINAL);
-			smp_shell_rx_reset(&smp_input, &smp_serial);
-#ifdef CONFIG_BRICKPHYR_HOST_UART
-			host_protocol_reset(&protocol);
-			reply_length = 0;
-			event_length = 0;
-#endif
-			session_generation = current_generation;
-		}
-		if (!open) {
-			key = k_spin_lock(&lock);
-			if (generation == session_generation) {
-				ready = true;
-				ble_shell = false;
-				ble_tx_ready = NULL;
-				finish_ble_session();
-				if (!ble_occupied) {
-					hub_power_connection(HUB_DISCONNECTED);
-				}
-				notify_ble_available();
-			}
-			k_spin_unlock(&lock, key);
-			continue;
-		}
-		if (selected == HOST_SHELL && (changed || !shell_initialized)) {
-			shell_generation = session_generation;
-			managed_shell = false;
-			int err = shell_initialized ? shell_start(&host_shell) :
-				shell_init(&host_shell, NULL, flags, false, 0);
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool changed = session_generation != generation;
+	bool open = occupied;
+	uint8_t selected = stream_mode();
+	uint32_t current_generation = generation;
+	if (changed) {
+		running = false;
+	}
+	k_spin_unlock(&lock, key);
+	if (changed) {
+		if (shell_initialized) {
+			/* Join accepted commands and clear session state without the
+			 * IRQ-masked permission sweep of thread destruction.
+			 */
+			int err = shell_reset(&host_shell, flags);
 			if (err) {
 				key = k_spin_lock(&lock);
 				if (!first_error) {
 					first_error = err;
 				}
 				k_spin_unlock(&lock, key);
-				continue;
 			}
-			shell_initialized = true;
+		}
+		application_session_closed();
+		hub_matrix_session_closed();
+		hub_sound_session_closed();
+		hub_ports_session_closed(BP_PORT_TERMINAL);
+		smp_shell_rx_reset(&smp_input, &smp_serial);
+#ifdef CONFIG_BRICKPHYR_HOST_UART
+		host_protocol_reset(&protocol);
+		reply_length = 0;
+		event_length = 0;
+#endif
+		session_generation = current_generation;
+	}
+	if (!open) {
+		key = k_spin_lock(&lock);
+		if (generation == session_generation) {
+			ready = true;
+			ble_shell = false;
+			ble_tx_ready = NULL;
+			finish_ble_session();
+			if (!ble_occupied) {
+				hub_power_connection(HUB_DISCONNECTED);
+			}
+			notify_ble_available();
+		}
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	if (selected == HOST_SHELL && (changed || !shell_initialized)) {
+		shell_generation = session_generation;
+		managed_shell = false;
+		int err = shell_initialized ? shell_start(&host_shell) :
+			shell_init(&host_shell, NULL, flags, false, 0);
+		if (err) {
+			key = k_spin_lock(&lock);
+			if (!first_error) {
+				first_error = err;
+			}
+			k_spin_unlock(&lock, key);
+			return;
+		}
+		shell_initialized = true;
+	}
+	key = k_spin_lock(&lock);
+	if (generation != session_generation) {
+		k_spin_unlock(&lock, key);
+		wake_host();
+		return;
+	}
+	running = true;
+	if (selected == HOST_SHELL) {
+		notify_shell(SHELL_TRANSPORT_EVT_RX_RDY);
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	k_spin_unlock(&lock, key);
+#ifdef CONFIG_BRICKPHYR_HOST_UART
+	/* Keep one pending event separate from command replies. Unread stdout
+	 * must not prevent consuming a STOP/input command. Once its reply is
+	 * pending, pause further commands until it can be queued intact.
+	 * Bound each batch by the receive capacity so queued management work
+	 * can run even when a peer continuously supplies input or drains output. */
+	size_t budget = ring_buf_capacity_get(&receive_buffer);
+	for (;;) {
+		if (!budget--) {
+			wake_host();
+			break;
+		}
+		bool queued = false;
+		if (event_length && !host_protocol_event_valid(&protocol)) {
+			event_length = 0;
+			protocol.message_request = 0;
 		}
 		key = k_spin_lock(&lock);
 		if (generation != session_generation) {
 			k_spin_unlock(&lock, key);
-			k_sem_give(&wake);
-			continue;
+			break;
 		}
-		running = true;
-		if (selected == HOST_SHELL) {
-			notify_shell(SHELL_TRANSPORT_EVT_RX_RDY);
-			k_spin_unlock(&lock, key);
-			continue;
+		if (reply_length) {
+			if (ring_buf_space_get(&transmit_buffer) < reply_length) {
+				k_spin_unlock(&lock, key);
+				break;
+			}
+			ring_buf_put(&transmit_buffer, reply, reply_length);
+			tx_idle = false;
+			reply_length = 0;
+			queued = true;
 		}
+		if (event_length && ring_buf_space_get(&transmit_buffer) >= event_length) {
+			ring_buf_put(&transmit_buffer, event_reply, event_length);
+			host_protocol_event_sent(&protocol);
+			tx_idle = false;
+			event_length = 0;
+			queued = true;
+		}
+		uint8_t byte;
+		bool received = ring_buf_get(&receive_buffer, &byte, 1);
 		k_spin_unlock(&lock, key);
-#ifdef CONFIG_BRICKPHYR_HOST_UART
-		/* Keep one pending event separate from command replies. Unread stdout
-		 * must not prevent consuming a STOP/input command. Once its reply is
-		 * pending, pause further commands until it can be queued intact. */
-		for (;;) {
-			bool queued = false;
-			if (event_length && !host_protocol_event_valid(&protocol)) {
-				event_length = 0;
-				protocol.message_request = 0;
-			}
-			key = k_spin_lock(&lock);
-			if (generation != session_generation) {
-				k_spin_unlock(&lock, key);
-				break;
-			}
-			if (reply_length) {
-				if (ring_buf_space_get(&transmit_buffer) < reply_length) {
-					k_spin_unlock(&lock, key);
-					break;
-				}
-				ring_buf_put(&transmit_buffer, reply, reply_length);
-				tx_idle = false;
-				reply_length = 0;
-				queued = true;
-			}
-			if (event_length && ring_buf_space_get(&transmit_buffer) >= event_length) {
-				ring_buf_put(&transmit_buffer, event_reply, event_length);
-				host_protocol_event_sent(&protocol);
-				tx_idle = false;
-				event_length = 0;
-				queued = true;
-			}
-			uint8_t byte;
-			bool received = ring_buf_get(&receive_buffer, &byte, 1);
-			k_spin_unlock(&lock, key);
-			if (queued) {
-				output_ready();
-			}
-			if (!received) {
-				if (event_length) {
-					break;
-				}
-				uint8_t event[HOST_PROTOCOL_PAYLOAD_MAX];
-				size_t length = host_protocol_event(&protocol, false, k_uptime_get_32(),
-					event, sizeof(event));
-				if (length) {
-					event_length = pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_EVENT,
-						event, length, event_reply);
-					continue;
-				}
-				break;
-			}
-			reply_length = host_protocol_receive(&protocol, byte, variant, k_uptime_get_32(), reply);
-			if (protocol.exit_compatibility) {
-				key = k_spin_lock(&lock);
-				if (generation == session_generation) {
-					next_mode = HOST_SHELL;
-				}
-				k_spin_unlock(&lock, key);
-				protocol.exit_compatibility = false;
-			}
+		if (queued) {
+			output_ready();
 		}
-		serial_rx_resume();
-#endif
+		if (!received) {
+			if (event_length) {
+				break;
+			}
+			uint8_t event[HOST_PROTOCOL_PAYLOAD_MAX];
+			size_t length = host_protocol_event(&protocol, false, k_uptime_get_32(),
+				event, sizeof(event));
+			if (length) {
+				event_length = pbio_cobs_encode_prefixed(PBIO_PYBRICKS_IN_EP_MSG_EVENT,
+					event, length, event_reply);
+				continue;
+			}
+			break;
+		}
+		reply_length = host_protocol_receive(&protocol, byte, variant, k_uptime_get_32(), reply);
+		if (protocol.exit_compatibility) {
+			key = k_spin_lock(&lock);
+			if (generation == session_generation) {
+				next_mode = HOST_SHELL;
+			}
+			k_spin_unlock(&lock, key);
+			protocol.exit_compatibility = false;
+		}
 	}
+	serial_rx_resume();
+	if (protocol.subscribed) {
+		/* schedule preserves an immediate wake queued during this batch. */
+		k_work_schedule_for_queue(smp_get_wq(), &host_work,
+			K_MSEC(IS_ENABLED(CONFIG_BRICKPHYR_PYBRICKS_EXECUTION) ?
+				20 : HOST_PROTOCOL_STATUS_INTERVAL_MS));
+	}
+#endif
 }
-
-K_KERNEL_STACK_DEFINE(host_stack, 2048);
-static struct k_thread host_worker;
 
 int host_transport_init(const struct device *device, uint16_t hub_variant)
 {
@@ -677,14 +686,11 @@ int host_transport_init(const struct device *device, uint16_t hub_variant)
 #ifdef CONFIG_MCUMGR_GRP_OS_RESET_HOOK
 	mgmt_callback_register(&reset_access);
 #endif
-	k_thread_create(&host_worker, host_stack, K_KERNEL_STACK_SIZEOF(host_stack),
-			host_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
-	k_thread_name_set(&host_worker, "host_stream");
 	serial_rx_resume();
 	/* Establish initial completion in the UART callback without requiring
 	 * a USB status request before the first Bluetooth connection. */
 	serial_tx_resume();
-	k_sem_give(&wake);
+	wake_host();
 	return 0;
 }
 
@@ -703,7 +709,7 @@ static void stream_changed(bool open)
 		mode = next_mode;
 		next_mode = -1;
 	}
-	k_sem_give(&wake);
+	wake_host();
 	k_sem_give(&smp_tx_ready);
 }
 

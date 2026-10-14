@@ -900,7 +900,7 @@ uv run --locked pytest -q tests/test_native.py -k 'uart-userspace or uart-superv
 ```
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-12 KiB loader limit and 18 KiB shared heap. Its SRAM starts after a reserved
+12 KiB loader limit and 20 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
 the running program, and successful or failed cleanup returning or retaining
 the loader buffer as required. It also omits direct Zephyr UART syscalls while

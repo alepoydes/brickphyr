@@ -9,6 +9,7 @@
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
+#include <zephyr/init.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
 #include <zephyr/mgmt/mcumgr/transport/serial.h>
@@ -106,9 +107,16 @@ static void close_session(void)
 	wait_idle();
 }
 
+/* Match USB transport registration before APPLICATION priority 90. The shared
+ * management queue must already accept work at this cold-start boundary. */
+static int initialize(void)
+{
+	return host_transport_init(uart, 1);
+}
+SYS_INIT(initialize, APPLICATION, 89);
+
 static void *setup(void)
 {
-	zassert_ok(host_transport_init(uart, 1));
 	/* BLE must be usable before any USB selection/status call refreshes TX. */
 	int64_t deadline = k_uptime_get() + 100;
 	int result;

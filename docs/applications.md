@@ -237,8 +237,8 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 192 KiB loader budget in a 206 KiB shared system heap. The Technic native
-profile permits 4 KiB images and a 12 KiB loader budget in an 18 KiB shared heap.
+and a 192 KiB loader budget in a 208 KiB shared system heap. The Technic native
+profile permits 4 KiB images and a 12 KiB loader budget in a 20 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
@@ -264,7 +264,7 @@ capacity under maximum peripheral/communication load nor a worst-case stack boun
 
 Separate USB checks on the same F4 with Zephyr heap statistics enabled measured
 system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 bytes
-for the stored workload, in the unchanged 210944-byte heap. These counts include
+for the stored workload, measured with a 210944-byte heap. These counts include
 the reserved loader buffer; they do not measure its internal live allocations.
 Both workloads return system-heap allocation to the 960-byte idle baseline.
 Stored-image admission and linking keep their loader caches and file metadata
@@ -372,8 +372,8 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 206 KiB heap, including on-demand loader buffers.
-The full Python profile provides 98 KiB and the reduced Python profile 116 KiB;
+The native profile provides a 208 KiB heap, including on-demand loader buffers.
+The full Python profile provides 100 KiB and the reduced Python profile 118 KiB;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.

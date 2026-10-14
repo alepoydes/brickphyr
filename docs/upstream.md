@@ -399,6 +399,15 @@ serialized access and packet user-data cleanup. The existing Zephyr reassembly
 fixture exercises the public header; the CC2640 fixture exercises asynchronous
 processing and session lifetime through it.
 
+Sharing connection work with SMP additionally requires local Zephyr commit
+`8d88ef35` on `topic/mcumgr-workqueue`, not yet included in the manifest pin.
+It exposes the existing `smp_get_wq()` through the public transport header for
+server-only builds and starts that queue during `POST_KERNEL`, before application
+transports register. The borrowed queue must not be stopped or reconfigured.
+The request-lifetime fixture checks serialization of external work with a real
+queued request; Brickphyr's transport fixture checks early application init,
+session cleanup and reconnection.
+
 ## CBOR stack bound
 
 Local zcbor commit `f4b3f69` on `topic/bounded-skip` adds the optional

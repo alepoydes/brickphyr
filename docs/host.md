@@ -384,13 +384,13 @@ uv run smpmgr --ble Brickphyr --timeout 10 os echo Brickphyr
 For multiple nearby hubs, specify the address reported by BLE discovery instead
 of the shared default name.
 
-The enabled groups provide OS echo/reset and Settings read/write/commit/whole-store
+The base profile provides OS echo/reset and Settings read/write/commit/whole-store
 save. Read and write operate on RAM; save is explicit. Settings values and storage
 limitations are described in [settings](settings.md). Load, delete and named saves
-are currently rejected before mutation. Shell RPC, firmware/file transfer and
-application loading are not enabled.
+are currently rejected before mutation. Application profiles add the file and
+program operations described above. Shell RPC and SMP firmware updates are not enabled.
 
-SMP executes on the Shell thread, so a response cannot interleave with a Shell
+Serial SMP executes on the Shell thread, so a response cannot interleave with a Shell
 command's output. Closing the session waits for an accepted operation to finish;
 it discards queued and partial input and suppresses old replies. An accepted save
 may therefore finish after the host disconnects. Reopening cannot inherit an old
@@ -401,6 +401,15 @@ packets are discarded; they cannot acquire the next session. A disconnect also
 rejects subsequent commands bundled in the current packet, while an already
 entered handler may finish. These paths require
 the pinned [Zephyr changes](upstream.md#smp-prerequisites).
+
+Connection admission, teardown and framed USB Pybricks parsing share the MCUmgr
+management queue instead of reserving another thread and stack. A parsing batch
+is bounded by the receive-buffer capacity; pending input wakes take precedence
+over periodic status polling. Shell retains its own worker, so teardown can join
+an entered command without blocking the controller that delivers its output.
+Management work must not wait for another operation on the same queue. The F4
+native/Python and Technic native profiles return 2 KiB of recovered RAM to the
+shared heap; application stacks and loader limits are unchanged.
 
 Unknown CBOR fields may contain at most four nested maps/lists when skipped.
 Deeper values return a decode error instead of consuming unbounded C stack.
