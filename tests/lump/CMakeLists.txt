@@ -5,6 +5,10 @@ set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
 list(APPEND DTS_ROOT ${BRICKPHYR_ROOT} ${BRICKPHYR_ROOT}/tests/ports)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(lump)
+option(UART_CAPACITY_ONLY "Check maximum metadata with all UART links allocated" OFF)
+if(UART_CAPACITY_ONLY)
+  target_compile_definitions(app PRIVATE UART_CAPACITY_ONLY=1)
+endif()
 target_sources(app PRIVATE main.c ../ports/wiring.c
   ${BRICKPHYR_ROOT}/src/ports/lump.c ${BRICKPHYR_ROOT}/src/ports/uart.c
   ${BRICKPHYR_ROOT}/src/ports/settings.c

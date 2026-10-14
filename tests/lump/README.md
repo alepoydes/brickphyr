@@ -35,6 +35,19 @@ duplicate or short metadata, overlong units and reconnects without optional fiel
 The mode-memory check fills every configured port with sixteen complete modes,
 then reconnects with shorter payloads and verifies reclamation. The four-port
 variant uses `../ports/four.overlay` and the corresponding devicetree-derived
-heap minimum, without overriding heap size. Run `lump::test_mode_memory_lifetime`
+heap minimum, without overriding heap size. Run `lump_capacity::test_mode_memory_lifetime`
 and `lump::test_mode_payload_allocation_failure` for that capacity boundary;
 the six-port fixture owns the full protocol suite.
+
+The ARM capacity variant keeps four real UART link allocations live while the
+same parser check interleaves maximum metadata growth, then frees both. It uses
+the 25 KiB devicetree-derived minimum with small heap headers and no libc malloc
+arena. Its independent UART emulators provide link state, not simultaneous wire
+negotiation or a physical timing test. Build separately before the short check:
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/lump -d build/lump-arm-capacity -o=-j4 -- \
+  -DUART_CAPACITY_ONLY=ON -DEXTRA_CONF_FILE=capacity.conf \
+  '-DDTC_OVERLAY_FILE=app.overlay;capacity.overlay;../ports/four.overlay'
+uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[lump-arm-capacity-PROJECT EXECUTION SUCCESSFUL]'
+```

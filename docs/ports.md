@@ -96,9 +96,11 @@ negotiation. Combination masks and uninterpreted INFO payloads use separate
 packed storage per mode, grown only for bytes actually
 advertised; the getter expands them into the unchanged public structure.
 The UART contribution to the minimum heap budget follows enabled devicetree ports:
-6 KiB per port for link state and complete mode tables, plus 2 KiB for allocator
-and growth overhead. This is 38 KiB for six ports and 26 KiB for four; it does not
-reserve that memory separately from other heap users.
+32-bit builds using small heap headers without canaries budget 5888 bytes per
+port for link state and complete mode tables, plus 2 KiB for negotiation growth.
+This gives a 25 KiB minimum for four ports. Other allocator configurations retain
+6 KiB per port plus 2 KiB: 38 KiB for six ports or 26 KiB for four. These are shared
+heap capacities, not separate reservations from other heap users.
 Disconnect, restart, failure and shutdown release the link and its metadata,
 retaining compact failure diagnostics. Internal negotiation baud changes retain
 the allocations. Publication occurs after negotiation, and reset invalidates

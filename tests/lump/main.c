@@ -2,6 +2,7 @@
 #include "lump.h"
 #include "captures.h"
 #include "hub_ports.h"
+#include "port_uart.h"
 #include "wiring.h"
 #include <string.h>
 #include <zephyr/drivers/uart.h>
@@ -168,8 +169,18 @@ ZTEST(lump, test_invalid_metadata)
 	lump_reset(&l);
 }
 
-ZTEST(lump, test_mode_memory_lifetime)
+ZTEST(lump_capacity, test_mode_memory_lifetime)
 {
+#ifdef UART_CAPACITY_ONLY
+	/* Stop the electrical scanner before driving the UART layer directly.
+	 * Keep real link allocations live while interleaved parser peers grow
+	 * their metadata; this checks heap capacity, not simultaneous wire I/O. */
+	zassert_ok(hub_ports_shutdown());
+	size_t idle = allocated_bytes();
+	for (uint32_t port = 0; port < DT_CHILD_NUM_STATUS_OKAY(DT_NODELABEL(hub_ports)); port++) {
+		zassert_ok(port_uart_start(port));
+	}
+#endif
 	size_t before = allocated_bytes();
 	/* Interleave INFO across all ports to exercise simultaneous heap growth.
 	 * Each has sixteen modes; the second connection has short and absent INFO
@@ -245,6 +256,10 @@ ZTEST(lump, test_mode_memory_lifetime)
 		for (size_t port = 0; port < ARRAY_SIZE(peers); port++) lump_reset(&peers[port]);
 		zassert_equal(allocated_bytes(), before, "Disconnected peers retained metadata");
 	}
+#ifdef UART_CAPACITY_ONLY
+	for (uint32_t port = 0; port < ARRAY_SIZE(peers); port++) port_uart_stop(port);
+	zassert_equal(allocated_bytes(), idle, "Stopped links retained memory");
+#endif
 }
 
 ZTEST(lump, test_mode_payload_allocation_failure)
@@ -1285,3 +1300,11 @@ ZTEST(lump, test_uart_hotplug)
 }
 
 ZTEST_SUITE(lump, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(lump_capacity, NULL, NULL, NULL, NULL, NULL);
+
+#ifdef UART_CAPACITY_ONLY
+void test_main(void)
+{
+	ztest_run_test_suite(lump_capacity, false, 1, 1, NULL);
+}
+#endif

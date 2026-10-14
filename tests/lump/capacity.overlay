@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+// Independent emulators supply real per-port link allocations for heap checks.
+#define TEST_UART(label_, name_) \
+	label_: name_ { compatible = "zephyr,uart-emul"; current-speed = <115200>; \
+		rx-fifo-size = <64>; tx-fifo-size = <64>; };
+/ {
+	TEST_UART(uart_b, uart-b)
+	TEST_UART(uart_c, uart-c)
+	TEST_UART(uart_d, uart-d)
+	TEST_UART(uart_e, uart-e)
+	TEST_UART(uart_f, uart-f)
+};
+&hub_ports {
+	port@1 { uart = <&uart_b>; };
+	port@2 { uart = <&uart_c>; };
+	port@3 { uart = <&uart_d>; };
+	port@4 { uart = <&uart_e>; };
+	port@5 { uart = <&uart_f>; };
+};
+#undef TEST_UART

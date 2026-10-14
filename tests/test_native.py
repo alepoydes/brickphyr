@@ -87,6 +87,7 @@ def test_reserved_slot_names():
         ("logging-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("main-userspace-tests", b"main_stack: PASS"),
         ("main-supervisor-tests", b"main_stack: PASS"),
+        ("lump-arm-capacity", b"PROJECT EXECUTION SUCCESSFUL"),
     ],
 )
 def test_arm_firmware(suite, success):
