@@ -643,7 +643,7 @@ mkdir -p build/native-dsp-sdk
 tar -xf build/native-dsp-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-dsp-sdk
 uv run --locked cmake -S examples/native -B build/native-dsp-examples -G Ninja \
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-dsp-sdk/brickphyr-sdk"
-uv run --locked cmake --build build/native-dsp-examples --target imu_filter
+uv run --locked cmake --build build/native-dsp-examples --target imu_filter imu_record
 ```
 
 The SDK adds `lib/libcmsis-dsp.a` and `LICENSES/CMSIS-DSP.txt` to Zephyr's EDK;
@@ -665,7 +665,10 @@ uv run --locked west build -b spike_prime_f4 -d build/python-dsp-apps -t firmwar
 uv run --locked west build -d build/python-dsp-apps -t brickphyr-sdk
 ```
 
-The `imu_filter.elf` example reads calibrated hub-axis Z angular velocity; its
+The `imu_filter.elf` example reads calibrated hub-axis Z angular velocity;
+`imu_record.elf` enables bounded recording in the same source for
+[desktop replay](applications.md#offline-inspection-and-numerical-replay). Its
+recording buffer is allocated only when that application runs. The filter's
 sampling and output limits are described in [applications](applications.md#experimental-native-profile).
 The full F4 DSP firmware and matching SDK, and the example built separately from
 that SDK, compile. The exported example also has ARM/QEMU RAM and LittleFS checks

@@ -3,7 +3,7 @@
 
 import argparse
 
-from . import application, compiler, monitor, terminal, usb
+from . import application, compiler, monitor, records, terminal, usb
 
 
 def main():
@@ -14,6 +14,12 @@ def main():
     compile_parser.add_argument("--output", help="Output .mpy path; default is SOURCE.mpy")
     compile_parser.add_argument("--sdk", help="Extracted native SDK directory")
     compile_parser.set_defaults(handler=compiler.run)
+    record_info = commands.add_parser("record-info", help="Inspect an application JSONL recording offline")
+    record_info.add_argument("file")
+    record_info.add_argument(
+        "--allow-incomplete", action="store_true", help="Inspect a cancelled or unfinished collection"
+    )
+    record_info.set_defaults(handler=records.run)
     terminal_parser = commands.add_parser("terminal", help="Open the shared Shell over BLE or USB")
     terminal_parser.add_argument(
         "target", nargs="?", help="BLE name or address (default Brickphyr); omit for USB"

@@ -21,6 +21,7 @@ Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4
 | VM, supervisor or loader | `tests/python`, `tests/native`, and the affected lifecycle/import/MPY cases |
 | Host ownership or protocol | `tests/host`, `test_host_protocol.py`, or the affected SMP/Pybricks adapter case |
 | Terminal input or TTY cleanup | `test_terminal.py`; add monitor/REPL cases only for those paths |
+| Application record collection or offline reading | `test_recording.py` and `test_records.py`; neither needs firmware |
 | Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
 | Crypto allocator or shared heap | `tests/crypto_heap` for cold AES/CMAC, allocation failure and cleanup |
 | Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
@@ -63,6 +64,12 @@ referenced builds. It is not the default task after a local edit. For an audit,
 add `--durations=10`; keep compilation and test execution timings separate.
 No pytest check connects to a physical hub. Hardware and long load checks remain
 separate, explicitly selected work.
+
+For the [FIR replay example](applications.md#offline-inspection-and-numerical-replay),
+build its desktop library into `build/imu-replay` separately, then run
+`uv run pytest -q tests/test_imu_replay.py`. It uses the actual CMSIS routine with
+known input/state vectors and detects changed results and broken continuity.
+It skips when the library is absent and never rebuilds it during pytest.
 
 Reuse the configured build directory for an affected check. For example, after
 configuring the [plain REPL fixture](#python-application-integration), an edit to

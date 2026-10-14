@@ -3,9 +3,27 @@
 #include <brickphyr.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU, 2048);
+
+#ifndef BP_IMU_RECORD
+#define BP_IMU_RECORD 0
+#endif
+
+struct imu_fir_record {
+	int64_t sample_us;
+	uint32_t sequence, epoch, reset, reserved;
+	float32_t input, output, before[4], after[4];
+};
+
+_Static_assert(sizeof(struct imu_fir_record) == 64 &&
+	       offsetof(struct imu_fir_record, input) == 24 &&
+	       offsetof(struct imu_fir_record, before) == 32 &&
+	       offsetof(struct imu_fir_record, after) == 48,
+	       "IMU FIR record layout");
 
 int app_main(void)
 {
@@ -16,9 +34,22 @@ int app_main(void)
 	arm_fir_instance_f32 filter;
 	uint32_t sequence = 0, epoch = 0, count = 0;
 	bool initialized = false;
+	bool recording = BP_IMU_RECORD;
+	const struct bp_record_spec spec = {
+		.size = sizeof(struct imu_fir_record),
+		.capacity = 64,
+		.schema = "brickphyr.imu-fir/1",
+	};
+	int err = 0;
+	if (recording) {
+		err = bp_record_begin_config(&spec, coefficients, sizeof(coefficients));
+		if (err) {
+			return err;
+		}
+	}
 	for (;;) {
 		struct bp_imu_state sample;
-		int err = bp_imu_get_state(&sample);
+		err = bp_imu_get_state(&sample);
 		if (err) {
 			return err;
 		}
@@ -27,7 +58,8 @@ int app_main(void)
 		} else if (sample.error) {
 			return sample.error;
 		} else if (!initialized || sample.raw.sequence != sequence || sample.epoch != epoch) {
-			if (!initialized || sample.epoch != epoch) {
+			bool reset = !initialized || sample.epoch != epoch;
+			if (reset) {
 				arm_fir_init_f32(&filter, 4, coefficients, history, 1);
 				count = 0;
 				initialized = true;
@@ -35,7 +67,28 @@ int app_main(void)
 			sequence = sample.raw.sequence;
 			epoch = sample.epoch;
 			float32_t raw = sample.angular_velocity[2], filtered;
+			struct imu_fir_record record;
+			if (recording) {
+				record = (struct imu_fir_record){
+					.sample_us = sample.raw.sample_us,
+					.sequence = sequence,
+					.epoch = epoch,
+					.reset = reset,
+					.input = raw,
+				};
+				memcpy(record.before, history, sizeof(history));
+			}
 			arm_fir_f32(&filter, &raw, &filtered, 1);
+			if (recording) {
+				record.output = filtered;
+				memcpy(record.after, history, sizeof(history));
+				err = bp_record_write(&record, sizeof(record));
+				if (err == -ENOSPC) {
+					recording = false;
+				} else if (err) {
+					return err;
+				}
+			}
 			/* A complete window first, then at most one line per 20 observations.
 			 * This keeps terminal traffic separate from the 10 ms polling cadence. */
 			if (++count == 20) {

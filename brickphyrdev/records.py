@@ -1,0 +1,260 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Streaming, offline access to application recordings; no hub connection."""
+
+import json
+from dataclasses import dataclass
+
+from . import record_codec
+
+
+def _integer(value, name, minimum=0, maximum=(1 << 64) - 1):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(f"Invalid {name}: {value!r}")
+    return value
+
+
+def _blob(value, size, name):
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid {name} hex data")
+    data = bytes.fromhex(value)
+    if len(data) != size:
+        raise ValueError(f"Invalid {name} length: expected {size}, got {len(data)}")
+    return data
+
+
+@dataclass(frozen=True)
+class Frame:
+    index: int
+    data: bytes
+    parameters: bytes | None
+    control: dict | None
+    gap: int
+    values: dict | None
+
+
+class Recording:
+    """Read one JSONL session from a caller-owned text stream.
+
+    Consume frames() to exhaustion before accepting a replay: termination and
+    final counts are checked at the end. Gaps and incomplete collection require
+    separate, explicit opt-ins. Malformed data is always rejected.
+    """
+
+    def __init__(self, source):
+        self._lines = iter(source)
+        self._name = getattr(source, "name", "<recording>")
+        self._line = 0
+        self._used = False
+        self.count = self.gaps = self.missing = self.revisions = 0
+        self.end = self.outcome = None
+        self.complete = False
+        try:
+            self.session = self._read()
+            if not self.session or self.session.get("type") != "session" or (
+                self.session.get("schema") != "brickphyr.records/1"
+            ):
+                raise ValueError("Expected a brickphyr.records/1 session")
+            self._session_id = self.session["session"]
+            if not isinstance(self._session_id, str) or not self._session_id:
+                raise ValueError("Missing session identity")
+            meta = self.session["recording"]
+            self.schema = meta["schema"]
+            if not isinstance(self.schema, str) or not 1 <= len(self.schema) <= 47 or any(
+                not 32 <= ord(char) <= 126 for char in self.schema
+            ):
+                raise ValueError("Invalid application record schema")
+            _integer(meta["generation"], "generation", 1, (1 << 32) - 1)
+            self.size = _integer(meta["size"], "record size", 1, 1024)
+            capacity = _integer(meta["capacity"], "capacity", 1, 32768)
+            config_size = _integer(meta.get("config_size", 0), "config size", 0, 1024)
+            self.config = _blob(meta.get("config", ""), config_size, "configuration")
+            if self.size * capacity + config_size > 32768:
+                raise ValueError("Recording exceeds buffer limit")
+            self.control = meta.get("control", False)
+            self.parameter_size = _integer(meta.get("parameter_size", 0),
+                                           "parameter size", 0, 256)
+            if type(self.control) is not bool or not self.control and self.parameter_size:
+                raise ValueError("Invalid recording control mode")
+            self._first = _integer(meta["first"], "first index")
+            self._next = _integer(meta["next"], "next index", self._first)
+            if self._next - self._first > capacity:
+                raise ValueError("Retained range exceeds capacity")
+            self._active = meta["active"]
+            if type(self._active) is not bool:
+                raise ValueError("Invalid recording active flag")
+            self._capacity = capacity
+            self._trigger = meta.get("trigger")
+            self._after = meta.get("after", 0)
+            self._reason = meta.get("reason")
+            if self._reason is None:
+                if self._trigger is not None or self._after != 0 or config_size:
+                    raise ValueError("Incomplete recording capture metadata")
+                self._reason = 0 if self._active else 1
+            if type(self._reason) is not int or self._reason not in (0, 1, 2) or (
+                self._active != (self._reason == 0)
+            ):
+                raise ValueError("Invalid recording end reason")
+            self._capture(self._trigger, self._after, self._next, self._reason == 2)
+            record_codec.check_size(self.schema, self.size)
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            raise self._error(error) from error
+
+    def _error(self, error):
+        return ValueError(f"{self._name}:{self._line}: {error}")
+
+    def _read(self):
+        line = next(self._lines, None)
+        if line is None:
+            return None
+        self._line += 1
+        event = json.loads(line)
+        if not isinstance(event, dict):
+            raise ValueError("Expected a JSON event object")
+        return event
+
+    def _capture(self, trigger, after, next_index, complete):
+        _integer(after, "post-trigger count", 0, self._capacity - 1)
+        if trigger is None:
+            if after or complete:
+                raise ValueError("Missing capture trigger")
+        else:
+            _integer(trigger, "trigger", 1, next_index)
+            target = _integer(trigger + after, "capture end")
+            if next_index > target or complete != (next_index == target):
+                raise ValueError("Inconsistent capture boundary")
+
+    def _outcome(self, event, next_index):
+        for field in ("state", "result", "fault", "cleanup"):
+            _integer(event[field], field, -(1 << 31), (1 << 32) - 1)
+        if next_index < self._next or not self._active and next_index != self._next:
+            raise ValueError("Final index differs from recording metadata")
+        triggered = event["type"] == "recording-end"
+        if self._reason != 0 and triggered != (self._reason == 2):
+            raise ValueError("End event differs from recording end reason")
+        capture = event.get("capture")
+        if capture is not None:
+            if type(capture["complete"]) is not bool or capture["complete"] != triggered:
+                raise ValueError("Invalid capture completion flag")
+            if _integer(capture["next"], "capture next index") != next_index:
+                raise ValueError("Capture end differs from collected range")
+            self._capture(capture["trigger"], capture["after"], next_index, triggered)
+            if capture["trigger"] is None or self._trigger is not None and (
+                (capture["trigger"], capture["after"]) != (self._trigger, self._after)
+            ):
+                raise ValueError("Capture trigger changed within session")
+        elif self._trigger is not None or triggered:
+            raise ValueError("Missing capture outcome")
+        if triggered and event.get("reason") != "trigger":
+            raise ValueError("Unknown recording end reason")
+
+    def frames(self, *, allow_gaps=False, allow_incomplete=False):
+        if self._used:
+            raise ValueError("Recording frames can only be consumed once")
+        self._used = True
+        index = gap = 0
+        revision = parameters = previous_step = None
+        try:
+            while (event := self._read()) is not None:
+                kind = event.get("type")
+                if self.end is not None or self.outcome is not None and kind != "end":
+                    raise ValueError("Event after recording termination")
+                if kind == "gap":
+                    if _integer(event["from"], "gap start") != index:
+                        raise ValueError("Gap does not start at the expected index")
+                    next_index = _integer(event["to"], "gap end", index + 1)
+                    if not self._active and next_index > self._next:
+                        raise ValueError("Gap exceeds frozen recording range")
+                    if not allow_gaps:
+                        raise ValueError(f"Missing records [{index}, {next_index})")
+                    gap += next_index - index
+                    self.missing += next_index - index
+                    self.gaps += 1
+                    index = next_index
+                elif kind == "parameters":
+                    if not self.control:
+                        raise ValueError("Parameters on an ordinary recording")
+                    revision = _integer(event["revision"], "parameter revision",
+                                        0 if revision is None else revision + 1,
+                                        (1 << 32) - 1)
+                    parameters = _blob(event["data"], self.parameter_size, "parameters")
+                    self.revisions += 1
+                elif kind == "record":
+                    if _integer(event["index"], "record index", self._first,
+                                (1 << 64) - 2) != index:
+                        raise ValueError("Unexpected record index; gap or duplicate")
+                    if not self._active and index >= self._next:
+                        raise ValueError("Record exceeds frozen recording range")
+                    data = _blob(event["data"], self.size, "record")
+                    control = event.get("control")
+                    if self.control:
+                        if not isinstance(control, dict):
+                            raise ValueError("Missing control step")
+                        step = tuple(_integer(control[field], field, minimum, maximum)
+                                     for field, minimum, maximum in (
+                                         ("scheduled_us", 0, (1 << 63) - 1),
+                                         ("started_us", 0, (1 << 63) - 1),
+                                         ("sequence", 1, (1 << 32) - 1),
+                                         ("skipped", 0, (1 << 32) - 1),
+                                         ("parameter_revision", 0, (1 << 32) - 1),
+                                         ("parameter_size", 0, 256),
+                                     ))
+                        if step[1] < step[0] or step[4:] != (revision, self.parameter_size):
+                            raise ValueError("Control step has invalid times or parameters")
+                        if previous_step is not None and (
+                            any(step[i] < previous_step[i] for i in (0, 1, 2, 4)) or
+                            step[2] == previous_step[2] and step != previous_step
+                        ):
+                            raise ValueError("Control step moved backwards or changed")
+                        previous_step = step
+                    elif control is not None:
+                        raise ValueError("Control step on an ordinary recording")
+                    self.count += 1
+                    index += 1
+                    frame = Frame(index - 1, data, parameters, control, gap,
+                                  record_codec.decode(self.schema, data))
+                    gap = 0
+                    yield frame
+                elif kind in ("application-end", "recording-end"):
+                    self._outcome(event, index)
+                    self.outcome = event
+                elif kind == "end":
+                    if event["session"] != self._session_id:
+                        raise ValueError("End event belongs to another session")
+                    if (_integer(event["records"], "record count") != self.count or
+                        _integer(event["gaps"], "gap count") != self.gaps):
+                        raise ValueError("End counts differ from collected events")
+                    reason = event["reason"]
+                    if reason not in ("completed", "cancelled", "error"):
+                        raise ValueError("Unknown collection end reason")
+                    if reason == "completed" and self.outcome is None:
+                        raise ValueError("Completed collection has no application outcome")
+                    self.end = event
+                else:
+                    raise ValueError(f"Unknown recording event: {kind!r}")
+            if self.end is None or self.end["reason"] != "completed":
+                if not allow_incomplete:
+                    raise ValueError("Incomplete collection")
+            else:
+                self.complete = True
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            raise self._error(error) from error
+
+
+def run(args):
+    with open(args.file, encoding="utf-8") as source:
+        recording = Recording(source)
+        for _frame in recording.frames(allow_gaps=True, allow_incomplete=args.allow_incomplete):
+            pass
+        print(json.dumps({
+            "session": recording.session["session"],
+            **{field: recording.session.get(field) for field in ("board", "firmware", "build")},
+            "schema": recording.schema,
+            "config_size": len(recording.config),
+            "records": recording.count,
+            "gaps": recording.gaps,
+            "missing_records": recording.missing,
+            "parameter_revisions": recording.revisions,
+            "collection_complete": recording.complete,
+            "outcome": recording.outcome,
+            "end": recording.end,
+        }, indent=2))

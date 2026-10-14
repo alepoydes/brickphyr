@@ -525,6 +525,91 @@ revision once; it discards an incomplete record if its parameter snapshot was
 overwritten before retrieval and reports the gap. A replay must use these values
 and the application schema, not current hub settings or a later sensor read.
 
+### Offline inspection and numerical replay
+
+Inspect a collected file without connecting to a hub:
+
+```sh
+uv run brickphyrdev record-info control.jsonl
+uv run brickphyrdev record-info interrupted.jsonl --allow-incomplete
+```
+
+The summary distinguishes completed collection, missing records, application
+result/fault/cleanup and triggered-capture completion. A completed collection can
+contain gaps or report a failed application. `--allow-incomplete` permits inspection
+of a cancelled, failed or unfinished collection; malformed data still fails.
+These checks validate structure and consistency, not cryptographic integrity.
+
+Application-owned replay tools use the streaming `brickphyrdev.records.Recording`
+reader. It retains the current parameter revision rather than loading the full
+history. `config` contains the original immutable bytes; each `Frame` provides
+`index`, raw `data`, applied `parameters`, optional `control` step metadata and
+`gap` (the number of missing records immediately before it). Known schemas also
+provide `values`, decoded from raw bytes instead of trusting cached JSON values.
+Unknown application schemas remain available as raw bytes.
+
+```python
+from brickphyrdev.records import Recording
+
+with open("control.jsonl", encoding="utf-8") as source:
+    recording = Recording(source)
+    for frame in recording.frames():
+        # Decode using the application's schema, then call its numerical core.
+        print(frame.index, frame.data.hex(), frame.control)
+    print(recording.complete, recording.outcome)
+```
+
+Consume the iterator fully before accepting replay results: termination and final
+counts are validated at the end. Gaps and incomplete collection fail by default.
+`frames(allow_gaps=True)` is appropriate only when the application can interpret
+the retained steps independently; it never reconstructs missing history.
+`allow_incomplete=True` exposes a valid prefix but leaves `complete` false.
+The reader consumes its caller-owned stream once and does not close it.
+
+The DSP SDK builds `imu_record.elf` from the same source as `imu_filter.elf`,
+enabling recording without adding it to the smaller filter example. It retains
+64 observations in 4096 bytes, plus 16 bytes of FIR coefficients. Its
+`brickphyr.imu-fir/1` schema uses little-endian `float32` configuration and 64-byte
+records (`<q4I10f`): sample time in microseconds, sequence, IMU epoch, reset flag,
+reserved zero, input/output in millidegrees per second and four-word FIR states
+before/after the calculation. It neither claims nor drives motors.
+
+Build the [DSP SDK and native examples](builds.md#optional-cmsis-dsp-native-sdk),
+then the desktop library and collect an event capture:
+
+```sh
+uv run cmake -S examples/host -B build/imu-replay -G Ninja \
+  -DCMSIS_DSP_DIR="$PWD/../modules/lib/cmsis-dsp"
+uv run cmake --build build/imu-replay -j 4
+uv run brickphyrdev app run build/native-dsp-examples/imu_record.elf
+uv run brickphyrdev app record reports/imu.jsonl --after 8
+uv run brickphyrdev app stop
+uv run brickphyrdev record-info reports/imu.jsonl
+uv run python examples/host/replay_imu_filter.py reports/imu.jsonl \
+  --library build/imu-replay/libbrickphyr_imu_fir.so --allow-gaps
+uv run brickphyrdev app record-clear
+```
+
+The desktop library compiles the same CMSIS-DSP `arm_fir_f32` source from the
+pinned workspace module. The replay script uses recorded coefficients and each
+original input state, checks continuity where history is present, and compares
+output/state bytes. `--allow-gaps` explicitly permits replay of the retained tail;
+the summary still reports missing records. A mismatch or incomplete collection
+returns a nonzero exit status. Exact equality is checked for this scalar filter
+with quarter coefficients, not guaranteed for arbitrary algorithms or compiler
+floating-point options. Replaying original steps does not simulate a different
+closed-loop trajectory after changing the controller.
+
+On one Robot Inventor F4 (PCB revision unknown), a USB event capture retained
+68 observations with explicit gaps; all 68 matched desktop output/state bits.
+The filter continued after capture and was then explicitly stopped. Its 4192-byte
+ELF used 800 of the requested 2048 stack bytes in that bounded run. Application
+fault, cleanup and output-drop counters were zero; stored applications remained
+unchanged. This establishes the example's capture/replay path, not lossless
+streaming, calibrated sensor accuracy or a robot's complete replay contract.
+
+### Control recording examples
+
 The read-only [example](../examples/native/control_record.c) records 40 observations
 of the IMU, battery and ports A/B, retaining the last 32 in 5632 bytes. Its
 `brickphyr.control-input/1` schema is a 176-byte little-endian layout; the CLI
@@ -589,7 +674,7 @@ unknown) has checks of the passive variant and identical USB/BLE record retrieva
 physical group drive and expiry remain unverified. The example adds no resident
 firmware worker or memory reservation. Automatic control-step correlation,
 including attribution of actuation completion to the original input, autonomous
-flash recording and numerical replay remain [roadmap work](roadmap.md).
+flash recording and integrated robot replay remain [roadmap work](roadmap.md).
 
 ## Installed native files
 

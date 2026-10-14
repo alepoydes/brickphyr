@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from brickphyrdev import recording
+from brickphyrdev.records import Recording
 
 
 def _info(**changes):
@@ -303,6 +304,12 @@ def test_control_parameters_follow_retained_revision_across_overwrite(monkeypatc
     ]
     assert events[2]["control"]["parameter_revision"] == 1
     assert events[2]["values"]["port_mask"] == 3
+    offline = Recording(io.StringIO(output.getvalue()))
+    frames = list(offline.frames(allow_gaps=True, allow_incomplete=True))
+    assert [(frame.index, frame.gap, frame.parameters) for frame in frames] == [
+        (0, 0, b"ab"), (1, 0, b"ab"), (3, 1, b"cd"),
+    ]
+    assert not offline.complete  # collect() itself does not write the CLI footer.
 
 
 def test_control_step_must_remain_stable_across_fragments(monkeypatch):
