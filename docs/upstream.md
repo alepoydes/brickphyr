@@ -237,7 +237,7 @@ fixed metadata budget. The board profiles use automatic sizing with no additiona
 RAM margin; the read-only index has its own percentage reserve.
 `CONFIG_USERSPACE_STACKS_EARLY` optionally places the entire standard stack range
 before initialized data on Cortex-M with power-of-two MPU regions and the GNU
-linker. F4 Python profiles select it to avoid alignment gaps; Technic retains the
+linker. F4 profiles select it to avoid alignment gaps; Technic retains the
 default layout because of its reserved SRAM prefix. The final map must be checked
 for each layout. ARM protection, dynamic-object, futex, system-mutex and application
 checks cover these changes. Publication and manifest pinning remain pending.

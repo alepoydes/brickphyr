@@ -87,6 +87,22 @@ static struct bp_motor_state motor(uint32_t port)
 	return value;
 }
 
+static size_t allocated_bytes(void)
+{
+	struct k_heap *heaps;
+	int count = k_heap_array_get(&heaps);
+	size_t total = 0;
+	for (int i = 0; i < count; i++) {
+		struct sys_memory_stats stats;
+		k_spinlock_key_t key = k_spin_lock(&heaps[i].lock);
+		int err = sys_heap_runtime_stats_get(&heaps[i].heap, &stats);
+		k_spin_unlock(&heaps[i].lock, key);
+		zassert_ok(err);
+		total += stats.allocated_bytes;
+	}
+	return total;
+}
+
 static struct bp_motor_state motor_applied(uint32_t port, uint32_t request)
 {
 	int64_t deadline = k_uptime_get() + 300;
@@ -256,7 +272,9 @@ static void connect_motors(void)
 ZTEST(drivebase, test_pair_lifetime)
 {
 	connect_motors();
+	size_t heap_before_pair = allocated_bytes();
 	uint32_t handle = open_pair();
+	zassert_true(allocated_bytes() > heap_before_pair);
 	struct bp_drivebase_state initial;
 	zassert_ok(hub_drivebase_get(BP_PORT_APPLICATION, handle, &initial));
 	struct bp_drivebase_settings settings = initial.settings;
@@ -308,6 +326,7 @@ ZTEST(drivebase, test_pair_lifetime)
 	wait_pair_gone(handle);
 	wait_coast(0);
 	wait_coast(1);
+	zassert_equal(allocated_bytes(), heap_before_pair);
 
 	handle = open_pair();
 	zassert_ok(hub_motor_close(BP_PORT_APPLICATION, 1, generation(1)));
@@ -368,6 +387,31 @@ ZTEST(drivebase, test_pair_lifetime)
 	zassert_equal(motor(1).duty, right_duty);
 	for (size_t i = 0; i < ARRAY_SIZE(output_before); i++) {
 		zassert_equal(atomic_get(&pwm_channels[i]), output_before[i]);
+	}
+
+	/* A valid setup must fail before touching either running motor when the
+	 * shared heap has no space for the pair record. Link the small filler
+	 * blocks in place so exhaustion needs no separate allocation. */
+	struct heap_filler { struct heap_filler *next; };
+	struct heap_filler *fillers = NULL, *block;
+	while ((block = k_malloc(64)) != NULL) {
+		block->next = fillers;
+		fillers = block;
+	}
+	zassert_not_null(fillers);
+	setup = pair_setup();
+	zassert_equal(hub_drivebase_open(BP_PORT_APPLICATION, &setup, &rejected), -ENOMEM);
+	zassert_equal(motor(0).request, left_request);
+	zassert_equal(motor(1).request, right_request);
+	zassert_equal(motor(0).duty, left_duty);
+	zassert_equal(motor(1).duty, right_duty);
+	for (size_t i = 0; i < ARRAY_SIZE(output_before); i++) {
+		zassert_equal(atomic_get(&pwm_channels[i]), output_before[i]);
+	}
+	while (fillers) {
+		block = fillers;
+		fillers = block->next;
+		k_free(block);
 	}
 
 	zassert_ok(hub_motor_close(BP_PORT_APPLICATION, 1, generation(1)));

@@ -865,6 +865,11 @@ Native applications use `bp_drivebase_open/get/command/settings_set/close`,
 Setup contains both port generations and dimensions in micrometres. Open and
 queued commands expose request/completion tokens; completion acknowledges
 application of the command, while `done` reports maneuver completion separately.
+Pair state is allocated from the shared system heap during open, before changing
+either motor. Insufficient memory returns `ENOMEM` and leaves both motors intact.
+The existing worker releases an unlogged pair after retiring it; recorded logs
+retain the pair's storage until owner cleanup or slot reuse. Control frames do
+not allocate. The number of simultaneous pairs remains bounded by the hub's ports.
 Settings do not replace the motion token. Close is asynchronous: `get` returns
 `ENODEV` after retirement. Error, command rejection and cleanup error are separate
 fields. A failed pair must be closed and reconstructed before reuse.

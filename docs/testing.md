@@ -788,6 +788,8 @@ configuration, and tank/steering signs. `tests/drivebase` checks the paired port
 worker with two synthetic UART encoders and PWM-driven shafts: ownership,
 settings without motion replacement, individual-motor takeover, hotplug,
 reconstruction, rejected setup and stopping both outputs after one PWM failure.
+It also checks pair heap reclamation and rejects creation under heap exhaustion
+without changing independently running motors.
 `tests/test_python_drivebase.py` uses the IMU-enabled protected ARM fixture for
 binding units, gyro reset/configuration exclusion, blocking/awaitable completion,
 rejected replacement, cancellation and supervised cleanup. These checks do not
@@ -860,7 +862,7 @@ uv run --locked west build -b mps2/an386 -s tests/native -d build/native-fpu-tes
 uv run --locked pytest -q -x tests/test_native.py -k native-fpu-tests
 ```
 
-The same run uses F4 native memory limits to exercise a 64 KiB padded RAM upload
+The same run uses representative F4 native budgets to exercise a 64 KiB padded RAM upload
 and a 64 KiB user BSS together, starting from dirty heap memory and verifying
 reclamation on exit. The capacity application checks every byte from user mode.
 This is a loader/MPU capacity check, not a physical peripheral-load measurement.
@@ -875,6 +877,7 @@ uv run --locked west build -d build/native-fpu-tests -- \
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-portable-tests -- \
   -DDTC_OVERLAY_FILE=app.overlay -DEXTRA_CONF_FILE=fpu.conf \
   -DCONFIG_AUXDISPLAY=y -DCONFIG_BRICKPHYR_APPLICATION_STACK_SIZE=4096 \
+  -DCONFIG_USERSPACE_STACKS_EARLY=y \
   -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
 uv run --locked pytest -q -x tests/test_native.py \
   -k 'native-fpu-tests or native-portable-tests'

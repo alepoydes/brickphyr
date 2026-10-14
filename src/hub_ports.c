@@ -146,7 +146,7 @@ static atomic_t activity;
 static uint32_t active_ports; /* lock protects mask; parity token is atomic */
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Membership/publication uses lock; only the existing port worker computes. */
-static struct drivebase {
+struct drivebase {
 	struct port *motor[2];
 	uint32_t handle;
 	enum bp_port_owner owner;
@@ -163,7 +163,11 @@ static struct drivebase {
 	uint32_t applied, imu_epoch;
 	enum { DRIVE_CONFIG_NONE, DRIVE_CONFIG_BASIC, DRIVE_CONFIG_AXIS } configure;
 	bool initializing, cancelled, detach, frame;
-} drivebases[ARRAY_SIZE(pins) / 2];
+};
+/* Slots bound the number of pairs, but unused controllers borrow no heap.
+ * Only the worker retires a live pair; stopped logs retain its record until
+ * owner cleanup or slot reuse. All pointer publication/reclamation holds lock. */
+static struct drivebase *drivebases[ARRAY_SIZE(pins) / 2];
 static uint32_t drivebase_handle;
 static void cancel_drivebase(struct port *p, int error, bool detach);
 #endif
@@ -334,6 +338,15 @@ static int read_motor_log(struct motor_log *log, uint32_t revision, uint32_t row
 	return 0;
 }
 
+static void free_idle_drivebase(size_t slot)
+{
+	struct drivebase *db = drivebases[slot];
+	if (!db || db->owner) return;
+	for (size_t axis = 0; axis < DRIVEBASE_AXES; axis++) if (db->log[axis].owner) return;
+	k_free(db);
+	drivebases[slot] = NULL;
+}
+
 static void free_motor_logs(enum bp_port_owner owner)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -345,10 +358,13 @@ static void free_motor_logs(enum bp_port_owner owner)
 		}
 	}
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
+		struct drivebase *db = drivebases[i];
+		if (!db) continue;
 		for (size_t axis = 0; axis < DRIVEBASE_AXES; axis++) {
-			struct motor_log *log = &drivebases[i].log[axis];
+			struct motor_log *log = &db->log[axis];
 			if (log->owner == owner) free_motor_log(log);
 		}
+		free_idle_drivebase(i);
 	}
 	k_spin_unlock(&lock, key);
 }
@@ -972,14 +988,15 @@ static int drivebase_gyro(struct drivebase *db, struct drivebase_state *state, b
 	return 0;
 }
 
-static void prepare_drivebase(struct drivebase *db, int64_t now)
+static void prepare_drivebase(size_t slot, int64_t now)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	db->frame = false;
-	if (!db->owner) {
+	struct drivebase *db = drivebases[slot];
+	if (!db || !db->owner) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
+	db->frame = false;
 	if (db->cancelled) {
 		drivebase_control_stop(&db->controller);
 		db->cancelled = false;
@@ -1400,10 +1417,11 @@ static __unused int64_t apply_motor(uint32_t port)
 }
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-static void finish_drivebase(struct drivebase *db)
+static void finish_drivebase(size_t slot)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (!db->owner) {
+	struct drivebase *db = drivebases[slot];
+	if (!db || !db->owner) {
 		k_spin_unlock(&lock, key);
 		return;
 	}
@@ -1442,6 +1460,7 @@ static void finish_drivebase(struct drivebase *db)
 		if (db->detach) {
 			for (size_t i = 0; i < 2; i++) db->motor[i]->drivebase = NULL;
 			db->owner = BP_PORT_UNOWNED;
+			free_idle_drivebase(slot);
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -1556,7 +1575,7 @@ static void scan(struct k_work *item)
 	/* Acquire both encoders before computing a pair; neither motor advances
 	 * its observer until the common reference has been calculated. */
 	int64_t now = k_uptime_get();
-	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) prepare_drivebase(&drivebases[i], now);
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) prepare_drivebase(i, now);
 #endif
 #if defined(CONFIG_BRICKPHYR_MOTORS) || defined(CONFIG_BRICKPHYR_PORT_UART)
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
@@ -1569,7 +1588,7 @@ static void scan(struct k_work *item)
 	}
 #endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
-	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) finish_drivebase(&drivebases[i]);
+	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) finish_drivebase(i);
 #endif
 	if (!atomic_get(&stopping) && next != INT64_MAX) {
 		k_work_schedule_for_queue(PORT_QUEUE, &work,
@@ -2129,7 +2148,7 @@ int hub_ports_release(enum bp_port_owner owner)
 		/* Drop even an idle pair before the next application can claim its
 		 * ports; detached numerical state is retired by the worker. */
 		for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
-			pending |= drivebases[i].owner == owner && drivebases[i].detach;
+			pending |= drivebases[i] && drivebases[i]->owner == owner && drivebases[i]->detach;
 		}
 #endif
 		k_spin_unlock(&lock, key);
@@ -2409,7 +2428,8 @@ static struct drivebase *find_drivebase(enum bp_port_owner owner, uint32_t handl
 {
 	if (!handle || (owner != BP_PORT_APPLICATION && owner != BP_PORT_TERMINAL)) return NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
-		if (drivebases[i].handle == handle && drivebases[i].owner == owner) return &drivebases[i];
+		struct drivebase *db = drivebases[i];
+		if (db && db->handle == handle && db->owner == owner) return db;
 	}
 	return NULL;
 }
@@ -2430,17 +2450,29 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 	if (!err && p[0]->motor.gear_ratio != p[1]->motor.gear_ratio) err = -EINVAL;
 	int32_t scales[2];
 	if (!err) err = drivebase_control_scales(p[0]->motor.gear_ratio, setup->wheel_um, setup->track_um, setup->spike, scales);
-	struct drivebase *db = NULL;
-	for (size_t i = 0; i < ARRAY_SIZE(drivebases) && !db; i++) if (!drivebases[i].owner) db = &drivebases[i];
-	if (!err && !db) err = -ENOSPC;
+	size_t slot;
+	for (slot = 0; slot < ARRAY_SIZE(drivebases); slot++) {
+		if (!drivebases[slot] || !drivebases[slot]->owner) break;
+	}
+	if (!err && slot == ARRAY_SIZE(drivebases)) err = -ENOSPC;
 	if (!err && drivebase_handle == UINT32_MAX) err = -EOVERFLOW;
 	if (!err) {
+		struct drivebase *db = drivebases[slot];
+		bool fresh = !db;
+		/* Nonwaiting allocation precedes every output/ownership change. The
+		 * lock prevents an aborted caller from leaving an unpublished record. */
+		if (fresh) db = k_malloc(sizeof(*db));
+		if (!db) {
+			k_spin_unlock(&lock, key);
+			return -ENOMEM;
+		}
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
-			for (size_t i = 0; i < DRIVEBASE_AXES; i++) free_motor_log(&db->log[i]);
+			if (!fresh) for (size_t i = 0; i < DRIVEBASE_AXES; i++) free_motor_log(&db->log[i]);
 			*db = (struct drivebase){.motor = {p[0], p[1]}, .owner = owner, .setup = *setup,
 				.handle = ++drivebase_handle, .initializing = true,
 				.value = {.request = 1, .pending = true}};
+			drivebases[slot] = db;
 			for (size_t i = 0; i < 2; i++) {
 				set_motor_request(p[i], BP_MOTOR_COAST, 0, 0);
 				p[i]->drivebase = db;
@@ -2448,7 +2480,7 @@ int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup
 			}
 			*handle = db->handle;
 			err = 0;
-		}
+		} else if (fresh) k_free(db);
 	}
 	k_spin_unlock(&lock, key);
 	return err;
@@ -2606,8 +2638,8 @@ int hub_drivebase_log_start(enum bp_port_owner owner, uint32_t handle, uint32_t 
 static struct motor_log *drivebase_log(enum bp_port_owner owner, uint32_t handle, uint32_t axis)
 {
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
-		struct drivebase *db = &drivebases[i];
-		if (db->handle == handle && (db->owner == owner || db->log[axis].owner == owner)) return &db->log[axis];
+		struct drivebase *db = drivebases[i];
+		if (db && db->handle == handle && (db->owner == owner || db->log[axis].owner == owner)) return &db->log[axis];
 	}
 	return NULL;
 }
@@ -2644,8 +2676,8 @@ bool hub_drivebase_uses_gyro(void)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	bool used = false;
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) {
-		const struct drivebase *db = &drivebases[i];
-		used |= db->owner && !db->detach && db->value.gyro && (db->value.active || db->value.pending);
+		const struct drivebase *db = drivebases[i];
+		used |= db && db->owner && !db->detach && db->value.gyro && (db->value.active || db->value.pending);
 	}
 	k_spin_unlock(&lock, key);
 	return used;

@@ -237,7 +237,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 196 KiB loader budget in a 215 KiB shared system heap. The Technic native
+and a 204672-byte loader budget in a 224128-byte shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -374,8 +374,8 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 215 KiB heap, including on-demand loader buffers.
-The full Python profile provides 105344 bytes and the reduced Python profile 135040 bytes;
+The native profile provides a 224128-byte heap, including on-demand loader buffers.
+The full Python profile provides 109056 bytes and the core Python profile 138880 bytes;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
@@ -387,6 +387,12 @@ allocations. These are heap capacities, not increases to Python's GC arena.
 Heap contention or fragmentation can reject a new device or an application
 allocation. Physical combined-load acceptance of this layout remains pending.
 
+DriveBase records also use the shared heap only while a pair or its retained logs
+exist, instead of reserving every possible pair at boot. Each F4 record occupies
+1264 bytes plus allocator overhead. There is no allocation in ordinary control
+frames. Pair creation can report `ENOMEM` before changing either motor; retirement
+and log lifetime follow the [paired control contract](ports.md#paired-drive-control).
+
 F4 Bluetooth cryptography also allocates its temporary state from the shared
 system heap, with the former 2 KiB libc arena added to that budget. LittleFS uses
 the mount buffers and file caches supplied by Zephyr. Neither path needs a
@@ -394,9 +400,9 @@ separate libc allocator arena. Crypto allocation failures propagate to the
 Bluetooth operation; pairing under combined memory pressure remains unverified.
 
 Static kernel-object permissions and metadata use one RAM entry per object;
-the sparse address lookup table resides in flash. F4 Python profiles place the
-complete userspace stack range directly after the execution arena, before ordinary
-data, avoiding a large alignment gap after BSS. Stack registration, MPU protection,
+the sparse address lookup table resides in flash. F4 profiles place the complete
+userspace stack range before ordinary data, directly after the execution arena
+when Python is enabled, avoiding an alignment gap after BSS. Stack registration, MPU protection,
 privileged syscall stacks and application limits remain unchanged. Recovered RAM
 is assigned to the shared heap. These layouts require the
 [Zephyr sizing changes](upstream.md#kernel-object-sizing-prerequisite).
