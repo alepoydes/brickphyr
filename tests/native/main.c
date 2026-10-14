@@ -170,8 +170,8 @@ int main(void)
 	CHECK(!status.fault && !status.cleanup_error && available() == capacity);
 #endif
 	size_t hello_budget = 0;
-	for (int i = 0; i < 2; i++) {
-		int err = native_fixture_run(i ? "metadata" : "hello");
+	for (int i = 0; i < (CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE >= 4096 ? 3 : 2); i++) {
+		int err = native_fixture_run(i == 2 ? "largerstack" : i ? "metadata" : "hello");
 		printk("hello load %d\n", err);
 		CHECK(err == 0);
 		k_msleep(60);
@@ -183,6 +183,7 @@ int main(void)
 		application_get_status(&status);
 		printk("state %d result %d fault %u\n", status.state, status.result, status.fault);
 		CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
+		CHECK(status.stack_bytes == (i == 2 ? 4096 : 2048));
 		char output[80] = {0};
 		CHECK(application_output(output, sizeof(output) - 1) > 0);
 		CHECK(strstr(output, "Hello from a native application."));
@@ -201,6 +202,15 @@ int main(void)
 	void *reservation = k_malloc(running_capacity);
 	CHECK(reservation != NULL);
 	CHECK(available() < hello_budget);
+	CHECK(native_fixture_run("hello") == -ENOMEM);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING && !status.cleanup_error);
+	k_free(reservation);
+	CHECK(available() == running_capacity);
+	/* The new loader fits, but its protected stack does not. Admission must
+	 * still preserve the running thread and reclaim its partial reservation. */
+	reservation = k_malloc(running_capacity - hello_budget - 256);
+	CHECK(reservation != NULL && available() >= hello_budget);
 	CHECK(native_fixture_run("hello") == -ENOMEM);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING && !status.cleanup_error);

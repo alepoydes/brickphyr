@@ -96,18 +96,22 @@ int native_fixture_run(const char *name)
 {
 	if (!strcmp(name, "read_error")) {
 		struct image_reader reader = {.fail_at = SIZE_MAX};
-		size_t heap;
-		int err = native_image_check(read_image, &reader, sizeof(hello), &heap);
+		struct native_image_requirements requirements;
+		int err = native_image_check(read_image, &reader, sizeof(hello), &requirements);
 		if (err) return err;
 		/* Interrupt each read of a valid ELF, including nested symbol and
-		 * relocation lookups. Keep the actual I/O error and no accepted budget. */
+		 * relocation lookups. Keep the actual I/O error and no accepted requirements. */
 		size_t calls = reader.calls;
 		for (size_t i = 0; i < calls; i++) {
 			reader = (struct image_reader){.fail_at = i};
-			heap = SIZE_MAX;
-			err = native_image_check(read_image, &reader, sizeof(hello), &heap);
-			if (err != -EIO || heap != SIZE_MAX) {
-				printk("Admission read %u: error %d, heap %u\n", (unsigned)i, err, (unsigned)heap);
+			requirements = (struct native_image_requirements){.heap_size = SIZE_MAX,
+							      .stack_size = SIZE_MAX};
+			err = native_image_check(read_image, &reader, sizeof(hello), &requirements);
+			if (err != -EIO || requirements.heap_size != SIZE_MAX ||
+			    requirements.stack_size != SIZE_MAX) {
+				printk("Admission read %u: error %d, heap %u, stack %u\n",
+				       (unsigned)i, err, (unsigned)requirements.heap_size,
+				       (unsigned)requirements.stack_size);
 				return -EINVAL;
 			}
 		}
@@ -142,8 +146,8 @@ int native_fixture_run(const char *name)
 				if (sparse) {
 					/* Isolate admission: a later backing-allocation error
 					 * must not pass for rejecting the file's memory cost. */
-					size_t heap;
-					err = native_image_check_buffer(changed, length, &heap);
+					struct native_image_requirements requirements;
+					err = native_image_check_buffer(changed, length, &requirements);
 				} else {
 					err = application_run_native(changed, length);
 				}
@@ -208,7 +212,8 @@ int native_fixture_run(const char *name)
 		k_free(changed);
 		return err;
 	}
-	if (!strcmp(name, "badabi") || !strcmp(name, "missingcap") || !strcmp(name, "bigstack")) {
+	if (!strcmp(name, "badabi") || !strcmp(name, "missingcap") ||
+	    !strcmp(name, "bigstack") || !strcmp(name, "largerstack")) {
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) {
 			return -ENOMEM;
@@ -225,6 +230,8 @@ int native_fixture_run(const char *name)
 					abi->major++;
 				} else if (!strcmp(name, "missingcap")) {
 					abi->capabilities = 1U << 31;
+				} else if (!strcmp(name, "largerstack")) {
+					abi->stack_size = 3072;
 				} else {
 					abi->stack_size = UINT32_MAX;
 				}

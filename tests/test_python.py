@@ -142,6 +142,7 @@ def test_engine_replacement():
                 await checked(client, Start())
                 status = await completed(client, state)
                 assert status.format == format
+                assert status.stack == (2048 if format == Format.NATIVE else 16384)
                 assert text in await output(client)
                 if state == 2:
                     assert status.result == 0

@@ -49,6 +49,8 @@ BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY_OVERRIDE &&
 	     CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO);
 BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_CUSTOM_PRIORITY &&
 	     CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO);
+BUILD_ASSERT(CONFIG_DYNAMIC_THREAD_POOL_SIZE == 0,
+	"Application stacks must not reserve a static dynamic-thread pool");
 
 static FUNC_NORETURN void user_memory_fault(const char *operation, const void *data,
 	size_t size, const char *reason)
@@ -74,14 +76,17 @@ static ALWAYS_INLINE void user_memory_check(const void *data, size_t size, size_
 }
 
 K_MUTEX_DEFINE(lifecycle);
-/* A single application stack: no thread creation API or inherited objects. */
-K_THREAD_STACK_DEFINE(application_stack, CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE);
+/* The supervisor reserves the stack before replacing the current application. */
+static k_thread_stack_t *application_stack;
+static size_t application_stack_size;
 static struct k_thread application_thread;
 static struct k_mem_domain application_domain;
 static bool domain_initialized;
 static struct llext *extension;
 static bool loader_initialized;
 #ifdef CONFIG_BRICKPHYR_PYTHON
+/* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
+K_APP_BMEM(python_partition) static uintptr_t python_stack_bottom;
 /* Python maps the whole arena; both engines initialize their own allocations. */
 static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
 	__aligned(APPLICATION_MEMORY_LIMIT)
@@ -108,7 +113,7 @@ static void *upload;
 static size_t upload_capacity;
 static size_t upload_size;
 static size_t upload_bytes;
-static size_t upload_heap;
+static struct native_image_requirements upload_requirements;
 static enum application_format upload_format;
 static bool upload_pybricks;
 static atomic_t session_generation;
@@ -573,12 +578,13 @@ static void discard_upload(void)
 {
 	k_free(upload);
 	upload = NULL;
-	upload_capacity = upload_size = upload_bytes = upload_heap = 0;
+	upload_capacity = upload_size = upload_bytes = 0;
+	upload_requirements = (struct native_image_requirements){0};
 }
 
 static void expire_upload(void)
 {
-	if (!upload_heap && upload_generation != atomic_get(&session_generation)) {
+	if (!upload_requirements.heap_size && upload_generation != atomic_get(&session_generation)) {
 		discard_upload();
 	}
 }
@@ -1998,7 +2004,7 @@ static void python_entry(void *program, void *size, void *format)
 	size_t heap_size = sizeof(execution_memory) - ROUND_UP(length, 16);
 	int result = python_execute(program, length,
 		(uintptr_t)format, execution_memory, heap_size,
-		(uintptr_t)K_THREAD_STACK_BUFFER(application_stack));
+		python_stack_bottom);
 	application_finished(result);
 }
 #endif
@@ -2074,6 +2080,13 @@ static int release(void)
 		execution_memory = NULL;
 	}
 #endif
+	if (!err && application_stack) {
+		err = k_thread_stack_free(application_stack);
+		if (!err) {
+			application_stack = NULL;
+			application_stack_size = 0;
+		}
+	}
 	if (err && !status.cleanup_error) {
 		status.cleanup_error = err;
 	}
@@ -2261,17 +2274,29 @@ void application_buttons(uint32_t buttons)
 }
 
 /* lifecycle is held; neither engine may replace a thread before it is joined. */
-static int prepare(void)
+static int prepare(size_t stack_size)
 {
 	if (shutting_down) {
 		return -ESHUTDOWN;
 	}
+	/* Allocation belongs to the calling supervisor, not the application. Restore
+	 * its resource pool before any other work or thread creation can inherit it.
+	 */
+	struct k_thread *caller = k_current_get();
+	struct k_heap *pool = caller->resource_pool;
+	k_thread_system_pool_assign(caller);
+	k_thread_stack_t *stack = k_thread_stack_alloc(stack_size, K_USER);
+	k_thread_heap_assign(caller, pool);
+	if (!stack) {
+		return -ENOMEM;
+	}
 	int err = reap(true);
 	if (err) {
-		return err;
+		goto failed;
 	}
 	if (!hub_power_application(true)) {
-		return -ESHUTDOWN;
+		err = -ESHUTDOWN;
+		goto failed;
 	}
 	if (!domain_initialized) {
 		err = k_mem_domain_init(&application_domain, 0, NULL);
@@ -2279,7 +2304,14 @@ static int prepare(void)
 	}
 	if (err) {
 		hub_power_application(false);
+		goto failed;
 	}
+	application_stack = stack;
+	application_stack_size = stack_size;
+	return 0;
+failed:
+	/* This reservation was never attached to a thread. Keep the first error. */
+	(void)k_thread_stack_free(stack);
 	return err;
 }
 
@@ -2288,7 +2320,7 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 {
 	status = value;
 	status.state = APPLICATION_RUNNING;
-	status.stack_bytes = sizeof(application_stack);
+	status.stack_bytes = K_THREAD_STACK_LEN(application_stack_size);
 	(void)z_impl_bp_set_stop_buttons(value.format == APPLICATION_NATIVE ? 0 : 1);
 	atomic_clear(&return_value);
 	atomic_clear(&fault_reason);
@@ -2308,8 +2340,9 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 	k_spin_unlock(&output_lock, key);
 	application_record_reset();
 	k_thread_create(&application_thread, application_stack,
-			K_THREAD_STACK_SIZEOF(application_stack), entry, first, second, third,
+			application_stack_size, entry, first, second, third,
 			K_LOWEST_APPLICATION_THREAD_PRIO, K_USER, K_FOREVER);
+	k_thread_heap_assign(&application_thread, NULL);
 	int err = k_mem_domain_add_thread(&application_domain, &application_thread);
 	if (err) {
 		k_thread_abort(&application_thread);
@@ -2332,8 +2365,10 @@ static __noinline int start_native(const void *function, size_t length, size_t h
 }
 
 /* lifecycle is held and this loader has passed native_image_check. */
-static int run_image(struct llext_loader *loader, size_t length, size_t heap_size)
+static int run_image(struct llext_loader *loader, size_t length,
+	const struct native_image_requirements *requirements)
 {
+	size_t heap_size = requirements->heap_size;
 #ifndef CONFIG_BRICKPHYR_PYTHON
 	/* Admission must not stop the current program when the shared heap is full. */
 	void *memory = k_malloc(heap_size);
@@ -2341,7 +2376,8 @@ static int run_image(struct llext_loader *loader, size_t length, size_t heap_siz
 		return -ENOMEM;
 	}
 #endif
-	int err = prepare();
+	/* Keep the existing native trampoline/exception budget for tiny requests. */
+	int err = prepare(MAX(requirements->stack_size, 2048));
 	if (err) {
 #ifndef CONFIG_BRICKPHYR_PYTHON
 		k_free(memory);
@@ -2387,7 +2423,7 @@ failed:
 static int run_python(const void *program, size_t length, enum application_format format,
 	bool soft_reset, int program_id)
 {
-	int err = prepare();
+	int err = prepare(CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE);
 	if (err) {
 		return err;
 	}
@@ -2401,6 +2437,7 @@ static int run_python(const void *program, size_t length, enum application_forma
 		err = k_mem_domain_add_partition(&application_domain, &python_partition);
 	}
 	if (!err) {
+		python_stack_bottom = (uintptr_t)K_THREAD_STACK_BUFFER(application_stack);
 		err = start_thread(python_entry, retained, (void *)length, (void *)(uintptr_t)format,
 			(struct application_status){.format = format, .image_bytes = length, .repl = !program,
 				.program_id = program_id,
@@ -2429,10 +2466,11 @@ int application_repl(void)
 #endif
 
 /* The linker's section cache is needed only for loading, not admission. */
-static __noinline int run_native_buffer(const void *image, size_t length, size_t heap)
+static __noinline int run_native_buffer(const void *image, size_t length,
+	const struct native_image_requirements *requirements)
 {
 	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(image, length);
-	return run_image(&loader.loader, length, heap);
+	return run_image(&loader.loader, length, requirements);
 }
 
 int application_run_native(const void *image, size_t length)
@@ -2440,11 +2478,11 @@ int application_run_native(const void *image, size_t length)
 	if (!image || !length) {
 		return -EINVAL;
 	}
-	size_t heap_size;
-	int err = native_image_check_buffer(image, length, &heap_size);
+	struct native_image_requirements requirements;
+	int err = native_image_check_buffer(image, length, &requirements);
 	if (!err) {
 		k_mutex_lock(&lifecycle, K_FOREVER);
-		err = run_native_buffer(image, length, heap_size);
+		err = run_native_buffer(image, length, &requirements);
 		k_mutex_unlock(&lifecycle);
 	}
 	return err;
@@ -2455,7 +2493,7 @@ int application_write_upload(const char *path)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	expire_upload();
-	if (!upload_heap || (upload_format != APPLICATION_NATIVE && upload_format != APPLICATION_FILES)) {
+	if (!upload_requirements.heap_size || (upload_format != APPLICATION_NATIVE && upload_format != APPLICATION_FILES)) {
 		k_mutex_unlock(&lifecycle);
 		return -ENOEXEC;
 	}
@@ -2496,7 +2534,8 @@ static int read_file(void *context, size_t offset, void *data, size_t size)
 
 /* The caller's store lock preserves the file during both admission and loading.
  * Native ELF keeps its streaming loader; Python snapshots its complete namespace. */
-static int read_stored(const char *path, size_t length, void **image, size_t *heap)
+static int read_stored(const char *path, size_t length, void **image,
+	struct native_image_requirements *requirements)
 {
 	*image = NULL;
 	struct fs_file_t file;
@@ -2508,7 +2547,7 @@ static int read_stored(const char *path, size_t length, void **image, size_t *he
 	uint8_t magic[4];
 	err = length < sizeof(magic) ? -ENOEXEC : read_file(&file, 0, magic, sizeof(magic));
 	if (!err && !memcmp(magic, "\x7f" "ELF", sizeof(magic))) {
-		err = native_image_check(read_file, &file, length, heap);
+		err = native_image_check(read_file, &file, length, requirements);
 	} else if (!err) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (length > APPLICATION_IMAGE_LIMIT) {
@@ -2532,8 +2571,8 @@ static int read_stored(const char *path, size_t length, void **image, size_t *he
 int application_check_file(const char *path, size_t length)
 {
 	void *image;
-	size_t heap;
-	int err = read_stored(path, length, &image, &heap);
+	struct native_image_requirements requirements;
+	int err = read_stored(path, length, &image, &requirements);
 	k_free(image);
 	return err;
 }
@@ -2554,10 +2593,11 @@ static __noinline int stored_size(const char *path, size_t *length)
 }
 
 /* Keep the linker's cache off the file admission and Python paths. */
-static __noinline int run_native_file(const char *path, size_t length, size_t heap)
+static __noinline int run_native_file(const char *path, size_t length,
+	const struct native_image_requirements *requirements)
 {
 	struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
-	return run_image(&loader.loader, length, heap);
+	return run_image(&loader.loader, length, requirements);
 }
 
 int application_run_file(const char *path, int program_id)
@@ -2568,8 +2608,8 @@ int application_run_file(const char *path, int program_id)
 		return err;
 	}
 	void *image;
-	size_t heap;
-	err = read_stored(path, length, &image, &heap);
+	struct native_image_requirements requirements;
+	err = read_stored(path, length, &image, &requirements);
 	if (!err) {
 		k_mutex_lock(&lifecycle, K_FOREVER);
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -2578,7 +2618,7 @@ int application_run_file(const char *path, int program_id)
 		} else
 #endif
 		{
-			err = run_native_file(path, length, heap);
+			err = run_native_file(path, length, &requirements);
 		}
 		k_mutex_unlock(&lifecycle);
 	}
@@ -2610,12 +2650,14 @@ static int complete_upload(void)
 	if (upload_format != APPLICATION_NATIVE) {
 		err = python_image_check(upload, upload_size, upload_format);
 		if (!err) {
-			upload_heap = sizeof(execution_memory);
+			upload_requirements = (struct native_image_requirements){
+				.heap_size = sizeof(execution_memory),
+				.stack_size = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE};
 		}
 		return err;
 	}
 #endif
-	return native_image_check_buffer(upload, upload_size, &upload_heap);
+	return native_image_check_buffer(upload, upload_size, &upload_requirements);
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -2730,7 +2772,7 @@ int application_upload(enum application_format format, size_t offset, size_t tot
 		memcpy((uint8_t *)upload + offset, data, length);
 		upload_bytes += length;
 	}
-	if (upload_size && upload_bytes == upload_size && !upload_heap) {
+	if (upload_size && upload_bytes == upload_size && !upload_requirements.heap_size) {
 		err = complete_upload();
 		if (err) {
 			discard_upload();
@@ -2748,14 +2790,14 @@ int application_run_uploaded(bool retain)
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	expire_upload();
 	int err = -ENODATA;
-	if (upload_heap) {
+	if (upload_requirements.heap_size) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (upload_format != APPLICATION_NATIVE) {
 			err = run_python(upload, upload_size, upload_format, false, upload_pybricks ? 0 : -1);
 		} else
 #endif
 		{
-			err = run_native_buffer(upload, upload_size, upload_heap);
+			err = run_native_buffer(upload, upload_size, &upload_requirements);
 		}
 		if (!err && !retain) {
 			/* The temporary buffer loader copies all retained sections. */
@@ -2773,7 +2815,7 @@ static void copy_status(struct application_status *value)
 	value->upload_bytes = upload_bytes;
 	value->upload_size = upload_size;
 	value->upload_format = upload_format;
-	value->upload_ready = upload_heap != 0;
+	value->upload_ready = upload_requirements.heap_size != 0;
 	k_spinlock_key_t key = k_spin_lock(&output_lock);
 	value->output_dropped = output_dropped;
 	value->output_bytes = ring_buf_size_get(&output);

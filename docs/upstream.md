@@ -242,6 +242,22 @@ default layout because of its reserved SRAM prefix. The final map must be checke
 for each layout. ARM protection, dynamic-object, futex, system-mutex and application
 checks cover these changes. Publication and manifest pinning remain pending.
 
+## Dynamic application stacks
+
+On-demand protected application stacks require local Zephyr commit `33872c3e`
+on `topic/dynamic-user-stacks`, pending publication and manifest integration.
+The ARM allocator aligns each stack to its actual MPU size and accounts for the
+privileged stack and guard without an extra full user-stack-sized allowance.
+User-visible stack metadata excludes privileged storage. Guard checks accept
+dynamic placement, and freeing a stack belonging to a live suspended thread is
+rejected using its stack object rather than its adjusted writable start.
+
+The ARM/QEMU regression checks allocation, concurrent user threads, syscalls,
+MPU denial of metadata access, suspended-stack lifetime and complete reclamation.
+Brickphyr additionally checks native ABI stack sizes, engine replacement, faults
+and REPL reset through its application supervisor. These checks do not establish
+sustained physical memory-pressure behavior.
+
 ## Syscall diagnostic sizing prerequisite
 
 The local Zephyr `topic/syscall-memory-logging` change, commit `ab368896`, shares
@@ -530,7 +546,7 @@ integration remain pending.
 
 Local Zephyr commit `3fa06829` on `topic/user-stack-placement` places the
 MPU-aligned user-stack group before ordinary `.noinit` objects. This avoids the
-interior alignment gap caused by the F4 Python stack while preserving stack
+interior alignment gap of the earlier static F4 Python stack while preserving stack
 sizes, alignment and kernel-object bounds. Both linker definitions carry the
 same order. ARM checks cover stack metadata and access, and Brickphyr's protected
 native-Python execution, fault recovery and forced stop. Publication and manifest

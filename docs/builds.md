@@ -203,7 +203,8 @@ The artifacts are `build/technic-native/zephyr/firmware.zip` and
 `build/technic-native/zephyr/brickphyr-sdk.tar.xz`. Use the
 [SDK example build](#experimental-native-sdk) with this archive, or reuse an
 F4 SDK ELF whose required services and memory fit. This profile reserves a
-25 KiB shared heap and 2 KiB application stack; the on-demand loader budget is
+25 KiB shared heap, including its on-demand 2 KiB application stack and privileged
+stack overhead; the loader budget is
 limited to 16 KiB and uploads to 4 KiB. The upload and loaded program coexist
 during loading; replacement briefly also retains the old loader buffer.
 Use [BLE application commands](host.md#native-applications) for RAM upload,
@@ -620,7 +621,8 @@ built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
 these include the configured system heap and, for Python builds, a shared 64 KiB
-execution arena. Native-only builds obtain loader memory from the heap on demand.
+execution arena. Application stacks and native-only loader buffers come from the
+heap on demand and are released after the supervised application is quiescent.
 The loader reports the image size,
 reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
 the receive buffer is then released. File loading reserves no ELF receive buffer

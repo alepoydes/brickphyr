@@ -85,8 +85,9 @@ ordinary initialization, connection and ownership errors.
 
 Admission requires the same major and architecture, a supported minor, all
 required services and sufficient stack and loader memory. Rejection preserves
-the running application. The stack requirement is an admission threshold; the
-firmware still reserves one configured application stack. A matching architecture alone cannot promise that any
+the running application. The supervisor allocates the requested stack on demand,
+with a 2048-byte runtime minimum and MPU rounding. The configured stack size is
+the admission ceiling. A matching architecture alone cannot promise that any
 program fits or that a requested device is present. Within a major version,
 existing function slots, signatures, structure layouts, units and semantics are
 fixed; append calls at the end and increase the minor version. Incompatible
@@ -202,14 +203,17 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 214144-byte loader budget in a 233216-byte shared system heap. The Technic native
+and a 214144-byte loader budget in a 235264-byte shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
-images with large BSS can still exceed it. The native-only
-application stack is 2048 bytes; compiler-generated privileged stacks and guards
-are additional firmware RAM. `app status`
+images with large BSS can still exceed it. The native-only profile permits a
+2048-byte user stack. Its privileged syscall stack, guard and allocation metadata
+also come from the shared heap. The supervisor reserves a replacement's stack
+before stopping the current program; insufficient heap or alignment space leaves
+that program running. It joins the thread before freeing the stack on return,
+fault or explicit stop. `app status`
 reports the image, reserved loader budget, LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
@@ -482,15 +486,18 @@ raises `MemoryError`. Status reports its reservation as `code` and usage as
 The 32 KiB upload limit also applies to Python. The retained source/bytecode shares
 the 64 KiB arena with the GC heap, so larger programs leave less runtime memory.
 The Python profile requests a 12 KiB application stack; the F4 MPU rounds its
-allocation to 16 KiB. Stack checking uses the actual lower bound with a 512-byte
-MicroPython margin. These are admission limits, not guarantees that every image
+allocation to 16 KiB. This allocation exists only while Python is loaded; a
+native application in the same image uses its own ABI requirement. Stack checking
+uses the actual lower bound with a 512-byte MicroPython margin. These are
+admission limits, not guarantees that every image
 within them has enough compiler memory or stack. Status reports an execution error
 or protection fault when applicable.
 
 Brickphyr's main supervisor and dedicated service threads use kernel-only stacks
 with their configured byte budgets. They do not reserve a second privileged stack
 for a user-mode transition.
-The application retains its MPU-aligned user stack and privileged syscall stack.
+The active application allocates its MPU-aligned user stack and privileged
+syscall stack from the shared heap; idle firmware reserves neither.
 Linker RAM totals also include alignment gaps and kernel-object metadata; they
 are not a measure of free system heap or Python GC capacity.
 Firmware services use queues and events; the unused Zephyr asynchronous mailbox
@@ -501,11 +508,12 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native profile provides a 233216-byte heap, including on-demand loader buffers.
-The full Python profile provides 117888 bytes and the core Python profile 147968 bytes;
-both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
-These F4 profiles assign the remaining linker RAM to the shared heap, up to the
-319 KiB firmware RAM boundary; the loader-selector SRAM remains reserved.
+The native profile provides a 235264-byte heap, including on-demand loader buffers
+and stacks. The full Python profile provides 134272 bytes and the core Python
+profile 164352 bytes; both retain a 64 KiB execution arena and allocate the active
+engine's stack from that heap. These F4 profiles assign available linker RAM to
+the shared heap, below the 319 KiB firmware RAM boundary; the loader-selector
+SRAM remains reserved.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
 Getters reconstruct the fixed 288-byte public structure in caller-owned memory;
@@ -538,20 +546,26 @@ separate libc allocator arena. Crypto allocation failures propagate to the
 Bluetooth operation; pairing under combined memory pressure remains unverified.
 
 Static kernel-object permissions and metadata use one RAM entry per object;
-the sparse address lookup table resides in flash. F4 profiles place the complete
-userspace stack range before ordinary data, directly after the execution arena
-when Python is enabled, avoiding an alignment gap after BSS. Stack registration, MPU protection,
-privileged syscall stacks and application limits remain unchanged. Recovered RAM
+the sparse address lookup table resides in flash. F4 profiles place any static
+userspace stacks before ordinary data to avoid an alignment gap after BSS.
+Application stacks instead use protected heap allocations. Recovered static RAM
 is assigned to the shared heap. These layouts require the
-[Zephyr sizing changes](upstream.md#kernel-object-sizing-prerequisite).
+[Zephyr sizing changes](upstream.md#kernel-object-sizing-prerequisite) and
+[dynamic-stack correction](upstream.md#dynamic-application-stacks).
 ARM emulation checks cover lookup, permissions, protected stacks and application
 lifecycle; physical combined-load acceptance of the enlarged heaps remains pending.
+
+On one Robot Inventor F4, the full Python image runs native ELF with a 2 KiB
+stack and Python with a 16 KiB stack over USB/BLE. USB checks also cover a
+32 KiB source and a freshly installed native program. Existing files retain
+their contents. These are bounded lifecycle checks, not sustained memory-pressure
+or concurrent-engine acceptance.
 
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports
 current free/allocated system-heap bytes and the allocation high-water mark since
-boot. This heap holds uploads, receive-buffer growth and executable native
-code; its free bytes are not the Python GC budget. In REPL, `gc.mem_free()` and
+boot. This heap holds uploads, receive-buffer growth, executable native code and
+application stacks; its free bytes are not the Python GC budget. In REPL, `gc.mem_free()` and
 `gc.mem_alloc()` report the separate GC heap. Use `app status` after a program
 ends to inspect its stack high-water and native-code usage. A live application's
 `unused` stack field is not a current stack measurement.
@@ -569,15 +583,16 @@ request may still admit the fragment. Heap counters do not report the largest
 contiguous allocation or prove absence of fragmentation.
 ARM/QEMU checks exercise a synthetic 32 KiB bundle with a native import through
 RAM and stored starts and verify system-heap reclamation. Its fixture uses a
-64 KiB system heap and 64 KiB execution arena, but does not establish F4 USB/BLE
-driver overhead or the compiler requirements of other programs.
+80 KiB system heap, including the on-demand stack, and a 64 KiB execution arena;
+it does not establish F4 USB/BLE driver overhead or other programs' compiler needs.
 
 On one Robot Inventor F4 (PCB revision unknown), the full Python profile with
 Zephyr's optional memory counters also runs a synthetic 32,768-byte file map
 from RAM and LittleFS over USB. Most of the image is an unused resource; the
 program imports a dynamic C module and creates default HubNetwork inboxes without
 connecting peers. With Zephyr 4.4.2, Zephyr SDK 1.0.1 and the earlier 64 KiB
-system-heap configuration, the observed budgets are:
+system-heap configuration with a separate static application stack, the observed
+budgets were:
 
 | Allocation | Observed bytes |
 | --- | ---: |

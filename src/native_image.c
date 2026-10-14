@@ -84,7 +84,8 @@ static int name_at(struct image *image, const elf_shdr_t *strings, size_t offset
 	return err ? err : memchr(name, 0, length) ? 0 : -ENOEXEC;
 }
 
-int native_image_check(native_image_read_fn read, void *context, size_t length, size_t *heap_size)
+int native_image_check(native_image_read_fn read, void *context, size_t length,
+		       struct native_image_requirements *requirements)
 {
 	if (length > APPLICATION_IMAGE_LIMIT) {
 		return -EFBIG;
@@ -118,6 +119,7 @@ int native_image_check(native_image_read_fn read, void *context, size_t length, 
 		return err ? err : -ENOEXEC;
 	}
 	bool abi = false;
+	size_t stack_size = 0;
 	bool entry = false;
 	unsigned int symtabs = 0;
 	struct region regions[LLEXT_MEM_COUNT] = {0};
@@ -154,6 +156,7 @@ int native_image_check(native_image_read_fn read, void *context, size_t length, 
 			if (!identity.stack_size || identity.stack_size > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) {
 				return -ENOMEM;
 			}
+			stack_size = identity.stack_size;
 			abi = true;
 		}
 		if (sh.sh_flags & SHF_ALLOC) {
@@ -299,7 +302,8 @@ int native_image_check(native_image_read_fn read, void *context, size_t length, 
 	if (budget > HEAP_LIMIT) {
 		return -ENOMEM;
 	}
-	*heap_size = budget;
+	requirements->heap_size = budget;
+	requirements->stack_size = stack_size;
 	return 0;
 }
 
@@ -309,7 +313,8 @@ static int read_buffer(void *context, size_t offset, void *data, size_t size)
 	return 0;
 }
 
-int native_image_check_buffer(const void *data, size_t length, size_t *heap_size)
+int native_image_check_buffer(const void *data, size_t length,
+			      struct native_image_requirements *requirements)
 {
-	return native_image_check(read_buffer, (void *)data, length, heap_size);
+	return native_image_check(read_buffer, (void *)data, length, requirements);
 }

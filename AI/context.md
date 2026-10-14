@@ -39,7 +39,9 @@ Critical-battery cutoff has synthetic ADC checks. See
 [battery and charger support](../docs/hardware.md#hub-battery).
 
 One protected application lifecycle serves the native C SDK and optional
-MicroPython engine. RAM uploads and named LittleFS programs use the same
+MicroPython engine. Stacks are allocated for the active engine and reclaimed
+after its thread is joined; native programs request their size through the ABI.
+RAM uploads and named LittleFS programs use the same
 supervisor, store, Shell/SMP operations and USB/BLE transports. Application stop,
 fault recovery and disconnect handling release or retain resources according to
 the [application contract](../docs/applications.md); ordinary host disconnect

@@ -314,6 +314,9 @@ config BRICKPHYR_NATIVE
 	depends on !CURRENT_THREAD_USE_TLS && !USERSPACE_THREAD_MAY_RAISE_PRIORITY
 	depends on LOG && LOG_MODE_DEFERRED
 	select LOG_OUTPUT
+	select THREAD_STACK_INFO
+	select DYNAMIC_THREAD
+	select DYNAMIC_THREAD_ALLOC
 	help
 	  One separately built application, with a compatible versioned SDK.
 
@@ -328,14 +331,17 @@ config LLEXT_EXPORT_SYMBOL_GROUP_BRICKPHYR
 	default y if BRICKPHYR_NATIVE
 
 config BRICKPHYR_APPLICATION_STACK_SIZE
-	int "Application stack bytes"
+	int "Maximum application stack bytes"
 	depends on BRICKPHYR_NATIVE
 	default 12288 if BRICKPHYR_PYTHON
 	default 2048
 	range 2048 32768
 	help
-	  Shared by execution engines. Python compilation and exception reporting
-	  require more stack than the minimal native entry; measure high-water use.
+	  Admission limit for native ABI requirements and the Python stack size.
+	  Stacks are allocated only while an application is loaded, rounded for
+	  MPU protection, with a 2048-byte minimum for the native entry/exit path.
+	  Python compilation and exception reporting require more stack than the
+	  minimal native entry; measure high-water use.
 
 config BRICKPHYR_APPLICATION_IMAGE_SIZE
 	int "Maximum uploaded application bytes"
