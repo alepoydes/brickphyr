@@ -9,59 +9,24 @@ acceptance, including REPL, named programs, native `.mpy` and Pybricks clients.
 
 ## Native portability and resource efficiency plan
 
-The next platform milestone reduces firmware memory and execution costs while
-maximizing the memory available to user applications. Preserve MPU isolation,
-service responsiveness, supervised cleanup and stored data. Measure the native
-and full Python profiles separately: linked RAM includes application arenas and
-allocator reserves, so it is not the firmware's live working set.
+The [platform roadmap](roadmap.md) owns delivery order and the retained resource
+optimization work. Complete SPIKE/Inventor F4 support and prepare the runtime for
+Babybot while maximizing useful application memory. Preserve MPU isolation,
+service responsiveness, supervised cleanup and stored data. Native Technic is a
+secondary port; Python on Technic and WASM are outside this milestone.
 
-1. Establish comparable flash, RAM, stack, peak loading and execution budgets.
-   Include the four-port Control+/Technic Hub's reference limits from the start:
-   208 KiB firmware flash, 16 KiB user flash and 64 KiB RAM. Check the feasibility
-   of protected native execution and its distinct BLE controller before promising
-   a complete port. Preserve its factory loader and checksum-sensitive storage.
-2. Enable hardware single-precision arithmetic with the hard-float calling
-   convention on capable targets. Rebuild the firmware, libraries, MicroPython
-   and SDK together; compatibility with earlier experimental native binaries is
-   not required. Check FP context across preemption, system calls and application
-   termination, including native/Viper/C `.mpy`, and measure stack and memory costs.
-3. Keep upstream CMSIS-DSP optional in firmware and the matching native SDK,
-   linking only required routines and tables. Accept the sensor-processing
-   example through RAM and stored-program workflows over USB/BLE. CMSIS-NN remains a
-   later optional library for a concrete model, not a mandatory firmware payload.
-4. Remove unnecessary image contents, dependencies and allocations; size buffers
-   and stacks from contracts and measurements. Review loading copies, inactive
-   engine reservations and MPU alignment. Return recovered capacity to applications.
-   Optimize measured execution bottlenecks, including interrupt work, copies,
-   queues and service waits, preserving numerical behavior and responsiveness.
-   Report memory, throughput and latency changes together.
-5. Decouple the native application ABI from firmware configuration and Zephyr's
-   generated syscall numbering. Version the public interface and check required
-   capabilities and memory before execution, retaining ELF/LLEXT. Target the same application binary
-   on SPIKE/Inventor F4 and the four-port Technic Hub when both builds provide its
-   instruction set, calling convention and required services. Keep adaptation
-   costs small and measure them; do not introduce a VM for this compatibility.
-6. Bring up Technic as a board/profile in the same implementation: first boot,
-   recovery, power/UI, watchdog and BLE Shell; then IMU, four ports, motors,
-   settings, storage and native applications. Reuse the Pybricks BLE installer
-   and selected hardware code. Start with the native profile; additional engines
-   depend on measured capacity. Deliver a build-checked port while Technic hardware
-   is unavailable. Cross-hub hardware acceptance remains separate and requires
-   the same binary running on physical F4 and Technic boards.
-7. Complete the remaining [Python and device acceptance](python.md#starting-point),
-   including client transfer recovery, persistent programs and battery watchdog
-   behavior. Keep USB-initiated wake and physical charging-source acceptance as
-   explicit hardware checks. Define storage-reset scope before implementation.
-8. Publish required dependency changes in their forks, pin reachable revisions
-   and accept clean builds, SDK examples and release artifacts. Report per-board
-   capabilities and outstanding physical checks explicitly.
+Hard-float execution, optional CMSIS-DSP and the versioned ELF API independent of
+Zephyr syscall numbering are existing foundations, described below. Continue
+measuring loading peaks, stacks, buffers, reachable code and execution costs;
+linked RAM includes allocatable reserves and is not the firmware's live working set.
 
-The native ELF interface now has a versioned table independent of firmware
-configuration; Technic has build-only power/UI/watchdog, BLE management and
-RAM-native profiles with shared IMU acquisition, battery observations, telemetry
-and electrical port identification, plus direct passive-motor output. Persistent
-storage, UART negotiation and regulated motors remain pending. Existing Python
-acceptance work remains tracked in its owning plan; WASM is outside this milestone.
+The current supervisor executes one engine at a time. The selected extension is
+one application with an independently scheduled native controller and optional
+Python orchestration, sharing device claims and a supervised lifetime. Its
+[architecture work](roadmap.md#architecture-work-within-the-blocks) must define
+memory access, bounded data exchange, faults and quiescence before concurrent
+execution is enabled. Preserve standalone native and Python operation; do not
+reuse the same memory region for contexts that will be live together.
 
 ## Experimental native profile
 
@@ -712,9 +677,11 @@ load.
 
 ## Application formats
 
-One application executes at a time, under one of the engines enabled in the
-installed firmware. Native applications do not initialize MicroPython or WAMR.
-Python and WASM use the same device services through their respective bindings.
+One application executes at a time. The current implementation selects one
+enabled engine from its format; the planned native-control/Python extension
+adds two execution contexts within that same application lifetime. Standalone
+native applications do not initialize MicroPython or WAMR. Runtime bindings use
+the shared device services; WASM remains unimplemented.
 
 For interpreted engines, document the privilege of the VM, its bindings, and any
 native extensions. Language-level restrictions alone are not evidence of MPU

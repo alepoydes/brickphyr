@@ -5,20 +5,23 @@ This is the selected design. Implementation status belongs in
 
 ## Purpose and boundaries
 
-Brickphyr is a reusable application platform for LEGO hubs. Its first useful
-endpoint is a separately uploaded native application that reads sensors and
-commands motors without starting Python. Python compatibility and WASM use the
-same hardware services; they are part of the architecture from the beginning.
+Brickphyr is a platform for application-defined robot control, state estimation
+and learning on LEGO hubs. SPIKE/Inventor F4 and Babybot are the primary target
+and integration workload. Native computation, full Python and observable device
+timing share the same hardware services. The [roadmap](roadmap.md) retains full
+SPIKE support and resource optimization while adding independent control execution.
 
 The firmware contains device support, execution engines, and application lifecycle
 management. Robot-specific estimation, planning, balancing, and learning remain
 applications. In particular, babybot is a separate repository consuming an SDK
 and an installed firmware, not a component compiled into Brickphyr.
 
-One user application runs at a time. This does not mean one system thread:
-hardware, communication, and lifecycle services must continue independently.
-General-purpose multi-process scheduling and simultaneous native/Python/WASM
-applications are outside the initial scope.
+One user application owns a set of device claims and component lifetimes. The
+selected extension permits a native control context alongside an optional Python
+context within that application; standalone native and Python operation remain
+supported. This is planned work: the current implementation executes one engine
+at a time. Hardware and management services continue independently. General-purpose
+multi-process scheduling is outside scope; WASM remains a later extension.
 
 One Zephyr system serves all execution engines and host interfaces. Selecting a
 Pybricks-compatible or extended management interface does not switch operating
@@ -28,7 +31,7 @@ a Unix process model, and a POSIX shell are not project goals.
 ## Execution and ownership
 
 ```text
-one application: native | MicroPython + Pybricks | WASM
+one application: native | Python | native control + Python
                          |
              bounded hardware/service interface
                          |
@@ -45,6 +48,12 @@ it provides the general mechanism and Pybricks where it provides LEGO-specific
 behavior. Do not run the entire cooperative PBIO system as one opaque task and
 claim its original scheduling dependencies have disappeared.
 
+Native ELF on Technic/Control+ is a secondary goal using the shared SDK, hardware
+services and protected lifecycle. Python on that hub is outside scope. Supporting
+every Pybricks hub or accessory is not a prerequisite for the primary robot
+workload; preserve the agreed behavior of supported APIs. See
+[firmware profiles](builds.md#firmware-profiles).
+
 Each hardware resource has one owner. A port is not concurrently controlled by a
 raw PWM writer, a motor servo, and a diagnostic tool. Runtime bindings translate
 language values at the boundary; they do not reimplement the device behavior.
@@ -56,6 +65,12 @@ services for deferred processing. A slow application cannot hold a lock needed
 by essential device service indefinitely. Long-lived ownership and temporary
 locks are different: a program may own a motor while a firmware thread services it.
 Driver callbacks and queues need explicit cancellation and lifetime rules.
+
+The native control context must not wait on Python GC or mutable VM objects.
+Exchange bounded snapshots and versioned commands; parameter application occurs
+at a defined control-step boundary. Define memory access, component faults and
+stop/unload ordering before enabling concurrent execution. The supervisor must
+quiesce all owned execution before reclaiming module code or data.
 
 ## Isolation and application lifetime
 

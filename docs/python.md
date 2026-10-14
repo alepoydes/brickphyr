@@ -17,6 +17,16 @@ through a usable Python implementation on the initial Prime/Inventor F4 target.
 The working native engine remains supported. The behavioral reference is
 Pybricks v4.1.0b6, as selected in [compatibility](compatibility.md).
 
+The F4 requirements below retain source compilation, Python REPL and compatible
+`.mpy` modules. Python is outside the Technic/Control+ scope; that hub targets
+native ELF applications only. Follow the shared
+[platform roadmap](roadmap.md) for delivery order. It retains this acceptance
+inventory while adding independent native control alongside Python within one
+application. That concurrent runtime is new work; the current single-engine
+checks below do not establish independence from Python GC or simultaneous memory
+capacity. Unavailable external accessories do not block the initial Babybot
+integration experiment.
+
 ## Starting point
 
 Continue the existing implementation; the steps below are not all new work.

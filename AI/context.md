@@ -1,6 +1,8 @@
 # Project orientation
 
 Brickphyr is an open application platform for LEGO hubs built on Zephyr RTOS.
+Its primary target is SPIKE/Inventor F4 as a foundation for Babybot and similar
+robots. Complete SPIKE support and resource efficiency remain required work.
 Read [AGENTS.md](../AGENTS.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [the architecture](../docs/architecture.md), then the document owning the task:
 
@@ -10,6 +12,8 @@ Read [AGENTS.md](../AGENTS.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and
 - [Subsystems](../docs/subsystems.md) and [upstream](../docs/upstream.md): code
   ownership and dependency integration.
 - [Applications](../docs/applications.md): shared lifecycle and storage.
+- [Roadmap](../docs/roadmap.md): delivery order, retained optimizations and
+  preparation for Babybot.
 - [Python plan](../docs/python.md) and [compatibility](../docs/compatibility.md):
   implementation sequence and Pybricks behavior.
 - [Host](../docs/host.md) and [Bluetooth](../docs/bluetooth.md): clients,
@@ -72,36 +76,29 @@ remains pending.
 
 ## Next platform milestone
 
-Prioritize [resource efficiency and native ABI portability](../docs/applications.md#native-portability-and-resource-efficiency-plan):
-reduce firmware memory and execution costs, maximize application capacity, and
-allow a common native binary on compatible SPIKE F4 and Technic builds without
-binding it to Zephyr's internal configuration. Preserve isolation, cleanup and
-service responsiveness; measure adapter costs and both native/Python profiles.
-F4 hard-float execution and a matching SDK compiler have ARM and bounded USB/BLE
-checks. Native `.mpy` requires that SDK; ordinary Pybricks bytecode stays compatible.
-Port metadata now allocates only advertised modes, sharing reclaimed heap with
-applications. A versioned native ELF API replaces configuration-specific syscall
-IDs; cross-hub hardware acceptance and further memory optimization remain work.
-Technic has [build-only power/UI/watchdog, BLE and RAM-native profiles](../docs/hardware.md#experimental-technic-base).
-Its CC2640 transport, controller, GATT adapter and shared Shell/SMP endpoint have
-synthetic checks through the production worker. No Technic board has been available
-for boot, BLE, applications or recovery acceptance. The shared native loader has
-ARM checks with Technic's smaller application budgets. Its four-port electrical
-detector shares the F4 service and has synthetic GPIO checks. Direct passive-motor
-output reuses the same service with main/complementary PWM mappings and synthetic
-selection/coast checks; UART negotiation, regulated motors and storage remain absent.
-The native profile reuses IMU acquisition/orientation and telemetry, with a
-synthetic register-peer check of its distinct mounting axes.
-Technic profiles also reuse battery acquisition/protection, with synthetic
-ADC/GPIO checks of board scaling, chemistry selection and absent thermistor.
-The remaining Python acceptance scope below is retained.
+Follow the [platform roadmap](../docs/roadmap.md): complete SPIKE services and
+acceptance, then add timed observations/actuation, independent native control
+alongside Python, cycle recording/replay and bounded background computation.
+Resource optimization continues across these blocks. Babybot owns its models
+and learning algorithms; reuse its existing numerical core and recording tools.
+
+The current application thread and arena serve one engine at a time; concurrent
+native/Python execution is planned work. Hard-float, FPU context fixes, optional
+CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
+to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
+ordinary compatible Pybricks bytecode remains supported.
+
+The [build-only native Technic port](../docs/hardware.md#experimental-technic-base)
+remains a secondary goal. UART negotiation, regulated motors and storage are
+unfinished; no physical Technic acceptance is available. Python on that hub is
+outside scope. Full F4 Python and its remaining acceptance below are retained.
 
 ## Python implementation and remaining acceptance
 
-Follow the [Python implementation plan](../docs/python.md) for the full required
-surface and delivery order. Use the workspace summary and incremental checks
-linked there. The next blocks complete Pybricks client execution and the remaining
-bindings. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
+Follow the [Python implementation plan](../docs/python.md) for the required
+surface and acceptance inventory, within the platform roadmap. Use the workspace
+summary and incremental checks linked there. Client execution and remaining
+bindings stay in scope. Ctrl-D soft-resets Python; Ctrl-X returns to Shell.
 The [full and reduced F4 profiles](../docs/builds.md#experimental-python-profile)
 have package builds. Python's library and client adapter are independently
 selectable; native Python interaction and adapter isolation have ARM checks,

@@ -4,12 +4,13 @@ An open application platform for LEGO hubs, built on Zephyr RTOS.
 
 Source repository: [alepoydes/brickphyr](https://github.com/alepoydes/brickphyr).
 
-Brickphyr is being designed to run native applications, MicroPython programs
-using the Pybricks API, and WebAssembly applications on LEGO hubs. One user
-application runs at a time. Hardware services remain responsive independently
-of the application's interpreter, garbage collection, or willingness to yield.
+Brickphyr provides a foundation for robots with application-defined control,
+state estimation and learning. SPIKE Prime / Robot Inventor F4 is the primary
+target, with Babybot as the first integration workload. Native applications and
+MicroPython share hardware services and a supervised application lifecycle.
+Pybricks supplies reusable implementations, APIs and client compatibility.
 
-**Status: experimental connection and power foundation.** On one Robot Inventor
+**Status: experimental native and Python platform.** On one Robot Inventor
 F4, the firmware provides:
 
 - One interactive Zephyr Shell over USB or BLE, with editing, history and completion.
@@ -27,17 +28,20 @@ adds a C SDK, protected execution and RAM uploads over USB/BLE with `brickphyrde
 The native profile also installs several applications in LittleFS and runs them
 through the same protected loader. The experimental [Python profile](docs/builds.md#experimental-python-profile)
 adds temporary and installed programs, source/bytecode/native imports and the same
-shared lifecycle. REPL and temporary Pybricks-protocol execution have software
-checks. Parameters, geometry and non-device Pybricks tools have software coverage;
-physical client acceptance and hardware bindings remain open.
-WASM remains unimplemented. See the [Python plan](docs/python.md).
+shared lifecycle. REPL and pybricksdev workflows have bounded F4 USB/BLE checks;
+Pybricks Code has BLE checks. Complete client and hardware acceptance remains open. See the
+[Python plan](docs/python.md) for implemented bindings and their limits.
+Native and Python execution currently alternate. The [roadmap](docs/roadmap.md)
+adds independent native control alongside Python, timed observations/actuation
+and experiment recording while completing SPIKE support and reducing resource
+costs. WASM remains unimplemented and outside this milestone.
 LEGO restoration and interrupted-transfer recovery remain unverified. See
 [hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
 for setup and commands.
 
-The first target is the Inventor / SPIKE Prime family, starting with an identified
-physical board revision. Other hubs follow when their memory, peripherals, and
-recovery paths are understood. See [hardware support](docs/hardware.md).
+Native Technic/Control+ support is a secondary, build-only port. Other hubs follow
+concrete robot needs; broad hub compatibility is not the project's purpose.
+See [hardware support](docs/hardware.md) for board-specific evidence.
 
 ## Design
 
@@ -61,6 +65,7 @@ do not belong in this firmware.
 
 | Task | Document |
 | --- | --- |
+| Follow priorities and preparation for Babybot | [Platform roadmap](docs/roadmap.md) |
 | Understand the system boundaries | [Architecture](docs/architecture.md) |
 | Find what comes from which project | [Subsystems](docs/subsystems.md) |
 | Check hub and feature availability | [Hardware](docs/hardware.md) |
@@ -79,9 +84,9 @@ do not belong in this firmware.
 ## Start contributing
 
 Read the architecture and the document owning the subsystem you want to change.
-USB/BLE connections and settings/power are implemented on the initial F4 target.
-The next [acceptance milestone](docs/builds.md#acceptance-milestones) is a separately
-loaded native application with explicit lifecycle and isolation checks.
+The [roadmap](docs/roadmap.md) defines usable delivery blocks and their acceptance:
+complete SPIKE services, improve execution and observation, then validate the
+Babybot workload using the existing native/Python foundation.
 Subsystem contracts and implementation boundaries are linked in
 [the project orientation](AI/context.md).
 

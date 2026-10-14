@@ -392,13 +392,22 @@ connecting USB and release it after the colored blink. See the
 | Intended profile | Purpose | Engines |
 | --- | --- | --- |
 | Native | Small initial platform and native applications | Native loader |
-| Python | Pybricks-compatible Python plus native applications | Native + MicroPython |
+| Native + Python | Current full F4 firmware | Native + MicroPython |
 | WASM | Portable WASM plus native applications | Native + WAMR |
 | Combined | Convenient capable-hub firmware, subject to measured capacity | Native + MicroPython + WAMR |
 
 These are configuration combinations of one firmware implementation, not forks.
 Do not publish every possible combination without a real use and corresponding
 checks. Smaller hubs may support only a subset or remain unsupported.
+
+Technic targets native ELF applications only, with the shared application
+supervisor, hardware services, management Shell and MPU isolation. Its current
+native profile is incomplete and build-only, a secondary goal after the primary
+SPIKE/Babybot work. Python execution, including `.mpy`, is not planned for this
+hub. The full F4 profile retains native applications and Python, including source
+compilation, REPL and compatible `.mpy` modules. It currently executes one engine
+at a time; independent native control alongside Python is planned work in the
+[platform roadmap](roadmap.md).
 
 The firmware advertises its actual engines and hardware capabilities. Application
 format chooses an installed engine; the original programming language does not.
@@ -441,6 +450,10 @@ fragment is not part of the normal Python profile.
 
 ## Acceptance milestones
 
+These foundation contracts include already implemented work; they are not a
+sequence to restart. The [platform roadmap](roadmap.md) owns current delivery
+order and the native-control/Python extension. WASM is outside that milestone.
+
 Continue from the existing F4 image, USB shell, image/package checks, and native
 simulation. Packaging and shared hardware helpers are pinned to the public Pybricks
 fork. Normal Pybricks restoration and Brickphyr reinstallation have been exercised
@@ -474,10 +487,10 @@ LEGO transitions and interrupted-transfer recovery remain separate checks.
    [native application milestone](#native-application-milestone): temporary runs
    from RAM and installed applications in LittleFS, using LLEXT and one lifecycle.
    USB and BLE provide the same operations through SMP, Shell and `brickphyrdev`.
-6. **Integrate Python and WASM through that lifecycle.** Verify supported Pybricks
-   client/API behavior and WAMR execution incrementally, including cancellation
-   and system responsiveness. Preserve their shared service requirements during
-   native development; neither engine is an incompatible later fork.
+6. **Integrate Python through that lifecycle.** Complete the remaining Pybricks
+   client/API acceptance, cancellation and system responsiveness checks in the
+   [Python plan](python.md). Preserve shared service ownership during native
+   development. A future WASM engine must use the same lifecycle and services.
 
 USB wake after shutdown is a separate experiment after reliable power control,
 not a prerequisite for automated tests. Full compatibility and broader hardware

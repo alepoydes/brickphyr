@@ -20,6 +20,10 @@ unbounded telemetry queue. A management connection retains the existing
 [power hold](settings.md#inactivity-shutdown); closing it leaves an autonomous
 application running.
 
+The [platform roadmap](roadmap.md) separately plans bounded binary recording of
+each control step's actual inputs and actuation results. The current monitor and
+JSONL log below provide sampled observations, not that cycle history.
+
 ## Text monitor and recording
 
 From the repository, use the same installed `brickphyrdev` tools as for applications:
