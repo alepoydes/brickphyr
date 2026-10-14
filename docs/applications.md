@@ -141,14 +141,20 @@ Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
 allocated sections left outside the accepted image format fail admission before
 an application replaces the running one.
 
-On the current ARMv7-M targets, the shared execution arena occupies RAM
-without a flash initialization image. Native loading and Python GC initialize
-their own allocations; neither may assume the arena is zero on first use or
-after another program. This removes 64 KiB of empty image content without reducing
-F4 application memory or changing its MPU permissions. Native LLEXT allocations
-are aligned and protected individually; the arena itself needs only allocator
-alignment. Python still requires a power-of-two arena aligned to its size because
-it maps the whole arena as one MPU partition.
+On the current ARMv7-M targets, native-only builds allocate the loader's backing
+buffer from the shared system heap when starting an application and release it
+after successful cleanup. The requested size is the validated image's loader
+budget, bounded by the configured execution-memory limit. Native LLEXT allocations
+are aligned and protected individually. Python builds retain a shared, fixed
+execution arena for both engines: Python maps the whole power-of-two, size-aligned
+arena as one MPU partition. That arena has no flash initialization image.
+Both engines initialize their allocations and must accept arbitrary initial contents.
+
+A native-only replacement reserves its new buffer before stopping the old
+application. Insufficient or fragmented heap therefore rejects that start without
+interrupting the running program. This briefly requires space for both buffers;
+explicitly stopping the old program first releases its budget. Cleanup failure
+retains the old buffer until devices, MPU partitions and the loader are released.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
 bounded output, read-only buttons, optional
@@ -200,14 +206,14 @@ a 1024-byte queue with counted overflow; writing never waits for a reader. The
 remains available without a host, including during LLEXT's deferred-log flush.
 
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
-`CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` reserves the execution arena.
-The F4 defaults are 32 KiB of ELF and a 64 KiB arena; its separate 64 KiB system
-heap supplies uploads and firmware allocations. The Technic native profile uses
-a 4 KiB image limit, 12 KiB arena and 6 KiB system heap. An image limit does not
-reserve upload space or guarantee that the loaded image fits; another retained
-upload or firmware allocation can leave insufficient heap. Python reuses the
-same arena when enabled. Alignment, symbols and scratch space count against the
-loader budget; small images with large BSS can still exceed it. The native-only
+`CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
+builds, reserves the execution arena. The F4 native profile permits 32 KiB of ELF
+and a 64 KiB loader budget in a 158 KiB shared system heap. The Technic native
+profile permits 4 KiB images and a 12 KiB loader budget in an 18 KiB shared heap.
+An image limit does not reserve upload space or guarantee that the loaded image
+fits; another retained upload or firmware allocation can leave insufficient heap.
+Alignment, symbols and scratch space count against the loader budget; small
+images with large BSS can still exceed it. The native-only
 application stack is 2048 bytes; compiler-generated privileged stacks and guards
 are additional firmware RAM. `app status`
 reports the image, reserved loader budget, LLEXT allocation and stack high-water
@@ -314,7 +320,8 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 94 KiB heap and the full Python profile 98 KiB;
+The native profile provides a 158 KiB heap, including on-demand loader buffers,
+and the full Python profile 98 KiB;
 the latter retains its 16 KiB MPU-aligned stack and 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.

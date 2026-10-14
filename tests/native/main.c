@@ -124,13 +124,14 @@ static int check_fp_context(void)
 
 int main(void)
 {
-	/* Cold entry must work with arbitrary arena contents, just as reuse does. */
-	extern uint8_t __brickphyr_execution_start[], __brickphyr_execution_end[];
-	memset(__brickphyr_execution_start, 0xa5,
-		__brickphyr_execution_end - __brickphyr_execution_start);
+	size_t capacity = available();
+	/* Cold entry must work with dirty backing obtained from the real heap. */
+	void *dirty = k_malloc(capacity);
+	CHECK(dirty != NULL);
+	memset(dirty, 0xa5, capacity);
+	k_free(dirty);
 	LOG_WRN("Synthetic diagnostic before application unload");
 	struct application_status status;
-	size_t capacity = available();
 #ifdef CONFIG_FPU
 	CHECK(check_fp_context() == 0 && available() == capacity);
 #endif
@@ -161,15 +162,26 @@ int main(void)
 		CHECK(strstr(output, "Hello from a native application."));
 		CHECK(status.cleanup_error == 0 && available() == capacity);
 	}
-	void *reservation = k_malloc(capacity);
+	size_t hello_budget = status.loader_bytes;
+	/* A replacement must secure its arena before stopping the old image. */
+	CHECK(native_fixture_run("spin") == 0);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING);
+	size_t running_capacity = available();
+	void *reservation = k_malloc(running_capacity);
 	CHECK(reservation != NULL);
-	/* The execution arena is independent of transfer/system heap pressure. */
+	CHECK(available() < hello_budget);
+	CHECK(native_fixture_run("hello") == -ENOMEM);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RUNNING && !status.cleanup_error);
+	k_free(reservation);
+	CHECK(available() == running_capacity);
+	CHECK(application_stop() == 0 && available() == capacity);
 	CHECK(native_fixture_run("hello") == 0);
 	k_msleep(60);
 	application_get_status(&status);
-	CHECK(status.state == APPLICATION_RETURNED && status.result == 0);
-	k_free(reservation);
-	CHECK(available() == capacity);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0 &&
+	      !status.cleanup_error && available() == capacity);
 
 	/* Exercise the new ABI from a separately loaded userspace image. This
 	 * board lacks an IMU: the real call must report ENOTSUP, without a fault. */
@@ -207,6 +219,21 @@ int main(void)
 	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
 	CHECK(!sound_output_active && available() == capacity);
+	/* A failed driver release must retain the loaded image until retry. */
+	CHECK(shell_execute_cmd(shell_backend_dummy_get_ptr(), "sound_error 0 1") == 0);
+	CHECK(native_fixture_run("sound") == 0);
+	k_msleep(10);
+	CHECK(sound_output_active);
+	CHECK(application_stop() == -EACCES);
+	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_APPLICATION);
+	size_t held_capacity = available();
+	CHECK(held_capacity < capacity);
+	CHECK(native_fixture_run("spin") == -EACCES);
+	CHECK(available() == held_capacity);
+	CHECK(shell_execute_cmd(shell_backend_dummy_get_ptr(), "sound_error 0 0") == 0);
+	CHECK(application_stop() == 0);
+	CHECK(hub_sound_get(&speaker) == 0 && speaker.owner == BP_SOUND_FREE);
+	CHECK(available() == capacity);
 	CHECK(native_fixture_run("battery_fault") == 0);
 	deadline = k_uptime_get() + 1600;
 	do {

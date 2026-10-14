@@ -865,8 +865,10 @@ rejects unsupported ABI/capabilities/stack sizes, imports and import relocations
 without stopping the current program. No test rebuilds firmware implicitly.
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-12 KiB execution arena and 6 KiB system heap. Its SRAM starts after a reserved
-1 KiB prefix, checking that native arena placement needs no whole-arena alignment:
+12 KiB loader limit and 18 KiB shared heap. Its SRAM starts after a reserved
+1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
+the running program, and successful or failed cleanup returning or retaining
+the loader buffer as required:
 
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-compact-tests -- \

@@ -332,12 +332,13 @@ config BRICKPHYR_APPLICATION_IMAGE_SIZE
 	  free system heap while the execution arena holds the loaded program.
 
 config BRICKPHYR_APPLICATION_MEMORY_SIZE
-	int "Application execution arena bytes"
+	int "Application execution memory limit"
 	default 65536
 	range 8192 262144
 	help
-	  Shared native loader/Python heap arena. Native allocations have separate
-	  MPU regions; Python maps the whole arena and requires a power-of-two size.
+	  Native-only builds borrow a bounded loader buffer from the system heap
+	  while an application runs. Python builds reserve a shared execution arena
+	  for both engines, mapping it whole and requiring a power-of-two size.
 
 config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"

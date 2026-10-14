@@ -79,15 +79,16 @@ static struct k_mem_domain application_domain;
 static bool domain_initialized;
 static struct llext *extension;
 static bool loader_initialized;
-/* Each engine initializes its allocations; the arena need not be zero at boot.
- * Only Python maps the whole arena. Native LLEXT aligns each mapped allocation,
- * so arena-size alignment would waste RAM on boards with a reserved SRAM prefix. */
-static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
-	__aligned(IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ? APPLICATION_MEMORY_LIMIT : 8)
-	Z_GENERIC_SECTION(.brickphyr_execution);
 #ifdef CONFIG_BRICKPHYR_PYTHON
+/* Python maps the whole arena; both engines initialize their own allocations. */
+static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
+	__aligned(APPLICATION_MEMORY_LIMIT)
+	Z_GENERIC_SECTION(.brickphyr_execution);
 K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_memory),
 	K_MEM_PARTITION_P_RW_U_RW);
+#else
+/* LLEXT aligns each mapped allocation inside this on-demand backing buffer. */
+static void *execution_memory;
 #endif
 /* ARMv8-M bounds dynamic regions at app_smem; this earlier arena would require
  * a corresponding region-boundary integration before using that MPU model. */
@@ -1989,6 +1990,11 @@ static int release(void)
 		code_memory = NULL;
 		code_used = code_reserved = 0;
 	}
+#else
+	if (!err) {
+		k_free(execution_memory);
+		execution_memory = NULL;
+	}
 #endif
 	if (err && !status.cleanup_error) {
 		status.cleanup_error = err;
@@ -2224,10 +2230,23 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 /* lifecycle is held and this loader has passed native_image_check. */
 static int run_image(struct llext_loader *loader, size_t length, size_t heap_size)
 {
+#ifndef CONFIG_BRICKPHYR_PYTHON
+	/* Admission must not stop the current program when the shared heap is full. */
+	void *memory = k_malloc(heap_size);
+	if (!memory) {
+		return -ENOMEM;
+	}
+#endif
 	int err = prepare();
 	if (err) {
+#ifndef CONFIG_BRICKPHYR_PYTHON
+		k_free(memory);
+#endif
 		return err;
 	}
+#ifndef CONFIG_BRICKPHYR_PYTHON
+	execution_memory = memory;
+#endif
 	err = llext_heap_init(execution_memory, heap_size);
 	if (err) {
 		goto failed;
