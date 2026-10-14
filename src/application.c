@@ -2431,7 +2431,8 @@ int application_check_file(const char *path, size_t length)
 	return err;
 }
 
-int application_run_file(const char *path, int program_id)
+/* Do not retain the directory-entry name buffer across validation or linking. */
+static __noinline int stored_size(const char *path, size_t *length)
 {
 	struct fs_dirent info;
 	int err = fs_stat(path, &info);
@@ -2441,19 +2442,36 @@ int application_run_file(const char *path, int program_id)
 	if (info.type != FS_DIR_ENTRY_FILE) {
 		return -EINVAL;
 	}
+	*length = info.size;
+	return 0;
+}
+
+/* Admission uses its own loader; their caches must not share a stack lifetime. */
+static __noinline int run_native_file(const char *path, size_t length, size_t heap)
+{
+	struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
+	return run_image(&loader.loader, length, heap);
+}
+
+int application_run_file(const char *path, int program_id)
+{
+	size_t length;
+	int err = stored_size(path, &length);
+	if (err) {
+		return err;
+	}
 	void *image;
 	size_t heap;
-	err = read_stored(path, info.size, &image, &heap);
+	err = read_stored(path, length, &image, &heap);
 	if (!err) {
 		k_mutex_lock(&lifecycle, K_FOREVER);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (image) {
-			err = run_python(image, info.size, APPLICATION_FILES, false, program_id);
+			err = run_python(image, length, APPLICATION_FILES, false, program_id);
 		} else
 #endif
 		{
-			struct llext_fs_loader loader = LLEXT_FS_LOADER(path);
-			err = run_image(&loader.loader, info.size, heap);
+			err = run_native_file(path, length, heap);
 		}
 		k_mutex_unlock(&lifecycle);
 	}

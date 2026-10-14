@@ -246,7 +246,17 @@ Both verify their complete data regions, return without application or cleanup
 errors, and leave existing stored files unchanged across the profile switch.
 Their reported loaded allocations are 66258 and 83037 bytes; loader reservations
 are 136864 and 170291 bytes. These synthetic memory workloads establish neither
-allocator peak usage nor capacity under maximum peripheral/communication load.
+capacity under maximum peripheral/communication load nor a worst-case stack bound.
+
+Separate USB checks on the same F4 with Zephyr heap statistics enabled measured
+system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 bytes
+for the stored workload, in the unchanged 210944-byte heap. These counts include
+the reserved loader buffer; they do not measure its internal live allocations.
+Both workloads return system-heap allocation to the 960-byte idle baseline.
+Stored-image admission and linking keep their loader caches and file metadata
+in separate stack frames. In the instrumented stored-workload check this reduces
+Shell's observed high-water use from 3640 to 3056 bytes. Keep the 4096-byte Shell
+stack: other commands, failure paths and interrupt timing can use more stack.
 
 Earlier board checks verified repeated execution/unload, constructor state,
 soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
