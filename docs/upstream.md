@@ -232,6 +232,15 @@ This removes repeated formatting code without changing successful validation.
 Existing ARM userspace and thread API tests exercise denied reads/writes and
 successful copies. Publication and manifest pinning remain pending.
 
+Local Zephyr commit `334dcfd0` on `topic/object-validation-size` also shares
+kernel-object validation and access-denied formatting across syscall handlers.
+Object lookup, type, permission and initialization checks retain their order
+and return values. The `os` log filters and originating syscall name are preserved;
+an enabled automatic log-function prefix identifies the shared formatter.
+Existing ARM memory-protection tests cover invalid objects, missing permissions
+and initialization; Brickphyr's protected native lifecycle checks the integration.
+Publication and manifest pinning remain pending.
+
 ## Crypto configuration prerequisite
 
 The local TF-PSA-Crypto `topic/config-header-order` branch, commit `11672770f`,
