@@ -166,7 +166,9 @@ application independently of time slicing. This is not a claim that the privileg
 ELF parser or kernel withstand every malicious image.
 
 Typed result structures and PCM buffers require their natural C alignment.
-Syscall validation checks it and the complete memory range before entering
+Calls to a service omitted from the build retain their ABI slots and can return
+`-ENOTSUP` without inspecting application buffers. For enabled services, syscall
+validation checks alignment and the complete memory range before entering
 service locks; a bad pointer ends the application without stranding those locks.
 Memory checks stay inline, while their error reporting shares one cold path
 that retains the syscall name, buffer range and rejection reason. This reduces

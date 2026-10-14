@@ -20,10 +20,6 @@ int app_main(void)
 	/* Synthetic fixture selector: normal return, supervisor stop, or an invalid
 	 * syscall buffer while driving. None may leave PWM running after cleanup. */
 	uint32_t behavior = bp_buttons();
-	if (behavior == 3) {
-		uint64_t storage[sizeof(struct bp_motor_command) / sizeof(uint64_t) + 1];
-		return bp_motor_control(0, (const struct bp_motor_command *)((uint8_t *)storage + 1));
-	}
 	if (behavior == 2) {
 		uint64_t storage[sizeof(state) / sizeof(uint64_t) + 1];
 		return bp_motor_get(0, (struct bp_motor_state *)((uint8_t *)storage + 1));

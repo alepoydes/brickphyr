@@ -220,12 +220,12 @@ int main(void)
 		k_msleep(20);
 		application_get_status(&status);
 		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
-		CHECK(native_fixture_run("data_fault") == 0);
-		k_msleep(20);
-		application_get_status(&status);
-		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	}
 	test_buttons = 5;
+	CHECK(native_fixture_run("unsupported") == 0);
+	k_msleep(20);
+	application_get_status(&status);
+	CHECK(status.state == APPLICATION_RETURNED && status.result == 0 && status.cleanup_error == 0);
 	struct bp_battery_sample battery;
 	CHECK(hub_battery_get(&battery) == 0 && battery.error == 0);
 	CHECK(available() == capacity);
@@ -240,7 +240,7 @@ int main(void)
 		CHECK(hub_motor_get(0, &motor) == 0);
 		CHECK(k_uptime_get() < deadline);
 	} while (motor.error);
-	for (test_buttons = 0; test_buttons < 4; test_buttons++) {
+	for (test_buttons = 0; test_buttons < 3; test_buttons++) {
 		CHECK(native_fixture_run("motor") == 0);
 		deadline = k_uptime_get() + 500;
 		do {

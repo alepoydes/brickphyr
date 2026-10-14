@@ -654,8 +654,12 @@ int z_impl_bp_light_write(uint32_t light, const uint8_t *rgb)
 	return hub_light_write(light, rgb);
 }
 
+/* Keep optional calls in the ABI/SVC table, but omit buffer validation and
+ * copies when the service is absent. Enabled services still validate before
+ * entering their locks; device readiness is not a reason to skip validation. */
 static inline int z_vrfy_bp_light_write(uint32_t light, const uint8_t *rgb)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_LIGHT)) return -ENOTSUP;
 	user_memory_check(rgb, 3, 1, false, __func__);
 	uint8_t copy[3];
 	memcpy(copy, rgb, sizeof(copy));
@@ -674,6 +678,7 @@ static inline int z_vrfy_bp_light_animate(uint32_t light, const struct bp_light_
 	if (!count || count > BP_LIGHT_MAX_FRAMES) {
 		return -EINVAL;
 	}
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_LIGHT)) return -ENOTSUP;
 	user_memory_check(frames, count * sizeof(*frames), __alignof__(*frames), false, __func__);
 	return z_impl_bp_light_animate(light, frames, count);
 }
@@ -686,6 +691,7 @@ int z_impl_bp_light_get(uint32_t light, struct bp_light_state *state)
 
 static inline int z_vrfy_bp_light_get(uint32_t light, struct bp_light_state *state)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_LIGHT)) return -ENOTSUP;
 	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_light_get(light, state);
 }
@@ -701,6 +707,7 @@ static inline int z_vrfy_bp_matrix_write(uint32_t first, const uint8_t *values, 
 	if (!count || first >= BP_MATRIX_PIXELS || count > BP_MATRIX_PIXELS - first) {
 		return -EINVAL;
 	}
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MATRIX)) return -ENOTSUP;
 	user_memory_check(values, count, 1, false, __func__);
 	uint8_t copy[BP_MATRIX_PIXELS];
 	memcpy(copy, values, count);
@@ -718,6 +725,7 @@ static inline int z_vrfy_bp_matrix_animate(const uint8_t *frames, size_t count, 
 	if (!count || count > BP_MATRIX_MAX_FRAMES) {
 		return -EINVAL;
 	}
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MATRIX)) return -ENOTSUP;
 	user_memory_check(frames, count * BP_MATRIX_PIXELS, 1, false, __func__);
 	return z_impl_bp_matrix_animate(frames, count, interval_ms);
 }
@@ -741,6 +749,7 @@ int z_impl_bp_matrix_get(struct bp_matrix_state *value)
 
 static inline int z_vrfy_bp_matrix_get(struct bp_matrix_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MATRIX)) return -ENOTSUP;
 	/* Range validation alone permits misaligned memory. A resulting ARM
 	 * fault inside the snapshot copy would strand the service's spinlock. */
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
@@ -755,6 +764,7 @@ int z_impl_bp_imu_get(struct bp_imu_sample *value)
 
 static inline int z_vrfy_bp_imu_get(struct bp_imu_sample *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get(value);
 }
@@ -767,6 +777,7 @@ int z_impl_bp_imu_get_state(struct bp_imu_state *value)
 
 static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get_state(value);
 }
@@ -780,6 +791,7 @@ int z_impl_bp_imu_configure(const struct bp_imu_command *command)
 
 static inline int z_vrfy_bp_imu_configure(const struct bp_imu_command *command)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
 	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
 	return z_impl_bp_imu_configure(command);
 }
@@ -792,6 +804,7 @@ int z_impl_bp_imu_get_application(struct bp_imu_application_state *value)
 
 static inline int z_vrfy_bp_imu_get_application(struct bp_imu_application_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_IMU)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get_application(value);
 }
@@ -803,6 +816,7 @@ int z_impl_bp_battery_get(struct bp_battery_sample *value)
 }
 static inline int z_vrfy_bp_battery_get(struct bp_battery_sample *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BATTERY)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_battery_get(value);
 }
@@ -814,6 +828,7 @@ int z_impl_bp_charger_get(struct bp_charger_state *value)
 }
 static inline int z_vrfy_bp_charger_get(struct bp_charger_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_CHARGER)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_charger_get(value);
 }
@@ -825,6 +840,7 @@ int z_impl_bp_port_get(uint32_t port, struct bp_port_state *value)
 }
 static inline int z_vrfy_bp_port_get(uint32_t port, struct bp_port_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORTS)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_port_get(port, value);
 }
@@ -837,6 +853,7 @@ int z_impl_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *h
 static inline int z_vrfy_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle)
 {
 	if (count > BP_RADIO_CHANNELS_MAX) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_RADIO)) return -ENOTSUP;
 	if (count) user_memory_check(channels, count, 1, false, __func__);
 	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_radio_observe(channels, count, handle);
@@ -851,6 +868,7 @@ int z_impl_bp_radio_version(char *value, uint32_t size) { return hub_radio_versi
 static inline int z_vrfy_bp_radio_version(char *value, uint32_t size)
 {
 	if (!size || size > BP_RADIO_VERSION_MAX) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_RADIO)) return -ENOTSUP;
 	user_memory_check(value, size, 1, true, __func__);
 	return z_impl_bp_radio_version(value, size);
 }
@@ -862,6 +880,7 @@ int z_impl_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sampl
 }
 static inline int z_vrfy_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_RADIO)) return -ENOTSUP;
 	user_memory_check(sample, sizeof(*sample), __alignof__(*sample), true, __func__);
 	return z_impl_bp_radio_get(handle, channel, sample);
 }
@@ -877,6 +896,7 @@ int z_impl_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *h
 }
 static inline int z_vrfy_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(config, sizeof(*config), __alignof__(*config), false, __func__);
 	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_ble_peer_open(config, handle);
@@ -898,6 +918,7 @@ static inline int z_vrfy_bp_ble_peer_close(uint32_t handle) { return z_impl_bp_b
 int z_impl_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state) { return hub_ble_peer_get(handle, state); }
 static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_ble_peer_get(handle, state);
 }
@@ -906,6 +927,7 @@ static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_sta
 int z_impl_bp_network_open(uint32_t size, uint32_t *handle) { return hub_network_open(size, handle); }
 static inline int z_vrfy_bp_network_open(uint32_t size, uint32_t *handle)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_network_open(size, handle);
 }
@@ -914,6 +936,7 @@ static inline int z_vrfy_bp_network_open(uint32_t size, uint32_t *handle)
 int z_impl_bp_network_get(uint32_t handle, struct bp_network_state *state) { return hub_network_get(handle, state); }
 static inline int z_vrfy_bp_network_get(uint32_t handle, struct bp_network_state *state)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_network_get(handle, state);
 }
@@ -922,6 +945,7 @@ static inline int z_vrfy_bp_network_get(uint32_t handle, struct bp_network_state
 int z_impl_bp_network_connect(uint32_t handle, const uint8_t *address) { return hub_network_connect(handle, address); }
 static inline int z_vrfy_bp_network_connect(uint32_t handle, const uint8_t *address)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(address, 6, 1, false, __func__);
 	return z_impl_bp_network_connect(handle, address);
 }
@@ -930,6 +954,7 @@ static inline int z_vrfy_bp_network_connect(uint32_t handle, const uint8_t *addr
 int z_impl_bp_network_send(uint32_t handle, const struct bp_network_message *message) { return hub_network_send(handle, message); }
 static inline int z_vrfy_bp_network_send(uint32_t handle, const struct bp_network_message *message)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(message, sizeof(*message), __alignof__(*message), false, __func__);
 	return z_impl_bp_network_send(handle, message);
 }
@@ -945,6 +970,7 @@ static inline int z_vrfy_bp_network_cancel(uint32_t handle, uint32_t request)
 int z_impl_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through) { return hub_network_snapshot(handle, latest, through); }
 static inline int z_vrfy_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(through, sizeof(*through), __alignof__(*through), true, __func__);
 	return z_impl_bp_network_snapshot(handle, latest, through);
 }
@@ -953,6 +979,7 @@ static inline int z_vrfy_bp_network_snapshot(uint32_t handle, uint32_t latest, u
 int z_impl_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message) { return hub_network_read(handle, through, message); }
 static inline int z_vrfy_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_HUB_NETWORK)) return -ENOTSUP;
 	user_memory_check(message, sizeof(*message), __alignof__(*message), true, __func__);
 	return z_impl_bp_network_read(handle, through, message);
 }
@@ -971,6 +998,7 @@ int z_impl_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
 }
 static inline int z_vrfy_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(rumble, sizeof(*rumble), __alignof__(*rumble), false, __func__);
 	return z_impl_bp_xbox_rumble(handle, rumble);
 }
@@ -983,6 +1011,7 @@ int z_impl_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
 static inline int z_vrfy_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
 {
 	if (size < 3 || size > BP_LWP3_MESSAGE_MAX) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(data, size, 1, false, __func__);
 	return z_impl_bp_lwp3_write(handle, data, size);
 }
@@ -994,6 +1023,7 @@ int z_impl_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
 }
 static inline int z_vrfy_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(message, sizeof(*message), 1, true, __func__);
 	return z_impl_bp_lwp3_read(handle, message);
 }
@@ -1015,6 +1045,7 @@ int z_impl_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palett
 }
 static inline int z_vrfy_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), true, __func__);
 	return z_impl_bp_lwp3_palette_get(handle, palette);
 }
@@ -1026,6 +1057,7 @@ int z_impl_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *
 }
 static inline int z_vrfy_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_BLE_PEER)) return -ENOTSUP;
 	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), false, __func__);
 	return z_impl_bp_lwp3_palette_set(handle, palette);
 }
@@ -1039,6 +1071,7 @@ int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 static inline int z_vrfy_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_port_get_mode(port, generation, mode, value);
 }
@@ -1063,6 +1096,7 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!size || size > 32) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(data, size, 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint8_t copy[32];
@@ -1077,6 +1111,7 @@ int z_impl_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 }
 static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(generation, sizeof(*generation), __alignof__(*generation), true, __func__);
 	return z_impl_bp_uart_open(port, baud, generation);
 }
@@ -1088,6 +1123,7 @@ int z_impl_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, 
 }
 static inline int z_vrfy_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(generation, sizeof(*generation), __alignof__(*generation), true, __func__);
 	return z_impl_bp_uart_open_power(port, baud, power_pin, generation);
 }
@@ -1141,6 +1177,7 @@ int z_impl_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint3
 static inline int z_vrfy_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
 {
 	if (!size || size > 128) return size ? -EINVAL : 0;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(data, size, 1, true, __func__);
 	uint8_t copy[128];
 	int count = z_impl_bp_uart_read(port, generation, copy, size);
@@ -1158,6 +1195,7 @@ static inline int z_vrfy_bp_uart_write(uint32_t port, uint32_t generation,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!size || size > 32) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(data, size, 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint8_t copy[32];
@@ -1172,6 +1210,7 @@ int z_impl_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 }
 static inline int z_vrfy_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_port_reset(port, generation, request);
 }
@@ -1183,6 +1222,7 @@ int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 }
 static inline int z_vrfy_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_sensor_get(port, value);
 }
@@ -1214,6 +1254,7 @@ int z_impl_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_s
 }
 static inline int z_vrfy_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), true, __func__);
 	return z_impl_bp_sensor_palette_get(port, generation, palette);
 }
@@ -1225,6 +1266,7 @@ int z_impl_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struc
 }
 static inline int z_vrfy_bp_sensor_palette_set(uint32_t port, uint32_t generation, const struct bp_sensor_palette *palette)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	struct bp_sensor_palette copy;
 	if (palette) {
 		user_memory_check(palette, sizeof(*palette), 1, false, __func__);
@@ -1242,6 +1284,7 @@ int z_impl_bp_sensor_light_write(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generation,
 	const struct bp_sensor_light *light, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(light, sizeof(*light), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_sensor_light copy;
@@ -1256,6 +1299,7 @@ int z_impl_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brig
 }
 static inline int z_vrfy_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_port_light_write(port, generation, brightness, request);
 }
@@ -1267,6 +1311,7 @@ int z_impl_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32
 }
 static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint32_t copy[9];
 	if (colors) {
@@ -1285,6 +1330,7 @@ int z_impl_bp_port_pf_write(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_port_pf_write(uint32_t port, uint32_t generation,
 	const struct bp_pf_command *command, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) return -ENOTSUP;
 	user_memory_check(command, sizeof(*command), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_pf_command copy;
@@ -1324,6 +1370,7 @@ static inline int z_vrfy_bp_motor_coast(uint32_t port) { return z_impl_bp_motor_
 int z_impl_bp_motor_get(uint32_t port, struct bp_motor_state *value) { return hub_motor_get(port, value); }
 static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_get(port, value);
 }
@@ -1335,6 +1382,7 @@ int z_impl_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction,
 }
 static inline int z_vrfy_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_setup(port, generation, direction, request);
 }
@@ -1346,6 +1394,7 @@ int z_impl_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_
 }
 static inline int z_vrfy_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTORS)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_dc(port, generation, duty, coast, request);
 }
@@ -1377,6 +1426,7 @@ int z_impl_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *reques
 }
 static inline int z_vrfy_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_observe(port, generation, request);
 }
@@ -1390,6 +1440,7 @@ int z_impl_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t
 static inline int z_vrfy_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
 	struct bp_motor_observation *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_observation_get(port, generation, window_ms, value);
 }
@@ -1401,6 +1452,7 @@ int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *comman
 }
 static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
 	/* Copy user storage before taking any hardware service lock. */
 	struct bp_motor_command copy = *command;
@@ -1416,6 +1468,7 @@ int z_impl_bp_servo_setup(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_servo_setup(uint32_t port, uint32_t generation,
 	const struct bp_servo_setup *setup, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(setup, sizeof(*setup), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_setup copy;
@@ -1430,6 +1483,7 @@ int z_impl_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, 
 }
 static inline int z_vrfy_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_get(port, generation, window_ms, value);
 }
@@ -1441,6 +1495,7 @@ int z_impl_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uin
 }
 static inline int z_vrfy_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_servo_reset(port, generation, angle, absolute, request);
 }
@@ -1454,6 +1509,7 @@ int z_impl_bp_servo_move(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_servo_move(uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(command, sizeof(*command), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_command copy;
@@ -1468,6 +1524,7 @@ int z_impl_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_s
 }
 static inline int z_vrfy_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_settings_get(port, generation, value);
 }
@@ -1479,6 +1536,7 @@ int z_impl_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp
 }
 static inline int z_vrfy_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_trajectory_get(port, generation, value);
 }
@@ -1490,6 +1548,7 @@ int z_impl_bp_servo_model_get(uint32_t port, uint32_t generation, struct bp_moto
 }
 static inline int z_vrfy_bp_servo_model_get(uint32_t port, uint32_t generation, struct bp_motor_model_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_model_get(port, generation, value);
 }
@@ -1501,6 +1560,7 @@ int z_impl_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind
 }
 static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_log_status(port, generation, kind, stop, value);
 }
@@ -1512,6 +1572,7 @@ int z_impl_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, 
 }
 static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_log_read(port, generation, kind, revision, row, value);
 }
@@ -1535,6 +1596,7 @@ int z_impl_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t gr
 static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *revision)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), 1, false, __func__);
 	user_memory_check(revision, sizeof(*revision), __alignof__(*revision), true, __func__);
 	struct bp_servo_settings copy;
@@ -1549,6 +1611,7 @@ int z_impl_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *h
 }
 static inline int z_vrfy_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(setup, sizeof(*setup), 1, false, __func__);
 	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	struct bp_drivebase_setup copy;
@@ -1563,6 +1626,7 @@ int z_impl_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 }
 static inline int z_vrfy_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_get(handle, value);
 }
@@ -1574,6 +1638,7 @@ int z_impl_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_comma
 }
 static inline int z_vrfy_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(command, sizeof(*command), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_drivebase_command copy;
@@ -1588,6 +1653,7 @@ int z_impl_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_
 }
 static inline int z_vrfy_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(settings, sizeof(*settings), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_drivebase_settings copy;
@@ -1612,6 +1678,7 @@ int z_impl_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drive
 }
 static inline int z_vrfy_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_axis_get(handle, axis, value);
 }
@@ -1625,6 +1692,7 @@ int z_impl_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 static inline int z_vrfy_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *request)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), 1, false, __func__);
 	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_settings copy;
@@ -1649,6 +1717,7 @@ int z_impl_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop
 }
 static inline int z_vrfy_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_log_status(handle, axis, stop, value);
 }
@@ -1662,6 +1731,7 @@ int z_impl_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revisi
 static inline int z_vrfy_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_MOTOR_CONTROL)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_log_read(handle, axis, revision, row, value);
 }
@@ -1703,6 +1773,7 @@ static inline int z_vrfy_bp_sound_write(const int16_t *samples, size_t count)
 	if (!count || count > BP_SOUND_CHUNK_SAMPLES) {
 		return -EINVAL;
 	}
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_SOUND)) return -ENOTSUP;
 	user_memory_check(samples, count * sizeof(*samples), __alignof__(*samples), false, __func__);
 	/* The bounded copy/conversion finishes under the service spinlock.
 	 * No application pointer survives this syscall. */
@@ -1730,6 +1801,7 @@ int z_impl_bp_sound_get(struct bp_sound_state *value)
 }
 static inline int z_vrfy_bp_sound_get(struct bp_sound_state *value)
 {
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_SOUND)) return -ENOTSUP;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_sound_get(value);
 }
@@ -1795,6 +1867,7 @@ int z_impl_bp_user_data_read(uint32_t offset, void *data, size_t size)
 static inline int z_vrfy_bp_user_data_read(uint32_t offset, void *data, size_t size)
 {
 	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_APP_STORAGE)) return -ENOTSUP;
 	if (size) user_memory_check(data, size, 1, true, __func__);
 	return z_impl_bp_user_data_read(offset, data, size);
 }
@@ -1811,6 +1884,7 @@ int z_impl_bp_user_data_write(uint32_t offset, const void *data, size_t size)
 static inline int z_vrfy_bp_user_data_write(uint32_t offset, const void *data, size_t size)
 {
 	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_APP_STORAGE)) return -ENOTSUP;
 	if (size) user_memory_check(data, size, 1, false, __func__);
 	return z_impl_bp_user_data_write(offset, data, size);
 }
