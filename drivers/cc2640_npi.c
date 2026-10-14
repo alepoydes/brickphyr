@@ -40,9 +40,8 @@ struct npi_data {
 	atomic_t releases;
 	atomic_t gpio_error;
 	int error;
-	/* RX has a leading pad; both arrays also hold clocks beyond the shorter
-	 * half of a full-duplex exchange. Never keep 255 + FCS in an 8-bit size. */
-	uint8_t tx[RX_HEADER_SIZE + CC2640_NPI_MAX_PACKET + 1];
+	/* Retain RX until the handshake completes, including its leading pad and
+	 * FCS. Never keep 255 + FCS in an 8-bit size. TX uses the caller's packet. */
 	uint8_t rx[RX_HEADER_SIZE + CC2640_NPI_MAX_PACKET + 1];
 };
 
@@ -169,13 +168,13 @@ int cc2640_npi_off(const struct device *dev)
 	return err;
 }
 
-static int transfer(const struct device *dev, size_t offset, size_t size)
+static int transfer(const struct device *dev, const struct spi_buf *tx,
+		    size_t count, size_t offset, size_t size)
 {
 	const struct npi_config *config = dev->config;
 	struct npi_data *data = dev->data;
-	struct spi_buf tx = {.buf = data->tx + offset, .len = size};
 	struct spi_buf rx = {.buf = data->rx + offset, .len = size};
-	return spi_transceive_dt(&config->spi, &(struct spi_buf_set){&tx, 1},
+	return spi_transceive_dt(&config->spi, &(struct spi_buf_set){tx, count},
 				&(struct spi_buf_set){&rx, 1});
 }
 
@@ -197,16 +196,9 @@ int cc2640_npi_exchange(const struct device *dev, const uint8_t *command,
 		if (err) goto fault;
 	}
 
-	memset(data->tx, 0, sizeof(data->tx));
-	size_t tx_size = length ? length + 3 : 0;
-	if (length) {
-		data->tx[0] = NPI_SOF;
-		data->tx[1] = length;
-		memcpy(data->tx + 2, command, length);
-		uint8_t fcs = 0;
-		for (size_t i = 1; i < tx_size - 1; i++) fcs ^= data->tx[i];
-		data->tx[tx_size - 1] = fcs;
-	}
+	uint8_t header[] = {length ? NPI_SOF : 0, length, length ? command[0] : 0};
+	uint8_t fcs = length;
+	for (size_t i = 0; i < length; i++) fcs ^= command[i];
 	operation = "assert MRDY";
 	err = gpio_pin_set_dt(&config->mrdy, 1);
 	if (err) goto fault;
@@ -215,7 +207,7 @@ int cc2640_npi_exchange(const struct device *dev, const uint8_t *command,
 	if (err == -EAGAIN) err = -ETIMEDOUT;
 	if (err) goto fault;
 	operation = "SPI header";
-	err = transfer(dev, 0, RX_HEADER_SIZE);
+	err = transfer(dev, &(struct spi_buf){header, sizeof(header)}, 1, 0, RX_HEADER_SIZE);
 	if (err) goto fault;
 
 	size_t rx_size = 0;
@@ -229,14 +221,21 @@ int cc2640_npi_exchange(const struct device *dev, const uint8_t *command,
 	} else if (!length) {
 		/* The reference treats a non-SOF header during a write as no RX;
 		 * it does not specify idle byte values. A read-only malformed header
-		 * must never underflow tx_size - 3. */
+		 * must never underflow the remaining transfer length. */
 		err = -EBADMSG;
 		goto fault;
 	}
-	size_t remaining = MAX(rx_size ? rx_size + 1 : 0,
-			       tx_size ? tx_size - RX_HEADER_SIZE : 0);
+	size_t remaining = MAX(rx_size ? rx_size + 1 : 0, length);
+	struct spi_buf body[3];
+	size_t count = 0;
+	if (length) {
+		body[count++] = (struct spi_buf){(void *)(command + 1), length - 1};
+		body[count++] = (struct spi_buf){&fcs, 1};
+	}
+	/* NULL buffers send zeros while the receive frame is longer. */
+	if (remaining > length) body[count++] = (struct spi_buf){NULL, remaining - length};
 	operation = "SPI body";
-	err = transfer(dev, RX_HEADER_SIZE, remaining);
+	err = transfer(dev, body, count, RX_HEADER_SIZE, remaining);
 	if (err) goto fault;
 	if (rx_size) {
 		operation = "event length/FCS";

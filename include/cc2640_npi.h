@@ -20,7 +20,8 @@ void cc2640_npi_set_wake(const struct device *dev, struct k_sem *wake);
 
 /* Exchange an optional HCI command (01, opcode LE, parameter length, parameters)
  * for an optional HCI event (04, event code, parameter length, parameters).
- * event must hold CC2640_NPI_MAX_PACKET bytes. The result is its length or an
+ * event must hold CC2640_NPI_MAX_PACKET bytes and may overlap command: TX is
+ * consumed before a complete event is published. The result is its length or an
  * errno. With no command, timeout bounds waiting for unsolicited input;
  * -EAGAIN means no input and does not fault the transport. SPI/handshake/framing
  * faults assert reset and remain latched until an explicit successful reset.

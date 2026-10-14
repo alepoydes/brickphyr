@@ -119,12 +119,14 @@ static int send_command(uint16_t opcode, const uint8_t *payload, uint8_t length)
 	int err = !expected ? -ENOTSUP : length > CC2640_NPI_MAX_PACKET - 4 ||
 		(length && !payload) ? -EINVAL : 0;
 	if (err) goto failed;
-	uint8_t command[CC2640_NPI_MAX_PACKET] = {HCI_CMD_PACKET};
-	sys_put_le16(opcode, command + 1);
-	command[3] = length;
-	if (length) memcpy(command + 4, payload, length);
+	/* NPI consumes TX before publishing RX. The previous reply has already
+	 * been consumed, so command staging can reuse its storage. */
+	if (length) memcpy(response + 4, payload, length);
+	response[0] = HCI_CMD_PACKET;
+	sys_put_le16(opcode, response + 1);
+	response[3] = length;
 	k_timepoint_t deadline = sys_timepoint_calc(COMMAND_TIMEOUT);
-	err = cc2640_npi_exchange(transport, command, length + 4, response, K_NO_WAIT);
+	err = cc2640_npi_exchange(transport, response, length + 4, response, K_NO_WAIT);
 	if (err < 0) goto failed;
 	for (;;) {
 		response_size = err > 0 ? err : 0;

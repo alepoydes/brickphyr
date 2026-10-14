@@ -2227,6 +2227,14 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 	return 0;
 }
 
+/* Keep thread-start/status scratch off the deeper ELF link call chain. */
+static __noinline int start_native(const void *function, size_t length, size_t heap_size)
+{
+	return start_thread(native_entry, extension, (void *)function, NULL,
+		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length, .program_id = -1,
+			.loader_bytes = heap_size, .loaded_bytes = extension->alloc_size}, false);
+}
+
 /* lifecycle is held and this loader has passed native_image_check. */
 static int run_image(struct llext_loader *loader, size_t length, size_t heap_size)
 {
@@ -2268,9 +2276,7 @@ static int run_image(struct llext_loader *loader, size_t length, size_t heap_siz
 	if (err) {
 		goto failed;
 	}
-	err = start_thread(native_entry, extension, (void *)function, NULL,
-		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length, .program_id = -1,
-			.loader_bytes = heap_size, .loaded_bytes = extension->alloc_size}, false);
+	err = start_native(function, length, heap_size);
 	if (err) {
 		goto failed;
 	}

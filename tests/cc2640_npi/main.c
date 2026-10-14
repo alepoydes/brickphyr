@@ -64,20 +64,28 @@ static int on_spi(const struct emul *target, const struct spi_config *config,
 {
 	ARG_UNUSED(target);
 	ARG_UNUSED(config);
-	if (tx->count != 1 || rx->count != 1 ||
-	    tx->buffers[0].len != rx->buffers[0].len) return -EINVAL;
+	if (rx->count != 1) return -EINVAL;
 	size_t offset = radio.calls++ ? 3 : 0;
-	size_t size = tx->buffers[0].len;
+	size_t size = rx->buffers[0].len;
+	size_t tx_size = 0;
+	for (size_t segment = 0; segment < tx->count; segment++) {
+		if (tx->buffers[segment].len > size - tx_size) return -EINVAL;
+		tx_size += tx->buffers[segment].len;
+	}
+	if (tx_size != size) return -EINVAL;
 	radio.exchanging = true;
 	if (radio.calls == radio.fail_call) return -EIO;
 	size_t rx_body = radio.rx_size > 3 ? radio.rx_size - 3 : 0;
 	size_t tx_body = radio.tx_size > 3 ? radio.tx_size - 3 : 0;
 	if (size != (offset ? MAX(rx_body, tx_body) : 3) ||
 	    offset + size > CC2640_NPI_MAX_PACKET + 4) return -EINVAL;
-	const uint8_t *actual = tx->buffers[0].buf;
-	for (size_t i = 0; i < size; i++) {
-		uint8_t want = offset + i < radio.tx_size ? radio.tx[offset + i] : 0;
-		if (actual[i] != want) radio.mismatch = true;
+	size_t clock = 0;
+	for (size_t segment = 0; segment < tx->count; segment++) {
+		const uint8_t *actual = tx->buffers[segment].buf;
+		for (size_t i = 0; i < tx->buffers[segment].len; i++, clock++) {
+			uint8_t want = offset + clock < radio.tx_size ? radio.tx[offset + clock] : 0;
+			if ((actual ? actual[i] : 0) != want) radio.mismatch = true;
+		}
 	}
 	uint8_t *out = rx->buffers[0].buf;
 	for (size_t i = 0; i < size; i++) {
@@ -150,6 +158,14 @@ ZTEST(cc2640_npi, test_full_duplex_and_fast_srdy_reassert)
 	zassert_equal(gpio_pin_get_raw(GPIO, SRDY), 0);
 	zassert_true(k_sem_count_get(&worker_wake) >= 2);
 	cc2640_npi_set_wake(RADIO, NULL);
+	/* Once the event is consumed, its buffer may stage the next command. */
+	prepare(reply, sizeof(reply), command_wire, sizeof(command_wire));
+	memcpy(event, command, sizeof(command));
+	zassert_equal(cc2640_npi_exchange(RADIO, event, sizeof(command), event,
+					   K_MSEC(1)), 4);
+	zassert_mem_equal(event, reply + 3, 4);
+	zassert_equal(radio.calls, 2);
+	zassert_false(radio.mismatch);
 }
 
 ZTEST(cc2640_npi, test_maximum_receive_and_transmit)
