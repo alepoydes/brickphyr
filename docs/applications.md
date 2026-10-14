@@ -302,6 +302,9 @@ byte budgets. They do not reserve a second privileged stack for a user-mode tran
 The application retains its MPU-aligned user stack and privileged syscall stack.
 Linker RAM totals also include alignment gaps and kernel-object metadata; they
 are not a measure of free system heap or Python GC capacity.
+Firmware services use queues and events; the unused Zephyr asynchronous mailbox
+pool is disabled. Native applications access services through the SDK rather than
+kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
