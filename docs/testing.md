@@ -944,7 +944,7 @@ These checks preserve message content and access behavior; they do not establish
 physical interrupt latency or the maximum stack use of every driver error path.
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
-13 KiB loader limit and 22 KiB shared heap. Its SRAM starts after a reserved
+15.5 KiB loader limit and 24.5 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
 the running program, and successful or failed cleanup returning or retaining
 the loader buffer as required. It also uses a kernel-only main stack and omits
@@ -962,6 +962,31 @@ This retains the production loader, MPU and lifecycle checks, and exercises a
 fixed kernel-object table budget through protected thread creation. Simulated
 peripherals use additional MPS2 RAM; this is not a simulation of the complete
 Technic 64 KiB memory budget. The actual Technic link checks that budget separately.
+
+The RAM-only Shell/SMP service fixture uses Technic's 3 KiB Shell and 2.5 KiB
+SMP worker stacks. Build both backends: standard serial SMP exercises the SMP
+worker, while the production host dispatcher processes serial SMP on the Shell
+thread. With the [Technic SDK](builds.md#experimental-technic-base) extracted into
+`build/technic-sdk`, prepare the independent examples and fixtures:
+
+```sh
+uv run --locked cmake -S examples/native -B build/technic-native-examples -G Ninja \
+  -DLLEXT_EDK_INSTALL_DIR="$PWD/build/technic-sdk/brickphyr-sdk"
+uv run --locked cmake --build build/technic-native-examples --target hello spin -j4
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-service-stacks -o=-j4 -- \
+  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;compact.conf' \
+  '-DEXTRA_DTC_OVERLAY_FILE=imu.overlay;compact.overlay'
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-host-stacks -o=-j4 -- \
+  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;compact.conf;host.conf' \
+  '-DEXTRA_DTC_OVERLAY_FILE=imu.overlay;compact.overlay'
+uv run --locked pytest -q -s tests/test_native.py::test_native_service_stacks
+```
+
+This checks cold ELF upload with an enlarged BSS, Shell/SMP execution, link-error cleanup, forced stop,
+bounded nested CBOR rejection, UART metadata with float formatting, telemetry
+and settings. Stack high-water checks retain at least 512 unused bytes for
+exception/context and unexercised paths. This margin complements call-chain
+inspection; an emulated workload does not establish physical worst-case usage.
 
 The focused M4 QEMU check passes. Its DSP fixture checks a four-tap FIR impulse
 response, the linked native SDK archive and `snprintf` through the production

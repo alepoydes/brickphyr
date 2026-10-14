@@ -248,6 +248,11 @@ static void peer_work(struct k_work *item)
 				const uint8_t generic_mapping[] = {0x10, 0x10};
 				send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING,
 					generic_mapping, sizeof(generic_mapping));
+				if (mode == 3) {
+					/* IEEE float32 -0.125 .. 123.5, independent wire fixture. */
+					const uint8_t raw[] = {0, 0, 0, 0xbe, 0, 0, 0xf7, 0x42};
+					send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_RAW, raw, sizeof(raw));
+				}
 			} else if (peer->kind == COLOR || peer->kind == ULTRASONIC ||
 				   peer->kind == COLOR_DISTANCE || peer->kind == MATRIX) {
 				send_packet(peer, LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));

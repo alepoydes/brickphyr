@@ -138,7 +138,7 @@ MicroPython compiler and runtime described below.
 
 An independently built F4 SDK `hello.elf` passes unchanged in Cortex-M4
 QEMU firmware configurations with different Zephyr syscall IDs and application
-stack sizes, including a 13 KiB native arena after a reserved SRAM prefix.
+stack sizes, including a 15.5 KiB native arena after a reserved SRAM prefix.
 These checks include constructors, float arithmetic, time/output
 calls, rejection and protected cleanup. They do not establish cross-hub hardware
 compatibility. In the full F4 Python/DSP build, the table/admission change adds
@@ -238,7 +238,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
 and a 192 KiB loader budget in a 211 KiB shared system heap. The Technic native
-profile permits 4 KiB images and a 13 KiB loader budget in a 22 KiB shared heap.
+profile permits 4 KiB images and a 15.5 KiB loader budget in a 24.5 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small

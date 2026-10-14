@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Four ports select Technic's UART heap floor instead of the six-port F4 one. */
+&hub_ports {
+	port@4 { status = "disabled"; };
+	port@5 { status = "disabled"; };
+};

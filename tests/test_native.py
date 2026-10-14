@@ -311,6 +311,106 @@ def test_dsp_sdk_example():
         asyncio.run(exercise(port))
 
 
+@pytest.mark.parametrize("backend", ["worker", "host"])
+def test_native_service_stacks(backend):
+    from io import BytesIO
+    from elftools.elf.elffile import ELFFile
+    from smpclient.requests.os_management import EchoWrite
+    from test_python_hub import shell
+    from brickphyrdev import console
+
+    root = Path(__file__).resolve().parents[1]
+    build = root / ("build/native-service-stacks" if backend == "worker" else
+                    "build/native-host-stacks")
+    examples = root / "build/technic-native-examples"
+    hello = (examples / "hello.elf").read_bytes()
+    spin = (examples / "spin.elf").read_bytes()
+
+    class NestedEcho(EchoWrite):
+        u: list
+
+    # A larger zero-filled section exercises the capacity recovered from stacks
+    # without bloating the uploaded file or substituting a loader calculation.
+    elf = ELFFile(BytesIO(hello))
+    enlarged = bytearray(hello)
+    bss_index = elf.get_section_index(".bss")
+    struct.pack_into("<I", enlarged,
+                     elf["e_shoff"] + bss_index * elf["e_shentsize"] + 20, 4096)
+    hello = bytes(enlarged)
+
+    # An admitted ELF with an unsupported local relocation reaches link-error
+    # diagnostics and cleanup, deeper than rejecting an invalid upload header.
+    broken = bytearray(hello)
+    elf = ELFFile(BytesIO(hello))
+    for section in elf.iter_sections():
+        if section["sh_type"] != "SHT_REL":
+            continue
+        symbols = elf.get_section(section["sh_link"])
+        for index, relocation in enumerate(section.iter_relocations()):
+            if symbols.get_symbol(relocation["r_info_sym"])["st_shndx"] != "SHN_UNDEF":
+                broken[section["sh_offset"] + index * section["sh_entsize"] + 4] = 255
+                break
+        else:
+            continue
+        break
+    assert broken != hello
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            # Cold upload; no diagnostic command prepares the application path.
+            await upload(client, port, hello)
+            await shell(port, captured, b"app run")
+            async with asyncio.timeout(2):
+                while (state := await checked(client, Status())).state == 1:
+                    await asyncio.sleep(0.01)
+            assert state.state == 2 and state.result == state.cleanup == 0
+            assert 13312 < state.heap <= 15872
+            assert b"Hello from a native application." in (await checked(client, Output())).data
+            await upload(client, port, bytes(broken))
+            with pytest.raises(RuntimeError, match="Start rejected"):
+                await checked(client, Start())
+            await upload(client, port, spin)
+            await checked(client, Start())
+            with pytest.raises(RuntimeError, match="Upload rejected"):
+                await upload(client, port, incompatible_native(hello))
+            assert (await checked(client, Status())).state == 1
+            await shell(port, captured, b"app stop")
+            stopped = await checked(client, Status())
+            assert stopped.state == 3 and stopped.cleanup == 0
+            with pytest.raises(RuntimeError):
+                await checked(client, NestedEcho(d="x", u=[[[[[0]]]]]))
+            await shell(port, captured, b"pup_peer generic")
+            device = None
+            try:
+                async with asyncio.timeout(3):
+                    while (device := await snapshot(client, "port.A")).values["phase"] != 7:
+                        assert not device.values["failures"], device
+                        await asyncio.sleep(0.01)
+            except TimeoutError as error:
+                error.add_note(f"Last port snapshot: {device}")
+                raise
+            details = await shell(port, captured, b"port A")
+            assert b"Raw range: -0.125 .. 123.5" in details and b"Mode 3:" in details
+            observed = await shell(port, captured, b"observe all")
+            assert b"application read_ms=" in observed and b"imu read_ms=" in observed
+            settings = await shell(port, captured, b"config get power/usb_idle_s")
+            assert b"selected and effective" in settings
+            result = await shell(port, captured, b"stack_usage")
+            match = re.search(rb"Unused stack: shell=(\d+) smp=(\d+)", result)
+            assert match, result
+            unused = tuple(map(int, match.groups()))
+            print(f"Service stacks ({backend}): unused Shell/SMP {unused}")
+            # Reserve for exception/FPU frames and unexercised driver paths;
+            # this observed high-water mark is not a physical worst-case bound.
+            assert min(unused) >= 512, result
+
+    # Measure stack depth, not acquisition timing. Instruction-counted time
+    # advances very slowly while the host polls a mostly idle four-port guest.
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
 def test_installed_applications():
     from smpclient.requests.file_management import FileClose, FileUpload
 

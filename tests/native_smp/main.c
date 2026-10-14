@@ -12,6 +12,7 @@
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/spi_emul.h>
 #include <zephyr/kernel.h>
+#include <zephyr/mgmt/mcumgr/transport/smp.h>
 #include <zephyr/fff.h>
 #include <zephyr/shell/shell.h>
 
@@ -88,6 +89,19 @@ static int close_session(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(session_close, NULL, "Synthetic disconnect notification.", close_session, 1, 0);
+
+static int stack_usage(const struct shell *shell, size_t argc, char **argv)
+{
+	size_t shell_unused, smp_unused;
+	int err = k_thread_stack_space_get(k_current_get(), &shell_unused);
+	if (!err) {
+		err = k_thread_stack_space_get(k_work_queue_thread_get(smp_get_wq()), &smp_unused);
+	}
+	if (err) return err;
+	shell_print(shell, "Unused stack: shell=%zu smp=%zu", shell_unused, smp_unused);
+	return 0;
+}
+SHELL_CMD_REGISTER(stack_usage, NULL, "Service stack high-water marks in bytes.", stack_usage);
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 static int hold_heap(const struct shell *shell, size_t argc, char **argv)
