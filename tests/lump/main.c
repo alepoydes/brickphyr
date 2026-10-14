@@ -1149,10 +1149,13 @@ static void encoder_measurements(void)
 ZTEST(lump, test_uart_hotplug)
 {
 	uart_emul_callback_tx_data_ready_set(uart, sent, NULL);
+	size_t heap_before_uart = allocated_bytes();
 	/* A peer that sends SYNC forever must eventually release the port.
 	 * Accelerated simulator time makes this independent of wall-clock waits. */
 	pup_test_circuits[0].kind = UART_DEVICE;
 	wait_tx(sizeof(speed));
+	zassert_true(allocated_bytes() > heap_before_uart,
+		"UART start did not allocate its live transport");
 	uint8_t ack = LUMP_SYS_ACK, sync = LUMP_SYS_SYNC;
 	feed(&ack, 1);
 	feed(boost_interactive_motor, 3);
@@ -1166,6 +1169,36 @@ ZTEST(lump, test_uart_hotplug)
 	zassert_equal(snapshot().error, -ETIMEDOUT);
 	pup_test_circuits[0].kind = UNPLUGGED;
 	wait_phase(BP_PORT_EMPTY);
+	zassert_equal(allocated_bytes(), heap_before_uart,
+		"Stopped UART retained its transport");
+
+	/* Fail a real port start with the shared heap full. The failed attempt
+	 * must leave no published device or allocation, then normal probing can
+	 * resume after the filler blocks are released. */
+	struct heap_filler { struct heap_filler *next; };
+	struct heap_filler *fillers = NULL, *block;
+	while ((block = k_malloc(64)) != NULL) {
+		block->next = fillers;
+		fillers = block;
+	}
+	zassert_not_null(fillers);
+	size_t heap_full = allocated_bytes();
+	tx_count = 0;
+	pup_test_circuits[0].kind = UART_DEVICE;
+	struct bp_port_state failed = wait_phase(BP_PORT_FAULT);
+	zassert_equal(failed.error, -ENOMEM);
+	zassert_equal(failed.length, 0);
+	zassert_equal(tx_count, 0);
+	zassert_true(pup_test_released(0));
+	zassert_equal(allocated_bytes(), heap_full, "Failed UART start leaked memory");
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+	while (fillers) {
+		block = fillers;
+		fillers = block->next;
+		k_free(block);
+	}
+	zassert_equal(allocated_bytes(), heap_before_uart);
 	/* Likewise, no first TYPE at all must not strand electrical detection. */
 	tx_count = 0;
 	pup_test_circuits[0].kind = UART_DEVICE;
@@ -1174,6 +1207,7 @@ ZTEST(lump, test_uart_hotplug)
 	pup_test_circuits[0].kind = UNPLUGGED;
 	wait_phase(BP_PORT_EMPTY);
 	negotiate(false);
+	size_t before_observers = allocated_bytes();
 	const struct shell *shell = shell_backend_dummy_get_ptr();
 	zassert_ok(shell_execute_cmd(shell, "observe port.A"));
 	size_t size;
@@ -1181,6 +1215,9 @@ ZTEST(lump, test_uart_hotplug)
 	zassert_not_null(strstr(output, "type_id=38"));
 	zassert_not_null(strstr(output, "data_sequence=1"));
 	smp_snapshot(NULL, 0);
+	/* Shell command history has its own registered heap and outlives this
+	 * connection. Isolate its net allocation from UART/link reclamation. */
+	int64_t observer_delta = (int64_t)allocated_bytes() - (int64_t)before_observers;
 
 	struct bp_port_state before = snapshot();
 	uint8_t damaged[sizeof(position)];
@@ -1205,6 +1242,8 @@ ZTEST(lump, test_uart_hotplug)
 	zassert_equal(value.type_id, 0);
 	zassert_true(pup_test_released(0));
 	wait_phase(BP_PORT_EMPTY);
+	zassert_equal((int64_t)allocated_bytes() - (int64_t)heap_before_uart, observer_delta,
+		"Negotiated UART retained metadata after unplug");
 	negotiate(true);
 	zassert_true(snapshot().generation > before.generation);
 
@@ -1231,7 +1270,11 @@ ZTEST(lump, test_uart_hotplug)
 	encoder_measurements();
 	inspect_device();
 	writable_sensor();
+	size_t heap_before_shutdown = allocated_bytes();
+	negotiate(true);
 	zassert_ok(hub_ports_shutdown());
+	zassert_equal(allocated_bytes(), heap_before_shutdown,
+		"Shutdown retained the active UART transport");
 	zassert_equal(snapshot().phase, BP_PORT_OFF);
 	zassert_equal(snapshot().length, 0);
 	zassert_false(pup_test_supply());

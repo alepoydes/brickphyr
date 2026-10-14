@@ -237,7 +237,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 204672-byte loader budget in a 224128-byte shared system heap. The Technic native
+and a 210176-byte loader budget in a 229632-byte shared system heap. The Technic native
 profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
@@ -372,17 +372,20 @@ Firmware services use queues and events; the unused Zephyr asynchronous mailbox
 pool is disabled. Native applications access services through the SDK rather than
 kernel mailboxes.
 
-F4 port-mode descriptions now borrow from the shared system heap while devices
-are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 224128-byte heap, including on-demand loader buffers.
-The full Python profile provides 109056 bytes and the core Python profile 138880 bytes;
+F4 UART state and port-mode descriptions borrow from the shared system heap while
+devices are connected. Empty and passive ports need no UART allocation; each
+active UART link occupies 944 bytes plus allocator overhead, including its
+independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
+The native profile provides a 229632-byte heap, including on-demand loader buffers.
+The full Python profile provides 114560 bytes and the core Python profile 144384 bytes;
 both retain a 16 KiB MPU-aligned stack and a 64 KiB execution arena.
 On F4 each advertised mode uses a 68-byte core, plus the actual combination-mask
 and uninterpreted INFO bytes (0–224 bytes per mode) and allocation overhead.
 Getters reconstruct the fixed 288-byte public structure in caller-owned memory;
-DATA handling does not allocate. Six fully populated sixteen-mode devices still
-need about 28 KiB including allocator overhead; ordinary descriptions cost much
-less. Unoccupied capacity is available to uploads, executable code and other shared
+DATA handling does not allocate. Metadata for six fully populated sixteen-mode
+devices needs about 28 KiB including allocator overhead, in addition to the live
+links; ordinary descriptions cost much less.
+Unoccupied capacity is available to uploads, executable code and other shared
 allocations. These are heap capacities, not increases to Python's GC arena.
 Heap contention or fragmentation can reject a new device or an application
 allocation. Physical combined-load acceptance of this layout remains pending.

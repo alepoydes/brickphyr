@@ -86,17 +86,23 @@ The terminal checks generation while reading modes and after printing the sample
 if the connection changed, repeat inspection. Neither reader locks the device
 for the duration of the display.
 
-The UART parser owns the only metadata table: at most 16 modes per port, with
-bounded strings and payloads. It allocates the advertised number of modes from
-the shared system heap during negotiation. Combination masks and uninterpreted
-INFO payloads use separate packed storage per mode, grown only for bytes actually
+The port worker allocates UART state from the shared system heap only while a
+UART device is connected. Each live port retains its independent 512-byte receive
+buffer; empty and passive ports consume no UART link allocation. Allocation
+precedes UART configuration and failure reports `-ENOMEM` without starting I/O.
+The parser owns the only metadata table: at most 16 modes per port, with bounded
+strings and payloads. It allocates the advertised number of modes during
+negotiation. Combination masks and uninterpreted INFO payloads use separate
+packed storage per mode, grown only for bytes actually
 advertised; the getter expands them into the unchanged public structure.
 The UART contribution to the minimum heap budget follows enabled devicetree ports:
-5 KiB per port for complete mode tables, plus 2 KiB for allocator and growth
-overhead. This is 32 KiB for six ports and 22 KiB for four; it does not reserve
-that memory separately from other heap users.
-Disconnect, restart, failure and shutdown release both allocations. Internal baud changes retain the table. Publication
-occurs after negotiation, and reset invalidates readers before freeing storage.
+6 KiB per port for link state and complete mode tables, plus 2 KiB for allocator
+and growth overhead. This is 38 KiB for six ports and 26 KiB for four; it does not
+reserve that memory separately from other heap users.
+Disconnect, restart, failure and shutdown release the link and its metadata,
+retaining compact failure diagnostics. Internal negotiation baud changes retain
+the allocations. Publication occurs after negotiation, and reset invalidates
+readers and stops callback access before freeing storage.
 An allocation failure reports `-ENOMEM` and fails that negotiation; it does not
 publish incomplete metadata. No allocation occurs for DATA packets or getters,
 and getters perform no device I/O.

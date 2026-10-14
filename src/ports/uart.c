@@ -60,7 +60,15 @@ static struct link {
 	int64_t write_ready_ms;
 	enum { WRITE_WAIT, WRITE_TX, WRITE_SETTLE, WRITE_DONE } writing;
 	enum phase phase;
-} links[ARRAY_SIZE(config)];
+} *links[ARRAY_SIZE(config)];
+/* Retain bounded failure context after the worker releases the live link. */
+static struct diagnostic {
+	int64_t error_ms, data_ms;
+	int error;
+	unsigned int error_flags, queued;
+	enum phase phase;
+	enum lump_phase parser;
+} diagnostics[ARRAY_SIZE(config)];
 /* The parser owns the sole metadata copy. Publish only after negotiation;
  * invalidate under this lock before resetting it. No UART I/O holds the lock. */
 static struct k_spinlock metadata_lock;
@@ -70,8 +78,8 @@ int port_uart_get_mode(uint32_t port, uint32_t mode, struct bp_port_mode *value)
 {
 	if (!port_uart_available(port)) return -ENODEV;
 	k_spinlock_key_t key = k_spin_lock(&metadata_lock);
-	int err = !metadata_ready[port] ? -EAGAIN : mode >= links[port].lump.num_modes ? -EINVAL : 0;
-	if (!err) lump_mode_get(&links[port].lump.modes[mode], value);
+	int err = !metadata_ready[port] ? -EAGAIN : mode >= links[port]->lump.num_modes ? -EINVAL : 0;
+	if (!err) lump_mode_get(&links[port]->lump.modes[mode], value);
 	k_spin_unlock(&metadata_lock, key);
 	return err;
 }
@@ -85,16 +93,20 @@ static void disable_irq(const struct device *dev)
 
 static void interrupt(const struct device *dev, void *arg)
 {
-	struct link *l = arg;
-	if (!l->active) {
-		return;
+	/* Drivers may dispatch from a thread (notably uart_emul). Exclude the
+	 * worker until the last pointer use, without masking hardware interrupts. */
+	bool threaded = !k_is_in_isr();
+	if (threaded) k_sched_lock();
+	struct link *l = links[(uintptr_t)arg];
+	if (!l || !l->active) {
+		goto done;
 	}
 	int err = uart_irq_update(dev);
 	if (err < 0) {
 		goto failed;
 	}
 	if (!err) {
-		return;
+		goto done;
 	}
 	err = uart_err_check(dev);
 	if (err) {
@@ -153,12 +165,14 @@ static void interrupt(const struct device *dev, void *arg)
 			l->tx_busy = false;
 		}
 	}
-	return;
+	goto done;
 failed:
 	l->error_ms = k_uptime_get();
 	l->error = err;
 	l->active = false;
 	disable_irq(dev);
+done:
+	if (threaded) k_sched_unlock();
 }
 
 bool port_uart_available(uint32_t port)
@@ -169,13 +183,13 @@ bool port_uart_available(uint32_t port)
 void port_uart_report_error(uint32_t port)
 {
 	if (!port_uart_available(port)) return;
-	struct link *l = &links[port];
+	const struct diagnostic *d = &diagnostics[port];
 	/* The port worker calls this after disabling IRQ access and before
 	 * reinitialization. No formatting or logging runs in the UART ISR. */
 	LOG_WRN("Port %c UART: phase %u, parser %u, IRQ error %d at %lld ms, "
 		"flags 0x%x, queued %u, last DATA %lld ms",
-		'A' + port, l->phase, l->lump.phase, l->error, l->error_ms,
-		l->error_flags, ring_buf_size_get(&l->rx), l->data_ms);
+		'A' + port, d->phase, d->parser, d->error, d->error_ms,
+		d->error_flags, d->queued, d->data_ms);
 }
 
 static void stop_uart(uint32_t port)
@@ -188,7 +202,7 @@ static void stop_uart(uint32_t port)
 		return;
 	}
 	unsigned int key = irq_lock();
-	links[port].active = false;
+	if (links[port]) links[port]->active = false;
 	disable_irq(config[port].uart);
 	irq_unlock(key);
 }
@@ -197,16 +211,26 @@ void port_uart_stop(uint32_t port)
 {
 	if (port >= ARRAY_SIZE(links)) return;
 	stop_uart(port);
-	/* Metadata is unpublished and the worker has stopped parsing. Retain
-	 * phase/error counters for diagnostics, but return the storage now. */
-	lump_free_modes(&links[port].lump);
-	links[port].lump.length = 0;
+	/* Metadata is unpublished and IRQ access has stopped. Clear the stable
+	 * callback's lookup before returning both allocations to the heap. */
+	unsigned int key = irq_lock();
+	struct link *l = links[port];
+	links[port] = NULL;
+	irq_unlock(key);
+	if (!l) return;
+	diagnostics[port] = (struct diagnostic){
+		.phase = l->phase, .parser = l->lump.phase,
+		.error = l->error, .error_ms = l->error_ms, .error_flags = l->error_flags,
+		.queued = ring_buf_size_get(&l->rx), .data_ms = l->data_ms,
+	};
+	lump_free_modes(&l->lump);
+	k_free(l);
 }
 
 static int set_baud(uint32_t port, uint32_t baud)
 {
 	const struct device *dev = config[port].uart;
-	struct link *l = &links[port];
+	struct link *l = links[port];
 	/* Baud changes are part of negotiation; retain the parsed mode table. */
 	stop_uart(port);
 	struct uart_config cfg = {.baudrate = baud, .parity = UART_CFG_PARITY_NONE,
@@ -246,14 +270,19 @@ static int start(uint32_t port, uint32_t baud, bool serial)
 		return -ENODEV;
 	}
 	port_uart_stop(port);
-	struct link *l = &links[port];
-	*l = (struct link){0};
+	diagnostics[port] = (struct diagnostic){0};
+	struct link *l = k_calloc(1, sizeof(*l));
+	if (!l) return -ENOMEM;
 	l->serial = serial;
 	lump_reset(&l->lump);
 	l->measurement = UINT32_MAX;
 	l->sensor.value.error = -EAGAIN;
 	ring_buf_init(&l->rx, sizeof(l->rx_buffer), l->rx_buffer);
-	int err = uart_irq_callback_user_data_set(config[port].uart, interrupt, l);
+	unsigned int key = irq_lock();
+	links[port] = l;
+	irq_unlock(key);
+	/* Driver-held callback data must outlive every allocation of the link. */
+	int err = uart_irq_callback_user_data_set(config[port].uart, interrupt, (void *)(uintptr_t)port);
 #if defined(CONFIG_PINCTRL)
 	if (!err && config[port].pins) {
 		err = pinctrl_apply_state(config[port].pins, PINCTRL_STATE_DEFAULT);
@@ -263,6 +292,7 @@ static int start(uint32_t port, uint32_t baud, bool serial)
 		err = set_baud(port, baud);
 	}
 	l->born_ms = k_uptime_get();
+	if (err) port_uart_stop(port);
 	return err;
 }
 
@@ -271,7 +301,7 @@ int port_uart_serial_start(uint32_t port, uint32_t baud) { return start(port, ba
 
 static int transmit(uint32_t port, const uint8_t *bytes, size_t count)
 {
-	struct link *l = &links[port];
+	struct link *l = links[port];
 	unsigned int key = irq_lock();
 	int err = l->error ? l->error : l->tx_busy ? -EBUSY : 0;
 	if (!err) {
@@ -292,7 +322,8 @@ static int transmit(uint32_t port, const uint8_t *bytes, size_t count)
 int port_uart_serial_waiting(uint32_t port)
 {
 	if (!port_uart_available(port)) return -ENODEV;
-	struct link *l = &links[port];
+	struct link *l = links[port];
+	if (!l) return -ENODEV;
 	unsigned int key = irq_lock();
 	int result = l->error ? l->error : ring_buf_size_get(&l->rx);
 	irq_unlock(key);
@@ -302,7 +333,8 @@ int port_uart_serial_waiting(uint32_t port)
 int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size)
 {
 	if (!port_uart_available(port)) return -ENODEV;
-	struct link *l = &links[port];
+	struct link *l = links[port];
+	if (!l) return -ENODEV;
 	unsigned int key = irq_lock();
 	int result = l->error ? l->error : ring_buf_get(&l->rx, data, size);
 	irq_unlock(key);
@@ -312,7 +344,8 @@ int port_uart_serial_read(uint32_t port, uint8_t *data, uint32_t size)
 int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write, uint32_t *completed)
 {
 	if (!port_uart_available(port)) return -ENODEV;
-	struct link *l = &links[port];
+	struct link *l = links[port];
+	if (!l) return -ENODEV;
 	unsigned int key = irq_lock();
 	int err = l->error;
 	bool busy = l->tx_busy;
@@ -330,7 +363,7 @@ int port_uart_serial_poll(uint32_t port, const struct port_uart_write *write, ui
 
 static int receive(uint32_t port, int64_t now)
 {
-	struct link *l = &links[port];
+	struct link *l = links[port];
 	for (size_t n = 0; n < RX_BUDGET; n++) {
 		uint8_t byte;
 		unsigned int key = irq_lock();
@@ -374,7 +407,8 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 	const struct port_uart_write *write, bool cancel)
 {
 	if (!port_uart_available(port)) return -ENODEV;
-	struct link *l = &links[port];
+	struct link *l = links[port];
+	if (!l) return -ENODEV;
 	int64_t now = k_uptime_get();
 	unsigned int key = irq_lock();
 	int err = l->error;
