@@ -211,6 +211,17 @@ fetches the pinned pybricksdev sibling checkout; uv installs it as an editable
 dependency. The released upstream Python package does not yet supply this CDC
 client, so install the CLI through the documented workspace procedure.
 
+## Kernel-object sizing prerequisite
+
+The full F4 Python profile requires the local Zephyr `topic/kobject-data-budget`
+change, commit `1c7283cb`, adding `CONFIG_KOBJECT_DATA_AREA_SIZE`.
+A nonzero value fixes the RAM reserved for the
+generated kernel-object table; the final linker still rejects overflow. Zero
+retains upstream's percentage-based sizing. This prevents changes to code
+addresses and gperf output from moving an MPU-aligned stack across a large RAM
+boundary. Both linker generators consume the same generated size. The change
+belongs in Zephyr; publication and manifest pinning remain pending.
+
 ## Crypto configuration prerequisite
 
 The local TF-PSA-Crypto `topic/config-header-order` branch, commit `11672770f`,

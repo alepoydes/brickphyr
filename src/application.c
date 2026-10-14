@@ -48,6 +48,29 @@ BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY_OVERRIDE &&
 BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_CUSTOM_PRIORITY &&
 	     CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO);
 
+static FUNC_NORETURN void user_memory_fault(const char *operation, const void *data,
+	size_t size, const char *reason)
+{
+	LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
+	LOG_ERR("syscall %s: memory region %p (size %zu) %s", operation, data, size, reason);
+	K_OOPS(true);
+}
+
+/* Outline only the cold fault path. Constant size/alignment/access checks
+ * still fold at each caller, without another call or stack frame on success. */
+static ALWAYS_INLINE void user_memory_check(const void *data, size_t size, size_t alignment,
+	bool write, const char *operation)
+{
+	if (!IS_ALIGNED(data, alignment)) {
+		user_memory_fault(operation, data, size, "unaligned");
+	}
+	/* Use the same overflow guards and MPU check as K_SYSCALL_MEMORY. */
+	if (!K_SYSCALL_MEMORY_SIZE_CHECK(data, size) || Z_DETECT_POINTER_OVERFLOW(data, size) ||
+	    arch_buffer_validate((void *)data, size, write) != 0) {
+		user_memory_fault(operation, data, size, write ? "write access denied" : "read access denied");
+	}
+}
+
 K_MUTEX_DEFINE(lifecycle);
 /* A single application stack: no thread creation API or inherited objects. */
 K_THREAD_STACK_DEFINE(application_stack, CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE);
@@ -323,7 +346,7 @@ static inline int z_vrfy_application_message_read(uint32_t lease, size_t offset,
 {
 	verify_python_thread();
 	if (length > sizeof(message_rx)) return -EMSGSIZE;
-	if (length) K_OOPS(K_SYSCALL_MEMORY_WRITE(data, length));
+	if (length) user_memory_check(data, length, 1, true, __func__);
 	return z_impl_application_message_read(lease, offset, data, length);
 }
 #include <zephyr/syscalls/application_message_read_mrsh.c>
@@ -346,7 +369,7 @@ static inline int z_vrfy_application_message_send(uint32_t lease, const void *da
 {
 	verify_python_thread();
 	if (length > sizeof(message_tx)) return -EMSGSIZE;
-	if (length) K_OOPS(K_SYSCALL_MEMORY_READ(data, length));
+	if (length) user_memory_check(data, length, 1, false, __func__);
 	return z_impl_application_message_send(lease, data, length);
 }
 #include <zephyr/syscalls/application_message_send_mrsh.c>
@@ -460,7 +483,7 @@ static inline int z_vrfy_application_stdin(void *data, size_t capacity)
 		return -EMSGSIZE;
 	}
 	if (capacity) {
-		K_OOPS(K_SYSCALL_MEMORY_WRITE(data, capacity));
+		user_memory_check(data, capacity, 1, true, __func__);
 	}
 	return z_impl_application_stdin(data, capacity);
 }
@@ -477,7 +500,7 @@ static inline int z_vrfy_application_stdout(const void *data, size_t length)
 		return -EMSGSIZE;
 	}
 	if (length) {
-		K_OOPS(K_SYSCALL_MEMORY_READ(data, length));
+		user_memory_check(data, length, 1, false, __func__);
 	}
 	return z_impl_application_stdout(data, length);
 }
@@ -530,7 +553,7 @@ static inline int z_vrfy_application_code_commit(const void *data, size_t length
 		return -EINVAL;
 	}
 	if (length) {
-		K_OOPS(K_SYSCALL_MEMORY_READ(data, length));
+		user_memory_check(data, length, 1, false, __func__);
 	}
 	return z_impl_application_code_commit(data, length);
 }
@@ -610,7 +633,7 @@ static inline int z_vrfy_bp_write(const void *data, size_t length)
 	if (length > 128) {
 		return -EMSGSIZE;
 	}
-	K_OOPS(K_SYSCALL_MEMORY_READ(data, length));
+	user_memory_check(data, length, 1, false, __func__);
 	return z_impl_bp_write(data, length);
 }
 #include <zephyr/syscalls/bp_write_mrsh.c>
@@ -633,7 +656,7 @@ int z_impl_bp_light_write(uint32_t light, const uint8_t *rgb)
 
 static inline int z_vrfy_bp_light_write(uint32_t light, const uint8_t *rgb)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(rgb, 3));
+	user_memory_check(rgb, 3, 1, false, __func__);
 	uint8_t copy[3];
 	memcpy(copy, rgb, sizeof(copy));
 	return z_impl_bp_light_write(light, copy);
@@ -651,8 +674,7 @@ static inline int z_vrfy_bp_light_animate(uint32_t light, const struct bp_light_
 	if (!count || count > BP_LIGHT_MAX_FRAMES) {
 		return -EINVAL;
 	}
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(frames, __alignof__(*frames))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(frames, count * sizeof(*frames)));
+	user_memory_check(frames, count * sizeof(*frames), __alignof__(*frames), false, __func__);
 	return z_impl_bp_light_animate(light, frames, count);
 }
 #include <zephyr/syscalls/bp_light_animate_mrsh.c>
@@ -664,8 +686,7 @@ int z_impl_bp_light_get(uint32_t light, struct bp_light_state *state)
 
 static inline int z_vrfy_bp_light_get(uint32_t light, struct bp_light_state *state)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
+	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_light_get(light, state);
 }
 #include <zephyr/syscalls/bp_light_get_mrsh.c>
@@ -680,7 +701,7 @@ static inline int z_vrfy_bp_matrix_write(uint32_t first, const uint8_t *values, 
 	if (!count || first >= BP_MATRIX_PIXELS || count > BP_MATRIX_PIXELS - first) {
 		return -EINVAL;
 	}
-	K_OOPS(K_SYSCALL_MEMORY_READ(values, count));
+	user_memory_check(values, count, 1, false, __func__);
 	uint8_t copy[BP_MATRIX_PIXELS];
 	memcpy(copy, values, count);
 	return z_impl_bp_matrix_write(first, copy, count);
@@ -697,7 +718,7 @@ static inline int z_vrfy_bp_matrix_animate(const uint8_t *frames, size_t count, 
 	if (!count || count > BP_MATRIX_MAX_FRAMES) {
 		return -EINVAL;
 	}
-	K_OOPS(K_SYSCALL_MEMORY_READ(frames, count * BP_MATRIX_PIXELS));
+	user_memory_check(frames, count * BP_MATRIX_PIXELS, 1, false, __func__);
 	return z_impl_bp_matrix_animate(frames, count, interval_ms);
 }
 #include <zephyr/syscalls/bp_matrix_animate_mrsh.c>
@@ -722,8 +743,7 @@ static inline int z_vrfy_bp_matrix_get(struct bp_matrix_state *value)
 {
 	/* Range validation alone permits misaligned memory. A resulting ARM
 	 * fault inside the snapshot copy would strand the service's spinlock. */
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_matrix_get(value);
 }
 #include <zephyr/syscalls/bp_matrix_get_mrsh.c>
@@ -735,8 +755,7 @@ int z_impl_bp_imu_get(struct bp_imu_sample *value)
 
 static inline int z_vrfy_bp_imu_get(struct bp_imu_sample *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get(value);
 }
 #include <zephyr/syscalls/bp_imu_get_mrsh.c>
@@ -748,8 +767,7 @@ int z_impl_bp_imu_get_state(struct bp_imu_state *value)
 
 static inline int z_vrfy_bp_imu_get_state(struct bp_imu_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get_state(value);
 }
 #include <zephyr/syscalls/bp_imu_get_state_mrsh.c>
@@ -762,8 +780,7 @@ int z_impl_bp_imu_configure(const struct bp_imu_command *command)
 
 static inline int z_vrfy_bp_imu_configure(const struct bp_imu_command *command)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(command, __alignof__(*command))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
 	return z_impl_bp_imu_configure(command);
 }
 #include <zephyr/syscalls/bp_imu_configure_mrsh.c>
@@ -775,8 +792,7 @@ int z_impl_bp_imu_get_application(struct bp_imu_application_state *value)
 
 static inline int z_vrfy_bp_imu_get_application(struct bp_imu_application_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_imu_get_application(value);
 }
 #include <zephyr/syscalls/bp_imu_get_application_mrsh.c>
@@ -787,8 +803,7 @@ int z_impl_bp_battery_get(struct bp_battery_sample *value)
 }
 static inline int z_vrfy_bp_battery_get(struct bp_battery_sample *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_battery_get(value);
 }
 #include <zephyr/syscalls/bp_battery_get_mrsh.c>
@@ -799,8 +814,7 @@ int z_impl_bp_charger_get(struct bp_charger_state *value)
 }
 static inline int z_vrfy_bp_charger_get(struct bp_charger_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_charger_get(value);
 }
 #include <zephyr/syscalls/bp_charger_get_mrsh.c>
@@ -811,8 +825,7 @@ int z_impl_bp_port_get(uint32_t port, struct bp_port_state *value)
 }
 static inline int z_vrfy_bp_port_get(uint32_t port, struct bp_port_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_port_get(port, value);
 }
 #include <zephyr/syscalls/bp_port_get_mrsh.c>
@@ -824,9 +837,8 @@ int z_impl_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *h
 static inline int z_vrfy_bp_radio_observe(const uint8_t *channels, uint32_t count, uint32_t *handle)
 {
 	if (count > BP_RADIO_CHANNELS_MAX) return -EINVAL;
-	if (count) K_OOPS(K_SYSCALL_MEMORY_READ(channels, count));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	if (count) user_memory_check(channels, count, 1, false, __func__);
+	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_radio_observe(channels, count, handle);
 }
 #include <zephyr/syscalls/bp_radio_observe_mrsh.c>
@@ -839,7 +851,7 @@ int z_impl_bp_radio_version(char *value, uint32_t size) { return hub_radio_versi
 static inline int z_vrfy_bp_radio_version(char *value, uint32_t size)
 {
 	if (!size || size > BP_RADIO_VERSION_MAX) return -EINVAL;
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, size));
+	user_memory_check(value, size, 1, true, __func__);
 	return z_impl_bp_radio_version(value, size);
 }
 #include <zephyr/syscalls/bp_radio_version_mrsh.c>
@@ -850,8 +862,7 @@ int z_impl_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sampl
 }
 static inline int z_vrfy_bp_radio_get(uint32_t handle, uint32_t channel, struct bp_radio_sample *sample)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(sample, __alignof__(*sample))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(sample, sizeof(*sample)));
+	user_memory_check(sample, sizeof(*sample), __alignof__(*sample), true, __func__);
 	return z_impl_bp_radio_get(handle, channel, sample);
 }
 #include <zephyr/syscalls/bp_radio_get_mrsh.c>
@@ -866,10 +877,8 @@ int z_impl_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *h
 }
 static inline int z_vrfy_bp_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(config, __alignof__(*config))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(config, sizeof(*config)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	user_memory_check(config, sizeof(*config), __alignof__(*config), false, __func__);
+	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_ble_peer_open(config, handle);
 }
 #include <zephyr/syscalls/bp_ble_peer_open_mrsh.c>
@@ -889,8 +898,7 @@ static inline int z_vrfy_bp_ble_peer_close(uint32_t handle) { return z_impl_bp_b
 int z_impl_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state) { return hub_ble_peer_get(handle, state); }
 static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_state *state)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
+	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_ble_peer_get(handle, state);
 }
 #include <zephyr/syscalls/bp_ble_peer_get_mrsh.c>
@@ -898,8 +906,7 @@ static inline int z_vrfy_bp_ble_peer_get(uint32_t handle, struct bp_ble_peer_sta
 int z_impl_bp_network_open(uint32_t size, uint32_t *handle) { return hub_network_open(size, handle); }
 static inline int z_vrfy_bp_network_open(uint32_t size, uint32_t *handle)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	return z_impl_bp_network_open(size, handle);
 }
 #include <zephyr/syscalls/bp_network_open_mrsh.c>
@@ -907,8 +914,7 @@ static inline int z_vrfy_bp_network_open(uint32_t size, uint32_t *handle)
 int z_impl_bp_network_get(uint32_t handle, struct bp_network_state *state) { return hub_network_get(handle, state); }
 static inline int z_vrfy_bp_network_get(uint32_t handle, struct bp_network_state *state)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(state, __alignof__(*state))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(state, sizeof(*state)));
+	user_memory_check(state, sizeof(*state), __alignof__(*state), true, __func__);
 	return z_impl_bp_network_get(handle, state);
 }
 #include <zephyr/syscalls/bp_network_get_mrsh.c>
@@ -916,7 +922,7 @@ static inline int z_vrfy_bp_network_get(uint32_t handle, struct bp_network_state
 int z_impl_bp_network_connect(uint32_t handle, const uint8_t *address) { return hub_network_connect(handle, address); }
 static inline int z_vrfy_bp_network_connect(uint32_t handle, const uint8_t *address)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(address, 6));
+	user_memory_check(address, 6, 1, false, __func__);
 	return z_impl_bp_network_connect(handle, address);
 }
 #include <zephyr/syscalls/bp_network_connect_mrsh.c>
@@ -924,8 +930,7 @@ static inline int z_vrfy_bp_network_connect(uint32_t handle, const uint8_t *addr
 int z_impl_bp_network_send(uint32_t handle, const struct bp_network_message *message) { return hub_network_send(handle, message); }
 static inline int z_vrfy_bp_network_send(uint32_t handle, const struct bp_network_message *message)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(message, __alignof__(*message))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(message, sizeof(*message)));
+	user_memory_check(message, sizeof(*message), __alignof__(*message), false, __func__);
 	return z_impl_bp_network_send(handle, message);
 }
 #include <zephyr/syscalls/bp_network_send_mrsh.c>
@@ -940,8 +945,7 @@ static inline int z_vrfy_bp_network_cancel(uint32_t handle, uint32_t request)
 int z_impl_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through) { return hub_network_snapshot(handle, latest, through); }
 static inline int z_vrfy_bp_network_snapshot(uint32_t handle, uint32_t latest, uint32_t *through)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(through, __alignof__(*through))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(through, sizeof(*through)));
+	user_memory_check(through, sizeof(*through), __alignof__(*through), true, __func__);
 	return z_impl_bp_network_snapshot(handle, latest, through);
 }
 #include <zephyr/syscalls/bp_network_snapshot_mrsh.c>
@@ -949,8 +953,7 @@ static inline int z_vrfy_bp_network_snapshot(uint32_t handle, uint32_t latest, u
 int z_impl_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message) { return hub_network_read(handle, through, message); }
 static inline int z_vrfy_bp_network_read(uint32_t handle, uint32_t through, struct bp_network_message *message)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(message, __alignof__(*message))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(message, sizeof(*message)));
+	user_memory_check(message, sizeof(*message), __alignof__(*message), true, __func__);
 	return z_impl_bp_network_read(handle, through, message);
 }
 #include <zephyr/syscalls/bp_network_read_mrsh.c>
@@ -968,8 +971,7 @@ int z_impl_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
 }
 static inline int z_vrfy_bp_xbox_rumble(uint32_t handle, const struct bp_xbox_rumble *rumble)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(rumble, __alignof__(*rumble))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(rumble, sizeof(*rumble)));
+	user_memory_check(rumble, sizeof(*rumble), __alignof__(*rumble), false, __func__);
 	return z_impl_bp_xbox_rumble(handle, rumble);
 }
 #include <zephyr/syscalls/bp_xbox_rumble_mrsh.c>
@@ -981,7 +983,7 @@ int z_impl_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
 static inline int z_vrfy_bp_lwp3_write(uint32_t handle, const void *data, uint32_t size)
 {
 	if (size < 3 || size > BP_LWP3_MESSAGE_MAX) return -EINVAL;
-	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	user_memory_check(data, size, 1, false, __func__);
 	return z_impl_bp_lwp3_write(handle, data, size);
 }
 #include <zephyr/syscalls/bp_lwp3_write_mrsh.c>
@@ -992,7 +994,7 @@ int z_impl_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
 }
 static inline int z_vrfy_bp_lwp3_read(uint32_t handle, struct bp_lwp3_message *message)
 {
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(message, sizeof(*message)));
+	user_memory_check(message, sizeof(*message), 1, true, __func__);
 	return z_impl_bp_lwp3_read(handle, message);
 }
 #include <zephyr/syscalls/bp_lwp3_read_mrsh.c>
@@ -1013,8 +1015,7 @@ int z_impl_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palett
 }
 static inline int z_vrfy_bp_lwp3_palette_get(uint32_t handle, struct bp_sensor_palette *palette)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(palette, sizeof(*palette)));
+	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), true, __func__);
 	return z_impl_bp_lwp3_palette_get(handle, palette);
 }
 #include <zephyr/syscalls/bp_lwp3_palette_get_mrsh.c>
@@ -1025,8 +1026,7 @@ int z_impl_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *
 }
 static inline int z_vrfy_bp_lwp3_palette_set(uint32_t handle, const struct bp_sensor_palette *palette)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(palette, sizeof(*palette)));
+	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), false, __func__);
 	return z_impl_bp_lwp3_palette_set(handle, palette);
 }
 #include <zephyr/syscalls/bp_lwp3_palette_set_mrsh.c>
@@ -1039,8 +1039,7 @@ int z_impl_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 static inline int z_vrfy_bp_port_get_mode(uint32_t port, uint32_t generation, uint32_t mode,
 	struct bp_port_mode *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_port_get_mode(port, generation, mode, value);
 }
 #include <zephyr/syscalls/bp_port_get_mode_mrsh.c>
@@ -1064,9 +1063,8 @@ static inline int z_vrfy_bp_port_write(uint32_t port, uint32_t generation, uint3
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!size || size > 32) return -EINVAL;
-	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(data, size, 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint8_t copy[32];
 	memcpy(copy, data, size);
 	return z_impl_bp_port_write(port, generation, mode, copy, size, request);
@@ -1079,8 +1077,7 @@ int z_impl_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 }
 static inline int z_vrfy_bp_uart_open(uint32_t port, uint32_t baud, uint32_t *generation)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(generation, __alignof__(*generation))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(generation, sizeof(*generation)));
+	user_memory_check(generation, sizeof(*generation), __alignof__(*generation), true, __func__);
 	return z_impl_bp_uart_open(port, baud, generation);
 }
 #include <zephyr/syscalls/bp_uart_open_mrsh.c>
@@ -1091,8 +1088,7 @@ int z_impl_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, 
 }
 static inline int z_vrfy_bp_uart_open_power(uint32_t port, uint32_t baud, uint32_t power_pin, uint32_t *generation)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(generation, __alignof__(*generation))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(generation, sizeof(*generation)));
+	user_memory_check(generation, sizeof(*generation), __alignof__(*generation), true, __func__);
 	return z_impl_bp_uart_open_power(port, baud, power_pin, generation);
 }
 #include <zephyr/syscalls/bp_uart_open_power_mrsh.c>
@@ -1145,7 +1141,7 @@ int z_impl_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint3
 static inline int z_vrfy_bp_uart_read(uint32_t port, uint32_t generation, uint8_t *data, uint32_t size)
 {
 	if (!size || size > 128) return size ? -EINVAL : 0;
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(data, size));
+	user_memory_check(data, size, 1, true, __func__);
 	uint8_t copy[128];
 	int count = z_impl_bp_uart_read(port, generation, copy, size);
 	if (count > 0) memcpy(data, copy, count);
@@ -1162,9 +1158,8 @@ static inline int z_vrfy_bp_uart_write(uint32_t port, uint32_t generation,
 	const uint8_t *data, uint32_t size, uint32_t *request)
 {
 	if (!size || size > 32) return -EINVAL;
-	K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(data, size, 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint8_t copy[32];
 	memcpy(copy, data, size);
 	return z_impl_bp_uart_write(port, generation, copy, size, request);
@@ -1177,8 +1172,7 @@ int z_impl_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 }
 static inline int z_vrfy_bp_port_reset(uint32_t port, uint32_t generation, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_port_reset(port, generation, request);
 }
 #include <zephyr/syscalls/bp_port_reset_mrsh.c>
@@ -1189,8 +1183,7 @@ int z_impl_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 }
 static inline int z_vrfy_bp_sensor_get(uint32_t port, struct bp_sensor_sample *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_sensor_get(port, value);
 }
 #include <zephyr/syscalls/bp_sensor_get_mrsh.c>
@@ -1221,8 +1214,7 @@ int z_impl_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_s
 }
 static inline int z_vrfy_bp_sensor_palette_get(uint32_t port, uint32_t generation, struct bp_sensor_palette *palette)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(palette, __alignof__(*palette))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(palette, sizeof(*palette)));
+	user_memory_check(palette, sizeof(*palette), __alignof__(*palette), true, __func__);
 	return z_impl_bp_sensor_palette_get(port, generation, palette);
 }
 #include <zephyr/syscalls/bp_sensor_palette_get_mrsh.c>
@@ -1235,7 +1227,7 @@ static inline int z_vrfy_bp_sensor_palette_set(uint32_t port, uint32_t generatio
 {
 	struct bp_sensor_palette copy;
 	if (palette) {
-		K_OOPS(K_SYSCALL_MEMORY_READ(palette, sizeof(*palette)));
+		user_memory_check(palette, sizeof(*palette), 1, false, __func__);
 		memcpy(&copy, palette, sizeof(copy));
 	}
 	return z_impl_bp_sensor_palette_set(port, generation, palette ? &copy : NULL);
@@ -1250,9 +1242,8 @@ int z_impl_bp_sensor_light_write(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_sensor_light_write(uint32_t port, uint32_t generation,
 	const struct bp_sensor_light *light, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(light, sizeof(*light)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(light, sizeof(*light), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_sensor_light copy;
 	memcpy(&copy, light, sizeof(copy));
 	return z_impl_bp_sensor_light_write(port, generation, &copy, request);
@@ -1265,8 +1256,7 @@ int z_impl_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brig
 }
 static inline int z_vrfy_bp_port_light_write(uint32_t port, uint32_t generation, uint32_t brightness, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_port_light_write(port, generation, brightness, request);
 }
 #include <zephyr/syscalls/bp_port_light_write_mrsh.c>
@@ -1277,11 +1267,10 @@ int z_impl_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32
 }
 static inline int z_vrfy_bp_port_matrix_write(uint32_t port, uint32_t generation, const uint32_t *colors, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	uint32_t copy[9];
 	if (colors) {
-		K_OOPS(K_SYSCALL_MEMORY_READ(colors, sizeof(copy)));
+		user_memory_check(colors, sizeof(copy), 1, false, __func__);
 		memcpy(copy, colors, sizeof(copy));
 	}
 	return z_impl_bp_port_matrix_write(port, generation, colors ? copy : NULL, request);
@@ -1296,9 +1285,8 @@ int z_impl_bp_port_pf_write(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_port_pf_write(uint32_t port, uint32_t generation,
 	const struct bp_pf_command *command, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(command, sizeof(*command), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_pf_command copy;
 	memcpy(&copy, command, sizeof(copy));
 	return z_impl_bp_port_pf_write(port, generation, &copy, request);
@@ -1336,8 +1324,7 @@ static inline int z_vrfy_bp_motor_coast(uint32_t port) { return z_impl_bp_motor_
 int z_impl_bp_motor_get(uint32_t port, struct bp_motor_state *value) { return hub_motor_get(port, value); }
 static inline int z_vrfy_bp_motor_get(uint32_t port, struct bp_motor_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_get(port, value);
 }
 #include <zephyr/syscalls/bp_motor_get_mrsh.c>
@@ -1348,8 +1335,7 @@ int z_impl_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction,
 }
 static inline int z_vrfy_bp_motor_setup(uint32_t port, uint32_t generation, int32_t direction, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_setup(port, generation, direction, request);
 }
 #include <zephyr/syscalls/bp_motor_setup_mrsh.c>
@@ -1360,8 +1346,7 @@ int z_impl_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_
 }
 static inline int z_vrfy_bp_motor_dc(uint32_t port, uint32_t generation, int32_t duty, uint32_t coast, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_dc(port, generation, duty, coast, request);
 }
 #include <zephyr/syscalls/bp_motor_dc_mrsh.c>
@@ -1392,8 +1377,7 @@ int z_impl_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *reques
 }
 static inline int z_vrfy_bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_motor_observe(port, generation, request);
 }
 #include <zephyr/syscalls/bp_motor_observe_mrsh.c>
@@ -1406,8 +1390,7 @@ int z_impl_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t
 static inline int z_vrfy_bp_motor_observation_get(uint32_t port, uint32_t generation, uint32_t window_ms,
 	struct bp_motor_observation *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_observation_get(port, generation, window_ms, value);
 }
 #include <zephyr/syscalls/bp_motor_observation_get_mrsh.c>
@@ -1418,8 +1401,7 @@ int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *comman
 }
 static inline int z_vrfy_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(command, __alignof__(*command))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
+	user_memory_check(command, sizeof(*command), __alignof__(*command), false, __func__);
 	/* Copy user storage before taking any hardware service lock. */
 	struct bp_motor_command copy = *command;
 	return z_impl_bp_motor_control(port, &copy);
@@ -1434,9 +1416,8 @@ int z_impl_bp_servo_setup(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_servo_setup(uint32_t port, uint32_t generation,
 	const struct bp_servo_setup *setup, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(setup, sizeof(*setup)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(setup, sizeof(*setup), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_setup copy;
 	memcpy(&copy, setup, sizeof(copy));
 	return z_impl_bp_servo_setup(port, generation, &copy, request);
@@ -1449,8 +1430,7 @@ int z_impl_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, 
 }
 static inline int z_vrfy_bp_servo_get(uint32_t port, uint32_t generation, uint32_t window_ms, struct bp_servo_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_get(port, generation, window_ms, value);
 }
 #include <zephyr/syscalls/bp_servo_get_mrsh.c>
@@ -1461,8 +1441,7 @@ int z_impl_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uin
 }
 static inline int z_vrfy_bp_servo_reset(uint32_t port, uint32_t generation, int32_t angle, uint32_t absolute, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	return z_impl_bp_servo_reset(port, generation, angle, absolute, request);
 }
 #include <zephyr/syscalls/bp_servo_reset_mrsh.c>
@@ -1475,9 +1454,8 @@ int z_impl_bp_servo_move(uint32_t port, uint32_t generation,
 static inline int z_vrfy_bp_servo_move(uint32_t port, uint32_t generation,
 	const struct bp_servo_command *command, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(command, sizeof(*command), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_command copy;
 	memcpy(&copy, command, sizeof(copy));
 	return z_impl_bp_servo_move(port, generation, &copy, request);
@@ -1490,8 +1468,7 @@ int z_impl_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_s
 }
 static inline int z_vrfy_bp_servo_settings_get(uint32_t port, uint32_t generation, struct bp_servo_settings *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_settings_get(port, generation, value);
 }
 #include <zephyr/syscalls/bp_servo_settings_get_mrsh.c>
@@ -1502,8 +1479,7 @@ int z_impl_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp
 }
 static inline int z_vrfy_bp_servo_trajectory_get(uint32_t port, uint32_t generation, struct bp_servo_trajectory *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_trajectory_get(port, generation, value);
 }
 #include <zephyr/syscalls/bp_servo_trajectory_get_mrsh.c>
@@ -1514,8 +1490,7 @@ int z_impl_bp_servo_model_get(uint32_t port, uint32_t generation, struct bp_moto
 }
 static inline int z_vrfy_bp_servo_model_get(uint32_t port, uint32_t generation, struct bp_motor_model_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_servo_model_get(port, generation, value);
 }
 #include <zephyr/syscalls/bp_servo_model_get_mrsh.c>
@@ -1526,8 +1501,7 @@ int z_impl_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind
 }
 static inline int z_vrfy_bp_motor_log_status(uint32_t port, uint32_t generation, uint32_t kind, uint32_t stop, struct bp_motor_log_status *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_log_status(port, generation, kind, stop, value);
 }
 #include <zephyr/syscalls/bp_motor_log_status_mrsh.c>
@@ -1538,8 +1512,7 @@ int z_impl_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, 
 }
 static inline int z_vrfy_bp_motor_log_read(uint32_t port, uint32_t generation, uint32_t kind, uint32_t revision, uint32_t row, struct bp_motor_log_row *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_motor_log_read(port, generation, kind, revision, row, value);
 }
 #include <zephyr/syscalls/bp_motor_log_read_mrsh.c>
@@ -1562,9 +1535,8 @@ int z_impl_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t gr
 static inline int z_vrfy_bp_servo_settings_set(uint32_t port, uint32_t generation, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *revision)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(value, sizeof(*value)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(revision, __alignof__(*revision))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(revision, sizeof(*revision)));
+	user_memory_check(value, sizeof(*value), 1, false, __func__);
+	user_memory_check(revision, sizeof(*revision), __alignof__(*revision), true, __func__);
 	struct bp_servo_settings copy;
 	memcpy(&copy, value, sizeof(copy));
 	return z_impl_bp_servo_settings_set(port, generation, group, &copy, revision);
@@ -1577,9 +1549,8 @@ int z_impl_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *h
 }
 static inline int z_vrfy_bp_drivebase_open(const struct bp_drivebase_setup *setup, uint32_t *handle)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(setup, sizeof(*setup)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(handle, __alignof__(*handle))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(handle, sizeof(*handle)));
+	user_memory_check(setup, sizeof(*setup), 1, false, __func__);
+	user_memory_check(handle, sizeof(*handle), __alignof__(*handle), true, __func__);
 	struct bp_drivebase_setup copy;
 	memcpy(&copy, setup, sizeof(copy));
 	return z_impl_bp_drivebase_open(&copy, handle);
@@ -1592,8 +1563,7 @@ int z_impl_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 }
 static inline int z_vrfy_bp_drivebase_get(uint32_t handle, struct bp_drivebase_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_get(handle, value);
 }
 #include <zephyr/syscalls/bp_drivebase_get_mrsh.c>
@@ -1604,9 +1574,8 @@ int z_impl_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_comma
 }
 static inline int z_vrfy_bp_drivebase_command(uint32_t handle, const struct bp_drivebase_command *command, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(command, sizeof(*command)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(command, sizeof(*command), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_drivebase_command copy;
 	memcpy(&copy, command, sizeof(copy));
 	return z_impl_bp_drivebase_command(handle, &copy, request);
@@ -1619,9 +1588,8 @@ int z_impl_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_
 }
 static inline int z_vrfy_bp_drivebase_settings_set(uint32_t handle, const struct bp_drivebase_settings *settings, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(settings, sizeof(*settings)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(settings, sizeof(*settings), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_drivebase_settings copy;
 	memcpy(&copy, settings, sizeof(copy));
 	return z_impl_bp_drivebase_settings_set(handle, &copy, request);
@@ -1644,8 +1612,7 @@ int z_impl_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drive
 }
 static inline int z_vrfy_bp_drivebase_axis_get(uint32_t handle, uint32_t axis, struct bp_drivebase_axis_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_axis_get(handle, axis, value);
 }
 #include <zephyr/syscalls/bp_drivebase_axis_get_mrsh.c>
@@ -1658,9 +1625,8 @@ int z_impl_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 static inline int z_vrfy_bp_drivebase_axis_set(uint32_t handle, uint32_t axis, uint32_t group,
 	const struct bp_servo_settings *value, uint32_t *request)
 {
-	K_OOPS(K_SYSCALL_MEMORY_READ(value, sizeof(*value)));
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(request, __alignof__(*request))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(request, sizeof(*request)));
+	user_memory_check(value, sizeof(*value), 1, false, __func__);
+	user_memory_check(request, sizeof(*request), __alignof__(*request), true, __func__);
 	struct bp_servo_settings copy;
 	memcpy(&copy, value, sizeof(copy));
 	return z_impl_bp_drivebase_axis_set(handle, axis, group, &copy, request);
@@ -1683,8 +1649,7 @@ int z_impl_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop
 }
 static inline int z_vrfy_bp_drivebase_log_status(uint32_t handle, uint32_t axis, uint32_t stop, struct bp_motor_log_status *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_log_status(handle, axis, stop, value);
 }
 #include <zephyr/syscalls/bp_drivebase_log_status_mrsh.c>
@@ -1697,8 +1662,7 @@ int z_impl_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revisi
 static inline int z_vrfy_bp_drivebase_log_read(uint32_t handle, uint32_t axis, uint32_t revision, uint32_t row,
 	struct bp_motor_log_row *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_drivebase_log_read(handle, axis, revision, row, value);
 }
 #include <zephyr/syscalls/bp_drivebase_log_read_mrsh.c>
@@ -1739,8 +1703,7 @@ static inline int z_vrfy_bp_sound_write(const int16_t *samples, size_t count)
 	if (!count || count > BP_SOUND_CHUNK_SAMPLES) {
 		return -EINVAL;
 	}
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(samples, __alignof__(*samples))));
-	K_OOPS(K_SYSCALL_MEMORY_READ(samples, count * sizeof(*samples)));
+	user_memory_check(samples, count * sizeof(*samples), __alignof__(*samples), false, __func__);
 	/* The bounded copy/conversion finishes under the service spinlock.
 	 * No application pointer survives this syscall. */
 	return z_impl_bp_sound_write(samples, count);
@@ -1767,8 +1730,7 @@ int z_impl_bp_sound_get(struct bp_sound_state *value)
 }
 static inline int z_vrfy_bp_sound_get(struct bp_sound_state *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_sound_get(value);
 }
 #include <zephyr/syscalls/bp_sound_get_mrsh.c>
@@ -1787,8 +1749,7 @@ int z_impl_bp_system_get(struct bp_system_info *value)
 }
 static inline int z_vrfy_bp_system_get(struct bp_system_info *value)
 {
-	K_OOPS(K_SYSCALL_VERIFY(IS_ALIGNED(value, __alignof__(*value))));
-	K_OOPS(K_SYSCALL_MEMORY_WRITE(value, sizeof(*value)));
+	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
 	return z_impl_bp_system_get(value);
 }
 #include <zephyr/syscalls/bp_system_get_mrsh.c>
@@ -1834,7 +1795,7 @@ int z_impl_bp_user_data_read(uint32_t offset, void *data, size_t size)
 static inline int z_vrfy_bp_user_data_read(uint32_t offset, void *data, size_t size)
 {
 	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
-	if (size) K_OOPS(K_SYSCALL_MEMORY_WRITE(data, size));
+	if (size) user_memory_check(data, size, 1, true, __func__);
 	return z_impl_bp_user_data_read(offset, data, size);
 }
 #include <zephyr/syscalls/bp_user_data_read_mrsh.c>
@@ -1850,7 +1811,7 @@ int z_impl_bp_user_data_write(uint32_t offset, const void *data, size_t size)
 static inline int z_vrfy_bp_user_data_write(uint32_t offset, const void *data, size_t size)
 {
 	if (offset > BP_USER_DATA_SIZE || size > BP_USER_DATA_SIZE - offset) return -EINVAL;
-	if (size) K_OOPS(K_SYSCALL_MEMORY_READ(data, size));
+	if (size) user_memory_check(data, size, 1, false, __func__);
 	return z_impl_bp_user_data_write(offset, data, size);
 }
 #include <zephyr/syscalls/bp_user_data_write_mrsh.c>

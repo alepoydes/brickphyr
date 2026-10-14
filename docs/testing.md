@@ -873,7 +873,8 @@ uv run --locked west build -b mps2/an386 -s tests/native -d build/native-compact
 uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[native-compact-tests-NATIVE PASS:]'
 ```
 
-This retains the production loader, MPU and lifecycle checks. Simulated
+This retains the production loader, MPU and lifecycle checks, and exercises a
+fixed kernel-object table budget through protected thread creation. Simulated
 peripherals use additional MPS2 RAM; this is not a simulation of the complete
 Technic 64 KiB memory budget. The actual Technic link checks that budget separately.
 
@@ -883,9 +884,9 @@ loader. This is ARM emulation, not a physical IMU, USB or BLE check. Physical RA
 and stored USB/BLE acceptance for the optional F4 DSP profile remain pending.
 
 `tests/native` executes the production loader on an ARM MPU model, checking
-matrix syscalls, repeated invalid calls, invalid result buffers and release after
-stop/fault. Its synthetic SPI peer can delay a write until the test allows it to
-finish; application unload must wait for the final blank. It also checks
+matrix syscalls, repeated invalid calls, misaligned and read-only result buffers,
+and release after stop/fault. Its synthetic SPI peer can delay a write until the
+test allows it to finish; application unload must wait for the final blank. It also checks
 resource recovery, unavailable memory, interrupted staging, ABI/format rejection,
 busy-loop termination at terminal priority and recovery after a prohibited RAM
 write. `tests/native_smp` adds the standard serial SMP stack. Its host check uploads

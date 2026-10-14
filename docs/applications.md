@@ -167,6 +167,9 @@ ELF parser or kernel withstand every malicious image.
 Typed result structures and PCM buffers require their natural C alignment.
 Syscall validation checks it and the complete memory range before entering
 service locks; a bad pointer ends the application without stranding those locks.
+Memory checks stay inline, while their error reporting shares one cold path
+that retains the syscall name, buffer range and rejection reason. This reduces
+flash duplication without adding a call or allocation to successful validation.
 
 `bp_system_get()` reads the calling application's identity, hub name, cached boot
 cause and current USB/BLE management link. `bp_set_stop_buttons()` selects a
@@ -323,12 +326,13 @@ the mount buffers and file caches supplied by Zephyr. Neither path needs a
 separate libc allocator arena. Crypto allocation failures propagate to the
 Bluetooth operation; pairing under combined memory pressure remains unverified.
 
-The full F4 Python profile uses Zephyr's 25% extra reservation for the generated
-kernel-object table. The default 100% reserve can push the aligned application
-stack across another 16 KiB boundary. Keeping the stack on the earlier boundary
-returns 16 KiB to the shared heap. The final linker still checks that the full
-table fits; changes to the object set require a fresh memory-budget check.
-Reduced profiles retain Zephyr's default reserve.
+The full F4 Python profile reserves 4.5 KiB for the generated kernel-object table
+with `CONFIG_KOBJECT_DATA_AREA_SIZE`. Percentage-based sizing can change with
+code addresses alone and push the aligned application stack across another
+16 KiB boundary. The fixed budget keeps that padding available to the shared
+heap; the final linker rejects a table that exceeds it. Changes to the object
+set still require a fresh memory-budget check. Reduced profiles retain Zephyr's
+default sizing. This option requires the [Zephyr sizing change](upstream.md#kernel-object-sizing-prerequisite).
 
 The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
 Zephyr's `kernel heap` Shell command. It reports

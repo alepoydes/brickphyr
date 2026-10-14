@@ -215,11 +215,11 @@ int main(void)
 		CHECK(k_uptime_get() < deadline);
 	} while (status.state == APPLICATION_RUNNING);
 	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
-	CHECK(native_fixture_run("system_fault") == 0);
-	k_msleep(20);
-	application_get_status(&status);
-	CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 	for (test_buttons = 0; test_buttons < 2; test_buttons++) {
+		CHECK(native_fixture_run("system_fault") == 0);
+		k_msleep(20);
+		application_get_status(&status);
+		CHECK(status.state == APPLICATION_FAULT && status.cleanup_error == 0);
 		CHECK(native_fixture_run("data_fault") == 0);
 		k_msleep(20);
 		application_get_status(&status);
