@@ -2,6 +2,7 @@
 #include "lump.h"
 #include "captures.h"
 #include "hub_ports.h"
+#include "control_frame.h"
 #include "port_uart.h"
 #include "wiring.h"
 #include <string.h>
@@ -1076,6 +1077,12 @@ static void encoder_measurements(void)
 		zassert_equal(sensor().fields, BP_SENSOR_HAS_ANGLE | BP_SENSOR_HAS_ABSOLUTE_ANGLE);
 		zassert_equal(pup_test_sensor_supply(0), 0);
 	}
+	struct bp_control_frame frame;
+	zassert_ok(control_frame_get(BIT(0), &frame));
+	zassert_ok(frame.ports[0].error);
+	zassert_equal(frame.ports[0].output_error, -ESTALE);
+	zassert_false(frame.ports[0].valid);
+	zassert_not_equal(frame.ports[0].output_generation, frame.ports[0].generation);
 	WORDS(4, 0, 1800);
 	zassert_equal(sensor().absolute_mdeg, -180000);
 	smp_snapshot("absolute_mdeg", -180000);
@@ -1100,11 +1107,32 @@ static void encoder_measurements(void)
 	WORDS(4, 0, 1799);
 	zassert_equal(pup_test_sensor_supply(0), 2, "Encoder poll overwrote motor PWM");
 	struct bp_sensor_sample before = sensor();
+	/* One control read preserves source time and the same port's completed
+	 * output, without claiming it or allocating a model. */
+	size_t allocated = allocated_bytes();
+	zassert_ok(control_frame_get(BIT(0), &frame));
+	zassert_ok(frame.ports[0].error);
+	zassert_equal(frame.ports[0].generation, before.generation);
+	zassert_equal(frame.ports[0].sequence, before.sequence);
+	zassert_equal(frame.ports[0].sample_ms, before.sample_ms);
+	zassert_equal(frame.ports[0].angle_mdeg, before.angle_mdeg);
+	zassert_equal(frame.ports[0].duty_permille, 300);
+	zassert_equal(frame.ports[0].completed, motor.completed);
+	zassert_equal(frame.ports[0].request_generation, before.generation);
+	zassert_equal(frame.ports[0].output_generation, before.generation);
+	zassert_true(frame.ports[0].valid && !frame.ports[0].pending);
+	zassert_equal(frame.ports[0].owner, BP_PORT_TERMINAL);
+	zassert_equal(allocated_bytes(), allocated);
+	zassert_true(frame.capture_start_us <= frame.capture_end_us);
 	WORDS(4, 0, 3601);
 	zassert_equal(sensor().error, -EBADMSG);
 	zassert_equal(sensor().fields, 0);
 	zassert_equal(sensor().sequence, before.sequence);
 	zassert_equal(sensor().sample_ms, before.sample_ms);
+	zassert_ok(control_frame_get(BIT(0), &frame));
+	zassert_equal(frame.ports[0].error, -EBADMSG);
+	zassert_equal(frame.ports[0].sample_ms, before.sample_ms);
+	zassert_equal(frame.ports[0].sequence, before.sequence);
 	zassert_ok(hub_motor_get(0, &motor));
 	zassert_equal(motor.error, -EBADMSG);
 	zassert_equal(motor.mode, BP_MOTOR_COAST);
@@ -1125,6 +1153,9 @@ static void encoder_measurements(void)
 	zassert_equal(pup_test_sensor_supply(0), 1);
 	uint32_t generation = sensor().generation;
 	zassert_equal(wait_phase(BP_PORT_FAULT).error, -ETIMEDOUT);
+	zassert_ok(control_frame_get(BIT(0), &frame));
+	zassert_equal(frame.ports[0].error, -ETIMEDOUT);
+	zassert_not_equal(frame.ports[0].generation, generation);
 	zassert_equal(pup_test_sensor_supply(0), 0, "UART loss left the motor powered");
 	zassert_ok(hub_motor_get(0, &motor));
 	zassert_equal(motor.owner, BP_PORT_UNOWNED);

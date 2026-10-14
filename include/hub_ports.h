@@ -6,8 +6,10 @@
 #include <brickphyr_sensor.h>
 #include <brickphyr_motor.h>
 #include <brickphyr_drivebase.h>
+#include <brickphyr_control.h>
 
 #ifdef CONFIG_BRICKPHYR_PORTS
+int hub_control_port_get(uint32_t port, struct bp_control_port *value);
 int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle);
 int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state);
 int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
@@ -86,6 +88,7 @@ int hub_motor_log_read(enum bp_port_owner owner, uint32_t port, uint32_t generat
  * between two IMU samples, so learning cannot span an unobserved drive. */
 uint32_t hub_motor_activity(void);
 #else
+static inline int hub_control_port_get(uint32_t port, struct bp_control_port *value) { return -ENOTSUP; }
 static inline bool hub_drivebase_uses_gyro(void) { return false; }
 static inline int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle) { return -ENOTSUP; }
 static inline int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state) { return -ENOTSUP; }

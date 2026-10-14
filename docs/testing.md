@@ -646,6 +646,14 @@ uv run --locked cmake --build build/native-smp-examples
 uv run --locked pytest -q -x tests/test_bringup.py tests/test_packaging.py
 ```
 
+The control-input API reuses the IMU, LUMP and protected native fixtures. Checks
+cover retained timestamps on acquisition failure, encoder/output connection
+generations, invalid user arguments, disabled sources and reads without device
+I/O, claims or controller allocation. The SDK's
+[read-only example](../examples/native/control_frame.c) has the separate
+[F4 USB/BLE evidence](applications.md#control-input-frame); simulated checks do
+not establish control-loop latency.
+
 The simulator compiles the same application and Zephyr shell. The test opens its
 pseudoterminal with pyserial and checks command echo, help/identity, rejected
 arguments, and an unknown command. It closes the terminal for 200 ms, reopens it,

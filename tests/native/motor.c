@@ -3,6 +3,7 @@
 #include <errno.h>
 
 BRICKPHYR_APPLICATION();
+static struct bp_control_frame frame;
 
 int app_main(void)
 {
@@ -17,6 +18,18 @@ int app_main(void)
 		bp_sleep(1);
 	} while (state.pending);
 	if (!state.valid || state.duty != 250 || state.owner != BP_PORT_APPLICATION) return -EINVAL;
+	if (bp_control_frame_get(1U << BP_PORT_COUNT, (void *)UINTPTR_MAX) != -EINVAL) return -EINVAL;
+	err = bp_control_frame_get(1, &frame);
+	if (err) return err;
+	const struct bp_control_port *port = &frame.ports[0];
+	if (frame.port_mask != 1 || frame.capture_end_us < frame.capture_start_us ||
+	    !frame.capture_resolution_us ||
+	    port->generation != state.generation || port->completed != state.completed ||
+	    port->request_generation != state.generation || port->output_generation != state.generation ||
+	    !port->valid || port->pending || port->output_error || port->duty_permille != 250 ||
+	    port->owner != BP_PORT_APPLICATION) return -EINVAL;
+	if (!(bp_capabilities() & BP_CAP_PORT_UART) && port->error != -ENOTSUP) return -EINVAL;
+	if (!(bp_capabilities() & BP_CAP_IMU) && frame.imu.error != -ENOTSUP) return -EINVAL;
 	/* Synthetic fixture selector: normal return, supervisor stop, or an invalid
 	 * syscall buffer while driving. None may leave PWM running after cleanup. */
 	uint32_t behavior = bp_buttons();

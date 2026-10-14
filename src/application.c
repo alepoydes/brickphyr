@@ -22,6 +22,7 @@
 #include "hub_battery.h"
 #include "hub_charger.h"
 #include "hub_ports.h"
+#include "control_frame.h"
 #include "uart_settings.h"
 #include "hub_power.h"
 #include "hub_reset.h"
@@ -1446,6 +1447,18 @@ static inline int z_vrfy_bp_motor_observation_get(uint32_t port, uint32_t genera
 	return z_impl_bp_motor_observation_get(port, generation, window_ms, value);
 }
 #include <zephyr/syscalls/bp_motor_observation_get_mrsh.c>
+
+int z_impl_bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *frame)
+{
+	return control_frame_get(port_mask, frame);
+}
+static inline int z_vrfy_bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *frame)
+{
+	if (port_mask >> BP_PORT_COUNT) return -EINVAL;
+	user_memory_check(frame, sizeof(*frame), __alignof__(*frame), true, __func__);
+	return z_impl_bp_control_frame_get(port_mask, frame);
+}
+#include <zephyr/syscalls/bp_control_frame_get_mrsh.c>
 
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {

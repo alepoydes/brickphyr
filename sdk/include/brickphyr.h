@@ -18,6 +18,7 @@
 #include <brickphyr_motor.h>
 #include <brickphyr_drivebase.h>
 #include <brickphyr_system.h>
+#include <brickphyr_control.h>
 
 #if defined(__ZEPHYR__) && !defined(LL_EXTENSION_BUILD)
 #include <zephyr/toolchain.h>
@@ -349,6 +350,12 @@ __syscall int bp_sound_write(const int16_t *samples, size_t count);
 __syscall int bp_sound_finish(void);
 __syscall int bp_sound_stop(void);
 __syscall int bp_sound_get(struct bp_sound_state *state);
+
+/* Read cached IMU, battery and selected encoder/output publications. No I/O,
+ * allocation, mode changes or ownership. Returns 0 even when individual sources
+ * have errors; inspect their error fields. Bits 0..5 select A..F; zero is valid.
+ * Retained values are never relabeled as fresh. No application pointers persist. */
+__syscall int bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *frame);
 
 #include <zephyr/syscalls/brickphyr.h>
 #endif

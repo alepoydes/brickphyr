@@ -579,6 +579,9 @@ constructors and floating-point arithmetic; `counter.elf` reports a counter and 
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.
 `sound.elf` plays a short tone followed by generated PCM through the
 [shared speaker service](hardware.md#hub-sound).
+`control_frame.elf` reads IMU, battery and A/B encoder/output snapshots twice,
+including original timestamps and errors, without claiming or moving devices.
+See the [control input contract](applications.md#control-input-frame).
 `motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.

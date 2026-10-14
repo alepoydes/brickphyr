@@ -16,6 +16,7 @@
 #include <zcbor_encode.h>
 #include <pbio/imu.h>
 #include "hub_imu.h"
+#include "control_frame.h"
 #include "hub_power.h"
 #include "configuration.h"
 #include "storage.h"
@@ -438,6 +439,17 @@ ZTEST(imu, test_acquisition)
 	zassert_equal(initial.error, -ETIMEDOUT);
 	zassert_equal(initial.sequence, first.sequence);
 	zassert_equal(initial.sample_us, first.sample_us);
+	struct bp_control_frame captured;
+	before = transactions;
+	zassert_ok(control_frame_get(0, &captured));
+	zassert_equal(captured.imu.error, -ETIMEDOUT);
+	zassert_equal(captured.imu.raw.sequence, first.sequence);
+	zassert_equal(captured.imu.raw.sample_us, first.sample_us);
+	zassert_equal(captured.imu.raw.read_us, first.read_us);
+	zassert_equal(captured.battery.error, -ENOTSUP);
+	zassert_equal(transactions, before, "Control read triggered I2C");
+	zassert_true(captured.capture_start_us >= first.read_us);
+	zassert_true(captured.capture_end_us >= captured.capture_start_us);
 
 	/* I/O failure preserves data. One complete discarded read releases any
 	 * partial word held by BDU; only the following frame becomes observable. */

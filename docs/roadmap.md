@@ -31,6 +31,11 @@ and arena. Independent native execution alongside Python is new work. Existing
 control step. Babybot already has native numerical code, packed recordings and
 host replay: assess and reuse those rather than introducing replacement algorithms.
 
+The native [control input frame](applications.md#control-input-frame) supplies
+read-only IMU, battery and selected encoder/output snapshots with source times,
+errors and connection identity. Grouped actuation, independent execution and
+cycle recording remain work; this read API alone does not complete block 2.
+
 ## Delivery blocks
 
 Each block ends with usable behavior and evidence through the production path.

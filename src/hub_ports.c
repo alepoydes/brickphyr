@@ -98,6 +98,8 @@ static struct port {
 #ifdef CONFIG_BRICKPHYR_PORT_UART
 	struct port_uart_state uart;
 #endif
+	/* Internal generation tags the last completed output. hub_motor_get keeps
+	 * its existing public meaning: the current port connection generation. */
 	struct bp_motor_state motor;
 	uint32_t motor_duration, motor_generation;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -454,6 +456,7 @@ static int coast(uint32_t port)
 		m->duty = 0;
 		m->deadline_ms = 0;
 		m->applied_ms = k_uptime_get();
+		m->generation = ports[port].value.generation;
 	}
 	motor_activity(port, result != 0);
 	k_spin_unlock(&lock, key);
@@ -1256,6 +1259,7 @@ static __unused int64_t apply_motor(uint32_t port)
 		return deadline;
 	}
 	uint32_t request = m->request, duration = p->motor_duration;
+	uint32_t generation = p->value.generation;
 	int32_t duty = command_pending ? m->requested_duty : m->duty;
 	int err = mode != BP_MOTOR_COAST ? device_error ? device_error :
 		p->motor_generation != p->value.generation ? -ENODEV : 0 : 0;
@@ -1264,7 +1268,6 @@ static __unused int64_t apply_motor(uint32_t port)
 	uint16_t type = p->value.type_id;
 	int32_t profile = m->precision_profile;
 	int32_t max_voltage = m->direction ? m->max_voltage : motor_max_voltage(type);
-	uint32_t generation = p->value.generation;
 	uint32_t geometry_revision = p->geometry_revision;
 	uint32_t settings_revision = p->settings_revision;
 	bool settings_pending = frame && p->settings_ready && settings_revision != p->settings_applied;
@@ -1417,6 +1420,7 @@ static __unused int64_t apply_motor(uint32_t port)
 #endif
 		m->duty = err || passive ? 0 : duty;
 		m->applied_ms = k_uptime_get();
+		m->generation = generation;
 		m->deadline_ms = !err && mode == BP_MOTOR_DUTY && duration ? m->applied_ms + duration : 0;
 		p->supply = 0;
 	}
@@ -2211,6 +2215,43 @@ int hub_motor_get(uint32_t port, struct bp_motor_state *value)
 	value->generation = ports[port].value.generation;
 	if (!value->error) value->error = atomic_get(&stopping) ? -ESHUTDOWN :
 		output_device_error(&ports[port], ports[port].value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
+	k_spin_unlock(&lock, key);
+	return 0;
+}
+
+int hub_control_port_get(uint32_t port, struct bp_control_port *value)
+{
+	if (!value || port >= BP_PORT_COUNT) return -EINVAL;
+	if (!port_present(port)) return -ENODEV;
+	int output_error = port_output_check(port);
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct port *p = &ports[port];
+	const struct bp_motor_state *motor = &p->motor;
+	*value = (struct bp_control_port){
+		.generation = p->value.generation,
+		.requested_ms = motor->requested_ms, .applied_ms = motor->applied_ms,
+		.request = motor->request, .completed = motor->completed,
+		.request_generation = p->motor_generation, .output_generation = motor->generation,
+		.output_error = output_error ? output_error : motor->error,
+		.cleanup_error = motor->cleanup_error, .duty_permille = motor->duty,
+		.mode = motor->mode, .valid = motor->valid && motor->generation == p->value.generation,
+		.pending = motor->pending,
+		.owner = p->owner,
+	};
+	/* Reuse the same device validity as direct output. Passive motors may
+	 * have valid output without an encoder; the two errors stay independent. */
+	int err = atomic_get(&stopping) ? -ESHUTDOWN : output_device_error(p, false);
+	if (!value->output_error) value->output_error = err;
+	if (!value->output_error && motor->generation != p->value.generation) value->output_error = -ESTALE;
+	value->error = err ? err : -ENOTSUP;
+	if (IS_ENABLED(CONFIG_BRICKPHYR_PORT_UART)) {
+		const struct bp_sensor_sample *sensor = &uart_state(p)->sensor;
+		value->sample_ms = sensor->sample_ms;
+		value->angle_mdeg = sensor->angle_mdeg;
+		value->sequence = sensor->sequence;
+		value->error = err ? err : sensor->error ? sensor->error :
+			!(sensor->fields & BP_SENSOR_HAS_ANGLE) ? -ENOTSUP : 0;
+	}
 	k_spin_unlock(&lock, key);
 	return 0;
 }

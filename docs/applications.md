@@ -255,6 +255,55 @@ rebooted. Starting it uses the same supervisor and releases the receive buffer
 after LLEXT has copied retained sections. `app discard` frees a waiting image
 without stopping the active one. See [host commands](host.md#native-applications).
 
+### Control input frame
+
+`bp_control_frame_get(port_mask, &frame)` reads the current calibrated IMU,
+battery and selected encoder/output publications in one native call. Bits 0–5
+select A–F; zero reads only the hub sources. Caller-owned storage holds the
+result. The operation does not allocate, acquire a device, change modes, perform
+I/O or start a motor observer. This is the first input boundary for the
+[independent control runtime](roadmap.md), not its scheduler or cycle recorder.
+
+Each source retains its own validity and time. IMU data-ready/read times are in
+microseconds; encoder parser completion, battery conversion completion and motor
+driver completion remain in milliseconds. Capture start/end times describe the
+API read, not the physical acquisition. `capture_resolution_us` reports their
+quantization: one microsecond on F4, or the system tick on targets without a
+64-bit cycle counter. The sources are not simultaneously
+sampled. The encoder and output of each selected port are copied together under
+that port service's existing lock. Current connection, accepted request and last
+completed output have explicit generation identifiers. After reconnect, an old
+output confirmation reports `ESTALE` and `valid=0` until a new output completes;
+reading the frame never applies a new output merely to refresh its timestamp.
+
+Check `imu.error`, `battery.error` and each selected port's `error` before using
+measurements. Output has separate `output_error`, `cleanup_error`, `valid` and
+`pending` fields: a passive motor can have valid output without encoder feedback.
+An accepted pending request does not replace the last driver-confirmed duty.
+No field measures winding voltage or current. Compare IMU epoch and encoder
+generation/sequence, and choose an age limit appropriate to the controller;
+the service's connection timeout is not a control deadline.
+
+A successful call returns zero even if some sources are unavailable. Disabled
+services report `ENOTSUP`, absent ports report `ENODEV`, and an invalid mask
+returns `EINVAL` before touching output storage. Unselected port entries are
+zero and must not be interpreted as valid observations. Errors retain source
+timestamps where the underlying service retains its last sample.
+
+The [control-frame example](../examples/native/control_frame.c) reads A/B twice
+without moving them, and reports source times, errors, generations and applied
+outputs. It uses the same upload/run path as other SDK examples. Its pause and
+text output are illustrative, not a periodic controller. The API is appended in
+native ABI 1.1; older firmware rejects that SDK's images before replacement.
+
+The exported SDK example has bounded USB/BLE checks on one Robot Inventor F4
+(PCB revision unknown), using the full Python image and two idle ID-75 encoder
+motors. Both paths return changing IMU/encoder sequences, battery data and the
+expected stale output-generation indication without acquiring the motors.
+Stored programs remain unchanged. The read is preemptible: capture duration is
+observable, but no control-loop deadline or simultaneous-sampling guarantee is
+provided. Sensor accuracy and sustained combined-load timing remain unverified.
+
 ## Installed native files
 
 The F4 profile mounts a separate 224 KiB LittleFS partition at `/apps`. It shares
