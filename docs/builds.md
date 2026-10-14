@@ -206,8 +206,14 @@ F4 SDK ELF whose required services and memory fit. This profile reserves a
 12 KiB execution arena, 6 KiB system heap and 2 KiB application stack; uploads
 are limited to 4 KiB. The upload and loaded program coexist during loading.
 Use [BLE application commands](host.md#native-applications) for RAM upload,
-start, output and stop. There is no Python, persistent program store, IMU or
-port support in this profile. Compilation and the compact ARM fixture establish
+start, output and stop. The shared IMU service is available through native calls,
+`observe imu`, `observe imu.calibrated` and `observe imu.orientation`, or
+`uv run brickphyrdev monitor --ble Brickphyr --source imu.calibrated`.
+Calibration is runtime-only. There is no Python, persistent program store or
+port support in this profile. It omits an unused libc malloc arena and floating
+point text formatting in the firmware; the system/application heaps and hardware
+float arithmetic remain enabled. Native SDK C-library formatting is linked into
+each application independently. Compilation and the compact ARM fixture establish
 build fit and shared loader behavior, not physical Technic operation.
 
 ### Diagnostic shell

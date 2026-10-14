@@ -120,7 +120,7 @@ format, connection owner or Bluetooth service is introduced.
 | Source | Values and units |
 | --- | --- |
 | `power` | `sample_ms`, `source` (0 battery, 1 USB, negative errno unknown), `idle_since_ms`, `battery_idle_s`, `usb_idle_s`, `connected`, `application`, `shutdown` |
-| `buttons.center` | `sample_ms`, `raw` (ADC counts), `failures`, `stable`, `center` |
+| `buttons.center` | `center`; resistor-ladder boards also supply `sample_ms`, `raw` (ADC counts), `failures` and `stable` |
 | `buttons.side` | `sample_ms`, `raw` (ADC counts), `failures`, `stable`, `left`, `right`, `bluetooth` |
 | `application` | `state`, `result`, `fault`, `cleanup`, `image`, `heap`, `loaded`, `stack`, `unused`, `dropped`, `queued`, `received`, `total`, `ready` |
 | `matrix` | `applied_ms`, `failures`, `owner`, `pending`, `valid`, `requested`, `applied` |

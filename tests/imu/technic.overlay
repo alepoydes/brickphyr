@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
+&hub_imu {
+	axis-signs = <(-1) (-1) 1>;
+};

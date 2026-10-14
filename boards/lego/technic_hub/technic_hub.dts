@@ -68,6 +68,35 @@
 };
 &iwdg { status = "okay"; };
 
+&i2c1 {
+	status = "okay";
+	pinctrl-0 = <&i2c1_scl_pb8 &i2c1_sda_pb9>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	/* Pybricks Technic timing: PRESC/SCLDEL/SDADEL=0, SCLH/SCLL=4
+	 * with the 5 MHz APB1 clock; slightly below 400 kHz after bus delays. */
+	timings = <5000000 I2C_BITRATE_FAST 0x00000404>;
+	scl-gpios = <&gpiob 8 (GPIO_OPEN_DRAIN | GPIO_ACTIVE_HIGH)>;
+	sda-gpios = <&gpiob 9 (GPIO_OPEN_DRAIN | GPIO_ACTIVE_HIGH)>;
+	hub_imu: imu@6a {
+		compatible = "st,lsm6ds3tr-c";
+		reg = <0x6a>;
+		irq-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		axis-signs = <(-1) (-1) 1>;
+	};
+};
+
+&i2c1_scl_pb8 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+	slew-rate = "very-high-speed";
+};
+&i2c1_sda_pb9 {
+	/delete-property/ bias-pull-up;
+	bias-disable;
+	slew-rate = "very-high-speed";
+};
+
 &gpioa {
 	motors-off {
 		gpio-hog;

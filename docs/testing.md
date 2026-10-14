@@ -72,8 +72,9 @@ to inspect local dependency revisions before an update or a release build.
 
 The build-only Technic base has a short synthetic GPIO/PWM integration check. It
 uses the same hub loop and light service as F4, checking PWM duty/ownership,
-rejection of the absent Bluetooth light, shutdown hold and a fresh press after
-release. No test substitutes a simulated MCU for physical Technic evidence.
+rejection of the absent Bluetooth light, GPIO-button telemetry, shutdown hold
+and a fresh press after release. No test substitutes a simulated MCU for
+physical Technic evidence.
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/technic -d build/technic-tests
@@ -557,7 +558,10 @@ register code with a synthetic I²C/GPIO device. Checks cover cold configuration
 physical units and signed limits, read-only Shell snapshots, stale timestamps,
 I/O failure recovery, overlapping updates and shutdown. A separate startup-failure
 fixture checks that a failed register read cannot cause a write and that cleanup
-does not replace the first error. These do not measure F4 sensor accuracy or timing.
+does not replace the first error. `imu-technic-tests` selects Technic's mounting
+and explicit register samples for the same physical readings; it reuses the
+calibration, orientation and failure assertions. These do not measure physical
+sensor accuracy, bus timing or interrupts on either hub.
 
 `tests/imu_processing` checks the [ported calculation](../src/imu/README.md) on
 ARM QEMU: six gravity poses, known turns, user axes, calibration, rejected settings,
@@ -586,6 +590,7 @@ uv run --locked west build -b spike_prime_f4 -d build/prime
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -d build/native -- -DEXTRA_CONF_FILE=tests/native_sim.conf
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/hub -d build/hub-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-tests
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-technic-tests -- -DIMU_TECHNIC_MOUNT=ON
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/imu -d build/imu-failure-tests -- -DIMU_INIT_FAILURE=ON
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/sound -d build/sound-tests

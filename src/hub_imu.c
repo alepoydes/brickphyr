@@ -280,7 +280,7 @@ int hub_imu_shutdown(void)
 {
 	atomic_set(&stopping, 1);
 	k_sem_give(&ready);
-	/* Only this worker owns I2C2. Transfers and reset polling are bounded. */
+	/* Only this worker owns the IMU bus. Transfers and reset polling are bounded. */
 	int err = k_thread_join(imu_thread, K_FOREVER);
 	return err ? err : sample.error == -ESHUTDOWN ? 0 : sample.error;
 }

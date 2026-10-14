@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_power.h"
+#include "hub.h"
 #include "hub_matrix.h"
 #include "hub_imu.h"
 #include "hub_sound.h"
@@ -136,6 +137,8 @@ static void capture(enum source source, struct observation *out)
 				field(out, "right", resistor_ladder_sample_key(dev, &value, INPUT_KEY_RIGHT));
 				field(out, "bluetooth", resistor_ladder_sample_key(dev, &value, INPUT_KEY_BLUETOOTH));
 			}
+#elif DT_NODE_HAS_COMPAT(DT_NODELABEL(center_keys), gpio_keys)
+			field(out, "center", (hub_buttons() & 1) != 0);
 #endif
 		}
 	} else if (source == APPLICATION) {

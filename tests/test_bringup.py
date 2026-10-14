@@ -136,6 +136,7 @@ def test_technic_image():
         "host-ble-only-tests",
         "radio-tests",
         "imu-tests",
+        "imu-technic-tests",
         "imu-failure-tests",
         "sound-tests",
         "battery-tests",

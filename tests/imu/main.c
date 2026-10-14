@@ -31,6 +31,26 @@ static bool hold_read;
 static K_SEM_DEFINE(entered, 0, 1);
 static K_SEM_DEFINE(resume, 0, 1);
 
+/* Raw register values for the same physical readings on each hub mounting. */
+static const struct {
+	int16_t still[6];
+	int16_t biased[6];
+	int16_t rotating[6];
+	int16_t first[6];
+} raw_frames = {
+#ifdef IMU_TECHNIC_MOUNT
+	.still = {10, -20, 30, 0, 0, 4096},
+	.biased = {0, 0, 100, 0, 0, 4096},
+	.rotating = {0, 0, 1000, 0, 0, 4096},
+	.first = {INT16_MIN, -1000, 1000, 0, -1000, 4098},
+#else
+	.still = {10, 20, -30, 0, 0, -4096},
+	.biased = {0, 0, -100, 0, 0, -4096},
+	.rotating = {0, 0, -1000, 0, 0, -4096},
+	.first = {INT16_MIN, 1000, -1000, 0, 1000, -4098},
+#endif
+};
+
 static void pulse(void)
 {
 	const struct device *gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
@@ -184,8 +204,7 @@ static void processing(void)
 	zassert_ok(storage_status());
 	zassert_ok(settings_save());
 	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps -700 1400 2100"));
-	const int16_t still[] = {10, 20, -30, 0, 0, -4096};
-	struct bp_imu_state state = frame(still);
+	struct bp_imu_state state = frame(raw_frames.still);
 	zassert_equal(state.bias[0], -700);
 	zassert_equal(state.bias[1], 1400);
 	zassert_equal(state.bias[2], 2100);
@@ -202,7 +221,7 @@ static void processing(void)
 	zassert_equal((int32_t)sys_get_le32(saved), -700);
 	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 0"));
 	zassert_ok(config_load(imu_config, ARRAY_SIZE(imu_config)));
-	state = frame(still);
+	state = frame(raw_frames.still);
 	zassert_equal(state.angular_velocity[2], 0, "Loaded bias was not applied");
 	zassert_equal(state.bias[2], 2100);
 	uint32_t epoch = state.epoch;
@@ -215,7 +234,7 @@ static void processing(void)
 	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 -2147483648"), -EINVAL);
 	zassert_equal(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps -1"), -EINVAL);
 	zassert_equal(shell_execute_cmd(shell, "config set imu/accel_calibration_um_s2 9806650 9806650 9806650 -9806650 9806650 -9806650"), -EINVAL);
-	state = frame(still);
+	state = frame(raw_frames.still);
 	zassert_equal(state.epoch, epoch, "Rejected settings reset orientation");
 	zassert_equal(state.angular_velocity[2], 0);
 	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps 2147483647"));
@@ -230,7 +249,6 @@ static void processing(void)
 	/* A synthetic fixed offset: real acquisition, stationary detection and
 	 * PBIO calibration must remove it without a storage write. */
 	zassert_true(hub_power_application(true));
-	const int16_t biased[] = {0, 0, -100, 0, 0, -4096};
 	pup_test_circuits[0].kind = MEDIUM_MOTOR;
 	struct bp_motor_state motor;
 	int64_t deadline = k_uptime_get() + 1000;
@@ -240,12 +258,12 @@ static void processing(void)
 		zassert_true(k_uptime_get() < deadline);
 	} while (motor.error);
 	zassert_ok(hub_motor_drive(BP_PORT_APPLICATION, 0, 250, 0));
-	for (size_t i = 0; i < 2800; i++) state = frame(biased);
+	for (size_t i = 0; i < 2800; i++) state = frame(raw_frames.biased);
 	zassert_false(state.stationary);
 	zassert_equal(state.bias[2], 2100, "Motor operation was learned as gyro bias");
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
 	for (size_t i = 0; i < 2800; i++) {
-		state = frame(biased);
+		state = frame(raw_frames.biased);
 	}
 	zassert_true(state.stationary && state.ready);
 	zassert_equal(state.bias[2], 7000);
@@ -260,7 +278,7 @@ static void processing(void)
 		zassert_ok(hub_motor_get(0, &motor));
 	} while (motor.pending);
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
-	state = frame(biased);
+	state = frame(raw_frames.biased);
 	zassert_false(state.stationary);
 	zassert_equal(state.bias[2], 7000, "Inhibition erased the previous bias");
 
@@ -268,12 +286,11 @@ static void processing(void)
 	 * stability cannot distinguish rotation about gravity from a gyro bias. */
 	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_stationary_mdps 0"));
 	zassert_ok(shell_execute_cmd(shell, "config set imu/gyro_bias_start_mdps 0 0 0"));
-	const int16_t rotating[] = {0, 0, -1000, 0, 0, -4096};
-	state = frame(rotating);
+	state = frame(raw_frames.rotating);
 	int64_t start = state.raw.sample_us;
 	epoch = state.epoch;
 	for (size_t i = 0; i < 1000; i++) {
-		state = frame(rotating);
+		state = frame(raw_frames.rotating);
 	}
 	float degrees = 70.0 * (state.raw.sample_us - start) / 1000000.0;
 	zassert_equal(state.epoch, epoch);
@@ -301,7 +318,7 @@ static void processing(void)
 	zassert_ok(hub_imu_get_state(&state));
 	zassert_equal(state.error, -ETIMEDOUT);
 	zassert_false(state.ready);
-	state = frame(rotating);
+	state = frame(raw_frames.rotating);
 	zassert_equal(state.epoch, epoch + 1);
 	zassert_within(state.rotation[2], 0, 0.00001f);
 	zassert_true(hub_power_application(false));
@@ -345,9 +362,8 @@ ZTEST(imu, test_acquisition)
 		zassert_ok(hub_imu_get(&initial));
 	}
 	zassert_equal(transactions, before, "Observation triggered I2C");
-	const int16_t raw[] = {INT16_MIN, 1000, -1000, 0, 1000, -4098};
-	for (size_t i = 0; i < ARRAY_SIZE(raw); i++) {
-		sys_put_le16(raw[i], registers + 0x22 + i * 2);
+	for (size_t i = 0; i < ARRAY_SIZE(raw_frames.first); i++) {
+		sys_put_le16(raw_frames.first[i], registers + 0x22 + i * 2);
 	}
 	pulse();
 	struct bp_imu_sample first = latest(0, 0);

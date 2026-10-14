@@ -34,7 +34,7 @@ source changes preserve the session and uptime.
 | SPIKE Prime F4 (STM32F413VG source target) | Experimental board build; physical boot chain unverified | Clock/power setup, motor coast pins, USB shell, buttons and lights compile; shell and driver logic tested on host | None |
 | SPIKE Prime H5 / other Prime-family revisions | Require separate identification and port | None yet | None |
 | SPIKE Essential | Candidate after the first target | None yet | Hardware availability unconfirmed |
-| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base, BLE and RAM-native builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management endpoint has synthetic checks; shared native loader has compact ARM checks | No board available; boot, BLE, applications, recovery and electrical behavior unverified |
+| Technic 88012 (STM32L431RC source target) | Experimental `technic_hub` base, BLE and RAM-native builds | Power/button, timer RGB, watchdog and factory-loader package; optional CC2640 management and IMU have synthetic checks; shared native loader has compact ARM checks | No board available; boot, BLE, applications, IMU, recovery and electrical behavior unverified |
 | City | Candidate subject to resource and recovery study | None yet | Hardware availability unconfirmed |
 | Move | Candidate; severe memory constraints require separate evaluation | None yet | Hardware availability unconfirmed |
 
@@ -103,9 +103,9 @@ no separate Bluetooth button/light; requests for that light return `-ENODEV`.
 The base reserves the first 1 KiB of SRAM for the factory loader handoff and
 builds in the remaining 63 KiB with the same ARMv7E-M hard-float calling convention
 as F4. The optional native profile reuses the protected loader and shared
-application lifecycle with smaller memory budgets; the base has no application
-engine. IMU, port and
-motor services, battery observations and persistent storage remain unimplemented
+application lifecycle with smaller memory budgets and enables the shared IMU
+and telemetry services; the base has no application engine or IMU acquisition.
+Port and motor services, battery observations and persistent storage remain unimplemented
 on this board. The CC2640 is held in reset; no host terminal is available in this
 base image. Its factory-programmed TI controller owns GAP/GATT and needs a
 different adapter from F4's HCI controller. Do not substitute a generic SPI HCI
@@ -350,6 +350,18 @@ mounting signs come from Pybricks' Prime F4 platform: I²C2 at 400 kHz, PB10/PB3
 INT1 on PB4, sensor-to-hub signs −X/+Y/−Z. Both channels run at 833 Hz with ±8 g
 and ±2000°/s ranges. Startup waits for sensor boot and gyro settling; block data
 update and the filter-settling data-ready mask are enabled.
+
+The Technic native profile uses the same acquisition, calibration, orientation,
+settings and native API implementations. Its reference wiring is I²C1 on PB8/PB9,
+INT1 on PC9 and sensor-to-hub signs −X/−Y/+Z. The I²C timing preset
+`0x00000404` at a 5 MHz peripheral clock follows the pinned
+[Pybricks driver](https://github.com/pybricks/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/drv/imu/imu_lsm6ds3tr_c_stm32.c);
+its bus rate is slightly below 400 kHz after internal and electrical delays.
+Transfers use Zephyr interrupts with a 10 ms timeout and one standard bus-recovery
+attempt after a failed initial identity read. Calibration changes apply in RAM;
+this profile has no persistent settings backend. Register-peer simulation checks
+Technic's mounting, calibrated readings and lifecycle. Physical bus timing,
+axes, bias and orientation remain unverified on Technic.
 
 Read a snapshot in either terminal, or select it in the host monitor:
 

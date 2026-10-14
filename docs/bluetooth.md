@@ -32,7 +32,8 @@ The controller worker bounds command waits and retains the first failure for
 diagnosis. The BLE-only profile has no application engine; adding the
 [native profile](builds.md#experimental-technic-base) enables RAM application
 loading through the shared handlers. Neither profile provides Python, persistent
-program storage or port APIs. Production-path synthetic checks cover cold startup,
+program storage or port APIs. The native profile also provides shared IMU
+observations through the terminal and host monitor. Production-path synthetic checks cover cold startup,
 Shell/SMP, fragmented standard SMP requests/replies, notification backpressure,
 reconnect and isolation of old output. Disconnect or subscription cancellation
 discards incomplete and queued packets; an accepted command finishes while its

@@ -87,6 +87,8 @@ Its CC2640 transport, controller, GATT adapter and shared Shell/SMP endpoint hav
 synthetic checks through the production worker. No Technic board has been available
 for boot, BLE, applications or recovery acceptance. The shared native loader has
 ARM checks with Technic's smaller application budgets; storage and ports remain absent.
+The native profile reuses IMU acquisition/orientation and telemetry, with a
+synthetic register-peer check of its distinct mounting axes.
 The remaining Python acceptance scope below is retained.
 
 ## Python implementation and remaining acceptance

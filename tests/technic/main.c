@@ -2,9 +2,11 @@
 #include "hub.h"
 #include "hub_light.h"
 #include "hub_power.h"
+#include <string.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/drivers/pwm/pwm_fake.h>
 #include <zephyr/fff.h>
+#include <zephyr/shell/shell_dummy.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/ztest.h>
 
@@ -67,9 +69,18 @@ ZTEST(technic, test_gpio_button_and_pwm_lifecycle)
 	const struct device *gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 	zassert_ok(gpio_emul_input_set(gpio, 0, 1));
 	k_msleep(40);
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe buttons.center"));
+	size_t length;
+	zassert_not_null(strstr(shell_backend_dummy_get_output(shell, &length), "center=0"));
 	k_thread_create(&hub_thread, hub_stack, K_THREAD_STACK_SIZEOF(hub_stack),
 		run_hub, NULL, NULL, NULL, 1, 0, K_NO_WAIT);
 	zassert_ok(gpio_emul_input_set(gpio, 0, 0));
+	k_msleep(40);
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe buttons.center"));
+	zassert_not_null(strstr(shell_backend_dummy_get_output(shell, &length), "center=1"));
 	zassert_ok(k_sem_take(&power_released, K_MSEC(2100)));
 	zassert_false(hub_power_connection(HUB_BLE));
 	zassert_equal(hub_light_pwm(true, raw), -ESHUTDOWN);
