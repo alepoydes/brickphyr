@@ -9,8 +9,10 @@ int app_main(void)
 {
 	const struct bp_record_spec spec = {.size = sizeof(data), .capacity = 3, .schema = "fixture/1"};
 	if (bp_record_write(data, sizeof(data)) != -ENODATA) return 1;
-	int err = bp_record_begin(&spec);
+	for (unsigned int i = 0; i < sizeof(data); i++) data[i] = i ^ 0xa5;
+	int err = bp_record_begin_config(&spec, data, sizeof(data));
 	if (err) return err;
+	if (bp_record_trigger(0) != -ENODATA) return 4;
 	if (bp_record_begin(&spec) != -EALREADY) return 2;
 	if (bp_record_write(data, sizeof(data) - 1) != -EMSGSIZE) return 3;
 	for (unsigned int record = 0; record < 8; record++) {

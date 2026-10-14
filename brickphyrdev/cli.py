@@ -88,8 +88,11 @@ def main():
     app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
     for command in ("list", "status", "stop", "output", "discard", "interrupt"):
         app_commands.add_parser(command)
-    app_commands.add_parser("record", help="Collect retained cycle records to JSONL").add_argument(
-        "file", help="New JSONL file; existing files are never replaced"
+    record = app_commands.add_parser("record", help="Collect retained cycle records to JSONL")
+    record.add_argument("file", help="New JSONL file; existing files are never replaced")
+    record.add_argument(
+        "--after", type=int, metavar="N",
+        help="Trigger capture and freeze after N further records without stopping the app",
     )
     app_commands.add_parser("record-clear", help="Clear retained records after the app stops")
     app_input = app_commands.add_parser("input", help="Send a line to the running Python program")

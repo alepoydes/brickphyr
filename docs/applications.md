@@ -403,7 +403,8 @@ provided. Sensor accuracy and sustained combined-load timing remain unverified.
 A bounded read-only probe also runs while the host requests cached IMU, encoder
 and battery snapshots over USB or BLE. USB traffic can extend a capture beyond
 5 ms even with batched SMP transmission. That experiment is not an admission
-budget for a controller; independent scheduled execution remains planned work.
+budget for a controller; see [independent control](#native-control-alongside-python)
+for the execution mechanism and its remaining timing acceptance.
 
 ## Application recording
 
@@ -414,6 +415,14 @@ record count. The total buffer may not exceed 32768 bytes. The supervisor
 allocates it from the shared system heap while the caller waits; a failed
 allocation reports `ENOMEM`. A second successful configuration in the same run
 is rejected. Applications that do not record allocate no recording buffer.
+
+Native ABI 1.5 adds `bp_record_begin_config(&spec, config, length)`. It copies up
+to 1024 bytes of immutable experiment configuration together with the buffer;
+configuration and records share the 32768-byte allocation limit. The record
+schema defines the configuration's binary format too. Use it for model values,
+initial state, units and configuration identity needed for replay. Ring overwrite
+does not erase it. Later parameter changes belong in application records, with
+their revisions; the configuration is not a mutable parameter store.
 
 Each write copies one complete record and returns without allocation, transport
 work or waiting for a reader. Wrong lengths are rejected before modifying the
@@ -430,6 +439,16 @@ A rejected image does not clear a running application's records. The retained
 buffer consumes heap until replacement or clearing, even after application exit;
 clear it before admitting a large replacement when memory is constrained.
 Records are volatile and do not survive firmware reset or loss of power.
+
+`bp_record_trigger(after)` marks the boundary after the last recorded frame and
+freezes recording after exactly `after` further writes. The buffer must already
+contain a frame, and `after` must be less than its capacity, retaining at least
+one frame of prehistory. Zero freezes immediately; a second trigger returns
+`EALREADY`. After completion, writes return `ENOSPC` without changing the capture.
+The application continues running and may stop calling the recorder. An early
+application exit retains the available frames and identifies the incomplete
+capture. A trigger represents an application-defined event, not a firmware
+reset or power-loss detector. Rearming currently requires a new application run.
 
 The same SMP operations retrieve records over USB and BLE. Reads do not consume
 them and can be repeated. Large records use bounded fragments; every response
@@ -451,8 +470,28 @@ collection. It does not stop that application. Session metadata identifies the
 firmware, board, ABI and application status; each record retains its exact binary
 bytes as hex. Explicit gap events mark missing record ranges. A final event
 distinguishes completed collection from cancellation or transport failure, and
-completed collection includes the application's result, fault and cleanup status.
+completed collection includes current or terminal application result, fault and
+cleanup status.
 Clearing a live application's recording returns `EBUSY`.
+
+To trigger a capture from the computer, use `app record FILE --after N`.
+It binds the trigger to the current run and collects the retained prehistory
+and the next N frames through the same USB/BLE connection. For example:
+
+```sh
+uv run brickphyrdev app run build/native-examples/control_loop.elf
+uv run brickphyrdev app record reports/control-event.jsonl --after 8
+uv run brickphyrdev app status
+uv run brickphyrdev app stop
+```
+
+Here the read-only controller continues after capture. Its configuration is one
+little-endian `uint32` containing the requested period in microseconds.
+JSONL session metadata retains configuration bytes as hex. A `recording-end`
+event identifies a completed trigger capture and the current application status;
+it does not mean the application stopped. If the application ends first,
+`application-end` includes the trigger boundary, requested count and incomplete
+capture status. Collection never silently combines configurations from different runs.
 
 The read-only [example](../examples/native/control_record.c) records 40 observations
 of the IMU, battery and ports A/B, retaining the last 32 in 5632 bytes. Its
@@ -467,6 +506,12 @@ The example has bounded checks on one Robot Inventor F4 (PCB revision unknown):
 live USB collection retains all 40 observations, and USB/BLE retrieve identical
 retained tails after completion. No motors are energized. ARM/SMP checks cover
 fragmented records, overwrite, forced stop, reconnect and explicit clearing.
+Protected ARM checks also cover copied configuration, native triggering,
+preserved prehistory, post-trigger writes, continued execution and early stop.
+On the same F4, `control_loop` retains its period configuration and identical
+USB/BLE event captures while continuing execution. A BLE immediate capture also
+passes with the native controller running alongside Python; later controller
+progress leaves the frozen records unchanged.
 These checks do not establish lossless streaming at arbitrary rates or a control
 deadline under combined load.
 
@@ -509,8 +554,8 @@ variant, input rejection and host decoding. One Robot Inventor F4 (PCB revision
 unknown) has checks of the passive variant and identical USB/BLE record retrieval;
 physical group drive and expiry remain unverified. The example adds no resident
 firmware worker or memory reservation. Automatic control-step correlation,
-parameter-value metadata, event-triggered prehistory, autonomous flash recording
-and numerical replay remain [roadmap work](roadmap.md).
+automatic capture of later parameter values, autonomous flash recording and
+numerical replay remain [roadmap work](roadmap.md).
 
 ## Installed native files
 

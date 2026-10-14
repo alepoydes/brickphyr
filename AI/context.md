@@ -94,6 +94,7 @@ to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
 ordinary compatible Pybricks bytecode remains supported.
 The native [recording channel](../docs/applications.md#application-recording)
 retains bounded application-defined binary records for USB/BLE collection;
+immutable configuration and triggered prehistory/post-event capture are supported;
 examples include input observations and a correlated group command. Automatic
 control-step recording and numerical replay remain planned work.
 

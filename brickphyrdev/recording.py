@@ -29,6 +29,10 @@ class InfoResponse(message.ReadResponse):
     next: int
     active: bool
     record_schema: str = Field(alias="schema")
+    config_size: int = 0
+    trigger: int | None = None
+    after: int = 0
+    reason: int | None = None
 
 
 class Info(application._Group, message.ReadRequest):
@@ -49,6 +53,9 @@ class RecordResponse(message.ReadResponse):
     next: int
     active: bool
     data: bytes
+    trigger: int | None = None
+    after: int = 0
+    reason: int | None = None
 
 
 class Record(application._Group, message.ReadRequest):
@@ -59,9 +66,68 @@ class Record(application._Group, message.ReadRequest):
     off: int
 
 
+class ConfigResponse(message.ReadResponse):
+    _GROUP_ID = application.GROUP
+    _COMMAND_ID = 16
+    generation: int
+    total: int
+    data: bytes
+
+
+class Config(application._Group, message.ReadRequest):
+    _COMMAND_ID = 16
+    _Response = ConfigResponse
+    generation: int
+    off: int
+
+
+class Trigger(application._Group, message.WriteRequest):
+    _COMMAND_ID = 16
+    _Response = application.Done
+    generation: int
+    after: int
+
+
 def _range(first, next):
     if not 0 <= first <= next < 1 << 64:
         raise RuntimeError("Invalid recording index range")
+
+
+def _identity(info):
+    return info.size, info.capacity, info.record_schema, info.config_size
+
+
+def _metadata(reply, capacity, *, config_size=0):
+    _range(reply.first, reply.next)
+    trigger, after, reason = reply.trigger, reply.after, reply.reason
+    if reason is None:
+        if trigger is not None or after != 0 or config_size != 0:
+            raise RuntimeError("Incomplete recording capture metadata")
+        reason = 0 if reply.active else 1
+    if reason not in (0, 1, 2) or reply.active != (reason == 0):
+        raise RuntimeError("Invalid recording end reason")
+    if trigger is None:
+        if after != 0 or reason == 2:
+            raise RuntimeError("Invalid recording trigger metadata")
+    elif not (0 < trigger < 1 << 64 and trigger <= reply.next and
+              0 <= after < capacity and trigger + after < 1 << 64):
+        raise RuntimeError("Invalid recording trigger metadata")
+    if reason == 2 and reply.next != trigger + after:
+        raise RuntimeError("Invalid triggered recording boundary")
+    if trigger is not None and reason != 2 and reply.next >= trigger + after:
+        raise RuntimeError("Invalid open recording trigger boundary")
+    return trigger, after, reason
+
+
+def _advance(old, new):
+    old_first, old_next, old_trigger, old_after, old_reason = old
+    first, next_index, trigger, after, reason = new
+    if first < old_first or next_index < old_next:
+        raise RuntimeError("Recording index range moved backwards")
+    if (old_trigger is not None and (trigger, after) != (old_trigger, old_after)) or (
+        old_reason != 0 and reason != old_reason
+    ):
+        raise RuntimeError("Recording trigger state changed")
 
 
 def _control_values(data):
@@ -185,17 +251,20 @@ _DECODERS = {
 }
 
 
-async def collect(client, log, session, counts):
+async def collect(client, log, session, counts, *, after=None):
     info = await checked(client, Info())
     if info.size == 0:
         raise RuntimeError("Recording not initialized")
     if not 0 < info.generation < 1 << 32:
         raise RuntimeError("Invalid recording metadata")
     if not 0 < info.size <= 1024 or not 0 < info.capacity < 1 << 32 or (
-        info.size * info.capacity > 32768
+        not 0 <= info.config_size <= 1024 or
+        info.size * info.capacity + info.config_size > 32768
     ):
         raise RuntimeError("Invalid recording size or capacity")
-    _range(info.first, info.next)
+    trigger, trigger_after, reason = _metadata(
+        info, info.capacity, config_size=info.config_size
+    )
     if not info.record_schema or len(info.record_schema) > 47 or any(
         not 32 <= ord(char) <= 126 for char in info.record_schema
     ):
@@ -203,6 +272,56 @@ async def collect(client, log, session, counts):
     decoder = _DECODERS.get(info.record_schema)
     if decoder and info.size != decoder[0]:
         raise RuntimeError(f"Invalid {info.record_schema} record length")
+
+    generation = info.generation
+    if after is not None:
+        if not 0 <= after < info.capacity:
+            raise ValueError("--after must be between zero and recording capacity minus one")
+        if info.first == info.next:
+            raise RuntimeError("Cannot trigger an empty recording")
+        await checked(client, Trigger(generation=generation, after=after))
+        triggered_info = await checked(client, Info())
+        if triggered_info.generation != generation:
+            raise RuntimeError(
+                f"Recording generation changed from {generation} to {triggered_info.generation}"
+            )
+        if _identity(triggered_info) != _identity(info):
+            raise RuntimeError("Recording metadata changed within generation")
+        state = _metadata(
+            triggered_info, info.capacity, config_size=triggered_info.config_size
+        )
+        _advance((info.first, info.next, trigger, trigger_after, reason),
+                 (triggered_info.first, triggered_info.next, *state))
+        if state[0] is None or state[1] != after:
+            raise RuntimeError("Recording trigger was not retained")
+        info = triggered_info
+        trigger, trigger_after, reason = state
+
+    config = bytearray()
+    while len(config) < info.config_size:
+        fragment = await checked(client, Config(generation=generation, off=len(config)))
+        if fragment.generation != generation:
+            raise RuntimeError(
+                f"Recording generation changed from {generation} to {fragment.generation}"
+            )
+        if fragment.total != info.config_size or not 0 < len(fragment.data) <= min(
+            256, info.config_size - len(config)
+        ):
+            raise RuntimeError("Invalid recording config fragment")
+        config.extend(fragment.data)
+    if info.config_size:
+        current = await checked(client, Info())
+        if current.generation != generation:
+            raise RuntimeError(
+                f"Recording generation changed from {generation} to {current.generation}"
+            )
+        if _identity(current) != _identity(info):
+            raise RuntimeError("Recording metadata changed within generation")
+        state = _metadata(current, info.capacity, config_size=current.config_size)
+        _advance((info.first, info.next, trigger, trigger_after, reason),
+                 (current.first, current.next, *state))
+        info = current
+        trigger, trigger_after, reason = state
 
     identity = await telemetry.info(client)
     status = await checked(client, application.Status())
@@ -227,11 +346,15 @@ async def collect(client, log, session, counts):
                 "next": info.next,
                 "active": info.active,
                 "schema": info.record_schema,
+                "config": config.hex(),
+                "config_size": info.config_size,
+                "trigger": trigger,
+                "after": trigger_after,
+                "reason": reason,
             },
         },
     )
 
-    generation = info.generation
     first, next, active = info.first, info.next, info.active
     index = 0
     partial = bytearray()
@@ -248,16 +371,32 @@ async def collect(client, log, session, counts):
                 raise RuntimeError(
                     f"Recording generation changed from {generation} to {terminal_info.generation}"
                 )
-            monitor.write_log(
-                log,
-                {
-                    "type": "application-end",
-                    "state": status.state,
-                    "result": status.result,
-                    "fault": status.fault,
-                    "cleanup": status.cleanup,
-                },
+            if _identity(terminal_info) != _identity(info):
+                raise RuntimeError("Recording metadata changed within generation")
+            state = _metadata(
+                terminal_info, info.capacity, config_size=terminal_info.config_size
             )
+            _advance((first, next, trigger, trigger_after, reason),
+                     (terminal_info.first, terminal_info.next, *state))
+            first, next, active = terminal_info.first, terminal_info.next, terminal_info.active
+            trigger, trigger_after, reason = state
+            if active or next > index:
+                continue
+            event = {
+                "type": "recording-end" if reason == 2 else "application-end",
+                "state": status.state,
+                "result": status.result,
+                "fault": status.fault,
+                "cleanup": status.cleanup,
+            }
+            if trigger is not None:
+                event["capture"] = {
+                    "trigger": trigger, "after": trigger_after, "next": next,
+                    "complete": reason == 2,
+                }
+            if reason == 2:
+                event["reason"] = "trigger"
+            monitor.write_log(log, event)
             return
 
         reply = await checked(client, Record(generation=generation, index=index, off=len(partial)))
@@ -265,10 +404,11 @@ async def collect(client, log, session, counts):
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
             )
-        _range(reply.first, reply.next)
-        if reply.first < first or reply.next < next:
-            raise RuntimeError("Recording index range moved backwards")
+        state = _metadata(reply, info.capacity)
+        _advance((first, next, trigger, trigger_after, reason),
+                 (reply.first, reply.next, *state))
         first, next, active = reply.first, reply.next, reply.active
+        trigger, trigger_after, reason = state
         if index < first:
             continue  # Discard the partial record before the next request.
         if index >= next:
@@ -299,7 +439,7 @@ async def _record(args, log):
             client,
             _,
         ):
-            await collect(client, log, session, counts)
+            await collect(client, log, session, counts, after=getattr(args, "after", None))
     except BaseException as error:
         failure = error
         raise

@@ -18,7 +18,7 @@ if(NOT CONFIG_SHELL_BACKEND_SERIAL)
   target_include_directories(app PRIVATE ${WEST_TOPDIR}/pybricks-micropython/lib/pbio/include)
 endif()
 include(${BRICKPHYR_ROOT}/sdk/native.cmake)
-foreach(probe record control)
+foreach(probe record record_event control)
   add_llext_target(${probe}_probe OUTPUT ${PROJECT_BINARY_DIR}/${probe}_probe.elf
     SOURCES ${BRICKPHYR_ROOT}/tests/native/${probe}.c)
   add_dependencies(${probe}_probe_llext_lib brickphyr_api)

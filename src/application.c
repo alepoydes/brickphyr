@@ -149,7 +149,11 @@ static struct k_spinlock button_lock;
 static uint32_t stop_buttons;
 static uint32_t observed_buttons;
 static bool stop_pressed;
-static struct bp_record_spec record_request;
+static struct {
+	struct bp_record_spec spec;
+	const void *config;
+	size_t length;
+} record_request;
 static atomic_t record_pending;
 static int record_result;
 static K_SEM_DEFINE(record_done, 0, 1);
@@ -1657,14 +1661,31 @@ static inline int z_vrfy_bp_motor_group_get(struct bp_motor_group_state *state)
 }
 #include <zephyr/syscalls/bp_motor_group_get_mrsh.c>
 
-int z_impl_bp_record_begin(const struct bp_record_spec *spec)
+int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
 {
 	/* Allocation belongs to the supervisor. Aborting this caller must not
 	 * strand a just-allocated buffer or a lock in the application's thread. */
-	record_request = *spec;
+	record_request.spec = *spec;
+	record_request.config = config;
+	record_request.length = length;
 	atomic_set(&record_pending, 1);
 	k_sem_take(&record_done, K_FOREVER);
 	return record_result;
+}
+static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
+	const void *config, size_t length)
+{
+	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (length > 1024) return -EMSGSIZE;
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	if (length) user_memory_check(config, length, 1, false, __func__);
+	return z_impl_bp_record_begin_config(spec, config, length);
+}
+#include <zephyr/syscalls/bp_record_begin_config_mrsh.c>
+
+int z_impl_bp_record_begin(const struct bp_record_spec *spec)
+{
+	return z_impl_bp_record_begin_config(spec, NULL, 0);
 }
 static inline int z_vrfy_bp_record_begin(const struct bp_record_spec *spec)
 {
@@ -1685,6 +1706,17 @@ static inline int z_vrfy_bp_record_write(const void *data, size_t length)
 	return z_impl_bp_record_write(data, length);
 }
 #include <zephyr/syscalls/bp_record_write_mrsh.c>
+
+int z_impl_bp_record_trigger(uint32_t after)
+{
+	return application_record_trigger(0, after);
+}
+static inline int z_vrfy_bp_record_trigger(uint32_t after)
+{
+	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	return z_impl_bp_record_trigger(after);
+}
+#include <zephyr/syscalls/bp_record_trigger_mrsh.c>
 
 int z_impl_bp_motor_control(uint32_t port, const struct bp_motor_command *command)
 {
@@ -2460,7 +2492,8 @@ void application_poll(void)
 	}
 #endif
 	if (atomic_get(&record_pending)) {
-		record_result = application_record_begin(&record_request);
+		record_result = application_record_begin(&record_request.spec,
+			record_request.config, record_request.length);
 		atomic_clear(&record_pending);
 		k_sem_give(&record_done);
 	}

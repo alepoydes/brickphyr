@@ -384,6 +384,18 @@ __syscall int bp_record_write(const void *data, size_t length);
 __syscall int bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	void *parameters, size_t capacity);
 
+/* As begin(), with immutable application-defined binary configuration. The
+ * schema owns both formats; up to 1024 config bytes share the 32768-byte budget
+ * with records. Copied once, before periodic work, and retained with this run. */
+__syscall int bp_record_begin_config(const struct bp_record_spec *spec,
+	const void *config, size_t length);
+/* Mark the boundary after the last written record, then freeze after this many
+ * additional records. Requires a nonempty recording and after < capacity,
+ * preserving at least one pre-trigger record. One trigger per run; zero freezes
+ * immediately. The application keeps running; later writes return ENOSPC.
+ * This is an application event, not a power-loss/reset recorder. */
+__syscall int bp_record_trigger(uint32_t after);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

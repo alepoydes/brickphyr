@@ -581,6 +581,13 @@ also makes syscall and EDK generation depend on the generator script, so an
 incremental build cannot retain handlers from its previous implementation.
 Publication and manifest integration remain pending.
 
+Local Zephyr commit `8fabd677` on `topic/dynamic-user-stacks` also makes syscall
+parsing depend on headers registered through `zephyr_syscall_header`. Changing an
+out-of-tree declaration now regenerates the syscall list and handlers without a
+CMake reconfigure. Incremental generation was checked by adding and removing a
+temporary declaration in a registered Brickphyr header; the generated syscall
+JSON followed both edits. Publication and manifest integration remain pending.
+
 Local Zephyr commit `4ba9447c` on `topic/log-module-pointers` makes each logging
 module's source pointers constant. The objects containing runtime filters remain
 mutable. This lets the compiler replace the pointers with direct addresses,

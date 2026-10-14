@@ -210,6 +210,7 @@ def test_native_recording():
             counts = {"records": 0, "gaps": 0}
             await recording.collect(client, output, "arm", counts)
             events = [json.loads(line) for line in output.getvalue().splitlines()]
+            assert events[0]["recording"]["config"] == bytes((i ^ 0xa5) % 256 for i in range(600)).hex()
             assert {"type": "gap", "from": 0, "to": 5} in events
             records = [event for event in events if event["type"] == "record"]
             assert [event["index"] for event in records] == [5, 6, 7]
@@ -223,6 +224,9 @@ def test_native_recording():
             assert cleared.size == 0 and cleared.generation != meta.generation
             stale = await checked(client, recording.Record(generation=meta.generation, index=5, off=0))
             assert not stale.data and stale.generation == cleared.generation
+            stale_config = await checked(client, recording.Config(generation=meta.generation, off=0))
+            assert not stale_config.data and stale_config.total == 0
+            assert stale_config.generation == cleared.generation
             # A new run starts at zero; it cannot inherit the old tail.
             await upload(client, transport, (build / "record_probe.elf").read_bytes())
             await checked(client, Start())
@@ -230,6 +234,33 @@ def test_native_recording():
                 while (again := await checked(client, recording.Info())).next != 8:
                     await asyncio.sleep(0)
             assert again.generation != meta.generation
+            # A stale host trigger cannot capture a replacement application.
+            with pytest.raises(RuntimeError):
+                await checked(client, recording.Trigger(generation=meta.generation, after=0))
+            await checked(client, recording.Trigger(generation=again.generation, after=1))
+            await checked(client, Stop())
+            output = io.StringIO()
+            await recording.collect(client, output, "interrupted", {"records": 0, "gaps": 0})
+            ended = json.loads(output.getvalue().splitlines()[-1])
+            assert ended["type"] == "application-end" and ended["capture"] == {
+                "trigger": 8, "after": 1, "next": 8, "complete": False,
+            }
+            await checked(client, recording.Clear())
+
+            # The native trigger freezes two preceding and two following records.
+            await upload(client, transport, (build / "record_event_probe.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (event := await checked(client, recording.Info())).next != 10:
+                    assert (await checked(client, Status())).state == 1
+            assert not event.active and event.reason == 2
+            output = io.StringIO()
+            await recording.collect(client, output, "event", {"records": 0, "gaps": 0})
+            events = [json.loads(line) for line in output.getvalue().splitlines()]
+            assert [struct.unpack("<I", bytes.fromhex(e["data"]))[0]
+                    for e in events if e["type"] == "record"] == [6, 7, 8, 9]
+            assert events[-1]["type"] == "recording-end" and events[-1]["state"] == 1
+            assert events[-1]["capture"] == {"trigger": 8, "after": 2, "next": 10, "complete": True}
             await checked(client, Stop())
             await checked(client, recording.Clear())
 

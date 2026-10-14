@@ -130,7 +130,10 @@ static bool record_position(zcbor_state_t *zs, const struct application_record_i
 	return number(zs, "generation", info->generation) &&
 		zcbor_tstr_put_lit(zs, "first") && zcbor_uint64_put(zs, info->first) &&
 		zcbor_tstr_put_lit(zs, "next") && zcbor_uint64_put(zs, info->next) &&
-		zcbor_tstr_put_lit(zs, "active") && zcbor_bool_put(zs, info->active);
+		zcbor_tstr_put_lit(zs, "active") && zcbor_bool_put(zs, info->active) &&
+		zcbor_tstr_put_lit(zs, "trigger") &&
+		(info->triggered ? zcbor_uint64_put(zs, info->trigger) : zcbor_nil_put(zs, NULL)) &&
+		number(zs, "after", info->after) && number(zs, "reason", info->reason);
 }
 
 static int record_info_read(struct smp_streamer *stream)
@@ -139,6 +142,7 @@ static int record_info_read(struct smp_streamer *stream)
 	application_record_info(&info);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && number(zs, "size", info.spec.size) &&
+		number(zs, "config_size", info.config_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
 		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
@@ -169,6 +173,39 @@ static int record_read(struct smp_streamer *stream)
 static int record_clear_write(struct smp_streamer *stream)
 {
 	return result(stream, application_clear_recording());
+}
+
+static int record_config_read(struct smp_streamer *stream)
+{
+	uint32_t generation = 0, offset = UINT32_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("off", zcbor_uint32_decode, &offset),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || offset == UINT32_MAX) return MGMT_ERR_EINVAL;
+	uint8_t data[256];
+	struct application_record_info info;
+	int length = application_record_config_read(generation, offset, data, sizeof(data), &info);
+	if (length < 0) return result(stream, length);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = number(zs, "generation", info.generation) && number(zs, "total", info.config_size) &&
+		zcbor_tstr_put_lit(zs, "data") && zcbor_bstr_encode_ptr(zs, data, length);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_trigger_write(struct smp_streamer *stream)
+{
+	uint32_t generation = 0, after = UINT32_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("after", zcbor_uint32_decode, &after),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || after == UINT32_MAX) return MGMT_ERR_EINVAL;
+	return result(stream, application_record_trigger(generation, after));
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
@@ -300,6 +337,7 @@ static const struct mgmt_handler handlers[] = {
 	[13] = {.mh_read = stream_read},
 	[14] = {.mh_read = record_info_read, .mh_write = record_clear_write},
 	[15] = {.mh_read = record_read},
+	[16] = {.mh_read = record_config_read, .mh_write = record_trigger_write},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL
