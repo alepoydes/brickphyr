@@ -543,6 +543,18 @@ the default main-thread transition and the kernel-only variant with a separate
 user thread; Brickphyr's compact native lifecycle fixture checks integration.
 Publication and manifest integration remain pending.
 
+Local Zephyr commit `ea7fc7d4` on `topic/arm-syscall-frame` moves Cortex-M
+mainline syscall-frame bookkeeping into the architecture dispatcher. Generated
+marshallers retain argument validation and return-value copying but omit their
+repeated frame stores; other architectures retain the generated bookkeeping.
+The frame remains attached to its thread across blocking calls and is cleared
+before returning to user mode. ARM checks cover arguments, 64-bit results,
+context switches, IRQ observations, rejected access and protected native execution.
+No physical syscall-latency improvement has been measured. Commit `71da7f10`
+also makes syscall and EDK generation depend on the generator script, so an
+incremental build cannot retain handlers from its previous implementation.
+Publication and manifest integration remain pending.
+
 ## IMU processing port
 
 Brickphyr owns the adapted calibration/orientation code in

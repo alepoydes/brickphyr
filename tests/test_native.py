@@ -78,6 +78,8 @@ def test_reserved_slot_names():
         ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("driver-userspace-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("driver-supervisor-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("syscall-frame-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("upstream-userspace", b"PROJECT EXECUTION SUCCESSFUL"),
         ("main-userspace-tests", b"main_stack: PASS"),
         ("main-supervisor-tests", b"main_stack: PASS"),
     ],
@@ -112,7 +114,10 @@ def test_arm_firmware(suite, success):
                     assert chunk, output.decode()
                     output.extend(chunk)
                     assert b"NATIVE FAIL" not in output, output.decode()
-                    assert b"ASSERTION FAIL" not in output, output.decode()
+                    # The upstream protection suite deliberately triggers kernel
+                    # assertions; its fatal handler and final result own success.
+                    if suite != "upstream-userspace":
+                        assert b"ASSERTION FAIL" not in output, output.decode()
                     assert b"PROJECT EXECUTION FAILED" not in output, output.decode()
                     assert b"main_stack: FAIL" not in output, output.decode()
         finally:

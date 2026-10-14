@@ -910,6 +910,25 @@ uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/threads/main_
 uv run --locked pytest -q tests/test_native.py -k 'main-userspace or main-supervisor'
 ```
 
+The shared Cortex-M syscall-frame dispatcher has a focused upstream check for
+arguments, 64-bit returns, blocking/context switches and frame cleanup observed
+from an IRQ after return to user mode. The basic suite excludes the separate
+15-second stress workload. Pair it with the existing userspace protection suite
+for bad syscall IDs, rejected access and thread cleanup:
+
+```sh
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/syscalls -d build/syscall-frame-tests -- \
+  -DEXTRA_CPPFLAGS=-DTEST_SYSCALL_BASIC_ONLY=1
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace -- \
+  -DCONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=0 -DCONFIG_CURRENT_THREAD_USE_TLS=y \
+  -DCONFIG_TEST_HW_STACK_PROTECTION=n
+uv run --locked pytest -q tests/test_native.py -k 'syscall-frame-tests or upstream-userspace'
+```
+
+The protection suite deliberately triggers kernel assertions and checks their
+handling; its final test result distinguishes expected faults from failures.
+These ARM emulation checks do not measure physical syscall latency.
+
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
 12 KiB loader limit and 21 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
