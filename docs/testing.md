@@ -22,7 +22,18 @@ Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4
 | Host ownership or protocol | `tests/host`, `test_host_protocol.py`, or the affected SMP/Pybricks adapter case |
 | Terminal input or TTY cleanup | `test_terminal.py`; add monitor/REPL cases only for those paths |
 | Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
+| Crypto allocator or shared heap | `tests/crypto_heap` for cold AES/CMAC, allocation failure and cleanup |
 | Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
+
+The shared crypto allocator has a Cortex-M4 fixture with known AES/CMAC vectors.
+It exhausts the real kernel heap, checks the reported error, releases memory and
+checks successful reuse and recovered allocation capacity. Its entropy is
+synthetic; it does not verify radio pairing or combined hardware load.
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/crypto_heap -d build/crypto-heap-tests
+uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[crypto-heap-tests-PROJECT EXECUTION SUCCESSFUL]'
+```
 
 The F4 USB source path has two focused synthetic fixtures. The Zephyr detector
 test checks BC1.2 timing and classifications; Brickphyr's coordinator test checks

@@ -6,6 +6,15 @@ mainmenu "Brickphyr"
 config NUM_MBOX_ASYNC_MSGS
 	default 0
 
+# Crypto temporaries share the system heap instead of a user-mapped libc arena.
+config TF_PSA_CRYPTO_USER_CONFIG_FILE
+	default "brickphyr/crypto_config.h" if BOARD_SPIKE_PRIME_F4 && MBEDTLS_BUILTIN && !MBEDTLS_ENABLE_HEAP
+
+config HEAP_MEM_POOL_ADD_SIZE_BRICKPHYR_CRYPTO
+	int
+	default 2048 if MBEDTLS && TF_PSA_CRYPTO_USER_CONFIG_FILE = "brickphyr/crypto_config.h"
+	default 0
+
 # BC1.2 measures D+/D- before the USB PHY attaches to the host.
 config CDC_ACM_SERIAL_ENABLE_AT_BOOT
 	default n if BRICKPHYR_USB_BC12

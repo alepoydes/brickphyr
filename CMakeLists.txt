@@ -6,6 +6,7 @@ list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 list(APPEND SYSCALL_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include ${CMAKE_CURRENT_SOURCE_DIR}/include)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(brickphyr)
+include(cmake/runtime_memory.cmake)
 
 # Zephyr otherwise tracks its own Git index for both version headers.
 # Use its application-version dependency hook, including in Git worktrees.

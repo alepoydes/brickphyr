@@ -211,6 +211,16 @@ fetches the pinned pybricksdev sibling checkout; uv installs it as an editable
 dependency. The released upstream Python package does not yet supply this CDC
 client, so install the CLI through the documented workspace procedure.
 
+## Crypto configuration prerequisite
+
+The local TF-PSA-Crypto `topic/config-header-order` branch, commit `11672770f`,
+includes the platform-requirements header before loading user configuration in
+`tf_psa_crypto_config.c`. User configuration
+may include system headers, so feature macros must precede it, as they do in
+ordinary library sources. Without this order, a Zephyr allocator configuration
+fails to compile with Picolibc's Annex K types. The F4 image and focused ARM
+crypto fixture compile with the correction; publication and pinning remain pending.
+
 ## Python runtime prerequisites
 
 The MicroPython checkout has a local `readline_init0()` correction that clears

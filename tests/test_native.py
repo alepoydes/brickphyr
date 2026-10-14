@@ -67,6 +67,7 @@ def test_reserved_slot_names():
         ("native-compact-tests", b"NATIVE PASS:"),
         ("boot-handoff-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-core-fpu-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("crypto-heap-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),

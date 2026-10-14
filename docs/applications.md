@@ -308,7 +308,7 @@ kernel mailboxes.
 
 F4 port-mode descriptions now borrow from the shared system heap while devices
 are connected instead of reserving sixteen complete modes for every port in BSS.
-The native profile provides a 92 KiB heap and the full Python profile 80 KiB;
+The native profile provides a 94 KiB heap and the full Python profile 98 KiB;
 the latter retains its 16 KiB MPU-aligned stack and 64 KiB execution arena.
 Actual port metadata occupies 288 bytes per advertised mode plus allocation
 overhead on F4. Six sixteen-mode devices therefore consume about 27 KiB; the
@@ -317,10 +317,16 @@ allocations. These are heap capacities, not increases to Python's GC arena.
 Heap contention or fragmentation can reject a new device or an application
 allocation. Physical combined-load acceptance of this layout remains pending.
 
-The full F4 Python profile uses Zephyr's 50% extra reservation for the generated
+F4 Bluetooth cryptography also allocates its temporary state from the shared
+system heap, with the former 2 KiB libc arena added to that budget. LittleFS uses
+the mount buffers and file caches supplied by Zephyr. Neither path needs a
+separate libc allocator arena. Crypto allocation failures propagate to the
+Bluetooth operation; pairing under combined memory pressure remains unverified.
+
+The full F4 Python profile uses Zephyr's 25% extra reservation for the generated
 kernel-object table. The default 100% reserve can push the aligned application
-stack across another 16 KiB boundary. This reduces linker padding, not runtime
-heaps, stacks or permission capacity. The final linker still checks that the full
+stack across another 16 KiB boundary. Keeping the stack on the earlier boundary
+returns 16 KiB to the shared heap. The final linker still checks that the full
 table fits; changes to the object set require a fresh memory-budget check.
 Reduced profiles retain Zephyr's default reserve.
 
