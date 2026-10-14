@@ -24,6 +24,7 @@ static void connected(int error)
 	python_device_check(error == -ESTALE ? -ENODEV : error);
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTORS
 static mp_obj_t light_write(accessory_obj_t *self, uint32_t brightness)
 {
 	connected(bp_port_light_write(self->port, self->generation, brightness, &self->request));
@@ -37,20 +38,28 @@ static mp_obj_t light_write(accessory_obj_t *self, uint32_t brightness)
 		mp_hal_delay_ms(2);
 	}
 }
+#endif
 
 static mp_obj_t accessory_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port));
+#ifdef CONFIG_BRICKPHYR_MOTORS
 	bool light = type == &python_pup_light_type;
+#else
+	bool light = false;
+#endif
 	struct bp_port_state value;
 	uint32_t port = python_port_connect(port_in, light ? LEGO_DEVICE_TYPE_ID_LPF2_LIGHT :
 		LEGO_DEVICE_TYPE_ID_TECHNIC_COLOR_LIGHT_MATRIX, &value);
 	accessory_obj_t *self = mp_obj_malloc(accessory_obj_t, type);
 	*self = (accessory_obj_t){.base = {.type = type}, .port = port, .generation = value.generation};
+#ifdef CONFIG_BRICKPHYR_MOTORS
 	if (light) light_write(self, 0);
+#endif
 	return MP_OBJ_FROM_PTR(self);
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTORS
 static mp_obj_t light_on(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
 	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, accessory_obj_t, self, PB_ARG_DEFAULT_INT(brightness, 100));
@@ -66,7 +75,9 @@ static const mp_rom_map_elem_t light_methods[] = {
 static MP_DEFINE_CONST_DICT(light_dict, light_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_pup_light_type, MP_QSTR_Light, MP_TYPE_FLAG_NONE,
 	make_new, accessory_new, locals_dict, &light_dict);
+#endif
 
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 static pbio_error_t matrix_ready(pbio_os_state_t *state, mp_obj_t self_in)
 {
 	accessory_obj_t *self = MP_OBJ_TO_PTR(self_in);
@@ -114,3 +125,4 @@ static const mp_rom_map_elem_t matrix_methods[] = {
 static MP_DEFINE_CONST_DICT(matrix_dict, matrix_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_pup_matrix_type, MP_QSTR_ColorLightMatrix, MP_TYPE_FLAG_NONE,
 	make_new, accessory_new, locals_dict, &matrix_dict);
+#endif

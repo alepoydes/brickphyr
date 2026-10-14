@@ -318,6 +318,16 @@ uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp
 uv run --locked pytest -q tests/test_python_imu.py
 ```
 
+Reduced API checks also cover a passive-port profile: touch input and direct
+motor output remain usable while UART classes, `Motor` and UART-only operations
+are absent. The Bluetooth fixture checks the complementary configuration with
+wireless peers and no local devices. These use synthetic peripherals on ARM/QEMU.
+
+```sh
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-passive-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DCONFIG_BRICKPHYR_PORT_UART=n -DCONFIG_BRICKPHYR_MOTOR_CONTROL=n
+uv run --locked pytest -q tests/test_python_pupdevice.py::test_passive_profile_keeps_input_and_dc_output
+```
+
 `test_python_system.py` checks launch information, rejected button settings,
 combination presses, catchable `SystemExit`, disabling/restoring the stop button,
 and shutdown through supervisor cleanup. Buttons are synthetic and shutdown ends

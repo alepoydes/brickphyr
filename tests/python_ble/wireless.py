@@ -4,6 +4,26 @@ import errno
 from pybricks.parameters import Color
 from pybricks.pupdevices import TechnicMoveHub, MarioHub, DuploTrain
 from pybricks.tools import run_task, wait
+from pybricks.hubs import PrimeHub
+from pybricks import iodevices, pupdevices, tools
+
+# This profile has radio peers but no local peripherals. A usable hub and
+# wireless classes must not pull in disabled wired or hub-device bindings.
+hub = PrimeHub()
+assert hub.system.name()
+for name in ('light', 'bluetooth_light', 'display', 'battery', 'charger', 'speaker', 'imu'):
+    assert not hasattr(hub, name)
+assert hasattr(hub, 'ble')
+assert not hasattr(tools, 'hub_menu')
+for name in ('PUPDevice', 'LUMPDevice', 'UARTDevice', 'DCMotor'):
+    assert not hasattr(iodevices, name)
+for name in ('Motor', 'DCMotor', 'ColorSensor', 'Light', 'ColorLightMatrix', 'PFMotor'):
+    assert not hasattr(pupdevices, name)
+try:
+    import pybricks.robotics
+    raise AssertionError('motor control is disabled')
+except ImportError:
+    pass
 
 
 def missing(read):

@@ -15,15 +15,22 @@
 #include <pybricks/util_mp/pb_kwarg_helper.h>
 #include <pybricks/util_mp/pb_type_enum.h>
 
+#ifdef CONFIG_BRICKPHYR_PORTS
 typedef struct {
 	mp_obj_base_t base;
 	pb_type_async_t *iter;
-	uint32_t port, generation, write_request, reset_request;
+	uint32_t port, generation;
+#ifdef CONFIG_BRICKPHYR_PORT_UART
+	uint32_t write_request, reset_request;
+#endif
 	uint16_t id;
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	uint8_t mode;
+#endif
 	bool passive;
 } pup_obj_t;
 
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 /* Only this object's explicit reset permits accepting a new generation. A
  * later reconnection cannot impersonate the recorded completion. */
 static void resolve_reset(pup_obj_t *self)
@@ -40,6 +47,7 @@ static void resolve_reset(pup_obj_t *self)
 	self->generation = value.generation;
 	self->reset_request = 0;
 }
+#endif
 
 static void get_port(pup_obj_t *self, struct bp_port_state *value)
 {
@@ -81,13 +89,16 @@ static mp_obj_t pup_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, c
 static mp_obj_t pup_info(mp_obj_t self_in)
 {
 	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	resolve_reset(self);
+#endif
 	struct bp_port_state value;
 	python_device_check(bp_port_get(self->port, &value));
 	if (value.generation != self->generation) python_device_check(-ENODEV);
 	if (value.error != -EAGAIN) python_device_check(value.error);
 	mp_obj_t result = mp_obj_new_dict(2);
 	mp_obj_dict_store(result, MP_OBJ_NEW_QSTR(MP_QSTR_id), mp_obj_new_int(self->id));
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	if (!self->passive) {
 		mp_obj_t modes[LUMP_MAX_EXT_MODE + 1];
 		for (uint32_t mode = 0; mode < value.num_modes; mode++) {
@@ -102,10 +113,12 @@ static mp_obj_t pup_info(mp_obj_t self_in)
 		python_device_check(bp_port_get(self->port, &value));
 		if (value.generation != self->generation) python_device_check(-ENODEV);
 	}
+#endif
 	return result;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(pup_info_obj, pup_info);
 
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 static pbio_error_t read_ready(pbio_os_state_t *state, mp_obj_t self_in)
 {
 	pup_obj_t *self = MP_OBJ_TO_PTR(self_in);
@@ -150,18 +163,22 @@ static mp_obj_t read_values(mp_obj_t self_in)
 	}
 	return mp_obj_new_tuple(value.num_values, values);
 }
+#endif
 
 static mp_obj_t pup_read(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 {
 	PB_PARSE_ARGS_METHOD(n_args, args, kw_args, pup_obj_t, self, PB_ARG_REQUIRED(mode));
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	if (self->iter && self->iter->parent_obj != MP_OBJ_NULL) python_device_check(-EBUSY);
 	resolve_reset(self);
+#endif
 	if (self->passive) {
 		if (self->id != LEGO_DEVICE_TYPE_ID_LPF2_TOUCH) python_device_check(-ENOTSUP);
 		struct bp_port_state value;
 		get_port(self, &value);
 		return pb_type_async_return_result(mp_obj_new_bool(value.pressed), &self->iter);
 	}
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	mp_int_t mode = mp_obj_get_int(mode_in);
 	if (mode < 0 || mode > LUMP_MAX_EXT_MODE) mp_raise_ValueError(MP_ERROR_TEXT("invalid mode"));
 	int err = bp_port_select(self->port, self->generation, mode);
@@ -177,9 +194,15 @@ static mp_obj_t pup_read(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
 	 * instead of depending on PBIO's absent cooperative event scheduler. */
 	while (read_ready(&config.state, config.parent_obj) == PBIO_ERROR_AGAIN) mp_hal_delay_ms(2);
 	return read_values(config.parent_obj);
+#else
+	(void)mode_in;
+	python_device_check(-ENOTSUP);
+	return mp_const_none;
+#endif
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(pup_read_obj, 1, pup_read);
 
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 bool python_port_write_done(uint32_t port, uint32_t generation, uint32_t request)
 {
 	struct bp_port_state value;
@@ -259,25 +282,37 @@ static mp_obj_t pup_reset(mp_obj_t self_in)
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(pup_reset_obj, pup_reset);
+#endif
 
 static const mp_rom_map_elem_t pup_methods[] = {
 	{MP_ROM_QSTR(MP_QSTR_info), MP_ROM_PTR(&pup_info_obj)},
 	{MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&pup_read_obj)},
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	{MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&pup_write_obj)},
 	{MP_ROM_QSTR(MP_QSTR_reset), MP_ROM_PTR(&pup_reset_obj)},
+#endif
 };
 static MP_DEFINE_CONST_DICT(pup_dict, pup_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(pup_type, MP_QSTR_PUPDevice, MP_TYPE_FLAG_NONE,
 	make_new, pup_new, locals_dict, &pup_dict);
+#endif
 
 static const mp_rom_map_elem_t iodevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_iodevices)},
+#ifdef CONFIG_BRICKPHYR_PORTS
 	{MP_ROM_QSTR(MP_QSTR_PUPDevice), MP_ROM_PTR(&pup_type)},
 	{MP_ROM_QSTR(MP_QSTR_LUMPDevice), MP_ROM_PTR(&pup_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	{MP_ROM_QSTR(MP_QSTR_UARTDevice), MP_ROM_PTR(&python_uart_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_BLE_PEER
 	{MP_ROM_QSTR(MP_QSTR_LWP3Device), MP_ROM_PTR(&python_lwp3device_type)},
 	{MP_ROM_QSTR(MP_QSTR_XboxController), MP_ROM_PTR(&python_xbox_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_MOTORS
 	{MP_ROM_QSTR(MP_QSTR_DCMotor), MP_ROM_PTR(&python_dc_motor_type)},
+#endif
 };
 static MP_DEFINE_CONST_DICT(iodevices_dict, iodevices_globals);
 const mp_obj_module_t pb_module_iodevices = {{&mp_type_module}, (mp_obj_dict_t *)&iodevices_dict};

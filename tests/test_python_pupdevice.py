@@ -26,6 +26,45 @@ async def port_matches(client, **fields):
         raise
 
 
+def test_passive_profile_keeps_input_and_dc_output():
+    source = b"""
+from pybricks import iodevices, pupdevices
+from pybricks.parameters import Port
+from pybricks.tools import wait
+assert not hasattr(iodevices, 'UARTDevice') and not hasattr(pupdevices, 'Motor')
+assert not hasattr(pupdevices, 'ColorLightMatrix')
+d = iodevices.PUPDevice(Port.A)
+assert d.info() == {'id': 5} and d.read(0) is False
+assert not hasattr(d, 'write') and not hasattr(d, 'reset')
+m = pupdevices.DCMotor(Port.B)
+# The battery service deliberately reports settling during the first second.
+wait(1050)
+m.dc(25)
+print('ready'); input()
+m.close()
+print('passed')
+"""
+
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            await upload(client, port, source, Format.PYTHON)
+            await checked(client, Start())
+            await ready(client)
+            motor = (await snapshot(client, "motor.B")).values
+            assert motor["owner"] == 1 and 249 <= motor["duty_permille"] <= 250, motor
+            await checked(client, Input(data=b"\n"))
+            state = await completed(client)
+            text = await output(client)
+            assert state.result == state.fault == state.cleanup == 0, (state, text)
+            assert text.strip() == b"passed", text
+            motor = (await snapshot(client, "motor.B")).values
+            assert motor["owner"] == motor["mode"] == motor["duty_permille"] == 0, motor
+
+    with native_console(BUILD.with_name("python-passive-tests"), virtual_clock=True) as device:
+        asyncio.run(exercise(device))
+
+
 def test_raw_modes_async_hotplug_and_passive_input():
     source = b"""
 from pybricks.iodevices import PUPDevice, LUMPDevice

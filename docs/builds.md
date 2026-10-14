@@ -703,6 +703,11 @@ Pybricks execution capabilities, and rejects its application commands without
 touching a native application's execution or output. Protocol identity and
 connection-status queries remain available.
 
+The library's device bindings follow the corresponding native Kconfig services.
+Disabled features are excluded from its Python API and binding sources; see
+[reduced-build compatibility](compatibility.md#reference-and-scope). This avoids
+retaining unusable device objects in smaller images.
+
 For native Python without either compatibility component, use:
 
 ```sh

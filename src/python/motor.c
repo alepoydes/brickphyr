@@ -20,9 +20,11 @@ typedef struct {
 	mp_obj_base_t base;
 	uint32_t port, generation;
 	bool closed;
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	uint32_t motion_request;
 	pb_type_async_t *iter;
 	mp_obj_t control, model, log, control_log;
+#endif
 } motor_obj_t;
 
 static void check(int err)
@@ -45,6 +47,7 @@ static void configured(motor_obj_t *self, struct bp_motor_state *value)
 	if (value->owner != BP_PORT_APPLICATION || !value->direction) check(-ENODEV);
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 void python_motor_connection(mp_obj_t motor, uint32_t *port, uint32_t *generation)
 {
 	if (!mp_obj_is_type(motor, &python_motor_type)) mp_raise_TypeError(MP_ERROR_TEXT("expected Motor"));
@@ -54,6 +57,7 @@ void python_motor_connection(mp_obj_t motor, uint32_t *port, uint32_t *generatio
 	*port = self->port;
 	*generation = self->generation;
 }
+#endif
 
 static void applied(motor_obj_t *self, uint32_t request)
 {
@@ -71,11 +75,14 @@ static void applied(motor_obj_t *self, uint32_t request)
 	}
 }
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 void python_motor_applied(mp_obj_t motor, uint32_t request)
 {
 	applied(MP_OBJ_TO_PTR(motor), request);
 }
+#endif
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Parse single or compounded gear trains using Python integers so valid ratios
  * do not overflow intermediate products. Interior gears do not change ratio. */
 static int32_t gear_ratio(mp_obj_t gears)
@@ -102,26 +109,39 @@ static int32_t gear_ratio(mp_obj_t gears)
 	if (ratio < 1) check(-EINVAL);
 	return ratio;
 }
+#endif
 
 static mp_obj_t motor_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args)
 {
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port),
 		PB_ARG_DEFAULT_OBJ(positive_direction, pb_Direction_CLOCKWISE_obj),
 		PB_ARG_DEFAULT_NONE(gears), PB_ARG_DEFAULT_TRUE(reset_angle), PB_ARG_DEFAULT_NONE(profile));
 	bool servo = type == &python_motor_type;
 	if (!servo) mp_arg_parse_all(n_args, args, &kw_args, 2, allowed_args, parsed_args);
+#else
+	PB_PARSE_ARGS_CLASS(n_args, n_kw, args, PB_ARG_REQUIRED(port),
+		PB_ARG_DEFAULT_OBJ(positive_direction, pb_Direction_CLOCKWISE_obj));
+#endif
 	int direction = pb_type_enum_get_value(positive_direction_in, &pb_enum_type_Direction);
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	struct bp_servo_setup setup = {.direction = direction == PBIO_DIRECTION_CLOCKWISE ? 1 : -1,
 		.gear_ratio = gear_ratio(gears_in), .reset_angle = mp_obj_is_true(reset_angle_in),
 		.precision_profile = pb_obj_get_default_abs_int(profile_in, 0)};
+#endif
 	struct bp_port_state value;
 	uint32_t port = python_port_connect(port_in, 0, &value);
 	motor_obj_t *self = mp_obj_malloc(motor_obj_t, type);
 	*self = (motor_obj_t){.base = {.type = type}, .port = port, .generation = value.generation};
 	uint32_t request;
 	for (;;) {
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 		int err = servo ? bp_servo_setup(port, self->generation, &setup, &request) :
 			bp_motor_setup(port, self->generation, setup.direction, &request);
+#else
+		int err = bp_motor_setup(port, self->generation,
+			direction == PBIO_DIRECTION_CLOCKWISE ? 1 : -1, &request);
+#endif
 		if (err != -EAGAIN) {
 			check(err);
 			break;
@@ -138,7 +158,9 @@ static mp_obj_t drive(motor_obj_t *self, int32_t duty, bool coast)
 	uint32_t request;
 	check(bp_motor_dc(self->port, self->generation, duty, coast, &request));
 	applied(self, request);
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	pb_type_async_schedule_stop_iteration(self->iter);
+#endif
 	return mp_const_none;
 }
 
@@ -185,11 +207,14 @@ static mp_obj_t motor_close(mp_obj_t self_in)
 		mp_hal_delay_ms(2);
 	}
 	self->closed = true;
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	pb_type_async_schedule_stop_iteration(self->iter);
+#endif
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(motor_close_obj, motor_close);
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 static struct bp_servo_state servo_state(motor_obj_t *self, uint32_t window)
 {
 	if (self->closed) check(-ENODEV);
@@ -362,6 +387,7 @@ static mp_obj_t motor_run_until_stalled(size_t n_args, const mp_obj_t *args, mp_
 		.duty_limit = duty_limit_in == mp_const_none ? -1 : pb_obj_get_pct(duty_limit_in) * 10}, true, true);
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(motor_run_until_stalled_obj, 1, motor_run_until_stalled);
+#endif
 
 #define DC_METHODS \
 	{MP_ROM_QSTR(MP_QSTR_dc), MP_ROM_PTR(&motor_dc_obj)}, \
@@ -375,6 +401,7 @@ static MP_DEFINE_CONST_DICT(dc_motor_dict, dc_motor_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_dc_motor_type, MP_QSTR_DCMotor, MP_TYPE_FLAG_NONE,
 	make_new, motor_new, locals_dict, &dc_motor_dict);
 
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 /* Adapted from pb_type_control.c at a7b1b04ae. Retain the Motor object rather
  * than a privileged PBIO pointer; aliases see the native port's live settings. */
 typedef struct {
@@ -739,3 +766,4 @@ static const mp_rom_map_elem_t motor_methods[] = {
 static MP_DEFINE_CONST_DICT(motor_dict, motor_methods);
 MP_DEFINE_CONST_OBJ_TYPE(python_motor_type, MP_QSTR_Motor, MP_TYPE_FLAG_NONE,
 	make_new, motor_new, attr, motor_attr, locals_dict, &motor_dict);
+#endif

@@ -4,6 +4,7 @@
 #include "hub_light.h"
 #include "hub_charger.h"
 #include "hub_power.h"
+#include "../ports/wiring.h"
 
 #include <errno.h>
 #include <string.h>
@@ -117,6 +118,11 @@ SHELL_CMD_ARG_REGISTER(detach, NULL, "Schedule a synthetic DTR cycle in 1.2 s.",
 
 int main(void)
 {
+#ifndef CONFIG_BRICKPHYR_PORT_UART
+	/* Passive-only profile: exercise the remaining bindings without UART. */
+	pup_test_circuits[0].kind = TOUCH_SWITCH;
+	pup_test_circuits[1].kind = MEDIUM_MOTOR;
+#endif
 	/* Synthetic configured host and stable charge indication. The production
 	 * service acquires these ADC/ladder samples in the normal hub loop below. */
 	const struct device *adc = DEVICE_DT_GET(DT_NODELABEL(adc1));

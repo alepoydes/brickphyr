@@ -28,6 +28,15 @@ absence and an unfinished port are different reasons for unavailability and must
 be documented separately. Required compatibility deviations are explicit errors
 or documented experimental differences, never plausible fake measurements.
 
+Reduced builds omit Python classes and hub attributes for disabled native
+services. For example, disabling sound removes `hub.speaker`; disabling motor
+control removes `Motor` and `pybricks.robotics`, while `DCMotor` remains if motor
+output is enabled. A device module with no available classes is omitted.
+Bluetooth peer classes remain available independently of local wired ports. The full profile
+retains its API. Missing attributes raise `AttributeError`, and importing an
+omitted module or class raises `ImportError`; failures of enabled hardware still
+report their normal runtime errors.
+
 ## Multitasking and system responsiveness
 
 Support Pybricks `async`, `await`, `multitask`, and `run_task`, including normal
@@ -257,8 +266,9 @@ reset alone does not change that epoch. This is not an absolute compass heading.
 Pybricks units and tuple order. Values have the integer resolution of the
 [common settings](settings.md#imu-calibration); saving remains explicit.
 Invalid or stale measurements raise `OSError`; readiness/stationary return false
-while measurements are invalid. A build without IMU support raises
-`OSError(ENOTSUP)` without preventing construction or other hub operations.
+while measurements are invalid. A build without IMU support omits `hub.imu`;
+default hub construction and other available hub operations remain usable.
+Non-default IMU axes in the constructor raise `OSError(ENOTSUP)`.
 See the [IMU example](../examples/python/imu.py).
 Protected ARM checks use actual acquisition and processing with synthetic I2C/GPIO
 for selected frames, heading resets, integrated rotation, atomic calibration,

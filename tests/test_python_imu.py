@@ -132,9 +132,18 @@ print('passed')
 
 
 def test_imu_disabled_keeps_other_hub_functions_usable():
-    assert execute(IMPORTS + b"""
-assert PrimeHub().system.name()
-for operation in (imu.acceleration, lambda: PrimeHub(top_side=Axis.X, front_side=Axis.Y)):
+    assert execute(b"""
+from pybricks.hubs import PrimeHub
+from pybricks.parameters import Axis
+from pybricks import iodevices, pupdevices, messaging
+hub = PrimeHub()
+assert hub.system.name() and isinstance(hub.buttons.pressed(), set)
+assert not hasattr(hub, 'imu') and not hasattr(hub, 'ble')
+assert not hasattr(messaging, 'BLERadio') and not hasattr(messaging, 'HubNetwork')
+assert not hasattr(iodevices, 'LWP3Device') and not hasattr(pupdevices, 'Remote')
+assert iodevices.PUPDevice and pupdevices.Motor
+for operation in (lambda: PrimeHub(top_side=Axis.X, front_side=Axis.Y),
+                  lambda: PrimeHub(observe_channels=[1])):
     try:
         operation()
     except OSError as ex:

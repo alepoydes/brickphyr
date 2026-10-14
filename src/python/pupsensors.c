@@ -17,6 +17,7 @@
 #include <pybricks/util_mp/pb_kwarg_helper.h>
 #include <pybricks/util_mp/pb_obj_helper.h>
 
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 enum reading { FORCE, TRAVEL, TOUCHED, PRESSED, TILT, DISTANCE, REFLECTION, COUNT,
 	AMBIENT, HSV, COLOR, PRESENCE, WRITE };
 typedef struct {
@@ -403,23 +404,36 @@ static const mp_rom_map_elem_t pf_methods[] = {
 static MP_DEFINE_CONST_DICT(pf_dict, pf_methods);
 static MP_DEFINE_CONST_OBJ_TYPE(pf_type, MP_QSTR_PFMotor, MP_TYPE_FLAG_NONE,
 	make_new, pf_new, locals_dict, &pf_dict);
+#endif
 static const mp_rom_map_elem_t pupdevices_globals[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_pupdevices)},
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	{MP_ROM_QSTR(MP_QSTR_ForceSensor), MP_ROM_PTR(&force_type)},
 	{MP_ROM_QSTR(MP_QSTR_TiltSensor), MP_ROM_PTR(&tilt_type)},
 	{MP_ROM_QSTR(MP_QSTR_InfraredSensor), MP_ROM_PTR(&infrared_type)},
 	{MP_ROM_QSTR(MP_QSTR_ColorSensor), MP_ROM_PTR(&color_type)},
 	{MP_ROM_QSTR(MP_QSTR_UltrasonicSensor), MP_ROM_PTR(&ultrasonic_type)},
 	{MP_ROM_QSTR(MP_QSTR_ColorDistanceSensor), MP_ROM_PTR(&color_distance_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_MOTORS
 	{MP_ROM_QSTR(MP_QSTR_Light), MP_ROM_PTR(&python_pup_light_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_PORT_UART
 	{MP_ROM_QSTR(MP_QSTR_ColorLightMatrix), MP_ROM_PTR(&python_pup_matrix_type)},
 	{MP_ROM_QSTR(MP_QSTR_PFMotor), MP_ROM_PTR(&pf_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_MOTORS
 	{MP_ROM_QSTR(MP_QSTR_DCMotor), MP_ROM_PTR(&python_dc_motor_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	{MP_ROM_QSTR(MP_QSTR_Motor), MP_ROM_PTR(&python_motor_type)},
+#endif
+#ifdef CONFIG_BRICKPHYR_BLE_PEER
 	{MP_ROM_QSTR(MP_QSTR_Remote), MP_ROM_PTR(&python_remote_type)},
 	{MP_ROM_QSTR(MP_QSTR_TechnicMoveHub), MP_ROM_PTR(&python_technic_move_type)},
 	{MP_ROM_QSTR(MP_QSTR_MarioHub), MP_ROM_PTR(&python_mario_type)},
 	{MP_ROM_QSTR(MP_QSTR_DuploTrain), MP_ROM_PTR(&python_duplo_type)},
+#endif
 };
 static MP_DEFINE_CONST_DICT(pupdevices_dict, pupdevices_globals);
 const mp_obj_module_t pb_module_pupdevices = {{&mp_type_module}, (mp_obj_dict_t *)&pupdevices_dict};
