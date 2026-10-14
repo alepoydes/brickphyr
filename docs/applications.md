@@ -111,10 +111,15 @@ GC/floating-point work through USB and BLE; parameter updates, exit and subseque
 standalone execution pass. A short retained USB sample has no skipped releases,
 with dispatch delay up to 5.84 ms and snapshot duration up to 3.53 ms. These are
 observations of that workload, not worst-case bounds or a balancing budget.
-The BLE check establishes concurrent progress; its retained tail was collected
-after the GC workload, so it does not establish BLE-plus-GC timing. The normal
-image has no kernel stack Shell: controller stack high-water and sustained
-combined-load characterization remain open.
+Additional USB/BLE checks retain records during Python GC and monitoring, with
+no skipped 20 ms releases in those short runs. BLE completes fewer telemetry
+requests, so its timing cannot be treated as an equal-load USB comparison.
+A synthetic Babybot predictor compiled unchanged for the SDK and desktop also
+produces matching recorded float32 results in standalone and concurrent execution,
+including a parameter revision. This establishes bounded numerical portability;
+it does not establish physical feedback control or complete robot replay.
+Controller stack high-water and sustained combined-load characterization remain
+open; the normal image has no kernel stack Shell.
 
 ## Experimental native profile
 
