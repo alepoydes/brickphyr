@@ -887,23 +887,23 @@ not compatibility with physical Technic hardware. The lifecycle fixture also
 rejects unsupported ABI/capabilities/stack sizes, imports and import relocations
 without stopping the current program. No test rebuilds firmware implicitly.
 
-The [supervisor-owned UART prerequisite](upstream.md#supervisor-owned-uart-prerequisite)
-has a focused ARM check for the direct device-access boundary. It grants UART
-permission explicitly, checks the default user call, then verifies rejection
-with direct UART syscalls omitted while supervisor calls remain available:
+The [supervisor-owned driver prerequisites](upstream.md#supervisor-owned-driver-prerequisites)
+have a focused ARM check for the direct device-access boundary. It grants UART
+and GPIO permission explicitly, checks default user calls, then verifies rejection
+with their direct syscalls omitted while supervisor calls remain available:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/userspace_api -d build/uart-userspace-tests
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/userspace_api -d build/uart-supervisor-tests -- \
-  -DCONFIG_UART_USERSPACE=n -DEXTRA_CPPFLAGS=-DTEST_UART_USERSPACE_DISABLED=1
-uv run --locked pytest -q tests/test_native.py -k 'uart-userspace or uart-supervisor'
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/userspace_access -d build/driver-userspace-tests
+uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/userspace_access -d build/driver-supervisor-tests -- \
+  -DCONFIG_UART_USERSPACE=n -DCONFIG_GPIO_USERSPACE=n -DEXTRA_CPPFLAGS=-DTEST_DRIVER_USERSPACE_DISABLED=1
+uv run --locked pytest -q tests/test_native.py -k 'driver-userspace or driver-supervisor'
 ```
 
 The compact variant runs the same F4 SDK binary with Technic's 4 KiB image limit,
 12 KiB loader limit and 20 KiB shared heap. Its SRAM starts after a reserved
 1 KiB prefix. The checks cover dirty backing memory, failed admission preserving
 the running program, and successful or failed cleanup returning or retaining
-the loader buffer as required. It also omits direct Zephyr UART syscalls while
+the loader buffer as required. It also omits the direct driver syscalls above while
 retaining the protected Brickphyr API:
 
 ```sh

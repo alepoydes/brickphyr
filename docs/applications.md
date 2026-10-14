@@ -186,11 +186,11 @@ device handles or raw flash service. Essential system threads preempt a busy
 application independently of time slicing. This is not a claim that the privileged
 ELF parser or kernel withstand every malicious image.
 
-The F4 and Technic board profiles omit direct Zephyr UART syscalls: UART devices
-belong to privileged management and port services. Native and Python UART
-operations still use the shared, validated Brickphyr service. This removes unused
-driver entry points without changing the application ABI or disabling the UART
-driver. See the [Zephyr prerequisite](upstream.md#supervisor-owned-uart-prerequisite).
+The F4 and Technic board profiles omit direct Zephyr UART, GPIO, SPI, I2C, ADC,
+PWM, watchdog and hardware-information syscalls. Privileged services own hardware
+access; native and Python operations use the shared, validated Brickphyr API.
+This removes unused driver entry points without changing the application ABI or
+disabling the drivers. See the [Zephyr prerequisite](upstream.md#supervisor-owned-driver-prerequisites).
 
 Service files that run exclusively in privileged threads, workqueues or driver
 callbacks declare `__ZEPHYR_SUPERVISOR__` before their includes. Zephyr can then

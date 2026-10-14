@@ -636,7 +636,7 @@ before and after disabling TX interrupts on `mps2/an385`. That case and
 Brickphyr's shared-dispatcher REPL tests pass on ARM QEMU. Publication and manifest
 integration remain pending.
 
-## Supervisor-owned UART prerequisite
+## Supervisor-owned driver prerequisites
 
 The F4 and Technic board profiles require local Zephyr commit `b5f71207` on
 `topic/uart-userspace`, pending publication and manifest integration. It adds
@@ -644,14 +644,23 @@ The F4 and Technic board profiles require local Zephyr commit `b5f71207` on
 direct UART syscall handlers and dispatch entries. Supervisor APIs and drivers
 remain available; configurations without user mode retain their existing exports.
 
-Brickphyr disables this option because its privileged management and port
-services own the UART devices. Applications use the versioned Brickphyr API.
-The upstream MPS2/QEMU fixture checks both configurations: direct user access
-works with device permission by default, faults when disabled even with that
-permission, and supervisor access still works. Brickphyr's protected native
-fixture checks admission, calls and cleanup with the option disabled. F4 and
-Technic package builds cover integration; this change has no physical UART
-acceptance of its own.
+Local commit `5b5e01e6` on `topic/driver-userspace` extends this selection to
+`CONFIG_GPIO_USERSPACE`, `CONFIG_SPI_USERSPACE`, `CONFIG_I2C_USERSPACE`,
+`CONFIG_ADC_USERSPACE`, `CONFIG_PWM_USERSPACE`, `CONFIG_WDT_USERSPACE` and
+`CONFIG_HWINFO_USERSPACE`. Each defaults on with user mode; disabling one omits
+its user-access handlers while preserving supervisor APIs. Normal builds also
+omit the dispatch entries. `CONFIG_EMIT_ALL_SYSCALLS` retains generated entries
+but does not restore disabled handlers. Publication and manifest integration
+remain pending.
+
+Brickphyr disables these options because privileged services own hardware
+access. Applications use the versioned Brickphyr API. The upstream
+`tests/drivers/userspace_access` MPS2/QEMU fixture checks UART and GPIO in both
+configurations: direct user access works with device permission by default,
+faults when disabled even with that permission, and supervisor access still works.
+Brickphyr's protected native fixture checks admission, device calls and cleanup
+with the options disabled. F4 and Technic package builds cover integration;
+these changes have no physical hardware acceptance of their own.
 
 ## Speaker DMA prerequisite
 
