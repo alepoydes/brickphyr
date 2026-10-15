@@ -137,7 +137,9 @@ parameters with its lower priority, without blocking the controller on its work.
 buffers. It copies one complete record, its applied parameters and step metadata;
 readers have independent cursors. Its buffer, gap and generation rules are the
 same as the Python calls below. It returns the payload length, or zero when the
-next observation has not been written. Neither reading nor updating allocates.
+next observation has not been written. Payload, parameter and metadata output
+regions must be disjoint; overlap returns `EINVAL` before any output is written.
+Neither reading nor updating allocates.
 
 The [native background example](../examples/native/control_background.c) starts
 the existing `control_loop` controller, reads 24 observations and changes the
@@ -302,6 +304,17 @@ interval includes observation copying, optional recording, preemption and clock
 reads; final diagnostic bookkeeping follows it. The loop only acquires sensors,
 so these measurements do not establish an observer/actuator deadline. Host output
 polling is best-effort and does not impose equal USB/BLE traffic.
+
+A further bounded F4 check adds the original state observer to the 15 ms native
+context while six 30-row learning updates run in the native primary. Both use
+synthetic observations at 15 ms spacing; passive hardware acquisition also runs,
+but its values do not drive the numerical model. USB/BLE runs have no skipped
+periods through the final applied update. Their largest recorded intervals from
+scheduled release through record completion are 5692/6741 µs. The last 16 retained
+observer results in each run, and the final learned model/history, match the same
+C computation on the host bit for bit. Observed controller stack use is 2696 of
+8192 bytes. This includes observer computation and concurrent learning, but no
+actuator commands, physical identification or worst-case deadline guarantee.
 
 The larger workload accumulates ten independent 30-row synthetic fragments and
 one 20-row fragment at 15 ms spacing using the existing learning implementation.

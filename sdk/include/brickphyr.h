@@ -454,6 +454,8 @@ __syscall int bp_control_get(struct bp_control_status *value);
  * returns its length, zero if not written yet, ESTALE for an old generation,
  * EOVERFLOW for overwritten data, or EMSGSIZE before copying undersized buffers.
  * Copying includes the applied parameter values and step metadata atomically.
+ * Payload, parameters, info and step output regions must be disjoint; overlap
+ * returns EINVAL before writing any output. Empty payload regions are ignored.
  */
 __syscall int bp_record_get(struct bp_record_info *info);
 __syscall int bp_record_readinto(const struct bp_record_request *request,

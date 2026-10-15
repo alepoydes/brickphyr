@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <brickphyr.h>
 #include <errno.h>
+#include <stdbool.h>
+#include <string.h>
 
 BRICKPHYR_APPLICATION();
 static const uint8_t controller_image[] = {
@@ -30,6 +32,11 @@ int app_main(void)
 	uint32_t observed = 0;
 #if BACKGROUND_MODE == 0
 	uint32_t revision = 1;
+	bool aliases_checked = false;
+	static union {
+		uint64_t align;
+		uint8_t bytes[512];
+	} alias_storage;
 #endif
 	float accumulator = 0;
 	for (;;) {
@@ -42,6 +49,27 @@ int app_main(void)
 		if (err) return err;
 		request.generation = info.generation;
 		if (request.index < info.first) request.index = info.first;
+#if BACKGROUND_MODE == 0
+		if (!aliases_checked && request.index < info.next) {
+			/* info/payload, step/parameters, then info/step overlap. */
+			for (unsigned int alias = 0; alias < 3; alias++) {
+				memset(alias_storage.bytes, 0xa5, sizeof(alias_storage.bytes));
+				struct bp_record_request bad = request;
+				bad.data = alias_storage.bytes;
+				bad.capacity = sizeof(record) - (alias == 0);
+				bad.parameters = alias_storage.bytes + 256;
+				bad.parameters_capacity = sizeof(parameters);
+				struct bp_record_info *out_info = (void *)(alias_storage.bytes + (alias == 0 ? 8 : 128));
+				struct bp_control_step *out_step = (void *)(alias_storage.bytes +
+					(alias == 1 ? 256 : alias == 2 ? 136 : 384));
+				if (bp_record_readinto(&bad, out_info, out_step) != -EINVAL) return 8 + alias;
+				for (size_t i = 0; i < sizeof(alias_storage.bytes); i++) {
+					if (alias_storage.bytes[i] != 0xa5) return 11 + alias;
+				}
+			}
+			aliases_checked = true;
+		}
+#endif
 		err = bp_record_readinto(&request, &info, &step);
 		if (!err || err == -EOVERFLOW) continue;
 		if (err < 0) return err;

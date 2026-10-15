@@ -1734,11 +1734,23 @@ static inline int z_vrfy_bp_record_readinto(const struct bp_record_request *requ
 	copy.parameters_capacity = MIN(copy.parameters_capacity, BP_CONTROL_PARAMETERS_MAX);
 	if (copy.capacity) user_memory_check(copy.data, copy.capacity, 1, true, __func__);
 	if (copy.parameters_capacity) user_memory_check(copy.parameters, copy.parameters_capacity, 1, true, __func__);
-	if (copy.capacity && copy.parameters_capacity &&
-	    (uintptr_t)copy.data < (uintptr_t)copy.parameters + copy.parameters_capacity &&
-	    (uintptr_t)copy.parameters < (uintptr_t)copy.data + copy.capacity) return -EINVAL;
 	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
 	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
+	/* Metadata is output too: aliasing it must not corrupt a record or change
+	 * payload bytes on a rejected read. The request itself is already copied. */
+	const struct { uintptr_t start; size_t size; } outputs[] = {
+		{(uintptr_t)copy.data, copy.capacity},
+		{(uintptr_t)copy.parameters, copy.parameters_capacity},
+		{(uintptr_t)info, sizeof(*info)},
+		{(uintptr_t)step, sizeof(*step)},
+	};
+	for (size_t i = 0; i < ARRAY_SIZE(outputs); i++) {
+		for (size_t j = 0; j < i; j++) {
+			if (!outputs[i].size || !outputs[j].size) continue;
+			uintptr_t a = outputs[i].start, b = outputs[j].start;
+			if (a <= b ? b - a < outputs[i].size : a - b < outputs[j].size) return -EINVAL;
+		}
+	}
 	return z_impl_bp_record_readinto(&copy, info, step);
 }
 #include <zephyr/syscalls/bp_record_readinto_mrsh.c>
