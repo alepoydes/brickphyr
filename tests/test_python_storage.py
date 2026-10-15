@@ -13,6 +13,7 @@ from brickphyrdev.application import Format, Start, Stop, checked, connection, u
 def test_user_data_bounds_copy_and_application_lifetime():
     source = b"""
 from pybricks.hubs import PrimeHub
+from pybricks.tools import run_task, wait
 s = PrimeHub().system
 assert s.storage(0, read=512) == bytes(512)
 data = bytearray(b'abc')
@@ -41,6 +42,18 @@ for args in ({'offset': 0}, {'offset': 0, 'read': 1, 'write': b'a'},
     else:
         assert False
 assert s.storage(5, read=3) == b'abc' and s.storage(511, read=1) == b'Z'
+s.storage(10, write=b'A')
+assert s.storage_save() is None
+s.storage(10, write=b'B')
+request = s.storage_save(wait=False)
+assert request > 0
+while not s.storage_save_status(request):
+    wait(1)
+s.storage(10, write=b'C')
+async def save_async():
+    assert await s.storage_save() is None
+run_task(save_async())
+assert s.storage(10, read=1) == b'C'
 print('storage passed')
 """
 

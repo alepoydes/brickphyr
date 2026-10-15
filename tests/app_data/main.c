@@ -22,6 +22,7 @@ static int write_during_save(const struct device *dev, off_t offset, uint8_t byt
 	if (!changed) {
 		const uint8_t next = 0xa6;
 		zassert_ok(app_data_write(1, &next, 1));
+		zassert_equal(app_data_save_start(), -EBUSY);
 		changed = true;
 	}
 	return byte;
@@ -104,6 +105,29 @@ ZTEST(app_data, test_saved_snapshot_and_boot)
 	zassert_ok(app_data_save());
 	read_saved(data);
 	zassert_equal(data[1], 0xa6, "Concurrent update was marked saved too early");
+	/* Capture at acceptance, before the worker can start. A caller may change
+	 * RAM or finish immediately; the accepted snapshot must remain independent. */
+	const uint8_t accepted = 0x41, later = 0x42;
+	zassert_ok(app_data_write(2, &accepted, 1));
+	k_sched_lock();
+	int request = app_data_save_start();
+	zassert_true(request > 0);
+	zassert_equal(app_data_save_status(request), -EINPROGRESS);
+	zassert_equal(app_data_save_start(), -EBUSY);
+	zassert_ok(app_data_write(2, &later, 1));
+	k_sched_unlock();
+	while (app_data_save_status(request) == -EINPROGRESS) k_msleep(1);
+	zassert_ok(app_data_save_status(request));
+	read_saved(data);
+	zassert_equal(data[2], accepted);
+	/* The synchronous shutdown path must also commit the later RAM changes. */
+	zassert_ok(app_data_save());
+	zassert_equal(app_data_save_status(request), -ESTALE);
+	read_saved(data);
+	zassert_equal(data[2], later);
+	flash_simulator_set_callbacks(flash, &fail);
+	zassert_ok(app_data_save(), "Unchanged data must not write flash");
+	flash_simulator_set_callbacks(flash, NULL);
 	const uint8_t unsaved = 0x22;
 	zassert_ok(app_data_write(0, &unsaved, 1));
 	/* A leftover interrupted staging file must not override committed data. */

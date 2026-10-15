@@ -6,10 +6,10 @@ mainmenu "Brickphyr"
 config NUM_MBOX_ASYNC_MSGS
 	default 0
 
-# A native controller preempts the primary, while hardware and management retain
-# their priorities above both application contexts.
+# Control preempts storage, which preempts a busy primary. Hardware and management
+# retain their priorities above all three; timers can defeat equal-priority slices.
 config NUM_PREEMPT_PRIORITIES
-	default 16 if BRICKPHYR_NATIVE
+	default 17 if BRICKPHYR_NATIVE
 
 # Crypto temporaries share the system heap instead of a user-mapped libc arena.
 config TF_PSA_CRYPTO_USER_CONFIG_FILE

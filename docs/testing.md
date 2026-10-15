@@ -361,10 +361,13 @@ power reservation during accepted work. Watchdog tests check that repeated boot
 cause reads retain the captured flags after hardware flags have been cleared.
 
 `test_python_storage.py` checks copied user buffers, bounds and invalid arguments,
-fresh VM access and forced stop during writes through the protected SDK. The
+fresh VM access, forced stop during writes, and synchronous/nonblocking/awaitable
+saves through the protected SDK. The awaitable case also exercises storage progress
+under a continuously polling primary. The
 native fixture checks invalid read/write pointers. `tests/app_data` runs the
 production user-data store over LittleFS with a simulated flash device. It covers
-save failure/retry, a RAM write during commit, fresh-process reload, ignored
+save failure/retry, snapshot acceptance before worker execution, a RAM write during
+commit, pending/stale requests, unchanged saves without flash writes, fresh-process reload, ignored
 partial staging, and refusal to overwrite corrupt data or format foreign contents.
 
 ```sh

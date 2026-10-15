@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "app_data.h"
+#include "storage_work.h"
 #include <brickphyr_system.h>
+#include <limits.h>
 #include <string.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
@@ -10,8 +12,12 @@ LOG_MODULE_REGISTER(app_data);
 static K_MUTEX_DEFINE(save_lock);
 static struct k_spinlock data_lock;
 static uint8_t user_data[BP_USER_DATA_SIZE];
+static uint8_t snapshot[BP_USER_DATA_SIZE];
 static bool dirty;
 static int data_error = -EAGAIN;
+static uint32_t save_request;
+static int save_result;
+static bool firmware_saving;
 #define DATA_PATH "/apps/.userdata"
 #define DATA_STAGE "/apps/.userdata.tmp"
 
@@ -70,37 +76,80 @@ int app_data_write(uint32_t offset, const void *data, size_t size)
 	return err;
 }
 
+static void save_worker(struct k_work *work)
+{
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	int err = fs_open(&file, DATA_STAGE, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (!err) {
+		ssize_t size = fs_write(&file, snapshot, sizeof(snapshot));
+		err = size < 0 ? size : size != sizeof(snapshot) ? -ENOSPC : 0;
+		int closed = fs_close(&file);
+		err = err ? err : closed;
+	}
+	if (!err) err = fs_rename(DATA_STAGE, DATA_PATH);
+	k_spinlock_key_t key = k_spin_lock(&data_lock);
+	if (err) dirty = true;
+	save_result = err;
+	k_spin_unlock(&data_lock, key);
+}
+static K_WORK_DEFINE(save_work, save_worker);
+
+static int save_start(bool firmware)
+{
+	k_spinlock_key_t key = k_spin_lock(&data_lock);
+	int err = data_error ? data_error :
+		(save_result == -EINPROGRESS || (firmware_saving && !firmware)) ? -EBUSY :
+		save_request == INT_MAX ? -EOVERFLOW : 0;
+	if (!err && dirty) {
+		memcpy(snapshot, user_data, sizeof(snapshot));
+		/* Submit under the same lock: an aborted caller cannot leave a pending
+		 * snapshot without a worker. No application pointers survive this call. */
+		err = storage_work_submit(&save_work);
+		if (err >= 0) {
+			dirty = false;
+			save_result = -EINPROGRESS;
+		}
+	} else if (!err) {
+		save_result = 0;
+	}
+	int request = err < 0 ? err : ++save_request;
+	k_spin_unlock(&data_lock, key);
+	return request;
+}
+
+int app_data_save_start(void) { return save_start(false); }
+
+int app_data_save_status(uint32_t request)
+{
+	k_spinlock_key_t key = k_spin_lock(&data_lock);
+	int result = !request || request > INT_MAX ? -EINVAL :
+		request != save_request ? -ESTALE : save_result;
+	k_spin_unlock(&data_lock, key);
+	return result;
+}
+
 int app_data_save(void)
 {
-	uint8_t snapshot[sizeof(user_data)];
 	k_mutex_lock(&save_lock, K_FOREVER);
 	k_spinlock_key_t key = k_spin_lock(&data_lock);
-	int err = data_error;
-	bool changed = dirty;
-	if (!err && changed) {
-		memcpy(snapshot, user_data, sizeof(snapshot));
-		/* Further writes mark a new change. A failed commit restores this one;
-		 * save_lock keeps another saver from observing an unfinished commit. */
-		dirty = false;
-	}
+	/* Shell/shutdown owns this result until read, even if an application keeps
+	 * requesting asynchronous saves after the worker finishes. */
+	firmware_saving = true;
 	k_spin_unlock(&data_lock, key);
-	if (!err && changed) {
-		struct fs_file_t file;
-		fs_file_t_init(&file);
-		err = fs_open(&file, DATA_STAGE, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
-		if (!err) {
-			ssize_t size = fs_write(&file, snapshot, sizeof(snapshot));
-			err = size < 0 ? size : size != sizeof(snapshot) ? -ENOSPC : 0;
-			int closed = fs_close(&file);
-			err = err ? err : closed;
-		}
-		if (!err) err = fs_rename(DATA_STAGE, DATA_PATH);
-		if (err) {
-			key = k_spin_lock(&data_lock);
-			dirty = true;
-			k_spin_unlock(&data_lock, key);
-		}
+	struct k_work_sync sync;
+	/* Shutdown first stops writers. Join their accepted save before committing
+	 * subsequent RAM changes; never cut power beneath the filesystem worker. */
+	(void)k_work_flush(&save_work, &sync);
+	int request = save_start(true);
+	int err = request < 0 ? request : 0;
+	if (!err) {
+		(void)k_work_flush(&save_work, &sync);
+		err = app_data_save_status(request);
 	}
+	key = k_spin_lock(&data_lock);
+	firmware_saving = false;
+	k_spin_unlock(&data_lock, key);
 	k_mutex_unlock(&save_lock);
 	return err;
 }

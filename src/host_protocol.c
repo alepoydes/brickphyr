@@ -15,18 +15,13 @@
 
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 #include "app_store.h"
-#include <zephyr/init.h>
+#include "storage_work.h"
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 
 static struct k_spinlock slot_lock;
 static uint8_t selected_slot;
 static bool slot_busy;
-/* Flash operations stay off Bluetooth RX and the watchdog's system queue.
- * The existing filesystem management path uses 4 KiB; an ARM check exhausted
- * a 2 KiB worker during LittleFS access. Keep this independent of Shell size. */
-static struct k_work_q slot_queue;
-static K_KERNEL_STACK_DEFINE(slot_stack, 4096);
 static K_SEM_DEFINE(slot_done, 0, 1);
 static bool slot_install;
 static uint8_t slot_target;
@@ -46,7 +41,7 @@ static int slot_operation(bool install, uint8_t slot)
 	/* The reservation remains held through this synchronous operation. */
 	slot_install = install;
 	slot_target = slot;
-	int err = k_work_submit_to_queue(&slot_queue, &slot_work);
+	int err = storage_work_submit(&slot_work);
 	if (err < 0) {
 		return err;
 	}
@@ -117,14 +112,6 @@ static int cmd_slot(const struct shell *shell, size_t argc, char **argv)
 }
 SHELL_CMD_ARG_REGISTER(pybricks_slot, NULL, "Read or select a Pybricks program slot.", cmd_slot, 1, 1);
 
-static int slots_init(void)
-{
-	const struct k_work_queue_config config = {.name = "pybricks_store"};
-	k_work_queue_start(&slot_queue, slot_stack, K_KERNEL_STACK_SIZEOF(slot_stack),
-		CONFIG_SHELL_THREAD_PRIORITY, &config);
-	return 0;
-}
-SYS_INIT(slots_init, APPLICATION, 90);
 #endif
 
 void host_protocol_reset(struct host_protocol *protocol)

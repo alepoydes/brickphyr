@@ -126,7 +126,9 @@ The `spike_prime_f4` devicetree limits the image to the main-firmware partition.
 Its linker fragment places the mboot information records at offsets `0x1f0` and
 `0x264` from the image start. [The image checker](../tools/check_image.py) checks
 the resulting ELF and binary against the external F4 memory/boot contract. The
-build enables no application flash-write API and packages neither bootloader.
+build exposes no raw flash-controller API and packages neither bootloader.
+Applications may request an atomic save of their bounded shared user-data snapshot
+through the firmware's [application store](applications.md#persistent-user-data).
 Devicetree `read-only` labels describe ownership; they do not establish physical
 flash write protection.
 

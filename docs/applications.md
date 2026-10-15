@@ -92,8 +92,11 @@ parameters, and the caller chooses whether to retry or stop. Stop/fault handling
 can abort the sleeping context without leaving application memory in the IMU
 worker. Independent motor expiry remains necessary while waiting or recovering.
 
-On F4 the primary runs at priority 15 and the controller at 14; Shell/logging remain
-at 13, below acquisition and management services. The controller preempts the primary
+On F4 the primary runs at priority 16, the shared storage worker at 15 and the
+controller at 14; Shell/logging remain at 13, below acquisition and management
+services. Storage can progress even when the primary never yields; equal-priority
+time slicing alone cannot ensure this under frequent higher-priority wakeups.
+The controller preempts both storage and the primary
 (including Python GC), while essential services can still preempt or stop either application
 context. A controller that never yields can starve the primary. This priority scheme
 is not a deadline guarantee: application work, interrupts and driver delays must
@@ -447,8 +450,10 @@ fixed; append calls at the end and increase the minor version. Incompatible
 changes require a new major and table symbol. The table is generated from the
 public syscall declarations; bindings keep using the same implementation.
 
-The current version is 2.0. It retains each grouped motor command's per-port
-application and cleanup times instead of relying on mutable output snapshots.
+The current version is 2.1. It adds explicit application user-data saving;
+2.0 ELF applications retain their existing table slots and remain supported.
+Version 2 retains each grouped motor command's per-port application and cleanup
+times instead of relying on mutable output snapshots.
 ELF files built for ABI 1 must be rebuilt with the matching SDK; they are rejected
 before replacing a running application. Firmware updates preserve stored files
 but do not convert their ABI. Python source and compatible `.mpy` formats are
@@ -571,7 +576,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
 builds, sets the on-demand execution arena's size. The F4 native profile permits
-64 KiB of ELF and a 214144-byte loader budget in a 234752-byte shared system heap.
+64 KiB of ELF and a 214144-byte loader budget in a 229632-byte shared system heap.
 The Technic native profile permits 4 KiB images and a 16 KiB loader budget in a
 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
@@ -1151,9 +1156,9 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native-only profile provides a 234752-byte heap, including on-demand loader
+The native-only profile provides a 229632-byte heap, including on-demand loader
 allocations and stacks. The full and core Python profiles provide 199808 and
-229376 bytes, respectively, including the on-demand 64 KiB Python arena.
+224256 bytes, respectively, including the on-demand 64 KiB Python arena.
 Idle and native-only execution leave that capacity available to other allocations.
 Active stacks and native loader
 allocations, including a concurrent controller, also come from that heap.
@@ -1367,8 +1372,50 @@ hub.system.storage(0, write=b"hello")
 print(hub.system.storage(0, read=5))
 ```
 
-Dirty user data is saved at orderly hub shutdown, after applications and device
-outputs stop. To save without switching off, return to the hub Shell and run:
+Applications can explicitly save without exiting:
+
+```python
+from pybricks.tools import wait
+
+hub.system.storage_save()                  # Wait; OSError on failure.
+request = hub.system.storage_save(wait=False)
+while not hub.system.storage_save_status(request):
+    wait(1)
+```
+
+Inside `run_task`, `await hub.system.storage_save()` waits cooperatively with
+other Python tasks. `wait=False` returns immediately with a positive request ID;
+status returns `False` while pending, `True` on success, and raises `OSError` for
+failure. Closing an awaitable only stops waiting, not the accepted save.
+
+The native equivalents are `bp_user_data_save()` and
+`bp_user_data_save_start()`/`bp_user_data_save_status(request)`. Start returns a
+positive request or negative errno. Status returns `-EINPROGRESS`, zero, or the
+save error. Both are primary-context operations; an independent controller gets
+`EPERM`. The synchronous C convenience function yields while polling the same
+request. None of these calls gives the application filesystem access.
+
+One save can be pending. Acceptance copies all 512 bytes into a firmware-owned
+snapshot without allocation or flash I/O in the caller. A pending save or a
+firmware save reservation returns `EBUSY` without replacing the request. A newer
+accepted save expires the previous ID (`ESTALE`); read the result before starting
+another, and coordinate other writers. IDs are valid only for the current boot.
+Success means the snapshot was committed, not merely queued. Unchanged data needs
+no flash write. Stop, fault or host disconnection does not cancel accepted work.
+Changes to RAM after acceptance need a later save, even if made before the worker
+begins. Application code owns the meaning and versioning of the saved bytes;
+publishing a controller parameter revision does not implicitly persist it.
+
+The filesystem worker is shared with Pybricks program-slot operations, separate
+from the hub loop and system workqueue. The full F4 profile reuses their 4 KiB
+stack; a storage-enabled profile without slots also needs this worker. The snapshot
+adds 512 bytes independently of Python. There is no per-save thread or heap buffer.
+Control and hardware services can preempt the worker, but this is not a measured
+control-latency guarantee or a bound on flash completion time.
+
+Dirty user data is also saved at orderly hub shutdown, after applications and device
+outputs stop. Shutdown joins an accepted save before committing later RAM changes
+and releasing power. The Shell uses the same mechanism:
 
 ```text
 storage save data
@@ -1382,16 +1429,17 @@ application listing and host file transfer. A missing data file starts with zero
 bytes; an unreadable or wrong-sized file reports an error and is preserved.
 
 An unexpected power loss, watchdog reset, `reboot` or firmware replacement can
-lose unsaved RAM changes. `config save` and user-data saving are independent:
+lose unsaved RAM changes or interrupt a pending save. `config save` and user-data saving are independent:
 neither persists the other's pending changes. Reads outside the 512-byte user
 region are rejected; adjacent private Pybricks settings/program memory is not
 exposed. General writable Python files remain outside this interface.
 
-On the Inventor F4, native USB/BLE checks cover read/write, explicit save, retained
-data after reboot and loss of unsaved changes. Automatic saving during physical
-shutdown remains unverified. The F4 native profile reserves a 4 KiB main stack
-for shutdown's filesystem call path; the 512-byte snapshot is temporary stack
-storage and the shared RAM data occupies 512 bytes independently of the VM.
+ARM checks cover the protected application request and Python synchronous,
+nonblocking and awaitable calls. LittleFS simulation covers snapshot acceptance,
+concurrent RAM updates, errors/retry, unchanged saves and fresh-process restoration.
+On the Inventor F4, earlier native USB/BLE checks cover RAM read/write, Shell save,
+retained data after reboot and loss of unsaved changes. Application-requested saves
+and automatic saving during physical shutdown remain unverified there.
 
 ### Python input and output
 

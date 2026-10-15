@@ -130,8 +130,8 @@ static struct {
 static atomic_t control_pending;
 static K_SEM_DEFINE(control_done, 0, 1);
 static int start_controller(void);
-BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
-BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
+BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 2);
+BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 2);
 /* Dynamic application allocations require a corresponding region-boundary
  * integration before using a non-overlapping MPU model. */
 BUILD_ASSERT(!IS_ENABLED(CONFIG_MPU_REQUIRES_NON_OVERLAPPING_REGIONS));
@@ -2344,6 +2344,34 @@ static inline int z_vrfy_bp_user_data_write(uint32_t offset, const void *data, s
 }
 #include <zephyr/syscalls/bp_user_data_write_mrsh.c>
 
+int z_impl_bp_user_data_save_start(void)
+{
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	return app_data_save_start();
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_user_data_save_start(void)
+{
+	return primary_caller() ? z_impl_bp_user_data_save_start() : -EPERM;
+}
+#include <zephyr/syscalls/bp_user_data_save_start_mrsh.c>
+
+int z_impl_bp_user_data_save_status(uint32_t request)
+{
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	return app_data_save_status(request);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_user_data_save_status(uint32_t request)
+{
+	return primary_caller() ? z_impl_bp_user_data_save_status(request) : -EPERM;
+}
+#include <zephyr/syscalls/bp_user_data_save_status_mrsh.c>
+
 /* The first context to complete owns the result, even if cleanup preempts the
  * other context just as it returns. All memory stays mapped until both join. */
 static void finish_application(int result, unsigned int fault)
@@ -2881,7 +2909,7 @@ static int start_controller(void)
 	memset(&control_clock, 0, sizeof(control_clock));
 	k_thread_create(controller->thread, controller->stack, controller->stack_size,
 		native_entry, controller->extension, (void *)function, NULL,
-		K_LOWEST_APPLICATION_THREAD_PRIO - 1, K_USER, K_FOREVER);
+		K_LOWEST_APPLICATION_THREAD_PRIO - 2, K_USER, K_FOREVER);
 	if (IS_ENABLED(CONFIG_THREAD_NAME)) (void)k_thread_name_set(controller->thread, "app-control");
 	k_thread_heap_assign(controller->thread, NULL);
 	err = k_mem_domain_add_thread(&controller->domain, controller->thread);

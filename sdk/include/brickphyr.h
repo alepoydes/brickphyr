@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <brickphyr_abi.h>
@@ -96,8 +97,8 @@ __syscall int bp_set_stop_buttons(uint32_t buttons);
 __syscall uint32_t bp_get_stop_buttons(void);
 /* Request the ordinary shutdown/cleanup path; this call does not return. */
 __syscall void bp_shutdown(void);
-/* Shared user bytes, copied in RAM. Persist at orderly shutdown or with the
- * firmware's explicit storage-save operation; no flash I/O in this caller. */
+/* Shared user bytes, copied in RAM. Persist at orderly shutdown or an explicit
+ * bp_user_data_save_start()/bp_user_data_save(); no flash I/O in read/write. */
 __syscall int bp_user_data_read(uint32_t offset, void *data, size_t size);
 __syscall int bp_user_data_write(uint32_t offset, const void *data, size_t size);
 
@@ -465,10 +466,33 @@ __syscall int bp_record_get(struct bp_record_info *info);
 __syscall int bp_record_readinto(const struct bp_record_request *request,
 	struct bp_record_info *info, struct bp_control_step *step);
 
+/* Primary context only. Copy all shared user data into a firmware-owned
+ * snapshot and queue its atomic commit. Returns a positive request or errno;
+ * EBUSY leaves a pending request unchanged. No allocation, wait or flash I/O
+ * in the caller. Accepted saves survive application exit/disconnect. Further
+ * RAM writes require another save. An unchanged snapshot needs no flash write.
+ */
+__syscall int bp_user_data_save_start(void);
+/* Nonblocking result: EINPROGRESS, zero on committed success, or the operation's
+ * error. A newer accepted save makes the old request ESTALE. IDs last one boot.
+ * Failure preserves the previous committed file and keeps RAM changes dirty. */
+__syscall int bp_user_data_save_status(uint32_t request);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 
 #include <brickphyr_api.h>
+
+/* Synchronous convenience over the same request. Yield at millisecond cadence
+ * while pending; stopping this wait does not cancel the accepted commit. */
+static inline int bp_user_data_save(void)
+{
+	int request = bp_user_data_save_start();
+	if (request < 0) return request;
+	int result;
+	while ((result = bp_user_data_save_status(request)) == -EINPROGRESS) bp_sleep(1);
+	return result;
+}
 
 /* The firmware calls this entry in user mode; return ends the application. */
 int app_main(void);

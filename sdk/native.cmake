@@ -85,7 +85,8 @@ if(CONFIG_BRICKPHYR_NATIVE_FIXTURES)
 endif()
 
 if(CONFIG_BRICKPHYR_APP_STORAGE)
-  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c ${BRICKPHYR_ROOT}/src/app_data.c)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/app_store.c ${BRICKPHYR_ROOT}/src/app_data.c
+    ${BRICKPHYR_ROOT}/src/storage_work.c)
 endif()
 
 if(CONFIG_BRICKPHYR_PYTHON)

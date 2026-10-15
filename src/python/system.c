@@ -2,6 +2,7 @@
 // Copyright (c) 2018-2022 The Pybricks Authors
 // Adapted from pybricks/common/pb_type_system.c.
 #include "devices.h"
+#include "py/mphal.h"
 #include <brickphyr.h>
 #include <errno.h>
 #include <string.h>
@@ -9,6 +10,8 @@
 #include <pybricks/common.h>
 #include <pybricks/parameters.h>
 #include <pybricks/parameters/pb_type_button.h>
+#include <pybricks/tools.h>
+#include <pybricks/tools/pb_type_async.h>
 #include <pybricks/util_mp/pb_kwarg_helper.h>
 #include "py/objstr.h"
 
@@ -124,6 +127,45 @@ static mp_obj_t system_storage(size_t n_args, const mp_obj_t *args, mp_map_t *kw
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(system_storage_obj, 0, system_storage);
 
+static pbio_error_t storage_save_ready(pbio_os_state_t *state, mp_obj_t request_in)
+{
+	(void)state;
+	int err = bp_user_data_save_status(mp_obj_get_int(request_in));
+	if (err == -EINPROGRESS) return PBIO_ERROR_AGAIN;
+	python_device_check(err);
+	return PBIO_SUCCESS;
+}
+
+static mp_obj_t system_storage_save(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args)
+{
+	PB_PARSE_ARGS_FUNCTION(n_args, args, kw_args, PB_ARG_DEFAULT_TRUE(wait));
+	int request = bp_user_data_save_start();
+	python_device_check(request);
+	if (!mp_obj_is_true(wait_in)) return mp_obj_new_int(request);
+	pb_type_async_t config = {
+		.parent_obj = mp_obj_new_int(request), .iter_once = storage_save_ready,
+	};
+	if (pb_module_tools_run_loop_is_active()) {
+		/* Closing the awaitable detaches its waiter; the save still completes. */
+		return pb_type_async_wait_or_await(&config, NULL, false);
+	}
+	while (storage_save_ready(&config.state, config.parent_obj) == PBIO_ERROR_AGAIN) {
+		mp_hal_delay_ms(1);
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(system_storage_save_obj, 0, system_storage_save);
+
+static mp_obj_t system_storage_save_status(mp_obj_t request_in)
+{
+	int request = mp_obj_get_int(request_in);
+	int err = bp_user_data_save_status(request);
+	if (err == -EINPROGRESS) return mp_const_false;
+	python_device_check(err);
+	return mp_const_true;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(system_storage_save_status_obj, system_storage_save_status);
+
 static const mp_rom_map_elem_t system_globals[] = {
 	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_system) },
 	{ MP_ROM_QSTR(MP_QSTR_name), MP_ROM_PTR(&system_name_obj) },
@@ -132,6 +174,8 @@ static const mp_rom_map_elem_t system_globals[] = {
 	{ MP_ROM_QSTR(MP_QSTR_set_stop_button), MP_ROM_PTR(&system_set_stop_button_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_shutdown), MP_ROM_PTR(&system_shutdown_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_storage), MP_ROM_PTR(&system_storage_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_storage_save), MP_ROM_PTR(&system_storage_save_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_storage_save_status), MP_ROM_PTR(&system_storage_save_status_obj) },
 };
 static MP_DEFINE_CONST_DICT(system_dict, system_globals);
 const mp_obj_module_t python_system = {{&mp_type_module}, (mp_obj_dict_t *)&system_dict};

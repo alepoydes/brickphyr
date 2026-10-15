@@ -5,7 +5,7 @@
 
 #define BP_ABI_MAGIC 0x31415042U /* BPA1 */
 #define BP_ABI_MAJOR 2
-#define BP_ABI_MINOR 0
+#define BP_ABI_MINOR 1
 #define BP_ABI_STRINGIFY_(value) #value
 #define BP_ABI_STRINGIFY(value) BP_ABI_STRINGIFY_(value)
 #define BP_ABI_VERSION "bp" BP_ABI_STRINGIFY(BP_ABI_MAJOR) "." BP_ABI_STRINGIFY(BP_ABI_MINOR)
