@@ -81,8 +81,8 @@ upstream implementations. Private application syscalls supply the bounded input
 queue and event wait. A host interrupt sets only an atomic signal; VM/event hooks
 schedule the exception in the interpreter's own thread.
 
-The port explicitly enables the reference F4 build's memoryviews, builtin help,
-memory diagnostics, GC finalizers and extended/reverse class operators on top of
+The port explicitly enables memoryviews, mutable buffer slice assignment, builtin
+help, memory diagnostics, GC finalizers and extended/reverse class operators on top of
 MicroPython's basic feature set. Standard modules remain upstream code; their
 [integration coverage](../../docs/applications.md#standard-python-modules) runs
 through the protected application lifecycle.

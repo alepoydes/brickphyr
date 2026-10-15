@@ -2520,6 +2520,13 @@ static int reap(bool stop)
 	status.fault = fault ? fault - 1 : 0;
 	status.state = fault ? APPLICATION_FAULT : ended ? APPLICATION_RETURNED : APPLICATION_STOPPED;
 	(void)k_thread_stack_space_get(&application_thread, &status.stack_unused);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (controller_live) {
+		size_t unused;
+		int measured = k_thread_stack_space_get(controller->thread, &unused);
+		status.control_stack_unused = measured ? measured : (int)unused;
+	}
+#endif
 	int err = release();
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A soft reset is a complete application lifetime boundary. Recursive
@@ -2862,6 +2869,8 @@ static int start_controller(void)
 		goto failed;
 	}
 	controller->started = true;
+	status.control_stack_bytes = K_THREAD_STACK_LEN(controller->stack_size);
+	status.control_stack_unused = -1;
 	k_thread_start(controller->thread);
 	return 0;
 failed:
@@ -3409,6 +3418,14 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell, "Image %zu; loader budget %zu; loaded %zu; stack %zu (unused %zu)",
 		    value.image_bytes, value.loader_bytes, value.loaded_bytes,
 		    value.stack_bytes, value.stack_unused);
+	if (value.control_stack_bytes) {
+		if (value.control_stack_unused < 0) {
+			shell_print(shell, "Control stack: %zu bytes; unused not measured", value.control_stack_bytes);
+		} else {
+			shell_print(shell, "Control stack: %zu bytes (unused %d)",
+				value.control_stack_bytes, value.control_stack_unused);
+		}
+	}
 	if (value.code_bytes) {
 		shell_print(shell, "Python native code: %zu/%zu bytes", value.code_used, value.code_bytes);
 	}

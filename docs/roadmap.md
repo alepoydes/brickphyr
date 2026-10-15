@@ -128,8 +128,11 @@ The current Python context already provides preemptible execution for bounded C
 `.mpy` jobs. Its recorder reader copies observations with the corresponding applied
 parameters, independently of host collection; `control_update` publishes complete
 revisions at the next control boundary. Use this path for Python-managed background
-work before adding another worker or queue. Standalone-native background work and
-acceptance of the complete identification workload remain open.
+work before adding another worker or queue. A bounded F4 check now exercises
+existing learning code on synthetic recorded observations and replays the applied
+model's predictions; see [concurrent execution evidence](applications.md#concurrent-execution-example-and-evidence).
+Standalone-native background work, realistic workload budgets and complete robot
+identification acceptance remain open.
 
 ## Retained optimization work
 

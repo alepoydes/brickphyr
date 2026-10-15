@@ -202,20 +202,29 @@ including parameter revisions. With control recording, the retained 64 of 96
 steps also reproduce from their captured model and three applied revisions after
 ring overwrite; USB/BLE retrieve identical records. This establishes bounded
 numerical portability, not physical feedback control or complete robot replay.
-Controller stack high-water and sustained combined-load characterization remain
-open; the normal image has no kernel stack Shell.
+Sustained combined-load and worst-path stack characterization remain open.
+The normal image reports stack use through application status; it does not need
+the diagnostic kernel Shell.
 
-The same Inventor F4 also runs a bounded background numerical probe: 512 calls
-to Babybot's existing float32 information-diffusion routine, with deterministic
-15-by-16 input, inside one C `.mpy` call. USB/BLE runs take 1.15/1.25 seconds while
-the 20 ms read-only controller advances by 57/62 steps. The retained 31 steps
-inside each C call have no skipped releases and maximum dispatch delays of
-458/1088 us. The final numerical arrays match the desktop build of the same C
-routine, and Python/host readers observe the complete applied parameter revision.
-This is synthetic input to a real numerical kernel, not the complete identification
-workload or a control-deadline bound. USB stop interrupts a longer C call and its
-controller; the stop round trip and status read take about 7 ms, and a fresh
-Python/controller program then runs. No actuator commands are used in this probe.
+The same Inventor F4 runs Babybot's existing `learning_begin`, `learning_rows`
+and `learning_update` C routines as a background `.mpy` module. Python reads 30
+synthetic observations from the production recorder, calculates a complete
+60-byte candidate model and publishes it to the native predictor. USB/BLE runs
+spend 351/382 ms processing the batch and updating the model while the 20 ms
+controller advances by 17/19 steps. Cumulative counters show no skipped releases
+through the first applied update; maximum observed dispatch delays are 1510/403 us.
+Host replay uses the recorded observations, configuration and applied models:
+the learned model/history match, and all 31 retained predictions match bit for bit.
+These short runs use synthetic data and do not establish physical control timing
+or complete robot identification acceptance.
+
+The learning workspace is 3032 bytes with a 544-byte history buffer. After return,
+observed Python/controller stack use is 5768/776 bytes from 16384/4096-byte
+allocations. Native `.mpy` code uses 11388 bytes of its 16 KiB reservation. These
+are workload observations, not worst-case resource bounds. A separate longer
+information-diffusion C call also permits native progress and host stop; the USB
+stop round trip plus status read takes about 7 ms, followed by a successful fresh
+Python/controller run. Neither probe commands actuators.
 
 ## Experimental native profile
 
@@ -406,6 +415,15 @@ fault or explicit stop. `app status`
 reports the image, reserved loader budget, LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
+
+For Python with an independent controller, status also retains `control_stack`
+(allocated user-stack bytes) and `control_unused` (untouched bytes). The latter is
+negative while no measurement is available. The supervisor inspects the joined
+thread once, before releasing its stack, on return, fault or forced stop; periodic
+control and live status polling perform no stack scan. `control_stack == 0`
+means this run did not start a controller. The Shell's `app status` shows these
+values too. Stack filling estimates the observed high-water use, not the maximum
+required by paths that have not run.
 
 A protected ARM check loads a 64 KiB padded ELF containing a 64 KiB zero-initialized
 array, verifies every byte through the application, and reclaims its memory on exit.
@@ -903,6 +921,9 @@ Committed code stays allocated until the
 application ends, including functions no longer referenced by Python. Exhaustion
 raises `MemoryError`. Status reports its reservation as `code` and usage as
 `code_used`, separately from the execution arena.
+`MemoryError: native code reservation failed` identifies this code-region
+admission rather than a GC-heap allocation: free Python heap alone cannot satisfy
+its system-heap capacity and alignment requirements.
 
 The 32 KiB upload limit also applies to Python. The retained source/bytecode shares
 the 64 KiB arena with the GC heap, so larger programs leave less runtime memory.
@@ -1074,7 +1095,7 @@ does not replace the supervisor's unconditional application cleanup.
 | Area | Executable ARM coverage |
 | --- | --- |
 | `io`, `sys`, `select`, `errno` | Text/binary streams, buffer direction, polling, input, exception formatting, resource reads and file errors |
-| `struct`, `memoryview` | Endianness, in-place packing, buffer boundaries, shared views and read-only buffers |
+| `struct`, `memoryview` | Endianness, in-place packing, buffer boundaries, shared views, read-only buffers and mutable bytearray/memoryview slices |
 | `json`, `random`, `math` | Stream decoding, seeded generation, ranges and rejected inputs, numeric results with single-precision tolerances |
 | `gc`, `micropython` | Collection, thresholds, allocation locks, diagnostics, optimization selection and native/Viper execution |
 | Interactive/language support | Module help, reverse operators, editing, interruption and fresh state after reset |

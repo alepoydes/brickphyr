@@ -33,6 +33,7 @@ void *python_native_commit(void *buffer, size_t length, void *relocation);
 #define MICROPY_PY_SYS_STDIO_BUFFER 1
 #define MICROPY_PY_BUILTINS_INPUT 1
 #define MICROPY_PY_BUILTINS_MEMORYVIEW 1
+#define MICROPY_PY_ARRAY_SLICE_ASSIGN 1
 #define MICROPY_PY_BUILTINS_HELP 1
 #define MICROPY_PY_BUILTINS_HELP_MODULES 1
 #define MICROPY_PY_ALL_SPECIAL_METHODS 1

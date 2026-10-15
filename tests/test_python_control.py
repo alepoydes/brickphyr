@@ -90,6 +90,8 @@ print('controller revisions and GC passed')
                     status,
                     text,
                 )
+                assert status.control_stack >= 2048
+                assert 0 < status.control_unused < status.control_stack
                 observed = await records(client)
                 assert {row[4] for row in observed} >= {2, 3}, observed
                 for row in observed:
@@ -173,7 +175,9 @@ while brickphyr.control_status()['sequence'] < 20:
 info = brickphyr.record_info()
 assert info['control'] and info['schema'] == 'fixture.control/1'
 assert info['size'] == 48 and info['parameter_size'] == 16 and info['first'] > 0
-data, parameters = bytearray(48), bytearray(16)
+storage = bytearray(64)
+storage[:] = b'x' * len(storage)
+data, parameters = memoryview(storage)[:48], memoryview(storage)[48:]
 generation = info['generation']
 def rejected(generation, index, data, parameters):
     before = bytes(data), bytes(parameters)
@@ -207,6 +211,10 @@ for revision in range(1, 5):
     assert step['control'] and step['size'] == len(data)
     assert (step['scheduled_us'], step['started_us'], step['sequence'], step['skipped'], step['applied_revision'], step['parameter_size']) == row[:6]
     assert row[4] == revision and row[6] == value and bytes(parameters) == params(value)
+    copied = bytearray(64)
+    copied[:48] = data
+    memoryview(copied)[48:] = parameters
+    assert copied == storage
     assert row[7] == row[2] * .25
     # Returned storage is private; changing it cannot modify the controller's state.
     parameters[0] = 255
@@ -283,6 +291,7 @@ input()
                 await checked(client, Stop())
                 stopped = await checked(client, Status())
                 assert stopped.state == 3 and stopped.cleanup == 0, stopped
+                assert 0 < stopped.control_unused < stopped.control_stack
                 await checked(client, recording.Clear())
                 assert await heap_allocated() == baseline
 

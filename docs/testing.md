@@ -684,9 +684,13 @@ protocol and lifecycle behavior, not physical motor response or timing.
 `control_probe.elf`. It checks native progress during Python GC/float work,
 complete copied revisions, missed periodic releases, shared return/fault/stop,
 MPU separation and exact system-heap reclamation after clearing retained records.
+Return and forced-stop checks also read the joined controller's stack high-water
+measurement through normal application status.
 Python recording reads additionally check whole records with their applied
 parameters across ring overwrite, independent host reads, stale/overwritten
 cursors, integer overflow and buffer rejection without partial payload writes.
+They use writable views into shared storage and copy records with upstream
+bytearray/memoryview slice assignment.
 The port-service fixture checks that controller ownership excludes Python's
 application owner. Build before running the focused checks:
 

@@ -137,7 +137,7 @@ The experimental application management group is SMP group 65, API version 1:
 
 | Command ID | Operation | Fields/result |
 | --- | --- | --- |
-| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag |
+| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag; `control_stack`/`control_unused` describe an independent controller's stack |
 | 1 | Write upload fragment | `off`, `total`, `data`, optional `format` (default native); returns accepted `off` |
 | 2 | Write start | Start the completed RAM image |
 | 3 | Write stop | Confirm application termination and release |

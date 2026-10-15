@@ -53,6 +53,8 @@ class StatusResponse(message.ReadResponse):
     loaded: int
     stack: int
     unused: int
+    control_stack: int = 0
+    control_unused: int = -1
     dropped: int
     queued: int
     received: int

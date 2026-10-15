@@ -92,6 +92,10 @@ complete background-workload acceptance remain open. Python can read whole
 observations and their applied parameters from the same bounded recorder used by
 USB/BLE, then publish a complete candidate revision. A matching-SDK C `.mpy`
 runs in the preemptible Python context; robot-specific learning stays in the app.
+On Inventor F4, a bounded USB/BLE check runs Babybot's existing learning C code
+on synthetic recorded observations, publishes a complete model and reproduces
+the recorded predictions on the host. This is numerical integration evidence;
+physical timing and full robot migration remain open.
 Hard-float, FPU context
 fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;

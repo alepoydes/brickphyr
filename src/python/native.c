@@ -9,7 +9,8 @@ void *python_native_commit(void *buffer, size_t length, void *relocation)
 	intptr_t address = application_code_reserve(length);
 	if (address < 0) {
 		if (address == -ENOMEM) {
-			m_malloc_fail(length);
+			mp_raise_msg_varg(&mp_type_MemoryError,
+				MP_ERROR_TEXT("native code reservation failed: %u bytes"), (unsigned)length);
 		}
 		mp_raise_OSError(-address);
 	}

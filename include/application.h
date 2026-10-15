@@ -26,6 +26,8 @@ struct application_status {
 	size_t code_used;
 	size_t stack_bytes;
 	size_t stack_unused;
+	size_t control_stack_bytes;
+	int control_stack_unused;
 	uint32_t output_dropped;
 	size_t output_bytes;
 	size_t upload_bytes;

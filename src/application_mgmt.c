@@ -20,7 +20,7 @@
 
 /* Experimental Brickphyr application group; framing and transports remain SMP. */
 #define APPLICATION_GROUP 65
-BUILD_ASSERT(CONFIG_MCUMGR_SMP_CBOR_MAX_MAIN_MAP_ENTRIES >= 22);
+BUILD_ASSERT(CONFIG_MCUMGR_SMP_CBOR_MAX_MAIN_MAP_ENTRIES >= 24);
 /* Stream response: 256 data bytes, seven bounded status fields and SMP/CBOR
  * headers fit in 384 bytes, including worst-case 32-bit result/counter values. */
 BUILD_ASSERT(CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE >= 384);
@@ -48,6 +48,8 @@ static int status_read(struct smp_streamer *stream)
 		number(zs, "image", status.image_bytes) && number(zs, "heap", status.loader_bytes) &&
 		number(zs, "loaded", status.loaded_bytes) && number(zs, "stack", status.stack_bytes) &&
 		number(zs, "unused", status.stack_unused) && number(zs, "dropped", status.output_dropped) &&
+		number(zs, "control_stack", status.control_stack_bytes) &&
+		number(zs, "control_unused", status.control_stack_unused) &&
 		number(zs, "queued", status.output_bytes) &&
 		number(zs, "received", status.upload_bytes) && number(zs, "total", status.upload_size) &&
 		zcbor_tstr_put_lit(zs, "ready") && zcbor_bool_put(zs, status.upload_ready) &&
