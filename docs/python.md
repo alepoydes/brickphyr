@@ -22,10 +22,11 @@ The F4 requirements below retain source compilation, Python REPL and compatible
 native ELF applications only. Follow the shared
 [platform roadmap](roadmap.md) for delivery order. It retains this acceptance
 inventory while adding independent native control alongside Python within one
-application. That concurrent runtime is new work; the current single-engine
-checks below do not establish independence from Python GC or simultaneous memory
-capacity. Unavailable external accessories do not block the initial Babybot
-integration experiment.
+application. The concurrent runtime has separate protected memory and bounded
+F4 checks under Python GC, learning and USB/BLE telemetry; see
+[concurrent execution evidence](applications.md#concurrent-execution-example-and-evidence).
+Sustained timing and complete robot-workload acceptance remain open. Unavailable
+external accessories do not block the initial Babybot integration experiment.
 
 ## Starting point
 

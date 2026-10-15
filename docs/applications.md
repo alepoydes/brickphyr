@@ -334,14 +334,21 @@ deadlines remain unverified.
 An extended passive workload uses 16 actual IMU/encoder observations for the
 existing C learning kernel, then applies its complete candidate to the independent
 observer. Native-primary USB and Python-primary USB/BLE checks pass on the same
-Inventor F4. In the Python runs, learning takes 48/47 ms while the controller
-advances three 15 ms steps; all 22 retained observations, applied parameters and
-the learned model replay bit for bit on the host. No release is skipped; the
-largest recorded release-to-completion intervals are 1680/1874 µs. The full
-profile accommodates a 30-record, 904-byte payload ring alongside the Python
-arena, native module and controller. These short runs start with a synthetic
-model and issue no motor commands; they establish integration and memory capacity,
-not physical identification accuracy or sustained timing bounds.
+Inventor F4. A Python load check repeats that calculation 48 times on the same
+window, with 48 GC cycles and best-effort IMU/port telemetry. During learning and
+GC, the 15 ms controller advances 170/166 steps over USB/BLE without skipped
+releases or reported acquisition errors. The largest recorded scheduled-release
+to post-record intervals are 3251/2670 µs; the 30 retained observations, applied
+parameters and candidate model replay bit for bit on the host. These timings
+include preemption and recording, but precede final diagnostic bookkeeping.
+USB forced stop during the load completes in a 5.53 ms host round trip, retains
+the recording and permits both contexts to restart without a cleanup error.
+
+The full profile accommodates the 30-record, 904-byte payload ring alongside
+the Python arena, native module and controller. These short runs start with a
+synthetic model and issue no motor commands. Repeating one observation window
+exercises computation and lifetime, not identification on successive new data;
+physical control, sustained timing and worst-path memory bounds remain open.
 
 The larger workload accumulates ten independent 30-row synthetic fragments and
 one 20-row fragment at 15 ms spacing using the existing learning implementation.

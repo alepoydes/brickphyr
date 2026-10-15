@@ -102,8 +102,11 @@ physical timing and full robot migration remain open.
 An extended passive Inventor F4 workload also learns from actual IMU/encoder
 observations and replays its candidate and observer results exactly on the host:
 native-primary USB and Python-primary USB/BLE paths pass. The recorder uses small
-preallocated blocks to fit fragmented memory alongside both contexts. The model
-starts synthetic; actuation, sustained timing and robot identification remain open.
+preallocated blocks to fit fragmented memory alongside both contexts. Short
+Python USB/BLE checks also combine repeated learning, GC and telemetry without
+skipped control releases; USB forced stop and restart of both contexts pass.
+The model starts synthetic; actuation, sustained timing and robot identification
+remain open.
 The same C learning kernel also runs as a native primary beside passive hardware
 sampling on F4 over USB/BLE. A larger USB check processes 320 synthetic observations
 in bounded fragments; see [workload limits](../docs/applications.md#native-learning-workload).

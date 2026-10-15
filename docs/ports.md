@@ -567,7 +567,11 @@ native application sends all-coast A/B groups through USB and BLE and verifies
 completion identity and release. This physical check does not energize motors.
 The periodic coast-only example also records 16 commands and a final observation
 over both transports, with all 16 previous outcomes attributed to their issuing
-steps. It does not establish the timing of energized output.
+steps. The same coast-only controller also completes beside continuous Python
+GC and telemetry on F4 over USB/BLE, with no skipped releases or cleanup errors.
+Maximum observed dispatch delays are 245/162 µs and driver completion delays are
+at most 1 ms in these short runs. They do not establish the timing of energized
+output or an equal-traffic USB/BLE comparison.
 Grouped drive, measured PWM timing and combined-load expiry latency remain
 unverified. Group metadata occupies 152 bytes in the F4 builds, without adding
 per-port state or changing the Python arena or thread stacks.
