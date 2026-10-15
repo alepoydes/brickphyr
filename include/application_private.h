@@ -4,6 +4,7 @@
 #include <zephyr/syscall.h>
 __syscall void application_finished(int result);
 #include <brickphyr_control.h>
+#include "application_record.h"
 #define APPLICATION_CONTROL_PARAMETERS_MAX 256
 struct application_control_status {
 	struct bp_control_step step;
@@ -14,6 +15,15 @@ __syscall int application_control_start(const void *image, size_t size,
 	const void *parameters, size_t length);
 __syscall int application_control_update(const void *parameters, size_t length);
 __syscall int application_control_get(struct application_control_status *value);
+struct application_record_request {
+	uint64_t index;
+	uint32_t generation;
+	void *data, *parameters;
+	size_t capacity, parameters_capacity;
+};
+__syscall int application_record_get(struct application_record_info *info);
+__syscall int application_record_readinto(const struct application_record_request *request,
+	struct application_record_info *info, struct bp_control_step *step);
 /* Zero capacity observes pending bytes without consuming them. */
 __syscall int application_stdin(void *data, size_t capacity);
 /* Attached stream: return bytes accepted, zero when full; detached: consume into

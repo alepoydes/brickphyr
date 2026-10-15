@@ -1689,6 +1689,46 @@ static inline int z_vrfy_application_control_get(struct application_control_stat
 	return z_impl_application_control_get(value);
 }
 #include <zephyr/syscalls/application_control_get_mrsh.c>
+
+int z_impl_application_record_get(struct application_record_info *info)
+{
+	application_record_info(info);
+	return info->spec.size ? 0 : -ENODATA;
+}
+static inline int z_vrfy_application_record_get(struct application_record_info *info)
+{
+	verify_python_thread();
+	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
+	return z_impl_application_record_get(info);
+}
+#include <zephyr/syscalls/application_record_get_mrsh.c>
+
+int z_impl_application_record_readinto(const struct application_record_request *request,
+	struct application_record_info *info, struct bp_control_step *step)
+{
+	return application_record_copy(request->generation, request->index,
+		request->data, request->capacity, request->parameters, request->parameters_capacity,
+		info, step);
+}
+static inline int z_vrfy_application_record_readinto(const struct application_record_request *request,
+	struct application_record_info *info, struct bp_control_step *step)
+{
+	verify_python_thread();
+	user_memory_check(request, sizeof(*request), __alignof__(*request), false, __func__);
+	struct application_record_request copy = *request;
+	/* The recorder bounds these copies regardless of the Python buffer size. */
+	copy.capacity = MIN(copy.capacity, 1024);
+	copy.parameters_capacity = MIN(copy.parameters_capacity, APPLICATION_CONTROL_PARAMETERS_MAX);
+	if (copy.capacity) user_memory_check(copy.data, copy.capacity, 1, true, __func__);
+	if (copy.parameters_capacity) user_memory_check(copy.parameters, copy.parameters_capacity, 1, true, __func__);
+	if (copy.capacity && copy.parameters_capacity &&
+	    (uintptr_t)copy.data < (uintptr_t)copy.parameters + copy.parameters_capacity &&
+	    (uintptr_t)copy.parameters < (uintptr_t)copy.data + copy.capacity) return -EINVAL;
+	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
+	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
+	return z_impl_application_record_readinto(&copy, info, step);
+}
+#include <zephyr/syscalls/application_record_readinto_mrsh.c>
 #endif
 
 int z_impl_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)

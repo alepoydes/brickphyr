@@ -238,6 +238,30 @@ int application_record_parameters_read(uint32_t generation, uint64_t index,
 	return length;
 }
 
+int application_record_copy(uint32_t generation, uint64_t index,
+	void *data, size_t capacity, void *params, size_t params_capacity,
+	struct application_record_info *info, struct bp_control_step *step)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*info = state;
+	int result = generation != state.generation ? -ESTALE : !records ? -ENODATA :
+		index < state.first ? -EOVERFLOW : index > state.next ? -EINVAL :
+		capacity < state.spec.size || params_capacity < state.parameter_size ? -EMSGSIZE : 0;
+	if (!result && index < state.next) {
+		size_t slot = index % state.spec.capacity;
+		memcpy(data, records + slot * state.spec.size, state.spec.size);
+		if (state.control) {
+			*step = steps[slot].value;
+			if (state.parameter_size) {
+				memcpy(params, parameter_slot(steps[slot].parameters)->data, state.parameter_size);
+			}
+		}
+		result = state.spec.size;
+	}
+	k_spin_unlock(&lock, key);
+	return result;
+}
+
 int application_record_config_read(uint32_t generation, size_t offset,
 	void *data, size_t capacity, struct application_record_info *info)
 {

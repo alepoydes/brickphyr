@@ -88,7 +88,11 @@ orchestration and recording to Brickphyr; its current interfaces are not constra
 Python can start one independent native ELF controller with copied parameter
 revisions, separate MPU memory and a common stop/fault lifetime. Periodic and
 IMU-triggered release retain step observations; measured timing acceptance and
-background work remain open. Hard-float, FPU context
+complete background-workload acceptance remain open. Python can read whole
+observations and their applied parameters from the same bounded recorder used by
+USB/BLE, then publish a complete candidate revision. A matching-SDK C `.mpy`
+runs in the preemptible Python context; robot-specific learning stays in the app.
+Hard-float, FPU context
 fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
 ordinary compatible Pybricks bytecode remains supported.

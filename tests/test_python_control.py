@@ -116,7 +116,8 @@ for revision in range(1, 25):
                 status = await completed(client)
                 assert status.result == status.fault == status.cleanup == 0, status
                 observed = await records(client)
-                assert observed[-1][4] == 24 and len({row[4] for row in observed}) == 16
+                # A valid revision may span several steps before Python updates.
+                assert len(observed) == 16 and observed[-1][4] == 24 and observed[0][4] > 1
                 assert all(row[4] == row[6] for row in observed)
             finally:
                 await checked(client, Stop())
@@ -149,6 +150,82 @@ input()
                 observed = await records(client)
                 assert any(row[3] > 0 for row in observed), observed
                 assert any(row[4] == 2 for row in observed), observed
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+def test_python_reads_complete_control_records_and_detects_gaps():
+    source = """import brickphyr, struct
+from pybricks.tools import wait
+try:
+    brickphyr.record_info()
+    raise AssertionError('recording existed before begin')
+except OSError:
+    pass
+def params(value):
+    return struct.pack('<4I', 0, value, (~value) & 0xffffffff, 0)
+brickphyr.control_start(open('controller.elf', 'rb').read(), params(7))
+while brickphyr.control_status()['sequence'] < 20:
+    wait(1)
+info = brickphyr.record_info()
+assert info['control'] and info['schema'] == 'fixture.control/1'
+assert info['size'] == 48 and info['parameter_size'] == 16 and info['first'] > 0
+data, parameters = bytearray(48), bytearray(16)
+generation = info['generation']
+def rejected(generation, index, data, parameters):
+    before = bytes(data), bytes(parameters)
+    try:
+        brickphyr.record_readinto(generation, index, data, parameters)
+        raise AssertionError('invalid record accepted')
+    except OSError:
+        assert (bytes(data), bytes(parameters)) == before
+index = info['next'] - 1
+rejected(generation, index, bytearray(47), parameters)
+rejected(generation, index, data, bytearray(15))
+rejected(generation, index, data, data)
+rejected(generation + 1, index, data, parameters)
+rejected(generation, 0, data, parameters)
+rejected(generation, 1 << 63, data, parameters)
+for invalid_generation, invalid_index in ((generation + (1 << 32), index), (generation, 1 << 64), (generation, -1)):
+    try:
+        brickphyr.record_readinto(invalid_generation, invalid_index, data, parameters)
+        raise AssertionError('cursor was truncated')
+    except OverflowError:
+        pass
+for revision in range(1, 5):
+    value = 7 if revision == 1 else revision * 31
+    if revision > 1:
+        assert brickphyr.control_update(params(value)) == revision
+    while brickphyr.control_status()['applied_revision'] != revision:
+        wait(1)
+    index = brickphyr.record_info()['next'] - 1
+    step = brickphyr.record_readinto(generation, index, data, parameters)
+    row = struct.unpack('<qqIIIIIfII', data)
+    assert step['control'] and step['size'] == len(data)
+    assert (step['scheduled_us'], step['started_us'], step['sequence'], step['skipped'], step['applied_revision'], step['parameter_size']) == row[:6]
+    assert row[4] == revision and row[6] == value and bytes(parameters) == params(value)
+    assert row[7] == row[2] * .25
+    # Returned storage is private; changing it cannot modify the controller's state.
+    parameters[0] = 255
+    again = brickphyr.record_readinto(generation, index, data, parameters)
+    assert again == step and bytes(parameters) == params(value)
+print('record snapshots passed')
+"""
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            try:
+                await upload(client, transport, bundle(source), Format.FILES)
+                await checked(client, Start())
+                status = await completed(client)
+                text = await output(client)
+                assert status.result == 0 and b"record snapshots passed" in text, (status, text)
+                # Python consumes neither the host's cursor nor retained records.
+                observed = await records(client)
+                assert observed[-1][4] == 4
             finally:
                 await checked(client, Stop())
 

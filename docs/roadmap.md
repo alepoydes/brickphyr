@@ -124,6 +124,12 @@ Robot-specific models, learning acceptance and trajectory generation remain in
 Babybot. SDK libraries may supply selected CMSIS-DSP operations; no mandatory
 large numerical or ML runtime is needed. Host replay validates computation on
 recorded inputs, not a new closed-loop trajectory after changing the controller.
+The current Python context already provides preemptible execution for bounded C
+`.mpy` jobs. Its recorder reader copies observations with the corresponding applied
+parameters, independently of host collection; `control_update` publishes complete
+revisions at the next control boundary. Use this path for Python-managed background
+work before adding another worker or queue. Standalone-native background work and
+acceptance of the complete identification workload remain open.
 
 ## Retained optimization work
 

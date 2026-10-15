@@ -88,7 +88,12 @@ context. A controller that never yields can starve Python. This priority scheme
 is not a deadline guarantee: application work, interrupts and driver delays must
 be measured for the selected period. Motor command expiry remains enforced by
 the independent port service; a missed step alone does not abort an application.
-Bounded background jobs and measured combined-load timing remain planned work.
+Python can run bounded C numerical jobs through a matching-SDK native `.mpy`.
+That work remains in Python's lower-priority protected context, so the controller
+can preempt it without a Python yield or GC cooperation. It does not create an
+additional worker. Application code owns job size, candidate validation and
+rollback; `control_update` publishes a complete accepted parameter block. General
+combined-load timing acceptance remains open.
 
 The controller has its own dynamically allocated stack, MPU domain and loader
 memory. Neither context can access the other's mutable memory; parameter bytes
@@ -105,6 +110,52 @@ and faults do not rely on them. The first completion supplies the result/fault;
 cleanup errors are reported separately and retain resources for retry. Ordinary
 host disconnection leaves both contexts running. Keep Python alive while its
 controller is needed; independent component restart is not provided.
+
+### Reading observations from Python
+
+The controller can use the existing [recording channel](#application-recording)
+to supply bounded observations to Python. No separate queue is allocated, and
+Python and USB/BLE readers have independent cursors; reading does not consume data.
+
+- `brickphyr.record_info()` returns `generation`, `first`, `next`, `size`,
+  `capacity`, `schema`, `parameter_size`, `control` and `active`. It raises
+  `OSError(ENODATA)` until the application initializes recording.
+- `brickphyr.record_readinto(generation, index, data, parameters)` copies one
+  complete retained record into writable caller-owned buffers. For control
+  recordings it copies the parameters actually applied to that record, together
+  with its step metadata, under one recorder lock. Buffers must not overlap and
+  must hold at least `size` and `parameter_size` bytes. Larger buffer tails are
+  untouched. Use an empty `bytearray()` when there are no parameters.
+- A successful read returns `control` and `size`. For a control record it also
+  returns `sequence`, `skipped`, `scheduled_us`, `started_us`, `applied_revision`
+  and `parameter_size`. With valid buffers, reading `index == next` returns
+  `None` immediately; it does not wait for a future observation.
+
+Generation and index are unsigned 32-bit and 64-bit integers; values outside
+those ranges raise `OverflowError`. A changed generation returns `ESTALE`, an
+overwritten index `EOVERFLOW`, an index beyond `next` `EINVAL`, and a short buffer
+`EMSGSIZE`. These errors leave both payload buffers unchanged. The application
+must handle missing observations explicitly; the reader never silently skips
+ahead. `record_info()` is a snapshot: the ring can advance before the next read.
+
+For example, after the controller has initialized a control recording and written
+at least one observation:
+
+```python
+info = brickphyr.record_info()
+data = bytearray(info["size"])
+parameters = bytearray(info["parameter_size"])
+step = brickphyr.record_readinto(info["generation"], info["next"] - 1,
+                                data, parameters)
+# Decode data using info["schema"]; parameters belongs to this exact step.
+```
+
+Reuse these buffers for successive reads. Payload copying allocates no firmware
+buffer; returned metadata dictionaries allocate in Python. The copy is bounded
+by the recorder's 1024-byte record and 256-byte parameter limits. Its critical
+section and the application's processing cost still belong in the timing budget.
+
+### Concurrent execution example and evidence
 
 [The read-only example](../examples/native/control_loop.c) records a 20 ms native
 observation step beside [Python orchestration](../examples/python/control/main.py).
@@ -153,6 +204,18 @@ ring overwrite; USB/BLE retrieve identical records. This establishes bounded
 numerical portability, not physical feedback control or complete robot replay.
 Controller stack high-water and sustained combined-load characterization remain
 open; the normal image has no kernel stack Shell.
+
+The same Inventor F4 also runs a bounded background numerical probe: 512 calls
+to Babybot's existing float32 information-diffusion routine, with deterministic
+15-by-16 input, inside one C `.mpy` call. USB/BLE runs take 1.15/1.25 seconds while
+the 20 ms read-only controller advances by 57/62 steps. The retained 31 steps
+inside each C call have no skipped releases and maximum dispatch delays of
+458/1088 us. The final numerical arrays match the desktop build of the same C
+routine, and Python/host readers observe the complete applied parameter revision.
+This is synthetic input to a real numerical kernel, not the complete identification
+workload or a control-deadline bound. USB stop interrupts a longer C call and its
+controller; the stop round trip and status read take about 7 ms, and a fresh
+Python/controller program then runs. No actuator commands are used in this probe.
 
 ## Experimental native profile
 
