@@ -221,6 +221,23 @@ disabled children, nested nodes and missing paths; Brickphyr's four/six-port
 LUMP fixtures check complete mode tables within their derived heap budgets.
 Publication and manifest pinning remain pending.
 
+## Picolibc selection prerequisite
+
+F4 builds require local Zephyr commit `612e31a3` on `topic/picolibc-speed`.
+`CONFIG_PICOLIBC_TOOLCHAIN_SPEED_OPTIMIZATIONS` selects the GNU toolchain's
+`-O2` Picolibc archive independently of firmware optimization. The compiler
+resolves the archive for the selected CPU and floating-point ABI; no SDK path
+is embedded in the project. Firmware stays at `-Os`, and libgcc/LTO selection
+is unchanged. Other boards retain Zephyr's default.
+
+This avoids bytewise size-optimized copies in F4 snapshot/record critical
+sections. The upstream common-libc fixture runs with size-optimized firmware
+and the speed archive; Cortex-M4 hard-float checks and the bounded
+[F4 UART comparison](ports.md#electrical-ownership-and-shutdown) cover this integration.
+Choose firmware optimization through Kconfig: extra `-O` flags are rejected
+because they can change the archive lookup. Publication and manifest pinning
+remain pending.
+
 ## Kernel-object sizing prerequisite
 
 The profiles require local Zephyr commit `76b82abac` on

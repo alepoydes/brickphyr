@@ -1332,3 +1332,14 @@ Bounded native/Python return, concurrent controller completion under Python GC,
 and forced-stop checks retain both ID-75 port connections with the correction.
 This does not establish an interrupt-latency bound for all firmware operations or
 sustained combined load. Any reconnection still resets the encoder origin.
+
+F4 also selects the SDK's speed-optimized Picolibc archive while retaining `-Os`
+for firmware code; see the [libc prerequisite](upstream.md#picolibc-selection-prerequisite).
+Bytewise size-optimized copies can mask interrupts long enough to overrun a
+115200-baud UART during large snapshot/record reads. On the same Inventor F4,
+a bounded 5 ms native controller with 1024-byte records, 256-byte parameter
+updates and a Python reader performing GC retained both idle ID-75 connections
+with the speed archive. Instrumented recorder critical sections peaked at
+14.1 µs, compared with 76.3 µs and UART overruns using the size archive. This is
+a workload comparison, not a worst-case bound for all critical sections; the
+archive costs about 9 KiB additional flash without increasing linked RAM.

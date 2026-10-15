@@ -24,6 +24,11 @@ config HEAP_MEM_POOL_ADD_SIZE_BRICKPHYR_CRYPTO
 config CDC_ACM_SERIAL_ENABLE_AT_BOOT
 	default n if BRICKPHYR_USB_BC12
 
+# F4 UART reception cannot tolerate the bytewise size-optimized libc copies
+# used by bounded snapshot/record critical sections. Keep firmware code at -Os.
+config PICOLIBC_TOOLCHAIN_SPEED_OPTIMIZATIONS
+	default y if BOARD_SPIKE_PRIME_F4
+
 # Full source discovery with six controller observations exceeds the upstream
 # 384-byte default (about 430 bytes including the SMP header on F4).
 config MCUMGR_TRANSPORT_NETBUF_SIZE
