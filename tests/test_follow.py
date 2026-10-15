@@ -34,7 +34,7 @@ def test_follow_output_and_recording_detach(tmp_path):
     with native_console(build) as port:
         cli = [str(Path(sys.executable).with_name("brickphyrdev")), "app", "--port", port]
         hello = subprocess.run(
-            [*cli, "run", str(build.with_name("native-smp-examples") / "hello.elf"), "--follow"],
+            [*cli, "run", str(build / "hello.elf"), "--follow"],
             capture_output=True, timeout=3,
         )
         assert hello.returncode == 0, hello.stderr

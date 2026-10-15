@@ -36,6 +36,9 @@ def main():
     terminal_parser.add_argument(
         "--monitor", action="store_true", help="Share telemetry and logging; Ctrl+T switches views"
     )
+    terminal_parser.add_argument(
+        "--record", metavar="FILE", help="Collect the current or next recording into a new CBOR file"
+    )
     monitor.options(terminal_parser)
     terminal_parser.set_defaults(handler=terminal.run)
 

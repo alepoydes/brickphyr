@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 
-from . import application, console, monitor, repl
+from . import application, console, monitor, recording, repl
 
 
 class _OutputBoundary:
@@ -63,6 +63,8 @@ async def terminal(args):
         raise ValueError("Choose a BLE target or USB options, not both")
     if not args.monitor and (args.log or args.source or args.rate != 2):
         raise ValueError("Use --monitor with --log, --source or --rate")
+    record_path = getattr(args, "record", None)
+    has_view = args.monitor or bool(record_path)
     target = (
         {"port": args.port, "serial_number": args.serial}
         if usb
@@ -75,11 +77,28 @@ async def terminal(args):
     view = False
     pending_view = False
     boundary = _OutputBoundary()
-    last_screen = "Waiting for observations…"
+    last_body = ["Waiting for observations…"] if args.monitor else []
+    last_screen = ""
+    record_state = "Waiting for a recording"
+    record_counts = {"records": 0, "gaps": 0}
     input_error = None
     input_fd = None
     python = None
     use_repl = getattr(args, "repl", False)
+
+    def refresh_screen():
+        nonlocal last_screen
+        body = list(last_body)
+        if record_path:
+            body += [f"Recording: {record_path}", f"{record_state}; "
+                     f"{record_counts['records']} records, {record_counts['gaps']} gaps"]
+        last_screen = monitor.screen(body,
+            "Ctrl+T: terminal  |  Ctrl+]: close  |  collection continues in either view")
+        if view:
+            sys.stdout.write(last_screen)
+            sys.stdout.flush()
+
+    refresh_screen()
 
     def discard_input():
         loop.remove_reader(input_fd)
@@ -140,7 +159,7 @@ async def terminal(args):
             send = python.write if python is not None else transport.write
             start = 0
             for index, byte in enumerate(data):
-                if not args.monitor or byte != 0x14:
+                if not has_view or byte != 0x14:
                     continue
                 if not view:
                     await send(data[start:index])
@@ -156,11 +175,12 @@ async def terminal(args):
             if not view:
                 await send(data[start:])
 
-    with monitor.recording(args.log) as log:
+    with monitor.recording(args.log) as log, recording.open_log(record_path, "cbor") as record_log:
         print(
             "Ctrl+] closes the terminal."
             + (" Ctrl+X stops REPL and returns to Shell; Ctrl+D resets Python." if use_repl else "")
-            + (" Ctrl+T switches the monitor view." if args.monitor else ""),
+            + (" Ctrl+T switches the status view." if has_view else "")
+            + (f" Recording to {record_path}." if record_path else ""),
             flush=True,
         )
         previous = termios.tcgetattr(sys.stdin.fileno())
@@ -190,7 +210,7 @@ async def terminal(args):
                 mode[6][termios.VQUIT] = b"\x18"
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, mode)
             async with console.connection(
-                display, management=args.monitor or use_repl, **target
+                display, management=has_view or use_repl, **target
             ) as (
                 transport,
                 client,
@@ -213,6 +233,24 @@ async def terminal(args):
                     if not input_closed:
                         loop.add_reader(input_fd, read_input)
 
+                async def record_loop():
+                    nonlocal record_state, record_counts
+                    # A terminal may open before the user prepares capture.
+                    # App follow's wait semantics still end when its app exits.
+                    while not (await recording.checked(client, recording.Info())).size:
+                        await asyncio.sleep(0.2)
+                    record_state = "Receiving"
+                    with recording.session(record_log) as (session, counts):
+                        record_counts = counts
+                        await recording.collect(client, record_log, session, counts)
+                    record_state = "Download complete; hub data retained"
+                    refresh_screen()
+
+                async def record_view():
+                    while True:
+                        refresh_screen()
+                        await asyncio.sleep(1 / args.rate)
+
                 tasks = [
                     asyncio.create_task(input_loop(transport)),
                     asyncio.create_task(transport.closed.wait()),
@@ -221,19 +259,20 @@ async def terminal(args):
                 python_task = asyncio.create_task(python_loop()) if use_repl else None
                 if python_task is not None:
                     tasks.append(python_task)
+                record_task = None
                 try:
+                    if record_path:
+                        record_task = asyncio.create_task(record_loop())
+                        tasks.append(record_task)
+                        if not args.monitor:
+                            tasks.append(asyncio.create_task(record_view()))
                     if args.monitor:
                         identity, sources = await monitor.prepare(client, args.source)
 
                         def update(records, missed):
-                            nonlocal last_screen
-                            last_screen = monitor.screen(
-                                monitor.render(identity, records, missed),
-                                "Ctrl+T: terminal  |  Ctrl+]: close  |  monitoring continues in either view",
-                            )
-                            if view:
-                                sys.stdout.write(last_screen)
-                                sys.stdout.flush()
+                            nonlocal last_body
+                            last_body = monitor.render(identity, records, missed)
+                            refresh_screen()
 
                         tasks.append(
                             asyncio.create_task(
@@ -249,10 +288,13 @@ async def terminal(args):
                             ) from input_error
                         for task in done:
                             task.result()
-                        if done == {python_task}:
-                            tasks.remove(python_task)
-                            continue
-                        break
+                        # A finished download or REPL leaves the Shell open.
+                        for task in (python_task, record_task):
+                            if task in done:
+                                tasks.remove(task)
+                                done.remove(task)
+                        if done:
+                            break
                     if transport.closed.is_set():
                         raise transport.error or RuntimeError("Console disconnected")
                 finally:

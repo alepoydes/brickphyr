@@ -6,12 +6,50 @@ import contextlib
 import io
 import json
 import struct
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 from brickphyrdev import recording
 from brickphyrdev.records import Recording
+
+
+def test_slow_file_write_yields_and_joins_before_cancelled_footer():
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        release = threading.Event()
+
+        class SlowFile(io.BytesIO):
+            def write(self, data):
+                loop.call_soon_threadsafe(entered.set)
+                if not release.wait(1):
+                    raise TimeoutError("Event loop could not release the disk writer")
+                return super().write(data)
+
+        log = SlowFile()
+        counts = {"records": 0, "gaps": 0}
+        event = {"type": "record", "index": 0, "data": b"retained"}
+        task = asyncio.create_task(recording._write(log, event, counts=counts))
+        try:
+            async with asyncio.timeout(1):
+                await entered.wait()
+            # Cancellation must not close the file while a worker still writes;
+            # completion counts must include bytes persisted during that wait.
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        log.seek(0)
+        import cbor2
+        assert cbor2.load(log) == event
+        assert counts == {"records": 1, "gaps": 0}
+
+    asyncio.run(exercise())
 
 
 def _info(**changes):

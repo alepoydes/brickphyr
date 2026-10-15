@@ -11,7 +11,7 @@ from pydantic import Field
 from smp import message
 
 from . import application, monitor, record_codec, records, telemetry
-from .recording_io import write_event
+from .recording_io import write_event, write_events
 from .smp import checked, connection
 
 
@@ -175,6 +175,26 @@ def _advance(old, new):
         raise RuntimeError("Recording trigger state changed")
 
 
+async def _write(log, *events, counts=None):
+    # One transport batch at a time: slow storage backpressures this collector,
+    # not the terminal or the hub's sampling. Join before footer/close on cancel.
+    task = asyncio.create_task(asyncio.to_thread(write_events, log, events))
+    try:
+        await asyncio.shield(task)
+    except BaseException:
+        while not task.done():
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(task)
+        raise
+    finally:
+        if not task.cancelled() and task.exception() is None and counts is not None:
+            for event in events:
+                if event["type"] == "record":
+                    counts["records"] += 1
+                elif event["type"] == "gap":
+                    counts["gaps"] += 1
+
+
 async def collect(client, log, session, counts, *, after=None, wait=False, resume=None):
     if resume is not None and after is not None:
         raise ValueError("Cannot trigger a recording while resuming its download")
@@ -279,8 +299,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording index range moved backwards")
         if resume.needs_separator:
             log.write("\n")
-        write_event(log, {"type": "resume", "session": session, "from": resume.next_index,
-                          "resumed_utc": monitor.utc_now()})
+        await _write(log, {"type": "resume", "session": session, "from": resume.next_index,
+                           "resumed_utc": monitor.utc_now()})
     else:
         if tag is not None:
             bound = await checked(client, Bind(generation=generation, tag=uuid.uuid4().bytes))
@@ -289,7 +309,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             tag = bound.tag
         identity = await telemetry.info(client)
         status = await checked(client, application.Status())
-        write_event(
+        await _write(
             log,
             {
                 "type": "session",
@@ -332,8 +352,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     cached_revision = resume.parameter_revision if resume else None
     while True:
         if index < first:
-            write_event(log, {"type": "gap", "from": index, "to": first})
-            counts["gaps"] += 1
+            await _write(log, {"type": "gap", "from": index, "to": first}, counts=counts)
             index = first
             partial.clear()
             partial_step = None
@@ -376,7 +395,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                          "next": next}
                 if reason == 4:
                     event["missed"] = info.capacity - next
-            write_event(log, event)
+            await _write(log, event)
             return
 
         request = Block if block else Record
@@ -411,6 +430,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if not reply.data or len(reply.data) > limit or len(reply.data) > available - len(partial):
             raise RuntimeError("Invalid recording fragment")
         partial.extend(reply.data)
+        events = []
         while len(partial) >= stride:
             if info.control:
                 if block:
@@ -435,7 +455,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                         len(params.data) != info.parameter_size
                     ):
                         raise RuntimeError("Invalid retained control parameters")
-                    write_event(log, {
+                    events.append({
                         "type": "parameters", "revision": revision, "data": params.data,
                     })
                     cached_revision = revision
@@ -447,13 +467,14 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 values = record_codec.decode(info.record_schema, data, bytes(config))
                 if values is not None:
                     record["values"] = values
-            write_event(log, record)
-            counts["records"] += 1
+            events.append(record)
             if info.control:
                 last_sequence, last_revision = sequence, revision
             index += 1
             del partial[:stride]
             partial_step = None
+        if events:
+            await _write(log, *events, counts=counts)
 
 
 @contextlib.contextmanager

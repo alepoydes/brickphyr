@@ -2,10 +2,9 @@
 """Write application recording events as JSONL or a CBOR Sequence."""
 
 import io
+import json
 
 import cbor2
-
-from . import monitor
 
 
 def _json_value(value):
@@ -20,12 +19,21 @@ def _json_value(value):
 
 def write_event(log, event):
     """Write one event map to a caller-owned text or binary stream."""
+    write_events(log, (event,))
+
+
+def write_events(log, events):
+    """Encode one bounded transfer batch, then write and flush it together."""
     if log is None:
         return
     if isinstance(log, io.TextIOBase):
-        monitor.write_log(log, _json_value(event))
+        data = "".join(json.dumps(_json_value(event), ensure_ascii=True,
+                                  separators=(",", ":")) + "\n" for event in events)
     elif isinstance(log, (io.BufferedIOBase, io.RawIOBase)):
-        cbor2.dump(event, log)
-        log.flush()
+        data = b"".join(cbor2.dumps(event) for event in events)
     else:
         raise TypeError("Recording stream must be text or binary IO")
+    if data:
+        if log.write(data) != len(data):
+            raise OSError("Incomplete recording file write")
+        log.flush()

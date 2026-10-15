@@ -71,8 +71,33 @@ sampling. Starting capture refuses an existing application recording with
 rejected starts do not discard it. Capture is currently an idle-hub diagnostic;
 concurrent application recording uses the application's existing SDK interface.
 
-Closing the terminal does not stop this passive capture. To collect it, close the
-terminal with `Ctrl+]`, then use the existing recorder client:
+To record while keeping the same Shell available, open the terminal with a new
+binary output file before preparing and starting capture:
+
+```sh
+uv run brickphyrdev terminal --record capture.cbor
+```
+
+`--record` collects one current recording, or waits for the next if none exists.
+It uses binary SMP blocks on the same BLE connection as the Shell; add `--usb`
+for USB. `Ctrl+T` shows collection progress and returns to the Shell without
+losing a partially edited command. The terminal remains open after download
+completion. This status describes collection, not measurement success: inspect
+the recording outcome, source errors and skipped releases separately.
+`--monitor` may share that connection too; its display rate does not set the
+capture period. File encoding/writing runs in bounded batches outside the input
+event loop. Slow storage delays collection without blocking keyboard handling
+or hub sampling. No unbounded host queue accumulates.
+
+The output file is CBOR regardless of its filename; using `.cbor` lets offline
+tools detect it automatically. Existing files are never overwritten. Closing
+with `Ctrl+]` detaches collection and retains an incomplete file for resumption;
+it does not stop this passive capture or clear the hub buffer. Before any
+recording appears, the created file stays empty. After a completed download,
+`capture clear` releases the hub buffer; start another terminal invocation with
+a new output filename to collect another experiment.
+
+For separate collection or resumption, close the terminal and use:
 
 ```sh
 uv run brickphyrdev app --ble Brickphyr record capture.cbor
@@ -84,8 +109,6 @@ Use `--resume` only for an interrupted download. Collection can follow a running
 capture and finishes when it freezes. The binary file contains the original
 packed bytes, without duplicating decoded values; the offline `Recording` reader
 provides named values in `Frame.values`. The schema is `brickphyr.capture/1`.
-The terminal and this collector still have separate entry points; combined
-interactive capture collection is a later bench increment.
 
 The final `recording-end` event distinguishes `full`, `duration`, `cancelled` and
 `error` from an application's result. A duration outcome includes the total
@@ -106,6 +129,13 @@ source group, retains data across reconnection, decodes the binary file and
 releases the recording hold. The observed motor duties remain zero. This does
 not establish sustained sampling latency, battery-only BLE performance or
 electrical output timing.
+
+The combined `terminal --record` path has real CLI/PTY checks on ARM/QEMU,
+including command input during capture, collection completion without closing
+the Shell and terminal-state restoration. A bounded Inventor F4 check also runs
+that CLI over one BLE connection while capturing IMU, battery and two ports,
+then validates the binary file and explicitly clears the hub buffer. USB supplies
+power during that check; motor outputs are not energized.
 
 ## Text monitor and recording
 
