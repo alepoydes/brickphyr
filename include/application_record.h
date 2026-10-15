@@ -29,6 +29,10 @@ int application_record_trigger(uint32_t generation, uint32_t after);
 void application_record_info(struct bp_record_info *info);
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step);
+/* Consecutive slots, each containing the optional 32-byte control step followed
+ * by its payload. offset is within the first slot; a block may end mid-slot. */
+int application_record_read_block(uint32_t generation, uint64_t index, size_t offset,
+	void *data, size_t capacity, struct bp_record_info *info);
 int application_record_parameters_read(uint32_t generation, uint64_t index,
 	void *data, struct bp_record_info *info, uint32_t *revision);
 /* One complete observation and its applied parameters, atomically copied.

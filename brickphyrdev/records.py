@@ -3,6 +3,9 @@
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
+
+import cbor2
 
 from . import record_codec
 
@@ -14,9 +17,12 @@ def _integer(value, name, minimum=0, maximum=(1 << 64) - 1):
 
 
 def _blob(value, size, name):
-    if not isinstance(value, str):
-        raise ValueError(f"Invalid {name} hex data")
-    data = bytes.fromhex(value)
+    if isinstance(value, (bytes, bytearray)):
+        data = bytes(value)
+    elif isinstance(value, str):
+        data = bytes.fromhex(value)
+    else:
+        raise ValueError(f"Invalid {name} data")
     if len(data) != size:
         raise ValueError(f"Invalid {name} length: expected {size}, got {len(data)}")
     return data
@@ -32,8 +38,25 @@ class Frame:
     values: dict | None
 
 
+class _CountedReader:
+    def __init__(self, source):
+        self.source = source
+        self.count = 0
+
+    def read(self, size=-1):
+        data = self.source.read(size)
+        self.count += len(data)
+        return data
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return False
+
+
 class Recording:
-    """Read one JSONL session from a caller-owned text stream.
+    """Read one JSONL or CBOR Sequence session from a caller-owned stream.
 
     Consume frames() to exhaustion before accepting a replay: termination and
     final counts are checked at the end. Gaps and incomplete collection require
@@ -41,7 +64,11 @@ class Recording:
     """
 
     def __init__(self, source):
-        self._lines = iter(source)
+        probe = source.read(0) if hasattr(source, "read") else ""
+        self._binary = isinstance(probe, bytes)
+        self._lines = None if self._binary else iter(source)
+        self._reader = _CountedReader(source) if self._binary else None
+        self._decoder = cbor2.CBORDecoder(self._reader) if self._binary else None
         self._name = getattr(source, "name", "<recording>")
         self._line = 0
         self._used = False
@@ -103,6 +130,21 @@ class Recording:
         return ValueError(f"{self._name}:{self._line}: {error}")
 
     def _read(self):
+        if self._binary:
+            before = self._reader.count
+            self._line += 1
+            try:
+                event = self._decoder.decode()
+            except cbor2.CBORDecodeEOF as error:
+                if self._reader.count == before:
+                    self._line -= 1
+                    return None
+                raise ValueError("Truncated CBOR event") from error
+            except cbor2.CBORDecodeError as error:
+                raise ValueError(f"Invalid CBOR event: {error}") from error
+            if not isinstance(event, dict):
+                raise ValueError("Expected a CBOR event map")
+            return event
         line = next(self._lines, None)
         if line is None:
             return None
@@ -241,7 +283,10 @@ class Recording:
 
 
 def run(args):
-    with open(args.file, encoding="utf-8") as source:
+    format = getattr(args, "format", None)
+    binary = format == "cbor" if format else Path(args.file).suffix.lower() == ".cbor"
+    source = open(args.file, "rb") if binary else open(args.file, encoding="utf-8")
+    with source:
         recording = Recording(source)
         for _frame in recording.frames(allow_gaps=True, allow_incomplete=args.allow_incomplete):
             pass

@@ -5,8 +5,10 @@ import copy
 import io
 import json
 
+import cbor2
 import pytest
 
+from brickphyrdev.recording_io import write_event
 from brickphyrdev.records import Recording, run
 
 
@@ -32,6 +34,50 @@ def _events():
 
 def _source(events):
     return io.StringIO("".join(json.dumps(event) + "\n" for event in events))
+
+
+def _binary_events():
+    events = copy.deepcopy(_events())
+    events[0]["recording"]["config"] = bytearray(b"\xff")
+    for event in events:
+        if event["type"] in ("parameters", "record"):
+            event["data"] = bytes.fromhex(event["data"])
+    return events
+
+
+def test_cbor_sequence_and_jsonl_replay_equivalent(tmp_path, capsys):
+    events = _binary_events()
+    text, binary = io.StringIO(), io.BytesIO()
+    for event in events:
+        write_event(text, event)
+        write_event(binary, event)
+    assert [json.loads(line) for line in text.getvalue().splitlines()] == _events()
+    assert cbor2.load(io.BytesIO(binary.getvalue()))["recording"]["config"] == b"\xff"
+    json_recording = Recording(io.StringIO(text.getvalue()))
+    cbor_recording = Recording(io.BytesIO(binary.getvalue()))
+    assert list(json_recording.frames(allow_gaps=True)) == list(
+        cbor_recording.frames(allow_gaps=True)
+    )
+    assert cbor_recording.complete and cbor_recording.config == b"\xff"
+    path = tmp_path / "recording.cbor"
+    path.write_bytes(binary.getvalue())
+    run(type("Args", (), {"file": path, "allow_incomplete": False})())
+    assert json.loads(capsys.readouterr().out)["records"] == 2
+
+
+def test_cbor_truncation_is_not_incomplete_collection():
+    events = _binary_events()
+    prefix = b"".join(cbor2.dumps(event) for event in events[:3])
+    incomplete = cbor2.dumps(events[3])[:-1]
+    with pytest.raises(ValueError, match="Truncated CBOR event"):
+        list(
+            Recording(io.BytesIO(prefix + incomplete)).frames(
+                allow_gaps=True, allow_incomplete=True
+            )
+        )
+    recording = Recording(io.BytesIO(prefix))
+    assert list(recording.frames(allow_gaps=True, allow_incomplete=True)) == []
+    assert not recording.complete
 
 
 def test_reader_streams_exact_parameters_and_reports_missing_history():

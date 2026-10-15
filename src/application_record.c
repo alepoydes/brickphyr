@@ -293,6 +293,42 @@ int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	return length;
 }
 
+int application_record_read_block(uint32_t generation, uint64_t index, size_t offset,
+	void *data, size_t capacity, struct bp_record_info *info)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*info = state;
+	size_t step = state.control ? sizeof(struct bp_control_step) : 0;
+	size_t stride = step + state.spec.size;
+	int length = 0;
+	if (records && generation == state.generation && index >= state.first && index < state.next) {
+		if (offset >= stride) {
+			length = -EINVAL;
+		} else while (index < state.next && length < capacity) {
+			size_t slot = index % state.spec.capacity;
+			if (offset < step) {
+				size_t part = MIN(capacity - length, step - offset);
+				memcpy((uint8_t *)data + length,
+					(const uint8_t *)&recorded_step(slot)->value + offset, part);
+				length += part;
+				offset += part;
+			}
+			if (offset >= step && length < capacity) {
+				size_t part = MIN(capacity - length, stride - offset);
+				memcpy((uint8_t *)data + length, record_data(slot) + offset - step, part);
+				length += part;
+				offset += part;
+			}
+			if (offset == stride) {
+				index++;
+				offset = 0;
+			}
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return length;
+}
+
 int application_record_parameters_read(uint32_t generation, uint64_t index,
 	void *data, struct bp_record_info *info, uint32_t *revision)
 {

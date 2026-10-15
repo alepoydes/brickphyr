@@ -373,3 +373,33 @@ def test_control_step_must_remain_stable_across_fragments(monkeypatch):
         asyncio.run(recording.collect(
             object(), io.StringIO(), "fixture", {"records": 0, "gaps": 0}
         ))
+
+
+@pytest.mark.parametrize('control', [False, True])
+def test_blocks_combine_records_and_split_control_headers(monkeypatch, control):
+    payloads = (b'abcd', b'efgh', b'ijkl')
+    steps = [struct.pack('<qq4I', 100 * i, 100 * i + 10, i, 0, 1 if i < 3 else 2, 2)
+             for i in range(1, 4)]
+    stride = 36 if control else 4
+    wire = b''.join((steps[i] if control else b'') + data for i, data in enumerate(payloads))
+    info = _info(next=3, active=False, block=256, control=control, parameter_size=2 if control else 0)
+    reads = _fixture(monkeypatch, iter((
+        _fragment(next=3, active=False, data=wire[:stride + 2]),
+        _fragment(next=3, active=False, data=wire[stride + 2:]),
+    )), info, terminal_info=info, params=(
+        SimpleNamespace(generation=7, first=0, next=3, revision=1, data=b'AB'),
+        SimpleNamespace(generation=7, first=0, next=3, revision=2, data=b'CD'),
+    ))
+    stream = io.BytesIO if control else io.StringIO
+    output = stream()
+    counts = {'records': 0, 'gaps': 0}
+    with recording.session(output) as (session, saved):
+        asyncio.run(recording.collect(object(), output, session, counts))
+        saved.update(counts)
+    frames = list(Recording(stream(output.getvalue())).frames())
+    assert [frame.data for frame in frames] == list(payloads)
+    assert [read for read in reads if isinstance(read[0], int)] == [(0, 0), (1, 2)]
+    assert counts == {'records': 3, 'gaps': 0}
+    if control:
+        assert [frame.parameters for frame in frames] == [b'AB', b'AB', b'CD']
+        assert [frame.control['sequence'] for frame in frames] == [1, 2, 3]

@@ -5,7 +5,7 @@ import asyncio
 import sys
 
 from . import application as app
-from . import console, monitor, recording
+from . import console, recording
 from .smp import checked
 
 
@@ -80,7 +80,7 @@ async def execute(args, log):
 
 
 def run(args):
-    with monitor.recording(args.record) as log:
+    with recording.open_log(args.record) as log:
         try:
             asyncio.run(execute(args, log))
         except KeyboardInterrupt:

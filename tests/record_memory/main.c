@@ -134,4 +134,42 @@ ZTEST(record_memory, test_fragmented_heap_and_reclaimed_begin)
 	application_record_clear();
 }
 
+ZTEST(record_memory, test_blocks_cross_slots_headers_and_ring_wrap)
+{
+	const struct bp_record_spec spec = {.size = 5, .capacity = 3, .schema = "blocks/1"};
+	for (int mode = 0; mode < 2; mode++) {
+		bool control = mode != 0;
+		application_record_reset();
+		zassert_ok(application_record_begin(&spec, NULL, 0, control, 0));
+		uint8_t expected[3 * (32 + 5)], actual[sizeof(expected)] = {0};
+		size_t stride = 5 + (control ? 32 : 0);
+		for (size_t i = 0; i < 5; i++) {
+			struct bp_control_step step = {.sequence = i + 1, .parameter_revision = i};
+			const uint8_t payload[] = {i, 0, 255, i + 1, 9};
+			if (control) application_record_step(&step, NULL);
+			zassert_ok(application_record_write(payload, sizeof(payload)));
+			if (i >= 2) {
+				uint8_t *target = expected + (i - 2) * stride;
+				if (control) memcpy(target, &step, 32);
+				memcpy(target + stride - 5, payload, 5);
+			}
+		}
+		struct bp_record_info info;
+		application_record_info(&info);
+		uint32_t generation = info.generation;
+		for (size_t offset = 0; offset < stride * 3;) {
+			int length = application_record_read_block(generation, 2 + offset / stride,
+				offset % stride, actual + offset, 13, &info);
+			zassert_true(length > 0 && length <= 13);
+			offset += length;
+		}
+		zassert_mem_equal(actual, expected, stride * 3);
+		zassert_equal(application_record_read_block(generation, 5, 0, actual, 13, &info), 0);
+		zassert_equal(application_record_read_block(generation, 1, 0, actual, 13, &info), 0);
+		zassert_equal(info.first, 2);
+		zassert_equal(application_record_read_block(generation, 2, stride, actual, 13, &info), -EINVAL);
+		application_record_clear();
+	}
+}
+
 ZTEST_SUITE(record_memory, NULL, NULL, NULL, NULL, NULL);

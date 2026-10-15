@@ -14,12 +14,14 @@ def main():
     compile_parser.add_argument("--output", help="Output .mpy path; default is SOURCE.mpy")
     compile_parser.add_argument("--sdk", help="Extracted native SDK directory")
     compile_parser.set_defaults(handler=compiler.run)
-    record_info = commands.add_parser("record-info", help="Inspect an application JSONL recording offline")
+    record_info = commands.add_parser("record-info", help="Inspect a JSONL or binary recording offline")
     record_info.add_argument("file")
     record_info.add_argument(
         "--allow-incomplete", action="store_true", help="Inspect a cancelled or unfinished collection"
     )
     record_info.set_defaults(handler=records.run)
+    record_info.add_argument("--format", choices=("jsonl", "cbor"),
+                             help="File encoding; default is CBOR for .cbor, otherwise JSONL")
     terminal_parser = commands.add_parser("terminal", help="Open the shared Shell over BLE or USB")
     terminal_parser.add_argument(
         "target", nargs="?", help="BLE name or address (default Brickphyr); omit for USB"
@@ -106,7 +108,7 @@ def main():
         )
         launch.add_argument(
             "--record", metavar="FILE",
-            help="Follow output and collect cycle records into a new JSONL file",
+            help="Follow output and collect records; .cbor selects binary, otherwise JSONL",
         )
     app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
     for command in ("list", "status", "stop", "output", "discard", "interrupt"):
@@ -136,8 +138,9 @@ def main():
                             help="Account for Python native-code arena limit")
     app_budget.add_argument("--dynamic", type=int, metavar="BYTES",
                             help="Declared other runtime allocation bytes")
-    record = app_commands.add_parser("record", help="Collect retained cycle records to JSONL")
-    record.add_argument("file", help="New JSONL file; existing files are never replaced")
+    record = app_commands.add_parser("record", help="Collect retained cycle records")
+    record.add_argument("file", help="New file; .cbor selects binary, otherwise JSONL")
+    record.add_argument("--format", choices=("jsonl", "cbor"), help="Override the file encoding")
     record.add_argument(
         "--after", type=int, metavar="N",
         help="Trigger capture and freeze after N further records without stopping the app",

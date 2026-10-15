@@ -250,12 +250,18 @@ static bool record_position(zcbor_state_t *zs, const struct bp_record_info *info
 		number(zs, "after", info->after) && number(zs, "reason", info->reason);
 }
 
+/* Worst-case CBOR position, data header, map terminator and SMP header: 111
+ * bytes. Bound the copy/stack even if another service selects large buffers. */
+#define RECORD_BLOCK_BYTES MIN(1024, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 112)
+BUILD_ASSERT(RECORD_BLOCK_BYTES > 0);
+
 static int record_info_read(struct smp_streamer *stream)
 {
 	struct bp_record_info info;
 	application_record_info(&info);
 	zcbor_state_t *zs = stream->writer->zs;
-	bool ok = record_position(zs, &info) && number(zs, "size", info.spec.size) &&
+	bool ok = record_position(zs, &info) && number(zs, "block", RECORD_BLOCK_BYTES) &&
+		number(zs, "size", info.spec.size) &&
 		number(zs, "config_size", info.config_size) &&
 		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
 		number(zs, "parameter_size", info.parameter_size) &&
@@ -289,6 +295,28 @@ static int record_read(struct smp_streamer *stream)
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
 		zcbor_bstr_encode_ptr(zs, data, length) && zcbor_tstr_put_lit(zs, "step") &&
 		zcbor_bstr_encode_ptr(zs, (void *)&step, info.control && length ? sizeof(step) : 0);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_block_read(struct smp_streamer *stream)
+{
+	uint32_t generation = 0, offset = UINT32_MAX;
+	uint64_t index = UINT64_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
+		ZCBOR_MAP_DECODE_KEY_DECODER("off", zcbor_uint32_decode, &offset),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || offset == UINT32_MAX || index == UINT64_MAX) return MGMT_ERR_EINVAL;
+	uint8_t data[RECORD_BLOCK_BYTES];
+	struct bp_record_info info;
+	int length = application_record_read_block(generation, index, offset, data, sizeof(data), &info);
+	if (length < 0) return result(stream, length);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
+		zcbor_bstr_encode_ptr(zs, data, length);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
@@ -489,6 +517,7 @@ static const struct mgmt_handler handlers[] = {
 	[19] = {.mh_read = stack_read},
 	[20] = {.mh_read = budget_read},
 	[21] = {.mh_read = record_budget_read},
+	[22] = {.mh_read = record_block_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

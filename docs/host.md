@@ -252,6 +252,17 @@ The experimental application management group is SMP group 65, API version 1:
 | 19 | Read thread stack | Required zero-based `index`; `present=false` ends the list, otherwise returns `name`, `kind`, `requested`, `user`, `unused`, `privileged`, `priv_unused`, `next` |
 | 20 | Read image budget | Optional `name` (empty: completed RAM upload), `resource` (controller ELF within a Python package), `control` (default false), `stack` and `parameters` (default zero); returns integer `format`, `image`, `source_ram`, `source_flash`, `transfer`, `stack`, `user_stack`, `priv_stack`, `arena`, `code_limit`, `native`, `alignment`, `supervisor` |
 | 21 | Read recorder budget | `size`, `capacity`, `config`, `control`, `parameters`; returns `bytes` for the firmware recorder allocation excluding allocator metadata |
+| 22 | Read recording block | Required `generation`, starting `index` and slot byte `off`; returns consecutive slot bytes in `data` and the current position/capture fields, without a separate `step` field |
+
+Recording metadata (command 14) advertises the maximum block payload as `block`.
+Its absence means only command 15 is available. A block slot consists of the
+existing 32-byte little-endian control step when control recording is enabled,
+followed by the application's fixed-size payload. Blocks may cross slot and
+allocation-block boundaries or end inside a step/payload. Applied parameters
+remain command 17 and are fetched once per observed revision. Generation/range
+checks apply equally to single-record and block reads; missing data is never
+silently replaced. Block copying is bounded and performs no allocation or I/O
+while holding the recorder lock.
 
 [Application recording](applications.md#application-recording) uses non-consuming
 cursors. A mismatched generation or an index outside `[first, next)` returns

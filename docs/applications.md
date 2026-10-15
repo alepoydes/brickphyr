@@ -848,7 +848,9 @@ capture. A trigger represents an application-defined event, not a firmware
 reset or power-loss detector. Rearming currently requires a new application run.
 
 The same SMP operations retrieve records over USB and BLE. Reads do not consume
-them and can be repeated. Large records use bounded fragments; every response
+them and can be repeated. Capable firmware advertises block reads, allowing one
+response to carry several records or parts of records within the negotiated SMP
+buffer. Older firmware retains single-record reads. Every response
 reports the current generation and retained index range. A client must discard
 a partial record if it was overwritten, and must not combine generations.
 Generations identify runs within one boot, not persistent experiment identities.
@@ -857,11 +859,19 @@ Generations identify runs within one boot, not persistent experiment identities.
 uv run brickphyrdev app run build/native-examples/control_record.elf
 uv run brickphyrdev app record control.jsonl
 uv run brickphyrdev app --ble Brickphyr record control-again.jsonl
+uv run brickphyrdev app --ble Brickphyr record control.cbor
+uv run brickphyrdev record-info control.cbor
 uv run brickphyrdev app record-clear
 ```
 
-Use the matching SDK to build that example. `app record` creates a new JSONL
-file, refusing to overwrite an existing one before connecting. It collects the
+Use the matching SDK to build that example. `app record` creates a new file,
+refusing to overwrite an existing one before connecting. The `.cbor` suffix
+selects a standard CBOR Sequence with binary byte strings; other suffixes select
+JSONL with hex strings. `--format cbor` or `--format jsonl` overrides that choice
+for collection and `record-info`. `app run/start --record FILE` follows the same
+suffix convention. Both encodings use the same event schema and offline reader;
+a truncated CBOR event is rejected rather than treated as a complete sample.
+It collects the
 retained tail and follows a live application until it ends or the user interrupts
 collection. It does not stop that application. Session metadata identifies the
 firmware, board, ABI and application status; each record retains its exact binary

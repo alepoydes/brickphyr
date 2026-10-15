@@ -4,11 +4,13 @@
 import asyncio
 import contextlib
 import uuid
+from pathlib import Path
 
 from pydantic import Field
 from smp import message
 
 from . import application, monitor, record_codec, telemetry
+from .recording_io import write_event
 from .smp import checked, connection
 
 
@@ -28,6 +30,7 @@ class InfoResponse(message.ReadResponse):
     reason: int | None = None
     control: bool = False
     parameter_size: int = 0
+    block: int = 0
 
 
 class Info(application._Group, message.ReadRequest):
@@ -60,6 +63,15 @@ class Record(application._Group, message.ReadRequest):
     generation: int
     index: int
     off: int
+
+
+class BlockResponse(RecordResponse):
+    _COMMAND_ID = 22
+
+
+class Block(Record):
+    _COMMAND_ID = 22
+    _Response = BlockResponse
 
 
 class ConfigResponse(message.ReadResponse):
@@ -168,6 +180,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
     ):
         raise RuntimeError("Invalid recording schema")
     record_codec.check_size(info.record_schema, info.size)
+    block = getattr(info, "block", 0)
+    if not 0 <= block <= 1024:
+        raise RuntimeError("Invalid recording block capacity")
+    step_size = 32 if block and info.control else 0
+    stride = step_size + info.size
 
     generation = info.generation
     if after is not None:
@@ -221,7 +238,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
 
     identity = await telemetry.info(client)
     status = await checked(client, application.Status())
-    monitor.write_log(
+    write_event(
         log,
         {
             "type": "session",
@@ -242,7 +259,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
                 "next": info.next,
                 "active": info.active,
                 "schema": info.record_schema,
-                "config": config.hex(),
+                "config": bytes(config),
                 "config_size": info.config_size,
                 "trigger": trigger,
                 "after": trigger_after,
@@ -260,7 +277,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
     last_sequence = last_revision = cached_revision = None
     while True:
         if index < first:
-            monitor.write_log(log, {"type": "gap", "from": index, "to": first})
+            write_event(log, {"type": "gap", "from": index, "to": first})
             counts["gaps"] += 1
             index = first
             partial.clear()
@@ -297,10 +314,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
                 }
             if reason == 2:
                 event["reason"] = "trigger"
-            monitor.write_log(log, event)
+            write_event(log, event)
             return
 
-        reply = await checked(client, Record(generation=generation, index=index, off=len(partial)))
+        request = Block if block else Record
+        reply = await checked(client, request(generation=generation, index=index, off=len(partial)))
         if reply.generation != generation:
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
@@ -318,7 +336,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
             if active:
                 await asyncio.sleep(0.02)
             continue
-        if info.control:
+        if info.control and not block:
             step = record_codec.control_step(reply.step, info.parameter_size)
             if partial_step is None:
                 partial_step = reply.step
@@ -326,12 +344,15 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
                 raise RuntimeError("Control step changed between record fragments")
         elif reply.step:
             raise RuntimeError("Unexpected control step on ordinary recording")
-        limit = 224 if info.control else 256
-        if not reply.data or len(reply.data) > limit or len(reply.data) > info.size - len(partial):
+        limit = block or (224 if info.control else 256)
+        available = (next - index) * stride if block else info.size
+        if not reply.data or len(reply.data) > limit or len(reply.data) > available - len(partial):
             raise RuntimeError("Invalid recording fragment")
         partial.extend(reply.data)
-        if len(partial) == info.size:
+        while len(partial) >= stride:
             if info.control:
+                if block:
+                    step = record_codec.control_step(partial[:step_size], info.parameter_size)
                 sequence, revision = step["sequence"], step["parameter_revision"]
                 if (last_sequence is not None and sequence < last_sequence or
                     last_revision is not None and revision < last_revision):
@@ -347,27 +368,28 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
                         raise RuntimeError("Recording index range moved backwards")
                     first, next = params.first, params.next
                     if index < first:
-                        continue  # The record and its parameter snapshot were overwritten.
+                        break  # Discard the block together with overwritten parameters.
                     if index >= next or params.revision != revision or (
                         len(params.data) != info.parameter_size
                     ):
                         raise RuntimeError("Invalid retained control parameters")
-                    monitor.write_log(log, {
-                        "type": "parameters", "revision": revision, "data": params.data.hex(),
+                    write_event(log, {
+                        "type": "parameters", "revision": revision, "data": params.data,
                     })
                     cached_revision = revision
-            record = {"type": "record", "index": index, "data": partial.hex()}
+            data = partial[step_size:stride]
+            record = {"type": "record", "index": index, "data": bytes(data)}
             if info.control:
                 record["control"] = step
-            values = record_codec.decode(info.record_schema, partial)
+            values = record_codec.decode(info.record_schema, data)
             if values is not None:
                 record["values"] = values
-            monitor.write_log(log, record)
+            write_event(log, record)
             counts["records"] += 1
             if info.control:
                 last_sequence, last_revision = sequence, revision
             index += 1
-            partial.clear()
+            del partial[:stride]
             partial_step = None
 
 
@@ -397,9 +419,9 @@ def session(log):
             end["error"] = str(failure)
         if failure:
             with contextlib.suppress(Exception):
-                monitor.write_log(log, end)
+                write_event(log, end)
         else:
-            monitor.write_log(log, end)
+            write_event(log, end)
 
 
 async def _record(args, log):
@@ -411,6 +433,15 @@ async def _record(args, log):
             await collect(client, log, session_id, counts, after=getattr(args, "after", None))
 
 
+@contextlib.contextmanager
+def open_log(path, format=None):
+    selected = format or ("cbor" if path and Path(path).suffix.lower() == ".cbor" else "jsonl")
+    if selected not in ("cbor", "jsonl"):
+        raise ValueError("Recording format must be cbor or jsonl")
+    with monitor.recording(path, binary=selected == "cbor") as log:
+        yield log
+
+
 def run(args):
-    with monitor.recording(args.file) as log:
+    with open_log(args.file, getattr(args, "format", None)) as log:
         asyncio.run(_record(args, log))
