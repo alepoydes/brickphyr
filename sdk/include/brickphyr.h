@@ -381,6 +381,8 @@ __syscall int bp_record_write(const void *data, size_t length);
  * representable in system ticks. Later
  * calls wait on that absolute schedule; missed releases are skipped, not replayed.
  * Copies the latest complete parameter revision at release, without allocation.
+ * Step and delivered parameter bytes must be disjoint; overlap returns EINVAL
+ * before changing either output or advancing the step.
  * Standalone native programs have no parameters (NULL/0). */
 __syscall int bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	void *parameters, size_t capacity);
@@ -424,7 +426,9 @@ __syscall int bp_control_motor_group_set(const struct bp_motor_group_command *co
  * Copy the latest complete parameters at this boundary, as control_wait() does.
  * An error creates no step and does not change parameters/step. Acquisition or
  * wait errors leave an IMU diagnostic in frame; early argument rejection does
- * not populate it. No allocation, I/O or polling by this caller. */
+ * not populate it. Frame, step and delivered parameter bytes must be disjoint;
+ * overlap returns EINVAL before any output or control state changes.
+ * No allocation, I/O or polling by this caller. */
 __syscall int bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
 	struct bp_control_step *step, struct bp_control_frame *frame,
 	void *parameters, size_t capacity);

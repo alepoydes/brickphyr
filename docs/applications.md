@@ -52,6 +52,8 @@ periods and reports them in `step.skipped`. It never runs a catch-up burst.
 `step.scheduled_us` and `started_us` use the input frame's monotonic timebase;
 their difference includes dispatch delay. `sequence` counts executed steps.
 The same call works in standalone ELF programs with an empty parameter block.
+Step metadata and delivered parameter bytes must be disjoint; overlap returns
+`EINVAL` before changing outputs or advancing the control clock.
 There is no allocation, formatting, storage or host I/O in this release path.
 
 Native ABI 1.9 adds `bp_time_us()` on the same monotonic timebase. Use it after
@@ -70,6 +72,8 @@ first call may use an already available fresh sample. Later calls sleep until
 its raw sequence changes; they do not poll or replay an accumulated sample queue.
 The returned frame retains the exact IMU observation which released the step,
 even if acquisition advances while the other sources are copied.
+Frame, step metadata and delivered parameter bytes must be disjoint. An overlap
+returns `EINVAL` before writing outputs, waiting for a sample or advancing the step.
 
 `scheduled_us` is that observation's data-ready edge, so the difference to
 `started_us` includes acquisition, processing, input copying and dispatch delay.
@@ -315,6 +319,16 @@ observer results in each run, and the final learned model/history, match the sam
 C computation on the host bit for bit. Observed controller stack use is 2696 of
 8192 bytes. This includes observer computation and concurrent learning, but no
 actuator commands, physical identification or worst-case deadline guarantee.
+
+A separate read-only F4 USB check feeds the observer with actual calibrated IMU
+and passive A/B encoder observations. All 128 periodic steps at 15 ms complete
+without skipped releases; the largest scheduled-release-to-record-completion
+interval is 2465 µs. The last 32 retained observations reproduce unit/coordinate
+conversion, consecutive observer states and results bit for bit using the same C
+code on the host. The record includes source times, errors and connection/reference
+identities. This uses a fixed coordinate configuration and a synthetic model,
+without learning or actuation; robot mounting, model accuracy and combined-load
+deadlines remain unverified.
 
 The larger workload accumulates ten independent 30-row synthetic fragments and
 one 20-row fragment at 15 ms spacing using the existing learning implementation.

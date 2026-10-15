@@ -15,6 +15,13 @@ _Static_assert(sizeof(struct observation) == 24, "IMU trigger observation layout
 
 static struct bp_control_frame frame;
 
+static bool zeroed(const void *data, size_t size)
+{
+	const uint8_t *bytes = data;
+	for (size_t i = 0; i < size; i++) if (bytes[i]) return false;
+	return true;
+}
+
 int app_main(void)
 {
 	const struct bp_record_spec spec = {
@@ -23,6 +30,18 @@ int app_main(void)
 	};
 	int err = bp_control_record_begin(&spec, NULL, 0);
 	if (err) return err;
+	struct bp_control_step rejected = {0};
+	struct parameters initial = {0};
+	/* Rejection must precede both output writes and choosing a release mode. */
+	if (bp_control_wait(10000, &rejected, &rejected, sizeof(initial)) != -EINVAL ||
+	    bp_control_imu_wait(0, 30, (struct bp_control_step *)&frame,
+	    &frame, &initial, sizeof(initial)) != -EINVAL ||
+	    bp_control_imu_wait(0, 30, &rejected,
+	    &frame, &frame, sizeof(initial)) != -EINVAL ||
+	    bp_control_imu_wait(0, 30, &rejected,
+	    &frame, &rejected, sizeof(initial)) != -EINVAL ||
+	    !zeroed(&frame, sizeof(frame)) || !zeroed(&rejected, sizeof(rejected)) ||
+	    !zeroed(&initial, sizeof(initial))) return -EBADMSG;
 	struct observation last = {0};
 	bool checked_mode = false;
 	bool retained = false;

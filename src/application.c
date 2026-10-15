@@ -76,6 +76,14 @@ static ALWAYS_INLINE void user_memory_check(const void *data, size_t size, size_
 	}
 }
 
+static bool output_overlaps(const void *first, size_t first_size,
+	const void *second, size_t second_size)
+{
+	uintptr_t a = (uintptr_t)first, b = (uintptr_t)second;
+	return first_size && second_size &&
+		(a <= b ? b - a < first_size : a - b < second_size);
+}
+
 K_MUTEX_DEFINE(lifecycle);
 /* The supervisor reserves the stack before replacing the current application. */
 static k_thread_stack_t *application_stack;
@@ -1593,6 +1601,7 @@ static inline int z_vrfy_bp_control_wait(uint32_t period_us, struct bp_control_s
 {
 	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
 	if (capacity) user_memory_check(parameters, capacity, 1, true, __func__);
+	if (output_overlaps(step, sizeof(*step), parameters, control_parameter_size())) return -EINVAL;
 	return z_impl_bp_control_wait(period_us, step, parameters, capacity);
 }
 #include <zephyr/syscalls/bp_control_wait_mrsh.c>
@@ -1630,6 +1639,10 @@ static inline int z_vrfy_bp_control_imu_wait(uint32_t port_mask, uint32_t timeou
 	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
 	user_memory_check(frame, sizeof(*frame), __alignof__(*frame), true, __func__);
 	if (capacity) user_memory_check(parameters, capacity, 1, true, __func__);
+	size_t size = control_parameter_size();
+	if (output_overlaps(step, sizeof(*step), frame, sizeof(*frame)) ||
+	    output_overlaps(step, sizeof(*step), parameters, size) ||
+	    output_overlaps(frame, sizeof(*frame), parameters, size)) return -EINVAL;
 	return z_impl_bp_control_imu_wait(port_mask, timeout_ms, step, frame, parameters, capacity);
 }
 #include <zephyr/syscalls/bp_control_imu_wait_mrsh.c>
@@ -1738,17 +1751,16 @@ static inline int z_vrfy_bp_record_readinto(const struct bp_record_request *requ
 	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
 	/* Metadata is output too: aliasing it must not corrupt a record or change
 	 * payload bytes on a rejected read. The request itself is already copied. */
-	const struct { uintptr_t start; size_t size; } outputs[] = {
-		{(uintptr_t)copy.data, copy.capacity},
-		{(uintptr_t)copy.parameters, copy.parameters_capacity},
-		{(uintptr_t)info, sizeof(*info)},
-		{(uintptr_t)step, sizeof(*step)},
+	const struct { const void *data; size_t size; } outputs[] = {
+		{copy.data, copy.capacity},
+		{copy.parameters, copy.parameters_capacity},
+		{info, sizeof(*info)},
+		{step, sizeof(*step)},
 	};
 	for (size_t i = 0; i < ARRAY_SIZE(outputs); i++) {
 		for (size_t j = 0; j < i; j++) {
-			if (!outputs[i].size || !outputs[j].size) continue;
-			uintptr_t a = outputs[i].start, b = outputs[j].start;
-			if (a <= b ? b - a < outputs[i].size : a - b < outputs[j].size) return -EINVAL;
+			if (output_overlaps(outputs[i].data, outputs[i].size,
+			    outputs[j].data, outputs[j].size)) return -EINVAL;
 		}
 	}
 	return z_impl_bp_record_readinto(&copy, info, step);
