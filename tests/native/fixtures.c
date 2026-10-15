@@ -131,6 +131,15 @@ int native_fixture_run(const char *name)
 		elf_ehdr_t *header = (void *)changed;
 		elf_shdr_t *sections = (void *)(changed + header->e_shoff);
 		const char *names = (void *)(changed + sections[header->e_shstrndx].sh_offset);
+		if (sparse) {
+			/* Keep metadata outside the merged code span, as LLEXT requires. */
+			for (size_t i = 0; i < header->e_shnum; i++) {
+				if (!(sections[i].sh_flags & SHF_EXECINSTR)) continue;
+				size_t offset = ROUND_UP(original_size, 4);
+				memcpy(changed + offset, changed + sections[i].sh_offset, sections[i].sh_size);
+				sections[i].sh_offset = offset;
+			}
+		}
 		int err = -ENOENT;
 		for (size_t i = 0; i < header->e_shnum; i++) {
 			if (!strcmp(names + sections[i].sh_name, ".comment")) {
@@ -143,21 +152,15 @@ int native_fixture_run(const char *name)
 					sections[i].sh_addralign = 4;
 					sections[i].sh_entsize = 0;
 				}
-				if (sparse) {
-					/* Isolate admission: a later backing-allocation error
-					 * must not pass for rejecting the file's memory cost. */
-					struct native_image_requirements requirements;
-					err = native_image_check_buffer(changed, length, &requirements);
-				} else {
-					err = application_run_native(changed, length);
-				}
+				err = application_run_native(changed, length);
 				break;
 			}
 		}
 		k_free(changed);
 		return err;
 	}
-	if (!strcmp(name, "badimport") || !strcmp(name, "badreloc")) {
+	if (!strcmp(name, "badimport") || !strcmp(name, "badreloc") || !strcmp(name, "linkerror")) {
+		bool linkerror = !strcmp(name, "linkerror");
 		unsigned char *changed = k_malloc(sizeof(hello));
 		if (!changed) return -ENOMEM;
 		memcpy(changed, hello, sizeof(hello));
@@ -173,8 +176,11 @@ int native_fixture_run(const char *name)
 			for (size_t j = 0; j < sections[i].sh_size / sizeof(*relocations); j++) {
 				elf_rel_t *rel = &relocations[j];
 				elf_sym_t *symbol = &symbols[ELF_R_SYM(rel->r_info)];
-				if (symbol->st_shndx != SHN_UNDEF) continue;
-				if (!strcmp(name, "badimport")) {
+				if ((symbol->st_shndx == SHN_UNDEF) == linkerror) continue;
+				if (linkerror) {
+					/* Valid image admission, unsupported ARM relocation at link time. */
+					rel->r_info = (rel->r_info & ~0xffU) | 255;
+				} else if (!strcmp(name, "badimport")) {
 					memcpy(names + symbol->st_name, "k_sleep", sizeof("k_sleep"));
 				} else {
 					rel->r_info = (rel->r_info & ~0xffU) | 10; /* R_ARM_THM_CALL */
@@ -183,7 +189,10 @@ int native_fixture_run(const char *name)
 				break;
 			}
 		}
-		int err = found ? application_run_native(changed, sizeof(hello)) : -ENOENT;
+		struct native_image_requirements requirements;
+		int err = linkerror ? native_image_check_buffer(changed, sizeof(hello), &requirements) : 0;
+		if (err) err = -EINVAL; /* This regression must reach the actual linker. */
+		else err = found ? application_run_native(changed, sizeof(hello)) : -ENOENT;
 		k_free(changed);
 		return err;
 	}

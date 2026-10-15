@@ -194,7 +194,7 @@ int main(void)
 			CHECK(status.loader_bytes == hello_budget);
 		}
 	}
-	/* A replacement must secure its arena before stopping the old image. */
+	/* A replacement must load its regions before stopping the old image. */
 	CHECK(native_fixture_run("spin") == 0);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING);
@@ -207,16 +207,13 @@ int main(void)
 	CHECK(status.state == APPLICATION_RUNNING && !status.cleanup_error);
 	k_free(reservation);
 	CHECK(available() == running_capacity);
-	/* The new loader fits, but its protected stack does not. Admission must
-	 * still preserve the running thread and reclaim its partial reservation. */
-	reservation = k_malloc(running_capacity - hello_budget - 256);
-	CHECK(reservation != NULL && available() >= hello_budget);
-	CHECK(native_fixture_run("hello") == -ENOMEM);
+	/* A late linker error reclaims the candidate while preserving the old
+	 * image. This reaches relocation after its regions have been allocated. */
+	CHECK(native_fixture_run("linkerror") == -ENOEXEC);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING && !status.cleanup_error);
-	k_free(reservation);
 	CHECK(available() == running_capacity);
-	CHECK(application_stop() == 0 && available() == capacity);
+	/* Successful replacement uses a distinct LLEXT name while the old one lives. */
 	CHECK(native_fixture_run("hello") == 0);
 	k_msleep(60);
 	application_get_status(&status);
@@ -378,10 +375,14 @@ int main(void)
 	CHECK(native_fixture_run("badreloc") == -ENOTSUP);
 	CHECK(native_fixture_run("badfloat") == -ENOTSUP);
 	CHECK(native_fixture_run("unwind") == -ENOTSUP);
-	if (APPLICATION_MEMORY_LIMIT == 12288) {
-		/* Tiny code sections separated across a 4 KiB image need a full
-		 * MPU region, exceeding this loader's admission budget. */
-		CHECK(native_fixture_run("sparse") == -ENOMEM);
+	if (APPLICATION_IMAGE_LIMIT == 4096) {
+		/* Merged code includes the gap, even though only its ends hold code. */
+		int sparse_error = native_fixture_run("sparse");
+		printk("sparse load %d\n", sparse_error);
+		CHECK(sparse_error == 0);
+		application_get_status(&status);
+		CHECK(status.loaded_bytes >= APPLICATION_IMAGE_LIMIT &&
+		      status.loaded_bytes <= status.loader_bytes);
 	}
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING);

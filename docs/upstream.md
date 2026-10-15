@@ -505,16 +505,19 @@ An ARM regression injects repeated section-read failures and checks that each
 attempt reaches the original I/O error rather than exhausting the loader heap;
 the relocatable LLEXT suite also passes. This correction is pending publication.
 
-Concurrent native images require local Zephyr commit `3e53777a` on
-`topic/llext-per-load-heap`, pending publication and manifest integration.
-An optional `llext_load_param.heap` directs the extension's metadata and regions
-to a caller-owned heap, retained through failed loading and unload. NULL preserves
-the configured global allocator. Harvard/memory-block allocation and experimental
-save/restore reject this option explicitly. Brickphyr uses one backing reservation
-per admitted ELF; it does not reserve an aggregate heap for every possible context.
-The upstream dynamic-heap suite checks independent simultaneous images and failed
-load/unload reclamation; protected Brickphyr checks exercise the caller heaps
-without initializing the default LLEXT heap.
+Native images use local Zephyr commit `f45ec3b2` on `topic/llext-per-load-heap`,
+pending publication and manifest integration. `CONFIG_LLEXT_HEAP_SYSTEM` selects
+the public system allocator for individual regions and metadata, returning them
+on unload. It reserves no dedicated LLEXT heap; the default allocator is unchanged.
+Brickphyr uses this backend so alignment padding outside an allocation remains
+available to other system-heap users.
+
+The earlier commit `3e53777a` adds optional `llext_load_param.heap` for a caller-owned
+heap. NULL selects the configured allocator. Harvard/memory-block allocation and
+experimental save/restore reject explicit per-load heaps. The upstream dynamic
+and system-heap ARM suites check independent simultaneous images and failed-load
+reclamation. Protected Brickphyr ARM checks additionally cover MPU isolation,
+replacement rejection, concurrent control and complete application cleanup.
 
 Installed application support additionally requires local Zephyr commit `d1fdd0b7`
 (on the same branch): `fs_mgmt_file_close()` exposes the standard file group's

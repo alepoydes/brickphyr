@@ -315,7 +315,7 @@ config BRICKPHYR_LIGHT
 config BRICKPHYR_NATIVE
 	bool "Experimental protected native applications"
 	depends on CPU_CORTEX_M && USERSPACE && ARM_MPU && LLEXT
-	depends on LLEXT_HEAP_DYNAMIC && LLEXT_IMPORT_ALL_GLOBALS
+	depends on LLEXT_HEAP_SYSTEM && LLEXT_IMPORT_ALL_GLOBALS
 	depends on !CURRENT_THREAD_USE_TLS && !USERSPACE_THREAD_MAY_RAISE_PRIORITY
 	depends on LOG && LOG_MODE_DEFERRED
 	select LOG_OUTPUT
@@ -354,16 +354,18 @@ config BRICKPHYR_APPLICATION_IMAGE_SIZE
 	range 1024 65536
 	help
 	  Admission limit, not a reservation. A RAM upload also needs this much
-	  free system heap while the execution arena holds the loaded program.
+	  free system heap alongside the loaded program and its stack.
 
 config BRICKPHYR_APPLICATION_MEMORY_SIZE
 	int "Application execution memory limit"
 	default 65536
 	range 8192 262144
 	help
-	  Native-only builds borrow a bounded loader buffer from the system heap
-	  while an application runs. Python builds reserve a shared execution arena
-	  for both engines, mapping it whole and requiring a power-of-two size.
+	  Bounds each native image's admitted region and loader metadata cost.
+	  Individual allocations use the system heap; loading and stack allocation
+	  can still fail if it lacks sufficiently large aligned free blocks.
+	  Python separately reserves an execution arena of this size, requiring
+	  power-of-two size/alignment for MPU protection. Native code never uses it.
 
 config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"

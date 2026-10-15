@@ -123,9 +123,9 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 	bool entry = false;
 	unsigned int symtabs = 0;
 	struct region regions[LLEXT_MEM_COUNT] = {0};
-	/* Header/map/symbol bookkeeping plus allocator metadata. Section alignment
-	 * can consume almost another whole block. This is a bounded allocation
-	 * budget, not a claim about actual occupied bytes in LLEXT's heap. */
+	/* Header/map/symbol bookkeeping plus allocator metadata. Regions allocate
+	 * independently; alignment padding returns to the system heap. This bounds
+	 * retained allocations, not the contiguous free space needed while loading. */
 	size_t budget = 4096 + header->e_shnum * 64;
 	for (unsigned int i = 0; i < header->e_shnum; i++) {
 		elf_shdr_t sh;
@@ -297,7 +297,7 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 		}
 		size_t span = region->end - ROUND_DOWN(region->first, region->alignment);
 		size_t block = 1U << LOG2CEIL(MAX(32U, MAX(span, region->alignment)));
-		budget += 2 * block;
+		budget += block;
 	}
 	if (budget > HEAP_LIMIT) {
 		return -ENOMEM;

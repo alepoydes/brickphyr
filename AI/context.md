@@ -101,7 +101,9 @@ sampling on F4 over USB/BLE. A larger USB check processes 320 synthetic observat
 in bounded fragments; see [workload limits](../docs/applications.md#native-learning-workload).
 Hard-float, FPU context
 fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
-to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;
+to preserve, not tasks to restart. Native ELF regions now use the system heap
+individually; failed loading preserves the old application. The full Python arena
+remains reserved. Native `.mpy` requires the matching SDK;
 ordinary compatible Pybricks bytecode remains supported.
 The native [recording channel](../docs/applications.md#application-recording)
 retains bounded application-defined binary records for USB/BLE collection;

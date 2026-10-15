@@ -206,7 +206,7 @@ F4 SDK ELF whose required services and memory fit. This profile reserves a
 25 KiB shared heap, including its on-demand 2 KiB application stack and privileged
 stack overhead; the loader budget is
 limited to 16 KiB and uploads to 4 KiB. The upload and loaded program coexist
-during loading; replacement briefly also retains the old loader buffer.
+during loading; replacement briefly also retains the old program and stack.
 Use [BLE application commands](host.md#native-applications) for RAM upload,
 start, output and stop. The shared IMU service is available through native calls,
 `observe imu`, `observe imu.calibrated` and `observe imu.orientation`, or
@@ -630,12 +630,13 @@ built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
 these include the configured system heap and, for Python builds, a dedicated 64 KiB
-Python arena. Application stacks and native loader buffers come from the
-heap on demand and are released after the supervised application is quiescent.
-The loader reports the image size,
-reservation and loaded allocation in `app status`. During RAM loading, the receive buffer and loader reservation coexist;
-the receive buffer is then released. File loading reserves no ELF receive buffer
-and reports the same loader/loaded allocation for the same image.
+Python arena. Application stacks and individual native loader allocations come
+from the heap on demand and are released after the supervised application is
+quiescent. `app status` reports the image size, admission budget and loaded bytes;
+the budget is not a reserved buffer or measured peak. During RAM loading, the
+receive buffer and loaded regions coexist; the receive buffer is then released.
+File loading reserves no ELF receive buffer and reports the same admission budget
+and loaded bytes for the same image.
 
 ### Optional CMSIS-DSP native SDK
 

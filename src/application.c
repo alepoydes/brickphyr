@@ -83,12 +83,7 @@ static size_t application_stack_size;
 static struct k_thread application_thread;
 static struct k_mem_domain application_domain;
 static bool domain_initialized;
-struct native_code {
-	struct llext *extension;
-	struct k_heap heap;
-	void *memory;
-};
-static struct native_code primary_code;
+static struct llext *primary_extension;
 static struct k_spinlock control_lock;
 static struct {
 	struct bp_control_step step;
@@ -110,7 +105,7 @@ K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_m
 	K_MEM_PARTITION_P_RW_U_RW);
 #endif
 static struct native_control {
-	struct native_code code;
+	struct llext *extension;
 	struct k_mem_domain domain;
 	struct k_thread *thread;
 	k_thread_stack_t *stack;
@@ -1697,7 +1692,7 @@ int z_impl_bp_control_get(struct bp_control_status *value)
 	value->period_us = control_clock.period_us;
 	value->stack_bytes = K_THREAD_STACK_LEN(controller->stack_size);
 	value->loader_bytes = controller->loader_size;
-	value->loaded_bytes = controller->code.extension->alloc_size;
+	value->loaded_bytes = controller->extension->alloc_size;
 	k_spin_unlock(&control_lock, key);
 	return 0;
 }
@@ -2397,21 +2392,16 @@ static int clear_domain(struct k_mem_domain *domain)
 }
 
 /* Domain mappings and live threads must be gone before releasing native code. */
-static int release_native(struct native_code *code)
+static int release_native(struct llext **extension)
 {
-	int err = code->extension ? llext_unload(&code->extension) : 0;
-	if (!err) {
-		k_free(code->memory);
-		code->memory = NULL;
-	}
-	return err;
+	return *extension ? llext_unload(extension) : 0;
 }
 
 static int release_controller(void)
 {
 	if (!controller) return 0;
 	int err = controller->domain_initialized ? clear_domain(&controller->domain) : 0;
-	if (!err) err = release_native(&controller->code);
+	if (!err) err = release_native(&controller->extension);
 	if (!err && controller->stack) {
 		err = k_thread_stack_free(controller->stack);
 		if (!err) controller->stack = NULL;
@@ -2457,7 +2447,7 @@ static int release(void)
 		err = clear_domain(&application_domain);
 	}
 	if (!err) err = release_controller();
-	if (!err) err = release_native(&primary_code);
+	if (!err) err = release_native(&primary_extension);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A queued worker acquires lifecycle before reading the request. Joining
 	 * its caller and clearing pending here also cancels an unstarted copy. */
@@ -2774,47 +2764,46 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 /* Keep thread-start/status scratch off the deeper ELF link call chain. */
 static __noinline int start_native(const void *function, size_t length, size_t heap_size)
 {
-	return start_thread(native_entry, primary_code.extension, (void *)function, NULL,
+	return start_thread(native_entry, primary_extension, (void *)function, NULL,
 		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length, .program_id = -1,
-			.loader_bytes = heap_size, .loaded_bytes = primary_code.extension->alloc_size}, false);
+			.loader_bytes = heap_size, .loaded_bytes = primary_extension->alloc_size}, false);
 }
 
-/* One LLEXT implementation serves either native context. Backing has already
- * been reserved; no application can observe a partially linked image. */
-static int load_native(struct native_code *code, const char *name,
-	struct llext_loader *loader, size_t heap_size,
-	struct k_mem_domain *domain, const void **function)
+/* Linking allocates individual regions from the system heap. Nothing executes
+ * or enters an application domain until the complete image has loaded. */
+static int load_native(struct llext **result, const char *name,
+	struct llext_loader *loader, const void **function)
 {
-	k_heap_init(&code->heap, code->memory, heap_size);
 	struct llext_load_param parameters = LLEXT_LOAD_PARAM_DEFAULT;
-	parameters.heap = &code->heap;
-	int err = llext_load(loader, name, &code->extension, &parameters);
+	int err = llext_load(loader, name, result, &parameters);
 	if (err) return err;
-	struct llext *extension = code->extension;
+	struct llext *extension = *result;
 	*function = llext_find_sym(&extension->exp_tab, "app_main");
 	uintptr_t pc = (uintptr_t)*function & ~1U;
 	uintptr_t text = (uintptr_t)extension->mem[LLEXT_MEM_TEXT];
 	if (!*function || pc < text || pc - text >= extension->mem_size[LLEXT_MEM_TEXT]) return -ENOEXEC;
-	return llext_add_domain(extension, domain);
+	return 0;
 }
 
 /* lifecycle is held and this loader has passed native_image_check. */
 static int run_image(struct llext_loader *loader, size_t length,
 	const struct native_image_requirements *requirements)
 {
-	size_t heap_size = requirements->heap_size;
-	/* Admission must not stop the current program when the shared heap is full. */
-	void *memory = k_malloc(heap_size);
-	if (!memory) return -ENOMEM;
-	int err = prepare(MAX(requirements->stack_size, 2048));
+	/* A distinct name prevents LLEXT from retaining the running image instead
+	 * of loading its replacement. Both can coexist until preparation succeeds. */
+	const char *name = primary_extension && !strcmp(primary_extension->name, "application-a") ?
+		"application-b" : "application-a";
+	struct llext *candidate = NULL;
+	const void *function;
+	int err = load_native(&candidate, name, loader, &function);
+	if (!err) err = prepare(MAX(requirements->stack_size, 2048));
 	if (err) {
-		k_free(memory);
+		(void)release_native(&candidate);
 		return err;
 	}
-	primary_code.memory = memory;
-	const void *function;
-	err = load_native(&primary_code, "application", loader, heap_size, &application_domain, &function);
-	if (!err) err = start_native(function, length, heap_size);
+	primary_extension = candidate;
+	err = llext_add_domain(primary_extension, &application_domain);
+	if (!err) err = start_native(function, length, requirements->heap_size);
 	if (err) (void)release();
 	return err;
 }
@@ -2846,18 +2835,14 @@ static int start_controller(void)
 	err = k_mem_domain_init(&controller->domain, 0, NULL);
 	if (err) goto failed;
 	controller->domain_initialized = true;
-	controller->code.memory = k_malloc(requirements.heap_size);
-	if (!controller->code.memory) {
-		err = -ENOMEM;
-		goto failed;
-	}
 	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(control_request.image, control_request.size);
 	const void *function;
-	err = load_native(&controller->code, "controller", &loader.loader, requirements.heap_size, &controller->domain, &function);
+	err = load_native(&controller->extension, "controller", &loader.loader, &function);
+	if (!err) err = llext_add_domain(controller->extension, &controller->domain);
 	if (err) goto failed;
 	memset(&control_clock, 0, sizeof(control_clock));
 	k_thread_create(controller->thread, controller->stack, controller->stack_size,
-		native_entry, controller->code.extension, (void *)function, NULL,
+		native_entry, controller->extension, (void *)function, NULL,
 		K_LOWEST_APPLICATION_THREAD_PRIO - 1, K_USER, K_FOREVER);
 	if (IS_ENABLED(CONFIG_THREAD_NAME)) (void)k_thread_name_set(controller->thread, "app-control");
 	k_thread_heap_assign(controller->thread, NULL);

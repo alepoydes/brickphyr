@@ -123,8 +123,8 @@ controller is needed; independent component restart is not provided.
 Native ABI 1.10 exposes `bp_control_start`, `bp_control_update` and
 `bp_control_get` to the primary ELF. The Python bindings call these same services;
 no Python engine is required for native background work. Each ELF has its own
-on-demand loader backing, stack and MPU domain. A failed second-image load leaves
-the primary intact. The shared supervisor still joins both before unloading either.
+individually allocated loader regions, stack and MPU domain. A failed second-image
+load leaves the primary intact. The shared supervisor still joins both before unloading either.
 
 Start the controller before the primary uses control waits or initializes a
 recording; otherwise start returns `EBUSY`. With a controller running, only that
@@ -291,9 +291,9 @@ fixture uses 3/5/4 ms intervals; the larger fragmented fixture uses 15 ms. Compl
 
 | Bounded workload | Learning time | Largest release-to-post-record timestamp interval |
 | --- | --- | --- |
-| Six 30-row updates, USB | 437–444 ms per update | 1861 µs |
-| Same ELF and inputs, BLE | 429–433 ms per update | 2265 µs |
-| One 320-row fragmented update, USB | 6937 ms | 2141 µs |
+| Six 30-row updates, USB | 437–444 ms per update | 1790 µs |
+| Same ELF and inputs, BLE | 425–432 ms per update | 854 µs |
+| One 320-row fragmented update, USB | 6925 ms | 2121 µs |
 
 All three runs have no skipped periodic releases through the first recorded
 application of the final candidate. The applied models and final information
@@ -306,19 +306,26 @@ polling is best-effort and does not impose equal USB/BLE traffic.
 The larger workload accumulates ten independent 30-row synthetic fragments and
 one 20-row fragment at 15 ms spacing using the existing learning implementation.
 It reuses a 1440-byte scratch tape, a 3032-byte learning workspace and a 544-byte
-history. Its 19144-byte ELF reserves 56251 bytes for loading; LLEXT reports
-26837 allocated bytes after loading. The controller separately reserves/reports
-9429/2559 bytes. Observed primary/controller stack use is 6120/648 bytes from
-16384/2048-byte allocations. These figures exclude the source upload, recorder,
-kernel thread metadata and other platform services; loaded bytes are not a peak
-heap measurement.
+history. Its 19144-byte ELF has a 31675-byte admission budget; LLEXT reports
+26837 loaded bytes. The controller separately reports 7381/2559 bytes. The budget
+is no longer retained as an arena: individual allocations share the system heap.
+Observed primary/controller stack use is 6120/648 bytes from 16384/2048-byte
+allocations. These figures exclude the source upload, recorder, kernel thread
+metadata and other platform services; loaded bytes are not a peak heap measurement.
+
+The 30-row ELF runs over USB and BLE with the system-heap backend and unchanged
+134272-byte full-profile heap. A separate USB capacity probe declaring a 320-row BSS array
+still fails to start with `ENOMEM`; it does not establish capacity for keeping
+that whole tape in the application. Large aligned regions and stacks still need
+sufficient contiguous free space, even when the admission budget fits.
 
 Processing those 320 rows takes longer than their 4.8 s input budget. Applications
 must choose retention and update frequency to match available computation;
 independent execution does not promise processing of every acquired observation.
-The current conservative loader reservation and MPU padding remain optimization
-work. Clear an already-collected recording before admitting a large application
-when its retained allocation prevents loading; a rejected start preserves it.
+The system-heap backend now returns alignment padding outside regions to the
+shared heap. MPU rounding inside regions and the fixed Python arena remain costs.
+Clear an already-collected recording before admitting a large application when
+its retained allocation prevents loading; a rejected start preserves it.
 
 ## Experimental native profile
 
@@ -355,8 +362,8 @@ LittleFS over USB and BLE, with advancing IMU samples, output and explicit stop.
 The first run after a software reboot needs no preliminary IMU reads. Application
 fault, cleanup and output-drop counters remain zero; existing stored files are
 preserved. The 3936-byte ELF reports 3288 loaded bytes and uses 672 bytes of its
-application stack in these runs. Its 10214-byte loader reservation is an admission
-budget, not a measured peak heap allocation. Sensor accuracy, fixed-rate timing
+application stack in these runs. The earlier arena allocator reserved 10214 bytes;
+that admission budget was not a measured peak heap allocation. Sensor accuracy, fixed-rate timing
 and sustained combined load remain unverified.
 
 ### Portable ELF ABI
@@ -409,25 +416,27 @@ Native C SDK links omit ARM unwind tables. Stack unwinding is unsupported;
 allocated sections left outside the accepted image format fail admission before
 an application replaces the running one.
 
-On the current ARMv7-M targets, native execution allocates the loader's backing
-buffer from the shared system heap when starting an application and release it
-after successful cleanup. The requested size is the validated image's loader
-budget, bounded by the configured execution-memory limit. Native LLEXT allocations
-are aligned and protected individually. Python retains its own fixed, power-of-two,
-size-aligned arena as one MPU partition. Native execution never uses that arena,
+On the current ARMv7-M targets, LLEXT allocates each native region and its metadata
+from the shared system heap, returning them individually after successful cleanup.
+Alignment padding outside each allocation remains available to other users of
+that heap. Native regions retain their individual MPU permissions. Python retains
+its own fixed, power-of-two, size-aligned arena as one MPU partition. Native execution never uses that arena,
 including in Python-enabled builds. The arena has no flash initialization image;
 both engines initialize their allocations and accept arbitrary initial contents.
 
-The native admission budget includes merged ELF region spans, MPU alignment,
+The native admission budget includes merged ELF region spans rounded for the MPU,
 symbol/string tables and loader bookkeeping. It excludes metadata that is only
-streamed or skipped; gaps inside a merged region still require memory. The budget
-is a conservative reservation, not a measurement of the loader's peak usage.
+streamed or skipped; gaps inside a merged region still require memory. This
+conservative bound is checked against the configured execution-memory limit; it
+is neither a reserved buffer nor a measurement of peak heap use. Aligned allocation
+also needs sufficient contiguous free space, so admission cannot guarantee loading.
 
-A native replacement reserves its new buffer before stopping the old
-application. Insufficient or fragmented heap therefore rejects that start without
-interrupting the running program. This briefly requires space for both buffers;
-explicitly stopping the old program first releases its budget. Cleanup failure
-retains the old buffer until devices, MPU partitions and the loader are released.
+A native replacement completely loads and links its regions and reserves its
+stack before stopping the old application. Insufficient or fragmented heap and
+link errors therefore reject that start without interrupting the running program.
+This briefly requires both images to fit; explicitly stopping the old program first
+releases its allocations. Cleanup failure retains the old memory until devices,
+MPU partitions and the loader are released.
 
 The [SDK header](../sdk/include/brickphyr.h) defines monotonic time, cancellable sleep,
 bounded output, read-only buttons, optional
@@ -506,7 +515,7 @@ also come from the shared heap. The supervisor reserves a replacement's stack
 before stopping the current program; insufficient heap or alignment space leaves
 that program running. It joins the thread before freeing the stack on return,
 fault or explicit stop. `app status`
-reports the image, reserved loader budget, LLEXT allocation and stack high-water
+reports the image, admission budget (`heap`), LLEXT allocation and stack high-water
 mark after termination. LLEXT's allocation count excludes allocator overhead and
 is not the peak RAM requirement.
 
@@ -521,21 +530,22 @@ required by paths that have not run.
 
 A protected ARM check loads a 64 KiB padded ELF containing a 64 KiB zero-initialized
 array, verifies every byte through the application, and reclaims its memory on exit.
-The upload and loader buffers coexist during startup. Padding exercises transfer
+The upload and loaded regions coexist during startup. Padding exercises transfer
 capacity, not 64 KiB of executable code. This uses the native F4 budgets with
 synthetic peripherals. On a Robot Inventor F4, the native-only profile also runs
 that maximum-size RAM upload over USB and BLE. A separately compiled stored ELF
 runs with 64 KiB BSS plus 16 KiB initialized writable data over both transports.
 Both verify their complete data regions, return without application or cleanup
 errors, and leave existing stored files unchanged across the profile switch.
-Their reported loaded allocations are 66258 and 83037 bytes; loader reservations
-are 136864 and 170291 bytes. These synthetic memory workloads establish neither
-capacity under maximum peripheral/communication load nor a worst-case stack bound.
+Those checks used the earlier per-image arena allocator: reported loaded
+allocations were 66258 and 83037 bytes, with 136864/170291-byte arena reservations.
+These synthetic memory workloads establish neither capacity under maximum peripheral/communication load nor a worst-case stack bound.
 
-Separate USB checks on the same F4 with Zephyr heap statistics enabled measured
-system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 bytes
+With that earlier allocator, separate USB checks on the same F4 with Zephyr heap
+statistics enabled measured system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 bytes
 for the stored workload, measured with a 210944-byte heap. These counts include
-the reserved loader buffer; they do not measure its internal live allocations.
+the reserved loader buffer; they do not measure its internal live allocations or
+the current system-heap backend.
 Both workloads return system-heap allocation to the 960-byte idle baseline.
 ELF admission reads bounded offsets directly from RAM or a locked file, without
 allocating a linker context. Only actual linking needs LLEXT's section cache;
@@ -1059,10 +1069,10 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native profile provides a 235264-byte heap, including on-demand loader buffers
+The native profile provides a 235264-byte heap, including on-demand loader allocations
 and stacks. The full Python profile provides 134272 bytes and the core Python
 profile 164352 bytes; both retain a 64 KiB Python arena. Active stacks and native
-loader buffers, including a concurrent controller, come from that heap.
+loader allocations, including a concurrent controller, come from that heap.
 These F4 profiles assign available linker RAM to
 the shared heap, below the 319 KiB firmware RAM boundary; the loader-selector
 SRAM remains reserved.

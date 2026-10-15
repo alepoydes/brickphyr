@@ -20,7 +20,7 @@ RAM and named stored applications, MicroPython, Shell/SMP over USB/BLE, settings
 power management, and device services. Hard-float execution, FPU context fixes,
 optional CMSIS-DSP and an ABI independent of Zephyr syscall numbering are existing
 foundations. On-demand UART metadata, motor/paired-controller state and the
-native loader backing buffer, plus recovered linker space, are completed
+individual native loader allocations, plus recovered linker space, are completed
 optimizations to preserve. The Python profile still reserves its own fixed
 execution arena.
 The owning [application](applications.md), [hardware](hardware.md) and
