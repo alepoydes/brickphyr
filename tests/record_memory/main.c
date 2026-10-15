@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "application_record.h"
+#include <errno.h>
+#include <string.h>
+#include <zephyr/kernel.h>
+#include <zephyr/ztest.h>
+
+enum { MAX_RECORD_SIZE = 904, PARAMETER_SIZE = 60, CONFIG_SIZE = 504 };
+
+static void *held[32];
+static uint8_t record[MAX_RECORD_SIZE], output[MAX_RECORD_SIZE];
+static uint8_t parameters[PARAMETER_SIZE], copied_parameters[PARAMETER_SIZE];
+static uint8_t config[CONFIG_SIZE], copied_config[CONFIG_SIZE];
+
+static void fill_record(unsigned int index, size_t size)
+{
+	for (size_t i = 0; i < size; i++) record[i] = (uint8_t)(index + 3 * i);
+}
+
+static void fill_parameters(unsigned int revision)
+{
+	for (size_t i = 0; i < sizeof(parameters); i++) parameters[i] = (uint8_t)(revision + i);
+}
+
+static void exercise(const struct bp_record_spec *spec, bool control,
+		     size_t parameter_size, size_t config_size, unsigned int extra)
+{
+	for (size_t i = 0; i < config_size; i++) config[i] = (uint8_t)(i * 7);
+	application_record_reset();
+	zassert_ok(application_record_begin(spec, config_size ? config : NULL, config_size,
+		control, parameter_size));
+	struct bp_record_info info;
+	application_record_info(&info);
+	uint32_t generation = info.generation;
+	for (unsigned int index = 0; index < spec->capacity + extra; index++) {
+		unsigned int revision = 1 + index / 7;
+		fill_record(index, spec->size);
+		if (control) {
+			fill_parameters(revision);
+			struct bp_control_step step = {
+				.sequence = index + 1, .parameter_revision = revision,
+				.parameter_size = parameter_size,
+			};
+			application_record_step(&step, parameters);
+		}
+		zassert_ok(application_record_write(record, spec->size));
+	}
+	application_record_info(&info);
+	zassert_equal(info.first, extra);
+	zassert_equal(info.next, spec->capacity + extra);
+	zassert_equal(application_record_copy(generation, extra - 1, output, sizeof(output),
+		copied_parameters, sizeof(copied_parameters), &info, &(struct bp_control_step){0}),
+		-EOVERFLOW);
+	if (config_size) {
+		zassert_equal(application_record_config_read(generation, 0, copied_config,
+			sizeof(copied_config), &info), config_size);
+		zassert_mem_equal(copied_config, config, config_size);
+	}
+	for (unsigned int index = extra; index < spec->capacity + extra; index++) {
+		struct bp_control_step step;
+		zassert_equal(application_record_copy(generation, index, output, sizeof(output),
+			copied_parameters, parameter_size, &info, &step), spec->size);
+		fill_record(index, spec->size);
+		zassert_mem_equal(output, record, spec->size);
+		if (control) {
+			fill_parameters(1 + index / 7);
+			zassert_mem_equal(copied_parameters, parameters, parameter_size);
+			zassert_equal(step.sequence, index + 1);
+			zassert_equal(step.parameter_revision, 1 + index / 7);
+		}
+	}
+}
+
+ZTEST(record_memory, test_fragmented_heap_and_reclaimed_begin)
+{
+	const struct bp_record_spec large_spec = {
+		.size = 904, .capacity = 31, .schema = "fragmented-recorder/1",
+	};
+	const struct bp_record_spec packed_spec = {
+		.size = 173, .capacity = 31, .schema = "packed-recorder/1",
+	};
+	const struct bp_record_spec tiny_spec = {
+		.size = 1, .capacity = 1025, .schema = "tiny-recorder/1",
+	};
+	application_record_reset();
+
+	/* Occupy the heap completely, then expose only separated 4 KiB holes. */
+	size_t count = 0;
+	while (count < ARRAY_SIZE(held) && (held[count] = k_malloc(4096))) count++;
+	zassert_true(count >= 16 && count < ARRAY_SIZE(held), "unexpected heap capacity: %zu", count);
+	const size_t holes[] = {1, 4, 7};
+	for (size_t i = 0; i < ARRAY_SIZE(holes); i++) {
+		k_free(held[holes[i]]);
+		held[holes[i]] = NULL;
+	}
+	zassert_equal(application_record_begin(&large_spec, config, sizeof(config), true, PARAMETER_SIZE),
+		-ENOMEM, "begin should fail after some block allocations");
+	struct bp_record_info info;
+	application_record_info(&info);
+	zassert_equal(info.spec.capacity, 0, "failed begin published a recording");
+	zassert_equal(application_record_copy(info.generation, 0, output, sizeof(output),
+		copied_parameters, sizeof(copied_parameters), &info, &(struct bp_control_step){0}),
+		-ENODATA);
+	for (size_t i = 0; i < ARRAY_SIZE(holes); i++) {
+		held[holes[i]] = k_malloc(4096);
+		zassert_not_null(held[holes[i]], "failed begin retained heap memory");
+	}
+
+	/* Aggregate free space suffices, but no 30 KiB contiguous request does. */
+	for (size_t i = 0; i < count; i += 2) {
+		k_free(held[i]);
+		held[i] = NULL;
+	}
+	void *large = k_malloc(30 * 1024);
+	zassert_is_null(large, "heap was not fragmented");
+	exercise(&large_spec, true, PARAMETER_SIZE, CONFIG_SIZE, 16);
+
+	application_record_reset();
+	application_record_info(&info);
+	zassert_equal(info.spec.capacity, 0);
+	zassert_ok(application_record_begin(&large_spec, config, sizeof(config), true, PARAMETER_SIZE),
+		"reset did not release recorder blocks");
+	application_record_clear();
+	for (size_t i = 0; i < count; i++) k_free(held[i]);
+	large = k_malloc(30 * 1024);
+	zassert_not_null(large, "recorder did not release fragmented heap memory");
+	k_free(large);
+
+	/* Two control slots per block, then a partial final block. */
+	exercise(&packed_spec, true, PARAMETER_SIZE, CONFIG_SIZE, 16);
+	application_record_clear();
+	/* 1024 tiny slots in one block, plus a one-slot tail without control metadata. */
+	exercise(&tiny_spec, false, 0, 0, 8);
+	application_record_clear();
+}
+
+ZTEST_SUITE(record_memory, NULL, NULL, NULL, NULL, NULL);

@@ -331,6 +331,18 @@ identities. This uses a fixed coordinate configuration and a synthetic model,
 without learning or actuation; robot mounting, model accuracy and combined-load
 deadlines remain unverified.
 
+An extended passive workload uses 16 actual IMU/encoder observations for the
+existing C learning kernel, then applies its complete candidate to the independent
+observer. Native-primary USB and Python-primary USB/BLE checks pass on the same
+Inventor F4. In the Python runs, learning takes 48/47 ms while the controller
+advances three 15 ms steps; all 22 retained observations, applied parameters and
+the learned model replay bit for bit on the host. No release is skipped; the
+largest recorded release-to-completion intervals are 1680/1874 µs. The full
+profile accommodates a 30-record, 904-byte payload ring alongside the Python
+arena, native module and controller. These short runs start with a synthetic
+model and issue no motor commands; they establish integration and memory capacity,
+not physical identification accuracy or sustained timing bounds.
+
 The larger workload accumulates ten independent 30-row synthetic fragments and
 one 20-row fragment at 15 ms spacing using the existing learning implementation.
 It reuses a 1440-byte scratch tape, a 3032-byte learning workspace and a 544-byte
@@ -670,14 +682,14 @@ for the execution mechanism and its remaining timing acceptance.
 Native ABI 1.3 adds `bp_record_begin(&spec)` and `bp_record_write(data, length)`.
 An application configures one fixed-size binary record format before periodic
 work. `spec` names its schema and version, record size (1–1024 bytes) and retained
-record count. The total buffer may not exceed 32768 bytes. The supervisor
+record count. The retained data may not exceed 32768 bytes. The supervisor
 allocates it from the shared system heap while the caller waits; a failed
 allocation reports `ENOMEM`. A second successful configuration in the same run
 is rejected. Applications that do not record allocate no recording buffer.
 
 Native ABI 1.5 adds `bp_record_begin_config(&spec, config, length)`. It copies up
 to 1024 bytes of immutable experiment configuration together with the buffer;
-configuration and records share the 32768-byte allocation limit. The record
+configuration and records share the 32768-byte data budget. The record
 schema defines the configuration's binary format too. Use it for model values,
 initial state, units and configuration identity needed for replay. Ring overwrite
 does not erase it. This configuration is not a mutable parameter store.
@@ -699,9 +711,13 @@ Standalone native execution has revision zero and an empty delivered parameter
 block; put its application-defined constants in the configuration.
 
 The control mode preallocates bounded metadata, parameter slots and staging space
-within the same 32768-byte limit. An over-budget request returns `EINVAL` before
-allocation. Eviction/reuse takes constant work without scanning the ring, and no
-allocator, transport or storage operation runs in a control step. Ordinary
+within the same 32768-byte data budget. An over-budget request returns `EINVAL`
+before allocation. Storage uses small blocks so protected arenas and stacks do
+not require the whole recording to fit one contiguous heap region. A block lookup
+table and allocator headers add a small allocation overhead. All blocks are
+allocated before publication; a failed begin releases them without publishing a
+partial recording. Eviction/reuse takes constant work without scanning the ring.
+No allocator, transport or storage operation runs in a control step. Ordinary
 recordings reserve none of these optional buffers. Control step sequence exhaustion
 returns `EOVERFLOW`; it does not silently wrap to a previous sequence.
 

@@ -22,6 +22,7 @@ Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4
 | Host ownership or protocol | `tests/host`, `test_host_protocol.py`, or the affected SMP/Pybricks adapter case |
 | Terminal input or TTY cleanup | `test_terminal.py`; add monitor/REPL cases only for those paths |
 | Application record collection or offline reading | `test_recording.py` and `test_records.py`; neither needs firmware |
+| Recorder allocation and retention | `tests/record_memory` and `test_record_memory.py`; real fragmented heap, overwrite and cleanup |
 | Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
 | Crypto allocator or shared heap | `tests/crypto_heap` for cold AES/CMAC, allocation failure and cleanup |
 | Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
@@ -34,6 +35,15 @@ synthetic; it does not verify radio pairing or combined hardware load.
 ```sh
 CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/crypto_heap -d build/crypto-heap-tests
 uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[crypto-heap-tests-PROJECT EXECUTION SUCCESSFUL]'
+```
+
+The recorder's small native-simulator fixture covers allocation with fragmented
+free memory, partial-allocation cleanup, retained parameter revisions and ring
+overwrite. It does not measure physical control latency.
+
+```sh
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run west build -b native_sim/native/64 -s tests/record_memory -d build/record-memory-tests -o=-j4
+uv run pytest -q tests/test_record_memory.py
 ```
 
 The F4 USB source path has two focused synthetic fixtures. The Zephyr detector

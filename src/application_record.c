@@ -6,14 +6,15 @@
 
 static struct k_spinlock lock;
 static struct bp_record_info state;
-static uint8_t *records;
-static uint8_t *configuration, *parameters, *applied_parameters;
-static size_t parameter_stride;
+static uint8_t **records;
+static uint8_t *configuration, *applied_parameters;
+static size_t parameter_stride, step_size;
+static unsigned int block_shift, block_mask;
 static uint16_t free_parameters;
-static struct recorded_step {
+struct recorded_step {
 	struct bp_control_step value;
 	uint16_t parameters;
-} *steps;
+};
 static struct bp_control_step current_step;
 struct parameter_slot {
 	uint16_t references, next;
@@ -22,22 +23,42 @@ struct parameter_slot {
 
 static struct parameter_slot *parameter_slot(uint16_t index)
 {
-	return (struct parameter_slot *)(parameters + index * parameter_stride);
+	size_t count = MIN(block_mask + 1, state.spec.capacity - (index & ~block_mask));
+	return (void *)(records[index >> block_shift] + count * step_size +
+		(index & block_mask) * parameter_stride);
+}
+
+static struct recorded_step *recorded_step(size_t index)
+{
+	return (struct recorded_step *)records[index >> block_shift] + (index & block_mask);
+}
+
+static uint8_t *record_data(size_t index)
+{
+	size_t count = MIN(block_mask + 1, state.spec.capacity - (index & ~block_mask));
+	return records[index >> block_shift] + count * (step_size + parameter_stride) +
+		(index & block_mask) * state.spec.size;
+}
+
+static void free_records(uint8_t **blocks, size_t count)
+{
+	for (size_t i = 0; i < count; i++) k_free(blocks[i]);
+	k_free(blocks);
 }
 
 static void reset(bool active)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	uint8_t *old = records;
+	uint8_t **old = records;
+	size_t count = old ? DIV_ROUND_UP(state.spec.capacity, block_mask + 1) : 0;
 	records = NULL;
-	steps = NULL;
-	configuration = parameters = applied_parameters = NULL;
+	configuration = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
 	uint32_t generation = state.generation + 1;
 	state = (struct bp_record_info){.generation = generation ? generation : 1,
 		.active = active};
 	k_spin_unlock(&lock, key);
-	k_free(old);
+	free_records(old, count);
 }
 
 void application_record_clear(void)
@@ -71,23 +92,39 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	/* The supervisor owns configuration and the caller is blocked. Allocate
 	 * before publication; no allocator or transport runs inside the data lock. */
 	if (records) return -EALREADY;
-	size_t bytes = spec->size * spec->capacity;
-	size_t step_offset = control ? ROUND_UP(bytes, __alignof__(*steps)) : bytes;
-	size_t parameter_offset = step_offset + (control ? spec->capacity * sizeof(*steps) : 0);
+	size_t step_bytes = control ? sizeof(struct recorded_step) : 0;
 	size_t stride = parameter_size ? ROUND_UP(sizeof(struct parameter_slot) + parameter_size, 4) : 0;
-	size_t applied_offset = parameter_offset + spec->capacity * stride;
-	size_t config_offset = applied_offset + parameter_size;
-	if (config_offset + length > 32768) return -EINVAL;
-	uint8_t *memory = k_malloc(config_offset + length);
+	size_t slot_bytes = step_bytes + stride + spec->size;
+	if (slot_bytes * spec->capacity + parameter_size + length > 32768) return -EINVAL;
+	/* Protected arenas and stacks can split otherwise sufficient free memory.
+	 * Keep complete slots in small blocks; a power-of-two slot count gives
+	 * constant-time lookup without padding each record to metadata alignment.
+	 * One maximum-size record plus metadata may exceed the 1 KiB target. */
+	unsigned int shift = 0;
+	while ((2U << shift) <= 1024 / slot_bytes) shift++;
+	size_t slots = 1U << shift;
+	size_t count = DIV_ROUND_UP(spec->capacity, slots);
+	uint8_t **memory = k_malloc(count * sizeof(*memory) + parameter_size + length);
 	if (!memory) return -ENOMEM;
-	if (length) memcpy(memory + config_offset, config, length);
+	uint8_t *applied = (void *)(memory + count);
+	uint8_t *config_data = applied + parameter_size;
+	if (length) memcpy(config_data, config, length);
 	/* Pool slots hold only revisions referenced by retained records. The free
 	 * list makes insertion/eviction constant-time without an allocator or scan. */
-	if (stride) {
-		for (size_t i = 0; i < spec->capacity; i++) {
-			struct parameter_slot *slot = (void *)(memory + parameter_offset + i * stride);
-			slot->references = 0;
-			slot->next = i + 1 < spec->capacity ? i + 1 : UINT16_MAX;
+	for (size_t block = 0; block < count; block++) {
+		size_t first = block * slots;
+		size_t used = MIN(slots, spec->capacity - first);
+		memory[block] = k_malloc(used * slot_bytes);
+		if (!memory[block]) {
+			free_records(memory, block);
+			return -ENOMEM;
+		}
+		if (stride) {
+			for (size_t i = 0; i < used; i++) {
+				struct parameter_slot *slot = (void *)(memory[block] + used * step_bytes + i * stride);
+				slot->references = 0;
+				slot->next = first + i + 1 < spec->capacity ? first + i + 1 : UINT16_MAX;
+			}
 		}
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -95,11 +132,12 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	state.config_size = length;
 	state.control = control;
 	state.parameter_size = parameter_size;
-	steps = control ? (void *)(memory + step_offset) : NULL;
-	parameters = memory + parameter_offset;
+	step_size = step_bytes;
 	parameter_stride = stride;
-	applied_parameters = memory + applied_offset;
-	configuration = memory + config_offset;
+	block_shift = shift;
+	block_mask = slots - 1;
+	applied_parameters = applied;
+	configuration = config_data;
 	free_parameters = 0;
 	records = memory;
 	k_spin_unlock(&lock, key);
@@ -134,14 +172,14 @@ int application_record_write(const void *data, size_t length)
 			uint16_t selected = UINT16_MAX;
 			if (state.parameter_size) {
 				if (state.next) {
-					const struct recorded_step *previous = &steps[(state.next - 1) % state.spec.capacity];
+					const struct recorded_step *previous = recorded_step((state.next - 1) % state.spec.capacity);
 					if (previous->value.parameter_revision == current_step.parameter_revision) {
 						selected = previous->parameters;
 						parameter_slot(selected)->references++;
 					}
 				}
 				if (state.next - state.first == state.spec.capacity) {
-					uint16_t old = steps[index].parameters;
+					uint16_t old = recorded_step(index)->parameters;
 					struct parameter_slot *slot = parameter_slot(old);
 					if (!--slot->references) {
 						slot->next = free_parameters;
@@ -156,9 +194,9 @@ int application_record_write(const void *data, size_t length)
 					memcpy(slot->data, applied_parameters, state.parameter_size);
 				}
 			}
-			steps[index] = (struct recorded_step){.value = current_step, .parameters = selected};
+			*recorded_step(index) = (struct recorded_step){.value = current_step, .parameters = selected};
 		}
-		memcpy(records + index * state.spec.size, data, length);
+		memcpy(record_data(index), data, length);
 		state.next++;
 		if (state.next - state.first > state.spec.capacity) state.first++;
 		if (state.triggered && state.next - state.trigger == state.after) {
@@ -209,8 +247,8 @@ int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 			length = -EINVAL;
 		} else {
 			length = MIN(capacity, state.spec.size - offset);
-			memcpy(data, records + (index % state.spec.capacity) * state.spec.size + offset, length);
-			if (state.control) *step = steps[index % state.spec.capacity].value;
+			memcpy(data, record_data(index % state.spec.capacity) + offset, length);
+			if (state.control) *step = recorded_step(index % state.spec.capacity)->value;
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -228,7 +266,7 @@ int application_record_parameters_read(uint32_t generation, uint64_t index,
 		if (!state.control) {
 			length = -ENOTSUP;
 		} else {
-			const struct recorded_step *step = &steps[index % state.spec.capacity];
+			const struct recorded_step *step = recorded_step(index % state.spec.capacity);
 			*revision = step->value.parameter_revision;
 			length = state.parameter_size;
 			if (length) memcpy(data, parameter_slot(step->parameters)->data, length);
@@ -249,11 +287,12 @@ int application_record_copy(uint32_t generation, uint64_t index,
 		capacity < state.spec.size || params_capacity < state.parameter_size ? -EMSGSIZE : 0;
 	if (!result && index < state.next) {
 		size_t slot = index % state.spec.capacity;
-		memcpy(data, records + slot * state.spec.size, state.spec.size);
+		memcpy(data, record_data(slot), state.spec.size);
 		if (state.control) {
-			*step = steps[slot].value;
+			const struct recorded_step *stored = recorded_step(slot);
+			*step = stored->value;
 			if (state.parameter_size) {
-				memcpy(params, parameter_slot(steps[slot].parameters)->data, state.parameter_size);
+				memcpy(params, parameter_slot(stored->parameters)->data, state.parameter_size);
 			}
 		}
 		result = state.spec.size;
