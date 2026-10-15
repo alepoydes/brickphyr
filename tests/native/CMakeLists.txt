@@ -2,6 +2,7 @@
 cmake_minimum_required(VERSION 3.20.5)
 get_filename_component(BRICKPHYR_ROOT ../.. ABSOLUTE)
 set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
+list(APPEND EXTRA_CONF_FILE ${BRICKPHYR_ROOT}/tests/arm.conf)
 list(APPEND DTS_ROOT ${BRICKPHYR_ROOT} ${BRICKPHYR_ROOT}/tests/ports)
 list(APPEND SYSCALL_INCLUDE_DIRS ${BRICKPHYR_ROOT}/sdk/include ${BRICKPHYR_ROOT}/include)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})

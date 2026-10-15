@@ -15,7 +15,7 @@ from test_native import native_console
 from test_python import completed, output
 
 
-BUILD = Path(__file__).resolve().parents[1] / "build/python-fpu-tests"
+BUILD = Path(__file__).resolve().parents[1] / "build/python-smp-tests"
 RECORD = struct.Struct("<qqIIIIIfII")
 
 

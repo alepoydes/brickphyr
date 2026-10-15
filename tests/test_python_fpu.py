@@ -12,7 +12,7 @@ from test_python import completed, output
 from brickphyrdev.application import Format, Start, checked, connection, upload
 from brickphyrdev.smp import Rejected
 
-BUILD = Path(__file__).resolve().parents[1] / "build/python-fpu-tests"
+BUILD = Path(__file__).resolve().parents[1] / "build/python-smp-tests"
 
 
 def test_hard_float_import_and_admission():

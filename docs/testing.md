@@ -12,6 +12,11 @@ the affected fixture, then run its checks. The commands below are a catalogue,
 not a sequence required after every change. Use an incremental build; a pristine
 build is needed when configuration or a generator requires it, not routinely.
 Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4`.
+ARM checks use one Cortex-M4 hard-float/MPU target, `mps2/an386`, with
+`tests/arm.conf`. A build directory previously configured for `mps2/an385`
+needs one pristine reconfiguration; subsequent builds are incremental. Direct
+`west build` commands for upstream Zephyr tests do not use their Twister
+platform allowlists.
 
 | Changed boundary | First checks |
 | --- | --- |
@@ -35,7 +40,7 @@ checks successful reuse and recovered allocation capacity. Its entropy is
 synthetic; it does not verify radio pairing or combined hardware load.
 
 ```sh
-CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/crypto_heap -d build/crypto-heap-tests
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/crypto_heap -d build/crypto-heap-tests -- -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
 uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[crypto-heap-tests-PROJECT EXECUTION SUCCESSFUL]'
 ```
 
@@ -194,11 +199,9 @@ bindings or physical hardware.
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/python -d build/python-tests
 build/python-tests/zephyr/zephyr.exe
-uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
+uv run --locked west build -b mps2/an386 -s tests/python -d build/python-arm-tests -- \
+  '-DEXTRA_CONF_FILE=arm.conf;../arm.conf'
 uv run --locked pytest -q -x tests/test_native.py -k python-arm
-uv run --locked west build -b mps2/an386 -s tests/python -d build/python-core-fpu-tests -- \
-  '-DEXTRA_CONF_FILE=arm.conf;../native/fpu.conf'
-uv run --locked pytest -q -x tests/test_native.py -k python-core-fpu-tests
 ```
 
 The build initializes no dependency automatically: populate the manifest's
@@ -206,7 +209,7 @@ MicroPython submodule first. The `mpy_cross` build target uses that same source
 revision. Use a pristine build when changing MicroPython feature selection;
 its current upstream registration generator can otherwise retain disabled
 modules. Compiler checks require local subprocesses and `asyncio` socket pairs.
-The Cortex-M4 hard-float core fixture checks native/Viper exception restoration
+The ARM core fixture also checks floating-point exception restoration
 through the full s16–s31 NLR frame; it is ARM emulation, not F4 hardware evidence.
 
 ### Python application integration
@@ -218,23 +221,31 @@ transitions after an MPU fault. The UART fixture has no physical USB/BLE detach
 signal; it checks client reconnection, not radio or USB session cleanup.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
 uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py tests/test_python_speaker.py tests/test_python_system.py
 ```
 
+The interactive image is `build/python-smp-tests/zephyr/zephyr.elf`:
+Cortex-M4, FPv4-SP-D16 hard-float, native ABI 2.2, with MPU protection.
+It accepts ELF applications from the matching F4 SDK without recompilation,
+subject to available services and memory. Peripherals are synthetic; this is
+not a simulation of SPIKE electrical behavior. To open its UART Shell:
+
+```sh
+uv run --locked west build -d build/python-smp-tests -t run
+```
+
 The same build produces native `.mpy` fixtures in `python-fixtures` using the
-matching compiler and upstream `dynruntime.mk` with the `armv7m` target.
+matching compiler and upstream `dynruntime.mk` with the `armv7emsp` target.
 `test_native_mpy.py` checks native/Viper calculations, dynamic C initialization
 and GC, code/data/kernel memory protection, forced stop, code exhaustion, malformed
 input and another successful run after each failure. These are protected ARM
 checks, not physical fault injection.
 
-For the matching F4 hard-float native ABI, use the M4 fixture and its focused
-admission/import check:
+The same `python-smp-tests` fixture checks the matching F4 hard-float native ABI
+with a focused admission/import check:
 
 ```sh
-uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-fpu-tests -- \
-  '-DEXTRA_CONF_FILE=python.conf;../native/fpu.conf'
 uv run --locked pytest -q tests/test_python_fpu.py
 ```
 
@@ -336,8 +347,7 @@ not become synthetic sensor gaps. Its finest clock resolution is for functional
 execution, not a model of STM32 instruction timing.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 uv run --locked pytest -q tests/test_python_imu.py
 ```
 
@@ -347,7 +357,7 @@ are absent. The Bluetooth fixture checks the complementary configuration with
 wireless peers and no local devices. These use synthetic peripherals on ARM/QEMU.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-passive-tests -- -DEXTRA_CONF_FILE=python.conf -DCONFIG_BRICKPHYR_PORT_UART=n -DCONFIG_BRICKPHYR_MOTOR_CONTROL=n
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-passive-tests -- -DEXTRA_CONF_FILE=python.conf -DCONFIG_BRICKPHYR_PORT_UART=n -DCONFIG_BRICKPHYR_MOTOR_CONTROL=n
 uv run --locked pytest -q tests/test_python_pupdevice.py::test_passive_profile_keeps_input_and_dc_output
 ```
 
@@ -431,10 +441,11 @@ DTR notification exercises real teardown and reattachment; UART device closure
 alone does not provide that notification in QEMU.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
 uv run --locked pytest -q tests/test_native.py -k uart-cmsdk
 uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
-  '-DEXTRA_CONF_FILE=python.conf;host.conf;../native/fpu.conf'
+  '-DEXTRA_CONF_FILE=python.conf;host.conf'
 uv run --locked pytest -q tests/test_python_shell.py
 ```
 
@@ -449,9 +460,9 @@ The reduced Python profile uses the same fixture with the optional library and
 client execution adapter off:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-core-host-tests -- \
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-core-host-tests -- \
   -DCONFIG_BRICKPHYR_PYBRICKS=n '-DEXTRA_CONF_FILE=python.conf;host.conf'
-uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-core-ble-tests -- \
+uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-core-ble-tests -- \
   -DCONFIG_BRICKPHYR_PYBRICKS=n
 uv run --locked pytest -q -x tests/test_python_profiles.py tests/test_native.py -k 'without_compatibility or python-core-ble'
 ```
@@ -491,9 +502,9 @@ The required local client changes are listed in
 
 ```sh
 uv run --locked pytest -q tests/test_pybricks_execution.py
-uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-ble-tests
+uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-ble-tests
 uv run --locked pytest -q tests/test_native.py -k python-ble
-uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-slots-tests -- \
+uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-slots-tests -- \
   '-DEXTRA_CONF_FILE=../native_smp/storage.conf;slots.conf' \
   '-DDTC_OVERLAY_FILE=app.overlay;../native_smp/storage.overlay'
 uv run --locked pytest -q tests/test_native.py -k python-slots
@@ -532,7 +543,7 @@ It does not verify physical controller initialization.
 The focused HubNetwork case runs only its own suite:
 
 ```sh
-CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-network-tests -- -DFOCUSED_TEST=test_hub_network_classic_routing_and_lifetime
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-network-tests -- -DFOCUSED_TEST=test_hub_network_classic_routing_and_lifetime
 uv run --locked pytest -q -x tests/test_native.py -k python-network-tests
 ```
 
@@ -659,15 +670,20 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/radio -d build/radio-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/storage -d build/storage-tests
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/management -d build/management-tests
-uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tests -- -DDTC_OVERLAY_FILE=app.overlay
-uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests
-uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests
-uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
+uv run --locked west build -b mps2/an386 -s tests/native -d build/native-app-tests -- \
+  -DDTC_OVERLAY_FILE=app.overlay \
+  '-DEXTRA_CONF_FILE=../../boards/spike_prime_f4_dsp.conf;capacity.conf' \
+  -DNATIVE_CAPACITY_TEST=ON
+uv run --locked west build -b mps2/an386 -s tests/imu_processing -d build/imu-processing-tests -- -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s tests/motor_control -d build/motor-control-arm-tests -- -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s tests/python -d build/python-arm-tests -- \
+  '-DEXTRA_CONF_FILE=arm.conf;../arm.conf'
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
 uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
-  '-DEXTRA_CONF_FILE=python.conf;host.conf;../native/fpu.conf'
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t brickphyr-sdk
+  '-DEXTRA_CONF_FILE=python.conf;host.conf'
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-smp-tests -t brickphyr-sdk
 mkdir -p build/native-smp-sdk
 tar -mxf build/native-smp-tests/zephyr/brickphyr-sdk.tar.xz -C build/native-smp-sdk
 uv run --locked cmake -S examples/native -B build/native-smp-examples -G Ninja \
@@ -708,7 +724,7 @@ these targets in `build/native-smp-examples` first; the test does not compile.
 It collects through the same SMP decoder used by `app record`. The model checks
 protocol and lifecycle behavior, not physical motor response or timing.
 
-`tests/test_python_control.py` uses `build/python-fpu-tests` and its native
+`tests/test_python_control.py` uses `build/python-smp-tests` and its native
 `control_probe.elf`. It checks native progress during Python GC/float work,
 complete copied revisions, missed periodic releases, shared return/fault/stop,
 MPU separation and exact system-heap reclamation after clearing retained records.
@@ -723,7 +739,7 @@ The port-service fixture checks that controller ownership excludes Python's
 application owner. Build before running the focused checks:
 
 ```sh
-uv run --locked cmake --build build/python-fpu-tests -j4
+uv run --locked cmake --build build/python-smp-tests -j4
 uv run --locked cmake --build build/native-smp-tests -j4
 uv run --locked pytest -q -x tests/test_python_control.py
 ```
@@ -917,7 +933,7 @@ Build fixtures separately; the focused checks below do not rebuild them:
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/drivebase -d build/drivebase-tests
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 build/drivebase-tests/zephyr/zephyr.exe
 uv run --locked pytest -q tests/test_python_drivebase.py
 uv run --locked pytest -q tests/test_python_car.py
@@ -926,7 +942,8 @@ uv run --locked pytest -q tests/test_python_car.py
 An optional numerical check enables Zephyr's undefined-behavior sanitizer on ARM:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-ubsan-tests -- -DCONFIG_UBSAN=y -DCONFIG_UBSAN_TRAP=y
+uv run --locked west build -b mps2/an386 -s tests/motor_control -d build/motor-control-arm-ubsan-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" -DCONFIG_UBSAN=y -DCONFIG_UBSAN_TRAP=y
 uv run --locked west build -d build/motor-control-arm-ubsan-tests -t run
 ```
 
@@ -962,16 +979,13 @@ also uploads the sound image through SMP and reads its completed sample count
 through the production observations handler. These fixtures
 do not execute STM32 DAC registers or measure sound quality or interrupt budgets.
 
-The optional CMSIS-DSP fixture uses the M4 hard-float native loader and Zephyr's
-selected filtering archive. Build it separately, then run the existing focused
-ARM fixture selection without an implicit rebuild:
+The `native-app-tests` fixture uses the M4 hard-float native loader and Zephyr's
+selected CMSIS-DSP filtering archive, with representative F4 native budgets.
+Build it as listed above, then run the focused check without
+an implicit rebuild:
 
 ```sh
-uv run --locked west build -b mps2/an386 -s tests/native -d build/native-fpu-tests -- \
-  -DDTC_OVERLAY_FILE=app.overlay \
-  '-DEXTRA_CONF_FILE=fpu.conf;../../boards/spike_prime_f4_dsp.conf;capacity.conf' \
-  -DNATIVE_CAPACITY_TEST=ON
-uv run --locked pytest -q -x tests/test_native.py -k native-fpu-tests
+uv run --locked pytest -q -x tests/test_native.py -k native-app-tests
 ```
 
 The same run uses representative F4 native budgets to exercise a 64 KiB padded RAM upload
@@ -980,19 +994,19 @@ reclamation on exit. The capacity application checks every byte from user mode.
 This is a loader/MPU capacity check, not a physical peripheral-load measurement.
 
 A separate ABI acceptance uses one `hello.elf` built by the exported F4 SDK
-in both M4 configurations. Export the SDK and build `build/native-examples` as
+in two M4 configurations. Export the SDK and build `build/native-examples` as
 shown in [builds](builds.md#experimental-native-sdk), then prepare both fixtures:
 
 ```sh
-uv run --locked west build -d build/native-fpu-tests -- \
+uv run --locked west build -d build/native-app-tests -- \
   -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-portable-tests -- \
-  -DDTC_OVERLAY_FILE=app.overlay -DEXTRA_CONF_FILE=fpu.conf \
+  -DDTC_OVERLAY_FILE=app.overlay \
   -DCONFIG_AUXDISPLAY=y -DCONFIG_BRICKPHYR_APPLICATION_STACK_SIZE=4096 \
   -DCONFIG_USERSPACE_STACKS_EARLY=y \
   -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
 uv run --locked pytest -q -x tests/test_native.py \
-  -k 'native-fpu-tests or native-portable-tests'
+  -k 'native-app-tests or native-portable-tests'
 ```
 
 Enabling the additional Zephyr display API changes its generated syscall IDs;
@@ -1008,9 +1022,11 @@ and GPIO permission explicitly, checks default user calls, then verifies rejecti
 with their direct syscalls omitted while supervisor calls remain available:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/userspace_access -d build/driver-userspace-tests
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/userspace_access -d build/driver-supervisor-tests -- \
-  -DCONFIG_UART_USERSPACE=n -DCONFIG_GPIO_USERSPACE=n -DEXTRA_CPPFLAGS=-DTEST_DRIVER_USERSPACE_DISABLED=1
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/drivers/userspace_access -d build/driver-userspace-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/drivers/userspace_access -d build/driver-supervisor-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" -DCONFIG_UART_USERSPACE=n -DCONFIG_GPIO_USERSPACE=n \
+  -DEXTRA_CPPFLAGS=-DTEST_DRIVER_USERSPACE_DISABLED=1
 uv run --locked pytest -q tests/test_native.py -k 'driver-userspace or driver-supervisor'
 ```
 
@@ -1019,10 +1035,21 @@ user mode, while the kernel-only option keeps main privileged and still permits
 a separate user thread to execute syscalls. Both enable hardware stack guards:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-userspace-tests
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-supervisor-tests -- \
-  -DCONFIG_MAIN_THREAD_USERSPACE=n -DEXTRA_CPPFLAGS=-DTEST_MAIN_THREAD_USERSPACE_DISABLED=1
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-userspace-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/threads/main_stack -d build/main-supervisor-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" -DCONFIG_MAIN_THREAD_USERSPACE=n \
+  -DEXTRA_CPPFLAGS=-DTEST_MAIN_THREAD_USERSPACE_DISABLED=1
 uv run --locked pytest -q tests/test_native.py -k 'main-userspace or main-supervisor'
+```
+
+The ARM startup check verifies interrupt-mask handoff from early reset to thread
+context and confirms that kernel timer interrupts run:
+
+```sh
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/arch/arm/boot_handoff -d build/boot-handoff-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked pytest -q tests/test_native.py -k boot-handoff
 ```
 
 The shared Cortex-M syscall-frame dispatcher has a focused upstream check for
@@ -1032,9 +1059,10 @@ from an IRQ after return to user mode. The basic suite excludes the separate
 for bad syscall IDs, rejected access and thread cleanup:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/syscalls -d build/syscall-frame-tests -- \
-  -DEXTRA_CPPFLAGS=-DTEST_SYSCALL_BASIC_ONLY=1
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace -- \
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mem_protect/syscalls -d build/syscall-frame-tests -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" -DEXTRA_CPPFLAGS=-DTEST_SYSCALL_BASIC_ONLY=1
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" \
   -DCONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=0 -DCONFIG_CURRENT_THREAD_USE_TLS=y \
   -DCONFIG_TEST_HW_STACK_PROTECTION=n
 uv run --locked pytest -q tests/test_native.py -k 'syscall-frame-tests or upstream-userspace'
@@ -1049,10 +1077,11 @@ existing protection suite with early stack placement and the futex/system-mutex
 suites for their generated backing objects:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/mem_protect -d build/zephyr-kobject-checks -o=-j4 -- \
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mem_protect/mem_protect -d build/zephyr-kobject-checks -o=-j4 -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" \
   -DCONFIG_USERSPACE_STACKS_EARLY=y -DCONFIG_TEST_HW_STACK_PROTECTION=n -DCONFIG_MINIMAL_LIBC=y
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/futex -d build/kobject-futex-tests -o=-j4
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mutex/sys_mutex -d build/kobject-sys-mutex-tests -o=-j4
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mem_protect/futex -d build/kobject-futex-tests -o=-j4 -- -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mutex/sys_mutex -d build/kobject-sys-mutex-tests -o=-j4 -- -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
 uv run --locked pytest -q tests/test_native.py -k 'zephyr-kobject-checks or kobject-futex-tests or kobject-sys-mutex-tests'
 ```
 
@@ -1062,7 +1091,8 @@ For dynamic thread-ID recycling with the default stack layout, build the
 userspace suite separately:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace-dynamic -o=-j4 -- \
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/kernel/mem_protect/userspace -d build/upstream-userspace-dynamic -o=-j4 -- \
+  -DEXTRA_CONF_FILE="$PWD/tests/arm.conf" \
   -DCONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=0 -DCONFIG_CURRENT_THREAD_USE_TLS=y \
   -DCONFIG_TEST_HW_STACK_PROTECTION=n -DCONFIG_DYNAMIC_OBJECTS=y -DCONFIG_HEAP_MEM_POOL_SIZE=8192
 uv run --locked pytest -q tests/test_native.py -k upstream-userspace-dynamic
@@ -1074,9 +1104,9 @@ For Zephyr's shared runtime log packager and constant module references, pair
 them with its protected logging/filter checks:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s ../zephyr/tests/subsys/logging/log_core_additional -d build/logging-userspace-tests -- \
-  -DCONF_FILE=log_user.conf
-uv run --locked pytest -q tests/test_native.py -k 'logging-userspace-tests or native-compact-tests or native-fpu-tests'
+uv run --locked west build -b mps2/an386 -s ../zephyr/tests/subsys/logging/log_core_additional -d build/logging-userspace-tests -- \
+  -DCONF_FILE=log_user.conf -DEXTRA_CONF_FILE="$PWD/tests/arm.conf"
+uv run --locked pytest -q tests/test_native.py -k 'logging-userspace-tests or native-compact-tests or native-app-tests'
 ```
 
 These checks preserve message content and access behavior; they do not establish
@@ -1093,7 +1123,7 @@ the direct driver syscalls above while retaining the protected Brickphyr API:
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native -d build/native-compact-tests -- \
   '-DDTC_OVERLAY_FILE=app.overlay;compact.overlay' \
-  '-DEXTRA_CONF_FILE=fpu.conf;compact.conf' \
+  -DEXTRA_CONF_FILE=compact.conf \
   -DNATIVE_HELLO_IMAGE="$PWD/build/native-examples/hello.elf"
 uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[native-compact-tests-NATIVE PASS:]'
 ```
@@ -1114,10 +1144,10 @@ uv run --locked cmake -S examples/native -B build/technic-native-examples -G Nin
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/technic-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/technic-native-examples --target hello spin -j4
 uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-service-stacks -o=-j4 -- \
-  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;compact.conf' \
+  '-DEXTRA_CONF_FILE=imu.conf;compact.conf' \
   '-DEXTRA_DTC_OVERLAY_FILE=imu.overlay;compact.overlay'
 uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-host-stacks -o=-j4 -- \
-  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;compact.conf;host.conf' \
+  '-DEXTRA_CONF_FILE=imu.conf;compact.conf;host.conf' \
   '-DEXTRA_DTC_OVERLAY_FILE=imu.overlay;compact.overlay'
 uv run --locked pytest -q -s tests/test_native.py::test_native_service_stacks
 ```
@@ -1142,7 +1172,7 @@ application limits:
 
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/native-dsp-tests -o=-j4 -- \
-  '-DEXTRA_CONF_FILE=../native/fpu.conf;imu.conf;dsp.conf' \
+  '-DEXTRA_CONF_FILE=imu.conf;dsp.conf' \
   -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 uv run --locked pytest -q tests/test_native.py::test_dsp_sdk_example
 ```

@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20.5)
 get_filename_component(BRICKPHYR_ROOT ../.. ABSOLUTE)
 set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
-set(CONF_FILE ../native/prj.conf prj.conf)
+set(CONF_FILE ../arm.conf ../native/prj.conf prj.conf)
 list(APPEND SYSCALL_INCLUDE_DIRS ${BRICKPHYR_ROOT}/sdk/include ${BRICKPHYR_ROOT}/include)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(python_ble)
@@ -42,6 +42,7 @@ zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_gatt_discover -Wl,--wrap=bt_gatt_subscribe -Wl,--wrap=bt_gatt_write
   -Wl,--wrap=bt_gatt_read
   -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb -Wl,--wrap=bt_gatt_get_mtu)
+include(${BRICKPHYR_ROOT}/cmake/python_arch.cmake)
 set(programs echo spin flood native messaging radio lwp3 wireless xbox network)
 if(CONFIG_BRICKPHYR_PYBRICKS_SLOTS GREATER 0)
   # A compiler-produced large constant fills the synthetic 64 KiB store.
@@ -57,7 +58,7 @@ foreach(program ${programs})
     set(source ${BRICKPHYR_ROOT}/tests/python/native.py)
   endif()
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${program}.mpy
-    COMMAND ${CMAKE_BINARY_DIR}/mpy-cross/mpy-cross -march=armv7m -s ${program}.py
+    COMMAND ${CMAKE_BINARY_DIR}/mpy-cross/mpy-cross -march=${python_native_arch} -s ${program}.py
       -o ${CMAKE_CURRENT_BINARY_DIR}/${program}.mpy ${source}
     DEPENDS mpy_cross ${source} VERBATIM)
   generate_inc_file_for_target(app ${CMAKE_CURRENT_BINARY_DIR}/${program}.mpy

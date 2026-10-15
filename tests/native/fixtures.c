@@ -203,9 +203,9 @@ int native_fixture_run(const char *name)
 		}
 		memcpy(changed, hello, sizeof(hello));
 		if (!strcmp(name, "badfloat")) {
-			/* ELF32 e_flags: keep EABI version, invert the explicit float ABI. */
+			/* ELF32 e_flags: keep EABI version, request incompatible soft ABI. */
 			uint32_t flags = sys_get_le32(changed + 36) & ~0x600U;
-			flags |= IS_ENABLED(CONFIG_FP_HARDABI) ? 0x200U : 0x400U;
+			flags |= 0x200U;
 			sys_put_le32(flags, changed + 36);
 		} else {
 			elf_ehdr_t *header = (void *)changed;

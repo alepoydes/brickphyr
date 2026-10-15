@@ -17,9 +17,6 @@
 #if defined(__ARM_ARCH_7EM__) && defined(__ARM_PCS_VFP) && (__ARM_FP == 4)
 #define BP_ABI_ARCH 1U /* ARMv7E-M, FPv4-SP-D16, hard float */
 #define BRICKPHYR_ABI BP_ABI_VERSION "-armv7em-hf"
-#elif defined(__ARM_ARCH_7M__) && !defined(__ARM_PCS_VFP)
-#define BP_ABI_ARCH 2U /* ARMv7-M, software float; simulator fixture */
-#define BRICKPHYR_ABI BP_ABI_VERSION "-armv7m-sf"
 #else
 #error Unsupported Brickphyr native architecture
 #endif

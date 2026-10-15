@@ -603,7 +603,9 @@ Set `ZEPHYR_SDK_INSTALL_DIR` to the SDK installed during workspace setup. The
 separate example build uses the exported SDK and toolchain, without compiling
 the firmware again. Its [versioned ELF ABI](applications.md#portable-elf-abi)
 is independent of Zephyr configuration; architecture, required services and
-memory must still match the destination. The resulting `hello.elf` demonstrates time, output,
+memory must still match the destination. The [interactive M4 QEMU image](testing.md#python-application-integration)
+uses the same native ABI for local application checks without a hub.
+The resulting `hello.elf` demonstrates time, output,
 constructors and floating-point arithmetic; `counter.elf` reports a counter and buttons.
 `matrix.elf` displays a smile until stopped. `imu.elf` reports calibrated
 acceleration (µm/s²) and angular velocity (millidegrees/s) in hub axes.

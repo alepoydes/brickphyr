@@ -46,8 +46,8 @@ arena. Its independent UART emulators provide link state, not simultaneous wire
 negotiation or a physical timing test. Build separately before the short check:
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/lump -d build/lump-arm-capacity -o=-j4 -- \
-  -DUART_CAPACITY_ONLY=ON -DEXTRA_CONF_FILE=capacity.conf \
+uv run --locked west build -b mps2/an386 -s tests/lump -d build/lump-arm-capacity -o=-j4 -- \
+  -DUART_CAPACITY_ONLY=ON -DEXTRA_CONF_FILE="capacity.conf;$PWD/tests/arm.conf" \
   '-DDTC_OVERLAY_FILE=app.overlay;capacity.overlay;../ports/four.overlay'
 uv run --locked pytest -q -x 'tests/test_native.py::test_arm_firmware[lump-arm-capacity-PROJECT EXECUTION SUCCESSFUL]'
 ```

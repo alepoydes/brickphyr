@@ -167,10 +167,6 @@ int python_image_check(const void *program, size_t length, enum application_form
 	    arch != MPY_FEATURE_ARCH) {
 		return -ENOTSUP;
 	}
-	/* The upstream Thumb feature upper bound also includes v7EM on Cortex-M3. */
-	if (IS_ENABLED(CONFIG_CPU_CORTEX_M3) && arch > MP_NATIVE_ARCH_ARMV7M) {
-		return -ENOTSUP;
-	}
 	return 0;
 }
 

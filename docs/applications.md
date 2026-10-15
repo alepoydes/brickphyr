@@ -704,7 +704,7 @@ cause, including when closing the file also fails. The F4 Shell retains its
 4096-byte stack for storage, Python and other commands.
 
 Earlier board checks verified repeated execution/unload, constructor state,
-soft-float arithmetic, forced termination, recovery after a prohibited RAM write,
+floating-point arithmetic, forced termination, recovery after a prohibited RAM write,
 cross-transport reconnection and power holds on one Robot Inventor F4 (PCB revision
 unknown). ARM QEMU additionally checks allocator capacity restoration, exhaustion,
 ABI/truncation rejection and command execution at the terminal priority. SMP checks

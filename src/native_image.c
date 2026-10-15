@@ -107,9 +107,8 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 	/* Relocatable objects may omit float flags; application metadata declares
 	 * the instruction set and calling convention too. Reject contradictions. */
 	uint32_t float_abi = header->e_flags & 0x600U;
-	uint32_t expected_abi = IS_ENABLED(CONFIG_FP_HARDABI) ? 0x400U : 0x200U;
 	if ((header->e_flags & 0xff000000U) != 0x05000000U ||
-	    (float_abi && float_abi != expected_abi)) {
+	    (float_abi && float_abi != 0x400U /* EF_ARM_ABI_FLOAT_HARD */)) {
 		return -ENOTSUP;
 	}
 	elf_shdr_t names;

@@ -46,6 +46,12 @@ def qemu(build):
     )
 
 
+def check_arm_fixture(build):
+    config = set((build / "zephyr/.config").read_text().splitlines())
+    required = {"CONFIG_CPU_CORTEX_M4=y", "CONFIG_FP_HARDABI=y", "CONFIG_ARM_MPU=y"}
+    assert required <= config, f"Reconfigure {build} for mps2/an386 with tests/arm.conf"
+
+
 def test_reserved_slot_names():
     from brickphyrdev.application import installed_name
 
@@ -62,11 +68,9 @@ def test_reserved_slot_names():
     ("suite", "success"),
     [
         ("native-app-tests", b"NATIVE PASS:"),
-        ("native-fpu-tests", b"NATIVE PASS:"),
         ("native-portable-tests", b"NATIVE PASS:"),
         ("native-compact-tests", b"NATIVE PASS:"),
         ("boot-handoff-tests", b"PROJECT EXECUTION SUCCESSFUL"),
-        ("python-core-fpu-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("crypto-heap-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("imu-processing-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("motor-control-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
@@ -92,6 +96,7 @@ def test_reserved_slot_names():
 )
 def test_arm_firmware(suite, success):
     build = Path(__file__).resolve().parents[1] / "build" / suite
+    check_arm_fixture(build)
     # Ask Ninja for just Zephyr's generated runner command, without building its
     # dependencies inside the test timeout. Preserve the board's clock/options.
     command = subprocess.check_output(
@@ -140,14 +145,14 @@ def native_console(build, *, virtual_clock=False):
     # Use the finest instruction clock, paced for host I/O. This is functional
     # device simulation, not the physical CPU's instruction/cycle timing.
     clock = ["-icount", "shift=0,align=off,sleep=on"] if virtual_clock else []
-    cortex_m4 = "CONFIG_CPU_CORTEX_M4=y" in (build / "zephyr/.config").read_text().splitlines()
+    check_arm_fixture(build)
     process = subprocess.Popen(
         [
             qemu(build),
             "-machine",
-            "mps2-an386" if cortex_m4 else "mps2-an385",
+            "mps2-an386",
             "-cpu",
-            "cortex-m4" if cortex_m4 else "cortex-m3",
+            "cortex-m4",
             "-nographic",
             "-monitor",
             "none",

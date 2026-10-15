@@ -4,7 +4,7 @@ tests:
     integration_platforms: [native_sim/native/64]
     tags: [python]
   brickphyr.python.arm:
-    platform_allow: mps2/an385
-    integration_platforms: [mps2/an385]
-    extra_args: EXTRA_CONF_FILE=arm.conf
+    platform_allow: mps2/an386
+    integration_platforms: [mps2/an386]
+    extra_args: EXTRA_CONF_FILE=arm.conf;../arm.conf
     tags: [python, userspace]
