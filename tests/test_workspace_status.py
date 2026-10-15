@@ -27,16 +27,15 @@ def test_release_check_detects_unpinned_code_and_stale_resolution(tmp_path, monk
         git(path, "init", "-q")
     (source / "code").write_text("original\n")
     commit(source)
-    git(dependency, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "module")
+    git(dependency, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "micropython")
     pin = commit(dependency)
     git(dependency, "update-ref", "refs/heads/manifest-rev", pin)
     (workspace / ".west").mkdir()
     (workspace / ".west/config").write_text("[manifest]\npath = app\n")
 
     def update_pin():
-        manifest = {"manifest": {"projects": [{"name": "dependency", "url": str(dependency),
-                    "revision": git(dependency, "rev-parse", "HEAD"),
-                    "submodules": [{"path": "module"}]}], "self": {"path": "app"}}}
+        manifest = {"manifest": {"projects": [{"name": "pybricks", "path": "dependency", "url": str(dependency),
+                    "revision": git(dependency, "rev-parse", "HEAD")}], "self": {"path": "app"}}}
         (root / "west.yml").write_text(yaml.safe_dump(manifest))
         commit(root)
 
@@ -53,7 +52,7 @@ def test_release_check_detects_unpinned_code_and_stale_resolution(tmp_path, monk
     git(dependency, "update-ref", "refs/heads/manifest-rev", "HEAD")
     assert main(["--check"]) == 0
 
-    module = dependency / "module"
+    module = dependency / "micropython"
     (module / "code").write_text("local runtime fix\n")
     commit(module)
     assert main(["--check"]) == 1
@@ -63,3 +62,5 @@ def test_release_check_detects_unpinned_code_and_stale_resolution(tmp_path, monk
     assert main(["--check"]) == 0
     (module / "code").write_text("uncommitted runtime fix\n")
     assert main(["--check"]) == 1
+    git(dependency, "submodule", "deinit", "--force", "--", "micropython")
+    assert main(["--check"]) == 1  # A clean parent cannot hide an absent runtime.

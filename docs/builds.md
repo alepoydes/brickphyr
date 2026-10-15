@@ -77,6 +77,7 @@ For a standalone checkout whose parent is not yet a west workspace:
 ```sh
 uvx west init -l .
 uvx west update --narrow -o=--depth=1
+git -C ../pybricks-micropython submodule update --init --checkout --depth=1 micropython
 uv sync --locked --group sdk
 uv run --locked --group sdk west sdk install --gnu-toolchains arm-zephyr-eabi --install-base ../toolchains
 ```
@@ -87,7 +88,10 @@ Skip initialization for an existing workspace, and inspect dependency worktrees
 before updating them. SDK installation uses the version required by the pinned
 Zephyr checkout and downloads only the ARM compiler and host tools.
 Bootstrap west fetches the sibling checkouts before uv resolves the editable
-pybricksdev dependency. The published 0.1.1 pins include that release's coordinated
+pybricksdev dependency. Initialize MicroPython separately without `--recursive`:
+its revision is owned by the Pybricks gitlink, and its other platform libraries
+are not needed by Brickphyr. The workspace preflight still checks this required
+submodule. The published 0.1.1 pins include that release's coordinated
 [dependency changes](upstream.md#current-downstream-delta). The current hardware
 and native-application increments additionally require the local prerequisites
 listed in [upstream integration](upstream.md); publication and updated manifest

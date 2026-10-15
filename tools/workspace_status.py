@@ -77,7 +77,11 @@ def main(argv=None):
                     if project.sha("refs/heads/manifest-rev") != expected:
                         print("  CHECK: manifest-rev differs from the pin (stale west resolution)")
                         failed = True
-            if project.submodules is True:
+            # MicroPython is required, but initialized without west's recursive
+            # submodule update to avoid fetching unrelated platform libraries.
+            if project.name == "pybricks":
+                submodules = ["micropython"]
+            elif project.submodules is True:
                 tree = git_text(project, ["ls-tree", "-r", "HEAD"])
                 submodules = [
                     line.split("\t", 1)[1]

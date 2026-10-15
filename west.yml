@@ -13,8 +13,7 @@ manifest:
       url: https://github.com/alepoydes/pybricks-micropython
       revision: a7b1b04ae4f8449dd46b3dfb97c420334439fd35 # Brickphyr helpers on v4.1.0b6
       path: pybricks-micropython
-      submodules:
-        - path: micropython
+      # Initialize only micropython with Git; west recursively fetches unused ports.
     - name: zephyr
       url: https://github.com/alepoydes/zephyr
       revision: 29bbb539f73adee89fed53fef4b94d59c97962bf # Brickphyr integration on v4.4.2
