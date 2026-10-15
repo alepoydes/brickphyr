@@ -12,6 +12,7 @@ import tty
 from pathlib import Path
 
 import pytest
+import usb.core
 from west.manifest import Manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -226,6 +227,48 @@ def test_shell_handover_with_immediate_prompt(monkeypatch):
     assert state[0] == "pybricks"
 
 
+class _UsbHub:
+    iManufacturer = 1
+    iSerialNumber = 2
+    langids = usb.core.Device.langids
+    serial_number = usb.core.Device.serial_number
+
+    def __init__(self, manufacturer="Brickphyr", serial_number="hub-1", *, phase=2,
+                 descriptor_error=None, languages=(0x0409,)):
+        self.manufacturer_name = manufacturer
+        self.serial_text = serial_number
+        self.phase = phase
+        self.descriptor_error = descriptor_error
+        self.languages = languages
+        self.set_calls = 0
+        self._langids = None
+        self._serial_number = None
+
+    def ctrl_transfer(self, bmRequestType, bRequest, wValue=0, wIndex=0,
+                      data_or_wLength=None, timeout=None):
+        import array
+
+        import usb.core
+
+        if (bmRequestType, bRequest) == (0x80, 0x06):
+            if self.descriptor_error:
+                raise self.descriptor_error
+            index = wValue & 0xFF
+            if index == 0:
+                body = b"".join(lang.to_bytes(2, "little") for lang in self.languages)
+            else:
+                assert wIndex == self.languages[0]
+                value = self.manufacturer_name if index == 1 else self.serial_text
+                body = value.encode("utf-16-le")
+            return array.array("B", bytes((len(body) + 2, 3)) + body)
+        assert (bRequest, wValue, wIndex) == (0x43, 0, 0)
+        if bmRequestType == 0xC0:
+            return bytes((1, self.phase))
+        assert (bmRequestType, data_or_wLength) == (0x40, b"")
+        self.set_calls += 1
+        raise usb.core.USBError("reset during SET acknowledgment", errno=errno.ENODEV)
+
+
 def test_usb_wake_survives_reset_ack_race(monkeypatch, capsys):
     import usb.core
     import usb.util
@@ -233,24 +276,9 @@ def test_usb_wake_survives_reset_ack_race(monkeypatch, capsys):
     from brickphyrdev import usb as brickphyr_usb
     from brickphyrdev.cli import main
 
-    calls = []
     released = []
-
-    class Hub:
-        manufacturer = "Brickphyr"
-        serial_number = "hub-1"
-
-        def __init__(self, phase):
-            self.phase = phase
-
-        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
-            calls.append((self.phase, request_type, request, value, index, data))
-            if request_type == 0xC0:
-                return bytes((1, self.phase))
-            raise usb.core.USBError("reset during SET acknowledgment", errno=errno.ENODEV)
-
-    off = Hub(2)
-    running = Hub(0)
+    off = _UsbHub(phase=2)
+    running = _UsbHub(phase=0)
     discoveries = iter(([off], [], [running]))
     clock = [0.0]
     monkeypatch.setattr(usb.core, "find", lambda **kwargs: next(discoveries))
@@ -262,11 +290,8 @@ def test_usb_wake_survives_reset_ack_race(monkeypatch, capsys):
     main()
 
     assert capsys.readouterr().out == "USB running\n"
-    assert [(request_type, request, value, index, data) for _, request_type, request, value, index, data in calls] == [
-        (0xC0, 0x43, 0, 0, 2),
-        (0x40, 0x43, 0, 0, b""),
-        (0xC0, 0x43, 0, 0, 2),
-    ]
+    assert off.set_calls == 1
+    assert running.set_calls == 0
     assert released == [running, off]
 
 
@@ -276,47 +301,85 @@ def test_usb_discovery_closes_unselected_and_error_handles(monkeypatch):
 
     from brickphyrdev import usb as brickphyr_usb
 
-    class Hub:
-        def __init__(self, manufacturer, serial_number):
-            self.manufacturer = manufacturer
-            self.serial_number = serial_number
-
-    class Denied:
-        @property
-        def manufacturer(self):
-            raise usb.core.USBError("permission denied", errno=errno.EACCES)
-
-    foreign, wrong, selected = Hub("Other", "hub-1"), Hub("Brickphyr", "hub-2"), Hub("Brickphyr", "hub-1")
+    foreign, wrong, selected = _UsbHub("Other"), _UsbHub(serial_number="hub-2"), _UsbHub()
     released = []
     monkeypatch.setattr(usb.util, "dispose_resources", released.append)
     monkeypatch.setattr(usb.core, "find", lambda **kwargs: [foreign, wrong, selected])
     assert brickphyr_usb.device("hub-1") is selected
     assert released == [foreign, wrong]
 
-    duplicate = Hub("Brickphyr", "hub-1")
+    duplicate = _UsbHub()
     monkeypatch.setattr(usb.core, "find", lambda **kwargs: [selected, duplicate])
     with pytest.raises(RuntimeError, match="found 2"):
         brickphyr_usb.device("hub-1", missing_ok=True)
     assert released[-2:] == [selected, duplicate]
 
-    denied = Denied()
+    failure = usb.core.USBError("permission denied", errno=errno.EACCES)
+    denied = _UsbHub(descriptor_error=failure)
     monkeypatch.setattr(usb.core, "find", lambda **kwargs: [denied])
-    with pytest.raises(usb.core.USBError):
+    with pytest.raises(usb.core.USBError) as caught:
         brickphyr_usb.device("hub-1", missing_ok=True)
+    assert caught.value is failure
     assert released[-1] is denied
+
+    no_languages = _UsbHub(languages=())
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [no_languages])
+    assert brickphyr_usb.device("hub-1", missing_ok=True) is None
+    assert released[-1] is no_languages
+
+
+def test_usb_wake_retries_enumeration_reset_and_preserves_permission_error(monkeypatch):
+    import usb.core
+    import usb.util
+
+    from brickphyrdev import usb as brickphyr_usb
+
+    reset = usb.core.USBError("reset during descriptor read", errno=errno.ENODEV)
+    denied = usb.core.USBError("permission denied during descriptor read", errno=errno.EACCES)
+    off = _UsbHub()
+    resetting = _UsbHub(descriptor_error=reset)
+    running = _UsbHub(phase=0)
+    clock = [0.0]
+    released = []
+    discoveries = iter(([resetting], [running]))
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: next(discoveries))
+    monkeypatch.setattr(usb.util, "dispose_resources", released.append)
+    monkeypatch.setattr(brickphyr_usb.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(brickphyr_usb.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    brickphyr_usb.wake(off)
+    assert off.set_calls == 1
+    assert released == [resetting, running]
+
+    forbidden = _UsbHub(descriptor_error=denied)
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [forbidden])
+    with pytest.raises(usb.core.USBError) as caught:
+        brickphyr_usb.wake(_UsbHub())
+    assert caught.value is denied
+    assert released[-1] is forbidden
+
+
+def test_usb_wake_initial_identity_error_sends_no_set(monkeypatch):
+    import usb.core
+
+    from brickphyrdev import usb as brickphyr_usb
+
+    failure = usb.core.USBError("reset during initial serial read", errno=errno.ENODEV)
+    hub = _UsbHub(descriptor_error=failure)
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: pytest.fail("unidentified hub rediscovered"))
+
+    with pytest.raises(usb.core.USBError) as caught:
+        brickphyr_usb.wake(hub)
+    assert caught.value is failure
+    assert hub.set_calls == 0
 
 
 def test_usb_wake_running_is_no_op():
     from brickphyrdev import usb as brickphyr_usb
 
-    class Hub:
-        serial_number = "hub-1"
-
-        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
-            assert (request_type, request, value, index, data) == (0xC0, 0x43, 0, 0, 2)
-            return b"\x01\x00"
-
-    brickphyr_usb.wake(Hub())
+    hub = _UsbHub(phase=0)
+    brickphyr_usb.wake(hub)
+    assert hub.set_calls == 0
 
 
 def test_usb_wake_times_out_without_repeating_set(monkeypatch):
@@ -330,15 +393,14 @@ def test_usb_wake_times_out_without_repeating_set(monkeypatch):
     clock = [0.0]
     failure = usb.core.USBError("reset during SET acknowledgment", errno=errno.ENODEV)
 
-    class Hub:
-        manufacturer = "Brickphyr"
-        serial_number = "hub-1"
-
-        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
-            if request_type == 0xC0:
-                return b"\x01\x02"
-            sets.append(self)
-            raise failure
+    class Hub(_UsbHub):
+        def ctrl_transfer(self, bmRequestType, bRequest, wValue=0, wIndex=0,
+                          data_or_wLength=None, timeout=None):
+            if bmRequestType == 0x40:
+                sets.append(self)
+                raise failure
+            return super().ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                         data_or_wLength, timeout)
 
     first = Hub()
     monkeypatch.setattr(usb.core, "find", lambda **kwargs: [Hub()])

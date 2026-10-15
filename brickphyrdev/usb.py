@@ -23,11 +23,22 @@ def device(serial_number=None, *, missing_ok=False):
     hubs = list(usb.core.find(find_all=True, idVendor=0x2FE3, idProduct=0x0004))
     selected = None
     try:
-        matches = [
-            hub for hub in hubs
-            if hub.manufacturer == "Brickphyr"
-            and (serial_number is None or hub.serial_number == serial_number)
-        ]
+        matches = []
+        for hub in hubs:
+            # Device.langids hides USBError as an empty language list. Read
+            # descriptors through the public functions so wake can distinguish
+            # a reset race from denied access or an invalid device identity.
+            languages = usb.util.get_langids(hub)
+            if not languages:
+                continue
+            language = languages[0]
+            if usb.util.get_string(hub, hub.iManufacturer, language) != "Brickphyr":
+                continue
+            if serial_number is not None and (
+                usb.util.get_string(hub, hub.iSerialNumber, language) != serial_number
+            ):
+                continue
+            matches.append(hub)
         if len(matches) == 1:
             selected = matches[0]
             return selected
@@ -64,11 +75,23 @@ def _reset_error(error):
     } or getattr(error, "backend_error_code", None) in {-1, -4, -7}
 
 
+def _serial_number(hub):
+    import usb.util
+
+    # Read directly here too: Device.serial_number can hide a reset while
+    # fetching its language list. Never rediscover a different hub on failure.
+    languages = usb.util.get_langids(hub)
+    value = usb.util.get_string(hub, hub.iSerialNumber, languages[0]) if languages else None
+    if not value:
+        raise RuntimeError("Hub has no USB serial number")
+    return value
+
+
 def wake(hub):
     import usb.core
     import usb.util
 
-    serial_number = hub.serial_number
+    serial_number = _serial_number(hub)
     deadline = time.monotonic() + 10
     current = hub
     sent = False
@@ -109,11 +132,12 @@ def wake(hub):
 
 
 def serial_port(hub):
+    serial_number = _serial_number(hub)
     ports = [
         port.device
         for port in serial.tools.list_ports.comports()
         if (port.vid, port.pid, port.serial_number)
-        == (hub.idVendor, hub.idProduct, hub.serial_number)
+        == (hub.idVendor, hub.idProduct, serial_number)
     ]
     if len(ports) != 1:
         raise RuntimeError(f"Expected one matching CDC port, found {len(ports)}")

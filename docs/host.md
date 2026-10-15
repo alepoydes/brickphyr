@@ -347,7 +347,9 @@ uv run brickphyrdev terminal --usb
 ```
 
 Add `--serial SERIAL` after `usb` when several hubs are attached. Wake waits up
-to ten seconds for the same hub to report that it is running. It does not restart
+to ten seconds for the same hub to report that it is running. Transient USB
+descriptor and transfer errors during re-enumeration use that same deadline;
+access errors are reported without retrying. It does not restart
 an already running hub or interrupt its application. Discovery, mode selection
 and opening a terminal do not wake the hub implicitly. The command requires
 firmware supporting the power request below; it cannot power a disconnected or
