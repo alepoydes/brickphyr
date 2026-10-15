@@ -314,10 +314,12 @@ allocations. These figures exclude the source upload, recorder, kernel thread
 metadata and other platform services; loaded bytes are not a peak heap measurement.
 
 The 30-row ELF runs over USB and BLE with the system-heap backend and unchanged
-134272-byte full-profile heap. A separate USB capacity probe declaring a 320-row BSS array
-still fails to start with `ENOMEM`; it does not establish capacity for keeping
-that whole tape in the application. Large aligned regions and stacks still need
-sufficient contiguous free space, even when the admission budget fits.
+134272-byte full-profile heap. A separate USB capacity probe declaring a 320-row
+BSS array links successfully but fails to allocate its stack with `ENOMEM`.
+About 60 KiB remains free at that point, without a contiguous block satisfying
+the stack's 16 KiB alignment and privileged-storage requirements. This does not
+establish capacity for keeping that whole tape in the application: neither the
+admission budget nor total free bytes account for fragmentation and alignment.
 
 Processing those 320 rows takes longer than their 4.8 s input budget. Applications
 must choose retention and update frequency to match available computation;

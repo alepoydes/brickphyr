@@ -512,6 +512,14 @@ on unload. It reserves no dedicated LLEXT heap; the default allocator is unchang
 Brickphyr uses this backend so alignment padding outside an allocation remains
 available to other system-heap users.
 
+Local Zephyr commit `b34c1276` on the same branch checks actual free-block
+addresses when worst-case alignment padding cannot fit. The additional search
+is bounded by `CONFIG_SYS_HEAP_ALLOC_LOOPS`; ordinary successful allocations
+keep their existing path. ARM and 64-bit host checks cover fitting aligned
+blocks, rewind offsets, canaries and reclamation. This avoids false allocation
+failures but cannot make fragmented space contiguous. The change is pending
+publication and manifest integration.
+
 The earlier commit `3e53777a` adds optional `llext_load_param.heap` for a caller-owned
 heap. NULL selects the configured allocator. Harvard/memory-block allocation and
 experimental save/restore reject explicit per-load heaps. The upstream dynamic

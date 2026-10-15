@@ -2691,6 +2691,8 @@ static int prepare(size_t stack_size)
 	k_thread_stack_t *stack = k_thread_stack_alloc(stack_size, K_USER);
 	k_thread_heap_assign(caller, pool);
 	if (!stack) {
+		LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
+		LOG_ERR("Application stack allocation failed: %zu user bytes", stack_size);
 		return -ENOMEM;
 	}
 	int err = reap(true);
