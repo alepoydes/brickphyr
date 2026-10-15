@@ -7,4 +7,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(motor_output)
 target_sources(app PRIVATE main.c ../ports/wiring.c ${BRICKPHYR_ROOT}/src/ports/output.c)
 target_include_directories(app PRIVATE ${BRICKPHYR_ROOT}/src/ports
-  ${BRICKPHYR_ROOT}/tests/ports ${BRICKPHYR_ROOT}/sdk/include)
+  ${BRICKPHYR_ROOT}/tests/ports ${BRICKPHYR_ROOT}/sdk/include ${BRICKPHYR_ROOT}/include)

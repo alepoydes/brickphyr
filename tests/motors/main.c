@@ -328,8 +328,8 @@ static void group_lifetime(void)
 	zassert_true(state.ports[0].cleanup_us >= state.ports[0].applied_us);
 	zassert_equal(state.ports[1].applied_us, 0);
 
-	/* Cancellation during A's failed write must retain its first coast error,
-	 * even though the group's follow-up coast succeeds. */
+	/* Cancellation during A's failed write retains the first coast error.
+	 * One batch cleanup attempts every member; explicit release retries A. */
 	command = group_command(300, -300, k_uptime_get() + 150);
 	fail_drive_channel = 0;
 	fail_first_coast_after_drive_error = true;
@@ -345,12 +345,14 @@ static void group_lifetime(void)
 	zassert_equal(state.cleanup_error, -EACCES);
 	zassert_equal(state.ports[0].cleanup_error, -EACCES);
 	zassert_equal(state.applied_mask, 0);
-	zassert_equal(state.cleanup_mask, state.port_mask);
-	zassert_true(state.ports[0].cleanup_us > 0);
+	zassert_equal(state.cleanup_mask, BIT(1));
+	zassert_equal(state.ports[0].cleanup_us, 0);
+	zassert_false(motor(0).valid);
 	zassert_equal(pup_test_circuits[0].coast_error, 0);
-	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
 	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	zassert_true(motor(0).valid);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
 }
 
 ZTEST(motors, test_lifetime)

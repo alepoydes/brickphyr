@@ -210,6 +210,7 @@ struct drivebase {
 static struct drivebase *drivebases[ARRAY_SIZE(pins) / 2];
 static uint32_t drivebase_handle;
 static void cancel_drivebase(struct port *p, int error, bool detach);
+static int control_input_error(struct port *p);
 #endif
 static void scan(struct k_work *item);
 static K_WORK_DELAYABLE_DEFINE(work, scan);
@@ -850,11 +851,114 @@ static void check_motor_group(void)
 		int err = m->error ? m->error : p->value.generation != g->ports[i].generation ? -ESTALE :
 			p->owner != motor_group.owner || m->request != g->ports[i].request ? -ECANCELED :
 			output_device_error(&ports[i], false);
+#ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
+		if (!err && m->control.observing) {
+			err = control_input_error(&ports[i]);
+			if (!err && p->control_due && k_uptime_get() >= p->control_due + CONTROL_MS) err = -ETIMEDOUT;
+		}
+#endif
 		if (!g->ports[i].error) g->ports[i].error = err;
 		if (!error) error = err;
 	}
 	if (!error && g->active && k_uptime_get() >= g->deadline_ms) error = -ETIMEDOUT;
 	if (error) cancel_motor_group(error);
+}
+
+static int group_output_check(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	check_motor_group();
+	int err = motor_group.cancelling ? motor_group.value.error : 0;
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+/* One worker owns output and publication. Keep preparation separate from the
+ * batch's physical application so a driver can latch all selected outputs at
+ * once. Observers run afterwards through apply_motor(), using this result. */
+static void apply_motor_group(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	check_motor_group();
+	struct bp_motor_group_state *g = &motor_group.value;
+	bool pending = false;
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (g->port_mask & BIT(i)) pending |= ports[i].motor.pending;
+	}
+	if (!g->pending || !pending) {
+		k_spin_unlock(&lock, key);
+		return;
+	}
+	bool cancelling = motor_group.cancelling;
+	struct bp_motor_group_command command = {.port_mask = g->port_mask,
+		.deadline_ms = cancelling ? 0 : g->deadline_ms};
+	uint32_t requests[BP_PORT_COUNT] = {0};
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (!(command.port_mask & BIT(i))) continue;
+		struct port *p = &ports[i];
+		struct bp_motor_state *m = &p->motor;
+		requests[i] = m->request;
+		command.ports[i].generation = p->value.generation;
+		command.ports[i].duty_permille = m->requested_duty;
+		if (m->requested_mode == BP_MOTOR_COAST) command.coast_mask |= BIT(i);
+		m->valid = false;
+		if (!(command.coast_mask & BIT(i)) && m->requested_duty) motor_activity(i, true);
+	}
+	k_spin_unlock(&lock, key);
+
+	struct port_output_result result;
+	int err = port_output_group(&command, &result, cancelling ? NULL : group_output_check);
+	key = k_spin_lock(&lock);
+	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+		if (!(command.port_mask & BIT(i))) continue;
+		struct port *p = &ports[i];
+		struct bp_motor_state *m = &p->motor;
+		bool applied = result.applied_mask & BIT(i);
+		bool passive = command.coast_mask & BIT(i);
+		int output_error = result.errors[i];
+		m->completed = requests[i];
+		m->pending = m->request != requests[i];
+		m->valid = applied;
+		m->cleanup_error = cancelling ? output_error : 0;
+		m->control.active = m->control.done = m->control.stalled = false;
+		if (output_error) {
+			if (!m->error) m->error = output_error;
+			m->failures += m->failures != UINT32_MAX;
+		}
+		if (applied) {
+			m->mode = passive ? BP_MOTOR_COAST : BP_MOTOR_DUTY;
+			m->duty = passive ? 0 : command.ports[i].duty_permille;
+			m->applied_ms = result.applied_us[i] / 1000;
+			m->generation = command.ports[i].generation;
+			m->deadline_ms = passive ? 0 : command.deadline_ms;
+			p->supply = 0;
+		}
+		if (cancelling) {
+			group_cleanup_result(i, output_error, result.applied_us[i]);
+		} else {
+			/* A concurrent cancellation changes requested_mode/request, not
+			 * the identity of the original write which just reached hardware. */
+			if (applied) {
+				g->ports[i].applied_us = result.applied_us[i];
+				g->applied_mask |= BIT(i);
+			}
+			if (!g->ports[i].error) g->ports[i].error = output_error;
+		}
+		motor_activity(i, !m->valid || (!passive && m->duty));
+		if (applied && passive && !m->pending && m->releasing && !write_pending(p) && !pf_outputs(p)) {
+			m->releasing = false;
+			drop_claim(p);
+		}
+	}
+	if (!cancelling) {
+		if (err) cancel_motor_group(err);
+		check_motor_group();
+	}
+	bool cleanup = !cancelling && motor_group.cancelling;
+	k_spin_unlock(&lock, key);
+	/* At most one cleanup pass; retries belong to ordinary release/recovery.
+	 * Do not let a failed cleanup overwrite the original operation error. */
+	if (cleanup) apply_motor_group();
 }
 #endif
 
@@ -1306,6 +1410,12 @@ static __unused int64_t apply_motor(uint32_t port)
 	if (group_member(p)) {
 		check_motor_group();
 		if (!motor_group.cancelling) expires = motor_group.value.deadline_ms;
+		/* A request arriving after this pass's batch must remain pending for
+		 * the next batch; individual observation must never apply one member. */
+		if (m->pending) {
+			k_spin_unlock(&lock, key);
+			return k_uptime_get();
+		}
 	}
 #endif
 	int device_error = output_device_error(p, p->value.type_id == LEGO_DEVICE_TYPE_ID_LPF2_LIGHT);
@@ -1424,8 +1534,6 @@ static __unused int64_t apply_motor(uint32_t port)
 	 * newly energized output. Expiry is also checked for the whole group. */
 	if (!err && output && !passive && expires && k_uptime_get() >= expires) err = -ETIMEDOUT;
 	if (!err && output) err = output_error = passive ? port_output_coast(port) : port_output_drive(port, duty);
-	bool applied = !err && output;
-	int64_t applied_us = grouped && applied ? hub_time_us() : 0;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	if (!err && frame) {
 		/* Prediction must use the output which actually reached the driver.
@@ -1463,33 +1571,20 @@ static __unused int64_t apply_motor(uint32_t port)
 	struct bp_servo_trajectory trajectory = {0};
 	if (!err && observing && !paired && (frame || command_pending)) controller_trajectory_get(&p->controller->control, &trajectory);
 #endif
-	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
-	int64_t cleanup_us = grouped && err && !cleanup ? coast_attempted ? applied_us : hub_time_us() : 0;
+	bool deferred_cleanup = grouped && err;
+	int cleanup = !err || deferred_cleanup ? 0 : coast_attempted ? output_error : port_output_coast(port);
 	key = k_spin_lock(&lock);
 #ifdef CONFIG_BRICKPHYR_MOTORS
-	if (group_member(p)) {
-		/* Cancellation can arrive during the driver call. Record its result
-		 * before the replacement coast can overwrite the port's completion. */
-		struct bp_motor_group_state *g = &motor_group.value;
-		bool original = request == g->ports[port].request && generation == g->ports[port].generation;
-		if (original) {
-			if (applied) {
-				g->ports[port].applied_us = applied_us;
-				g->applied_mask |= BIT(port);
-			}
-			if (!g->ports[port].error) g->ports[port].error = err;
-			if (!g->error) g->error = err;
-		}
-		if (err || (!original && applied && passive)) {
-			group_cleanup_result(port, cleanup, err ? cleanup_us : applied_us);
-		}
+	/* A failed observer stops the whole group through its batch. Individual
+	 * observation must not silently coast just one member ahead of the rest. */
+	if (deferred_cleanup) {
+		if (!motor_group.value.ports[port].error) motor_group.value.ports[port].error = err;
+		cancel_motor_group(err);
 	}
-#else
-	ARG_UNUSED(cleanup_us);
 #endif
 	m->completed = request;
 	m->pending = request != m->request;
-	m->valid = !cleanup;
+	m->valid = !cleanup && !deferred_cleanup;
 	m->cleanup_error = cleanup;
 	if (output || err) m->deadline_ms = 0;
 	if (output || err) m->control.active = false;
@@ -1585,15 +1680,8 @@ static void complete_motor_group(void)
 
 static void finish_motor_group(void)
 {
+	apply_motor_group();
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	struct bp_motor_group_state *g = &motor_group.value;
-	check_motor_group();
-	uint32_t coast = g->pending && motor_group.cancelling ? g->port_mask : 0;
-	k_spin_unlock(&lock, key);
-	/* Include earlier successful members when a later output failed. These
-	 * calls use the ordinary driver/cleanup path in this same worker pass. */
-	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) if (coast & BIT(i)) apply_motor(i);
-	key = k_spin_lock(&lock);
 	complete_motor_group();
 	k_spin_unlock(&lock, key);
 }
@@ -1761,6 +1849,9 @@ static void scan(struct k_work *item)
 	for (size_t i = 0; i < ARRAY_SIZE(drivebases); i++) prepare_drivebase(i, now);
 #endif
 #if defined(CONFIG_BRICKPHYR_MOTORS) || defined(CONFIG_BRICKPHYR_PORT_UART)
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	apply_motor_group();
+#endif
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!pins[i][P5].port) continue;
 		k_spinlock_key_t key = k_spin_lock(&lock);

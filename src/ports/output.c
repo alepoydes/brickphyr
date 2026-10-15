@@ -4,6 +4,7 @@
  * Zephyr GPIO, PWM and pinctrl replace PBIO I/O. See docs/ports.md. */
 #define __ZEPHYR_SUPERVISOR__
 #include "output.h"
+#include "hub_clock.h"
 #include <brickphyr_port.h>
 #include <errno.h>
 #include <zephyr/drivers/gpio.h>
@@ -137,5 +138,30 @@ int port_output_drive(uint32_t port, int32_t duty)
 	}
 	direction[port] = err ? 0 : sign;
 	return err;
+}
+
+int port_output_group(const struct bp_motor_group_command *command,
+	struct port_output_result *result, int (*check)(void))
+{
+	*result = (struct port_output_result){0};
+	/* This portable backend has sequential GPIO/PWM operations. A common call
+	 * boundary does not claim simultaneous electrical switching. */
+	bool cleanup = command->coast_mask == command->port_mask;
+	int first = 0;
+	for (uint32_t port = 0; port < BP_PORT_COUNT; port++) {
+		if (!(command->port_mask & BIT(port))) continue;
+		bool passive = command->coast_mask & BIT(port);
+		int err = check ? check() : 0;
+		if (!err && !passive && command->deadline_ms && k_uptime_get() >= command->deadline_ms) err = -ETIMEDOUT;
+		if (!err) err = passive ? port_output_coast(port) : port_output_drive(port, command->ports[port].duty_permille);
+		result->errors[port] = err;
+		if (!err) {
+			result->applied_mask |= BIT(port);
+			result->applied_us[port] = hub_time_us();
+		}
+		if (!first) first = err;
+		if (err && !cleanup) break;
+	}
+	return first;
 }
 #endif

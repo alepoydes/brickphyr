@@ -523,12 +523,17 @@ it until the worker has coasted it; admission returns `ETIMEDOUT` meanwhile.
 This mechanism does not promise zero scheduling/driver delay at expiry;
 its physical latency under combined load remains to be measured.
 
-The existing motor output path applies each member in port order. Successful
-admission is atomic; physical PWM switching is not. If a member fails or its
+The worker submits a whole group to the shared output adapter, then advances
+motor observers using the applied outputs. The current portable adapter still
+applies members in port order: successful admission is atomic; physical PWM
+switching is not. If a member fails or its
 identity changes, the worker coasts every member, including earlier successes,
 in the same pass. It does not restore previous drive values. A driver already in
 progress must finish before cleanup can complete. Application stop/fault/return
 joins that cleanup before unload; ordinary host disconnection retains the group.
+Cleanup attempts every member once, including after cancellation during an
+output write. A failed cleanup leaves that output invalid and claimed until
+explicit release or normal device recovery retries it.
 
 `bp_motor_group_get(&state)` reads the last accepted request without I/O. Before
 the first request it returns `ENODATA` with zero state. `pending` includes initial
