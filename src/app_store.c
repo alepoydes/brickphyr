@@ -65,7 +65,7 @@ static bool name_valid(const char *name)
 	return true;
 }
 
-static int path_for(const char *name, char *path, size_t capacity)
+int app_store_path(const char *name, char *path, size_t capacity)
 {
 	if (!name_valid(name)) {
 		return -EINVAL;
@@ -149,7 +149,8 @@ int app_store_remove(const char *name)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
-	int err = path_for(name, path, sizeof(path));
+	int err = app_store_path(name, path, sizeof(path));
+	if (!err) err = application_preserve_file(path);
 	if (!err) {
 		err = fs_unlink(path);
 	}
@@ -164,7 +165,7 @@ int app_store_publish(const char *name, size_t length)
 	}
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
-	int err = path_for(name, path, sizeof(path));
+	int err = app_store_path(name, path, sizeof(path));
 	struct fs_dirent entry;
 	if (!err) {
 		err = fs_stat(APP_STAGE, &entry);
@@ -175,6 +176,7 @@ int app_store_publish(const char *name, size_t length)
 	if (!err) {
 		err = application_check_file(APP_STAGE, length);
 	}
+	if (!err) err = application_preserve_file(path);
 	if (!err) {
 		/* LittleFS commits this replacement atomically; old content remains
 		 * visible until the fully validated incoming image takes its name. */
@@ -188,7 +190,7 @@ int app_store_publish_upload(const char *name)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
-	int err = path_for(name, path, sizeof(path));
+	int err = app_store_path(name, path, sizeof(path));
 #ifdef CONFIG_MCUMGR_GRP_FS
 	if (!err) {
 		/* Profile handover can leave a partial standard upload. Close its
@@ -199,6 +201,7 @@ int app_store_publish_upload(const char *name)
 	if (!err) {
 		err = application_write_upload(APP_STAGE);
 	}
+	if (!err) err = application_preserve_file(path);
 	if (!err) {
 		err = fs_rename(APP_STAGE, path);
 	}
@@ -210,9 +213,9 @@ int app_store_run(const char *name)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
-	int err = path_for(name, path, sizeof(path));
+	int err = app_store_path(name, path, sizeof(path));
 	if (!err) {
-		/* path_for already validated the reserved slot's canonical name. */
+		/* app_store_path already validated the reserved slot's canonical name. */
 		int slot = -1;
 		if (name[0] == '@') {
 			slot = 0;

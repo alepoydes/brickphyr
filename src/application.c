@@ -3,6 +3,7 @@
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
 #include "app_data.h"
+#include "storage_work.h"
 #include <zephyr/llext/fs_loader.h>
 #endif
 #include "native_image.h"
@@ -108,6 +109,17 @@ static struct {
 K_APP_BMEM(python_partition) static uintptr_t python_stack_bottom;
 /* The privileged descriptor owns the allocation; only Python maps it. */
 BUILD_ASSERT(IS_POWER_OF_TWO(APPLICATION_MEMORY_LIMIT));
+struct python_backing {
+	struct python_source source;
+	atomic_ptr_t data;
+	size_t references;
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	struct fs_file_t file;
+	char path[sizeof("/apps/") + APP_NAME_MAX];
+#endif
+};
+static struct python_backing *python_backing, *upload_backing;
+static int backing_release(struct python_backing *backing);
 static struct k_mem_partition execution_partition = {
 	.size = APPLICATION_MEMORY_LIMIT, .attr = K_MEM_PARTITION_P_RW_U_RW,
 };
@@ -124,7 +136,11 @@ static struct native_control {
 } *controller;
 static struct {
 	const void *image, *parameters;
-	size_t size, length;
+	size_t size, length, offset;
+	enum { CONTROL_BUFFER, CONTROL_RESOURCE, CONTROL_FILE } source;
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	char name[APP_NAME_MAX + 1];
+#endif
 	int result;
 } control_request;
 static atomic_t control_pending;
@@ -246,7 +262,7 @@ static void refresh_input(void)
 	}
 }
 
-static int run_python(const void *program, size_t length, enum application_format format,
+static int run_python(struct python_backing *backing, size_t length, enum application_format format,
 	bool soft_reset, int program_id);
 
 /* Allocated only when a program first compiles/loads native code. The allocator
@@ -256,13 +272,16 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_DCACHE) && !IS_ENABLED(CONFIG_ICACHE));
 static void *code_memory;
 static size_t code_used, code_reserved;
 static struct {
-	bool reserve;
+	bool reserve, read;
+	size_t offset;
 	const void *data;
 	size_t length;
 	intptr_t result;
 } code_request;
 static atomic_t code_pending;
+#ifndef CONFIG_BRICKPHYR_APP_STORAGE
 static K_SEM_DEFINE(code_ready, 0, 1);
+#endif
 K_SEM_DEFINE(code_done, 0, 1);
 
 static intptr_t reserve_code(size_t length)
@@ -296,52 +315,75 @@ static intptr_t reserve_code(size_t length)
 	return (intptr_t)((uint8_t *)code_memory + code_used);
 }
 
+static void code_work_execute(void)
+{
+	/* The requesting application is asleep. Stop joins it before clearing the
+	 * request; lifecycle keeps its validated buffers alive through every read. */
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	if (atomic_get(&code_pending)) {
+		intptr_t result = -EINVAL;
+		if (code_request.read) {
+			result = python_backing ? python_source_read(&python_backing->source,
+				code_request.offset, (void *)code_request.data, code_request.length) : -ENODATA;
+		} else if (code_request.reserve) {
+			result = reserve_code(code_request.length);
+		} else if (!code_request.data && !code_request.length) {
+			code_reserved = 0;
+			result = 0;
+		} else if (code_reserved && code_request.length == code_reserved) {
+			memcpy((uint8_t *)code_memory + code_used, code_request.data, code_reserved);
+			barrier_dsync_fence_full();
+			barrier_isync_fence_full();
+			code_used += ROUND_UP(code_reserved, 4);
+			status.code_used = code_used;
+			code_reserved = 0;
+			result = 0;
+		}
+		code_request.result = result;
+		atomic_clear(&code_pending);
+		k_sem_give(&code_done);
+	}
+	k_mutex_unlock(&lifecycle);
+}
+
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+static void code_work_handler(struct k_work *work) { code_work_execute(); }
+static K_WORK_DEFINE(code_work, code_work_handler);
+#else
 static void code_worker(void *a, void *b, void *c)
 {
-	/* The application is blocked. This privileged worker has its own MPU map:
-	 * it can fill new code while the application's region stays read/execute.
-	 * Serializing with stop prevents copying from an unloaded application. */
 	for (;;) {
 		k_sem_take(&code_ready, K_FOREVER);
-		k_mutex_lock(&lifecycle, K_FOREVER);
-		if (atomic_get(&code_pending)) {
-			intptr_t result = -EINVAL;
-			if (code_request.reserve) {
-				result = reserve_code(code_request.length);
-			} else if (!code_request.data && !code_request.length) {
-				code_reserved = 0;
-				result = 0;
-			} else if (code_reserved && code_request.length == code_reserved) {
-				memcpy((uint8_t *)code_memory + code_used, code_request.data, code_reserved);
-				barrier_dsync_fence_full();
-				barrier_isync_fence_full();
-				code_used += ROUND_UP(code_reserved, 4);
-				status.code_used = code_used;
-				code_reserved = 0;
-				result = 0;
-			}
-			code_request.result = result;
-			atomic_clear(&code_pending);
-			k_sem_give(&code_done);
-		}
-		k_mutex_unlock(&lifecycle);
+		code_work_execute();
 	}
 }
-/* Initializing the 16 KiB arena exceeds one IMU period on F4. Keep it
- * preemptible below hardware and management, with the blocked application's
- * priority. */
 K_KERNEL_THREAD_DEFINE(code_thread, 1024, code_worker, NULL, NULL, NULL,
 	K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+#endif
+
+static intptr_t code_submit(void)
+{
+	atomic_set(&code_pending, 1);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	int err = storage_work_submit(&code_work);
+	if (err < 0) {
+		atomic_clear(&code_pending);
+		return err;
+	}
+#else
+	k_sem_give(&code_ready);
+#endif
+	k_sem_take(&code_done, K_FOREVER);
+	return code_request.result;
+}
 
 static intptr_t code_exchange(bool reserve, const void *data, size_t length)
 {
+	code_request.read = false;
 	code_request.reserve = reserve;
 	code_request.data = data;
 	code_request.length = length;
-	atomic_set(&code_pending, 1);
-	k_sem_give(&code_ready);
-	k_sem_take(&code_done, K_FOREVER);
-	return code_request.result;
+	return code_submit();
 }
 
 static void verify_python_thread(void)
@@ -608,6 +650,30 @@ static inline int z_vrfy_application_event_wait(int32_t timeout_ms)
 }
 #include <zephyr/syscalls/application_event_wait_mrsh.c>
 
+int z_impl_application_source_read(size_t offset, void *data, size_t length)
+{
+	/* Only this primary can read. Stop joins it before freeing the immutable
+	 * backing, so a bounded RAM copy needs neither a lock nor a worker wake. */
+	void *memory = python_backing ? atomic_ptr_get(&python_backing->data) : NULL;
+	if (memory) {
+		const struct python_source source = {python_source_memory, memory, python_backing->source.length};
+		return python_source_read(&source, offset, data, length);
+	}
+	code_request.read = true;
+	code_request.offset = offset;
+	code_request.data = data;
+	code_request.length = length;
+	return code_submit();
+}
+static inline int z_vrfy_application_source_read(size_t offset, void *data, size_t length)
+{
+	verify_python_thread();
+	if (length > 256) return -EMSGSIZE;
+	if (length) user_memory_check(data, length, 1, true, __func__);
+	return z_impl_application_source_read(offset, data, length);
+}
+#include <zephyr/syscalls/application_source_read_mrsh.c>
+
 intptr_t z_impl_application_code_reserve(size_t length)
 {
 	return code_exchange(true, NULL, length);
@@ -637,11 +703,36 @@ static inline int z_vrfy_application_code_commit(const void *data, size_t length
 #include <zephyr/syscalls/application_code_commit_mrsh.c>
 #endif
 
+#ifdef CONFIG_BRICKPHYR_PYTHON
+static int backing_release(struct python_backing *backing)
+{
+	if (!backing) return 0;
+	if (backing->references > 1) { backing->references--; return 0; }
+	int err = 0;
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	/* /apps is LittleFS: its close releases the handle/cache even when it
+	 * reports a sync error. Do not retry a terminal close on a freed handle. */
+	if (backing->path[0]) err = fs_close(&backing->file);
+#endif
+	k_free(atomic_ptr_get(&backing->data));
+	k_free(backing);
+	return err;
+}
+#endif
+
 /* lifecycle is held for all staging access. A complete validated upload can
  * be started from a later session; an incomplete one cannot be resumed there. */
 static void discard_upload(void)
 {
-	k_free(upload);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	/* Repeat uploads and the active VM hold independent references to one
+	 * immutable allocation. A store writer can take the upload reference. */
+	if (upload_backing) {
+		(void)backing_release(upload_backing);
+		upload_backing = NULL;
+	} else
+#endif
+		k_free(upload);
 	upload = NULL;
 	upload_capacity = upload_size = upload_bytes = 0;
 	upload_requirements = (struct native_image_requirements){0};
@@ -1648,20 +1739,26 @@ static inline int z_vrfy_bp_control_imu_wait(uint32_t port_mask, uint32_t timeou
 }
 #include <zephyr/syscalls/bp_control_imu_wait_mrsh.c>
 
-int z_impl_bp_control_start(const void *image, size_t size,
-	const void *parameters, size_t length)
+static int control_start_request(const void *parameters, size_t length)
 {
 	if (controller || atomic_get(&control_pending) || control_clock.step.sequence) return -EBUSY;
 	struct bp_record_info info;
 	application_record_info(&info);
 	if (info.spec.size) return -EBUSY;
-	control_request.image = image;
-	control_request.size = size;
 	control_request.parameters = parameters;
 	control_request.length = length;
 	atomic_set(&control_pending, 1);
 	k_sem_take(&control_done, K_FOREVER);
 	return control_request.result;
+}
+
+int z_impl_bp_control_start(const void *image, size_t size,
+	const void *parameters, size_t length)
+{
+	control_request.source = CONTROL_BUFFER;
+	control_request.image = image;
+	control_request.size = size;
+	return control_start_request(parameters, length);
 }
 static inline int z_vrfy_bp_control_start(const void *image, size_t size,
 	const void *parameters, size_t length)
@@ -1673,6 +1770,51 @@ static inline int z_vrfy_bp_control_start(const void *image, size_t size,
 	return z_impl_bp_control_start(image, size, parameters, length);
 }
 #include <zephyr/syscalls/bp_control_start_mrsh.c>
+
+int z_impl_bp_control_start_file(const char *name, size_t name_length,
+	const void *parameters, size_t length)
+{
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (!name_length || name_length > APP_NAME_MAX || memchr(name, 0, name_length)) return -EINVAL;
+	memcpy(control_request.name, name, name_length);
+	control_request.name[name_length] = 0;
+	control_request.source = CONTROL_FILE;
+	return control_start_request(parameters, length);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_control_start_file(const char *name, size_t name_length,
+	const void *parameters, size_t length)
+{
+	if (!primary_caller()) return -EPERM;
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_APP_STORAGE)) return -ENOTSUP;
+	if (!name_length || name_length > 32 || length > BP_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	user_memory_check(name, name_length, 1, false, __func__);
+	if (length) user_memory_check(parameters, length, 1, false, __func__);
+	return z_impl_bp_control_start_file(name, name_length, parameters, length);
+}
+#include <zephyr/syscalls/bp_control_start_file_mrsh.c>
+
+#ifdef CONFIG_BRICKPHYR_PYTHON
+int z_impl_application_control_resource(size_t offset, size_t size,
+	const void *parameters, size_t length)
+{
+	control_request.source = CONTROL_RESOURCE;
+	control_request.offset = offset;
+	control_request.size = size;
+	return control_start_request(parameters, length);
+}
+static inline int z_vrfy_application_control_resource(size_t offset, size_t size,
+	const void *parameters, size_t length)
+{
+	verify_python_thread();
+	if (!size || size > APPLICATION_IMAGE_LIMIT || length > BP_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	if (length) user_memory_check(parameters, length, 1, false, __func__);
+	return z_impl_application_control_resource(offset, size, parameters, length);
+}
+#include <zephyr/syscalls/application_control_resource_mrsh.c>
+#endif
 
 int z_impl_bp_control_update(const void *parameters, size_t length)
 {
@@ -2409,14 +2551,27 @@ static void native_entry(void *ext, void *function, void *unused)
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
+/* A syscall reader exposes package bytes without mapping the kernel's file or
+ * retained upload into the writable Python arena. */
+static int python_read(void *context, size_t offset, void *data, size_t length)
+{
+	while (length) {
+		size_t size = MIN(length, 256);
+		int err = application_source_read(offset, data, size);
+		if (err) return err;
+		offset += size;
+		data = (uint8_t *)data + size;
+		length -= size;
+	}
+	return 0;
+}
+
 static void python_entry(void *memory, void *size, void *format)
 {
 	size_t length = (uintptr_t)size;
-	size_t heap_size = APPLICATION_MEMORY_LIMIT - ROUND_UP(length, 16);
-	void *program = length ? (uint8_t *)memory + heap_size : NULL;
-	int result = python_execute(program, length,
-		(uintptr_t)format, memory, heap_size,
-		python_stack_bottom);
+	const struct python_source source = {python_read, NULL, length};
+	int result = python_execute_source(length ? &source : NULL,
+		(uintptr_t)format, memory, APPLICATION_MEMORY_LIMIT, python_stack_bottom);
 	application_finished(result);
 }
 #endif
@@ -2513,6 +2668,13 @@ static int release(bool keep_python_memory)
 		k_free(code_memory);
 		code_memory = NULL;
 		code_used = code_reserved = 0;
+	}
+#endif
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (!err) {
+		struct python_backing *backing = python_backing;
+		python_backing = NULL;
+		err = backing_release(backing);
 	}
 #endif
 	if (!err && application_stack) {
@@ -2688,11 +2850,22 @@ int application_shutdown(void)
 
 void application_poll(void)
 {
+	/* A named controller needs the same store -> lifecycle lock order as a
+	 * host launch. Never wait for flash operations in the hub service loop. */
+	bool store_locked = false;
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (atomic_get(&control_pending) && control_request.source == CONTROL_FILE) {
+		store_locked = k_mutex_lock(&store_lock, K_NO_WAIT) == 0;
+	}
+#endif
 	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) {
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+		if (store_locked) k_mutex_unlock(&store_lock);
+#endif
 		return;
 	}
 	(void)reap(false, false);
-	if (atomic_get(&control_pending)) {
+	if (atomic_get(&control_pending) && (control_request.source != CONTROL_FILE || store_locked)) {
 		control_request.result = start_controller();
 		atomic_clear(&control_pending);
 		k_sem_give(&control_done);
@@ -2707,6 +2880,9 @@ void application_poll(void)
 	}
 	expire_upload();
 	k_mutex_unlock(&lifecycle);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (store_locked) k_mutex_unlock(&store_lock);
+#endif
 }
 
 void application_buttons(uint32_t buttons)
@@ -2874,15 +3050,91 @@ static int run_image(struct llext_loader *loader, size_t length,
 	return err;
 }
 
+struct control_source {
+	native_image_read_fn read;
+	void *context;
+	size_t offset, length;
+};
+
+static int control_read(void *context, size_t offset, void *data, size_t length)
+{
+	struct control_source *source = context;
+	if (offset > source->length || length > source->length - offset) return -ENOEXEC;
+	return source->read(source->context, source->offset + offset, data, length);
+}
+
+static int control_read_memory(void *context, size_t offset, void *data, size_t length)
+{
+	memcpy(data, (const uint8_t *)context + offset, length);
+	return 0;
+}
+
+struct control_loader {
+	struct llext_loader loader;
+	struct control_source *source;
+	size_t position;
+};
+
+static int control_loader_read(struct llext_loader *loader, void *data, size_t length)
+{
+	struct control_loader *stream = CONTAINER_OF(loader, struct control_loader, loader);
+	int err = control_read(stream->source, stream->position, data, length);
+	if (!err) stream->position += length;
+	return err;
+}
+
+static int control_loader_seek(struct llext_loader *loader, size_t offset)
+{
+	struct control_loader *stream = CONTAINER_OF(loader, struct control_loader, loader);
+	if (offset > stream->source->length) return -ENOEXEC;
+	stream->position = offset;
+	return 0;
+}
+
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+static int read_file(void *context, size_t offset, void *data, size_t size);
+static int stored_size(const char *path, size_t *length);
+#endif
+
 /* The primary context is blocked in control_start. lifecycle protects its source
  * image until this copy/link finishes, or cancels the pending request on stop. */
 static int start_controller(void)
 {
+	struct control_source source = {control_read_memory, (void *)control_request.image, 0, control_request.size};
+	int err = 0;
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	struct fs_file_t file;
+	bool file_open = false;
+	if (control_request.source == CONTROL_FILE) {
+		char path[sizeof("/apps/") + APP_NAME_MAX];
+		err = app_store_path(control_request.name, path, sizeof(path));
+		if (!err) err = stored_size(path, &source.length);
+		if (err) goto failed;
+		fs_file_t_init(&file);
+		err = fs_open(&file, path, FS_O_READ);
+		if (err) goto failed;
+		file_open = true;
+		source.read = read_file;
+		source.context = &file;
+	}
+#endif
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (control_request.source == CONTROL_RESOURCE) {
+		if (!python_backing || control_request.offset > python_backing->source.length ||
+		    source.length > python_backing->source.length - control_request.offset) {
+			err = -EINVAL;
+			goto failed;
+		}
+		source.read = python_backing->source.read;
+		source.context = python_backing->source.context;
+		source.offset = control_request.offset;
+	}
+#endif
 	struct native_image_requirements requirements;
-	int err = native_image_check_buffer(control_request.image, control_request.size, &requirements);
-	if (err) return err;
+	err = native_image_check(control_read, &source, source.length, &requirements);
+	if (err) goto failed;
 	controller = k_calloc(1, sizeof(*controller) + control_request.length);
-	if (!controller) return -ENOMEM;
+	if (!controller) { err = -ENOMEM; goto failed; }
 	controller->stack_size = MAX(requirements.stack_size, 2048);
 	controller->loader_size = requirements.heap_size;
 	controller->parameter_size = control_request.length;
@@ -2901,9 +3153,19 @@ static int start_controller(void)
 	err = k_mem_domain_init(&controller->domain, 0, NULL);
 	if (err) goto failed;
 	controller->domain_initialized = true;
-	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(control_request.image, control_request.size);
+	struct control_loader loader = {
+		.loader = {.read = control_loader_read, .seek = control_loader_seek, .storage = LLEXT_STORAGE_TEMPORARY},
+		.source = &source,
+	};
 	const void *function;
 	err = load_native(&controller->extension, "controller", &loader.loader, &function);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (file_open) {
+		int closed = fs_close(&file);
+		file_open = false;
+		if (!err) err = closed;
+	}
+#endif
 	if (!err) err = llext_add_domain(controller->extension, &controller->domain);
 	if (err) goto failed;
 	memset(&control_clock, 0, sizeof(control_clock));
@@ -2924,6 +3186,9 @@ static int start_controller(void)
 	k_thread_start(controller->thread);
 	return 0;
 failed:
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+	if (file_open) (void)fs_close(&file);
+#endif
 	/* A rejected controller leaves the primary running and preserves its first error. */
 	int cleanup = release_controller();
 	if (cleanup && !status.cleanup_error) status.cleanup_error = cleanup;
@@ -2931,7 +3196,7 @@ failed:
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
-static int run_python(const void *program, size_t length, enum application_format format,
+static int run_python(struct python_backing *backing, size_t length, enum application_format format,
 	bool soft_reset, int program_id)
 {
 	/* Reserve before stopping the current program. A live Python replacement
@@ -2949,10 +3214,7 @@ static int run_python(const void *program, size_t length, enum application_forma
 	execution_partition.start = (uintptr_t)memory;
 	/* Newly mapped heap storage must not expose a previous owner's contents. */
 	memset(memory, 0, APPLICATION_MEMORY_LIMIT);
-	if (program) {
-		void *retained = (uint8_t *)memory + APPLICATION_MEMORY_LIMIT - ROUND_UP(length, 16);
-		memcpy(retained, program, length);
-	}
+	python_backing = backing;
 	err = k_mem_domain_add_partition(&application_domain, &execution_partition);
 	if (!err) {
 		err = k_mem_domain_add_partition(&application_domain, &python_partition);
@@ -2960,7 +3222,7 @@ static int run_python(const void *program, size_t length, enum application_forma
 	if (!err) {
 		python_stack_bottom = (uintptr_t)K_THREAD_STACK_BUFFER(application_stack);
 		err = start_thread(python_entry, memory, (void *)length, (void *)(uintptr_t)format,
-			(struct application_status){.format = format, .image_bytes = length, .repl = !program,
+			(struct application_status){.format = format, .image_bytes = length, .repl = !backing,
 				.program_id = program_id,
 				.loader_bytes = APPLICATION_MEMORY_LIMIT, .loaded_bytes = APPLICATION_MEMORY_LIMIT},
 			soft_reset);
@@ -2968,6 +3230,7 @@ static int run_python(const void *program, size_t length, enum application_forma
 	if (!err) {
 		return 0;
 	}
+	python_backing = NULL;
 	(void)release(false);
 	return err;
 }
@@ -3019,6 +3282,10 @@ int application_write_upload(const char *path)
 		return -ENOEXEC;
 	}
 	void *image = upload;
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	struct python_backing *backing = upload_backing;
+	upload_backing = NULL;
+#endif
 	size_t length = upload_size;
 	upload = NULL;
 	discard_upload();
@@ -3040,7 +3307,14 @@ int application_write_upload(const char *path)
 		int closed = fs_close(&file);
 		err = err ? err : closed;
 	}
-	k_free(image);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	if (backing) {
+		k_mutex_lock(&lifecycle, K_FOREVER);
+		(void)backing_release(backing);
+		k_mutex_unlock(&lifecycle);
+	} else
+#endif
+		k_free(image);
 	return err;
 }
 
@@ -3053,32 +3327,34 @@ static int read_file(void *context, size_t offset, void *data, size_t size)
 	return count < 0 ? count : count == size ? 0 : -ENOEXEC;
 }
 
-/* The caller's store lock preserves the file during both admission and loading.
- * Native ELF keeps its streaming loader; Python snapshots its complete namespace. */
-static int read_stored(const char *path, size_t length, void **image,
+struct python_backing;
+/* The caller holds the store lock through admission and source adoption. ELF
+ * already copies its sections; Python keeps an open read-only source instead. */
+static int read_stored(const char *path, size_t length, struct python_backing **backing,
 	struct native_image_requirements *requirements)
 {
-	*image = NULL;
+	*backing = NULL;
 	struct fs_file_t file;
 	fs_file_t_init(&file);
 	int err = fs_open(&file, path, FS_O_READ);
-	if (err) {
-		return err;
-	}
+	if (err) return err;
 	uint8_t magic[4];
 	err = length < sizeof(magic) ? -ENOEXEC : read_file(&file, 0, magic, sizeof(magic));
 	if (!err && !memcmp(magic, "\x7f" "ELF", sizeof(magic))) {
 		err = native_image_check(read_file, &file, length, requirements);
 	} else if (!err) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
-		if (length > APPLICATION_IMAGE_LIMIT) {
-			err = -EFBIG;
-		} else if (!(*image = k_malloc(length))) {
-			err = -ENOMEM;
-		} else {
-			err = read_file(&file, 0, *image, length);
-			if (!err) {
-				err = python_image_check(*image, length, APPLICATION_FILES);
+		const struct python_source source = {read_file, &file, length};
+		err = length > APPLICATION_IMAGE_LIMIT ? -EFBIG : python_source_check(&source);
+		if (!err) {
+			*backing = k_calloc(1, sizeof(**backing));
+			if (!*backing) err = -ENOMEM;
+			else {
+				(*backing)->references = 1;
+				(*backing)->file = file;
+				strcpy((*backing)->path, path);
+				(*backing)->source = (struct python_source){read_file, &(*backing)->file, length};
+				return 0;
 			}
 		}
 #else
@@ -3091,10 +3367,45 @@ static int read_stored(const char *path, size_t length, void **image,
 
 int application_check_file(const char *path, size_t length)
 {
-	void *image;
+	struct python_backing *backing;
 	struct native_image_requirements requirements;
-	int err = read_stored(path, length, &image, &requirements);
-	k_free(image);
+	int err = read_stored(path, length, &backing, &requirements);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	int closed = backing_release(backing);
+	if (!err) err = closed;
+#endif
+	return err;
+}
+
+/* LittleFS does not pin all blocks of an unlinked read-only file. Before an
+ * active package is replaced/removed, snapshot only that old source into RAM.
+ * Failure precedes the store mutation; both installed and running versions stay
+ * intact. Ordinary execution reads flash without allocating a full package. */
+int application_preserve_file(const char *path)
+{
+	int err = 0;
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	struct python_backing *backing = python_backing;
+	if (backing && !strcmp(path, backing->path)) {
+		void *data = k_malloc(backing->source.length);
+		if (!data) err = -ENOMEM;
+		else {
+			err = python_source_read(&backing->source, 0, data, backing->source.length);
+			if (err) k_free(data);
+			else {
+				/* The copy is complete; LittleFS close is terminal on error too. */
+				err = fs_close(&backing->file);
+				backing->source.read = python_source_memory;
+				backing->source.context = data;
+				backing->path[0] = 0;
+				/* Publish the complete snapshot to the lock-free RAM reader. */
+				atomic_ptr_set(&backing->data, data);
+			}
+		}
+	}
+	k_mutex_unlock(&lifecycle);
+#endif
 	return err;
 }
 
@@ -3128,14 +3439,15 @@ int application_run_file(const char *path, int program_id)
 	if (err) {
 		return err;
 	}
-	void *image;
+	struct python_backing *backing;
 	struct native_image_requirements requirements;
-	err = read_stored(path, length, &image, &requirements);
+	err = read_stored(path, length, &backing, &requirements);
 	if (!err) {
 		k_mutex_lock(&lifecycle, K_FOREVER);
 #ifdef CONFIG_BRICKPHYR_PYTHON
-		if (image) {
-			err = run_python(image, length, APPLICATION_FILES, false, program_id);
+		if (backing) {
+			err = run_python(backing, length, APPLICATION_FILES, false, program_id);
+			if (!err) backing = NULL;
 		} else
 #endif
 		{
@@ -3143,7 +3455,10 @@ int application_run_file(const char *path, int program_id)
 		}
 		k_mutex_unlock(&lifecycle);
 	}
-	k_free(image);
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	int closed = backing_release(backing);
+	if (!err) err = closed;
+#endif
 	return err;
 }
 #endif
@@ -3314,7 +3629,20 @@ int application_run_uploaded(bool retain)
 	if (upload_requirements.heap_size) {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (upload_format != APPLICATION_NATIVE) {
-			err = run_python(upload, upload_size, upload_format, false, upload_pybricks ? 0 : -1);
+			if (!upload_backing) {
+				upload_backing = k_calloc(1, sizeof(*upload_backing));
+				if (upload_backing) {
+					upload_backing->references = 1;
+					atomic_ptr_set(&upload_backing->data, upload);
+					upload_backing->source = (struct python_source){python_source_memory, upload, upload_size};
+				}
+			}
+			if (!upload_backing) err = -ENOMEM;
+			else {
+				upload_backing->references++;
+				err = run_python(upload_backing, upload_size, upload_format, false, upload_pybricks ? 0 : -1);
+				if (err) (void)backing_release(upload_backing);
+			}
 		} else
 #endif
 		{

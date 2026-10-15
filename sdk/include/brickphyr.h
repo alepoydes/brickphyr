@@ -478,6 +478,13 @@ __syscall int bp_user_data_save_start(void);
  * Failure preserves the previous committed file and keeps RAM changes dirty. */
 __syscall int bp_user_data_save_status(uint32_t request);
 
+/* Same controller lifecycle, read directly from a named installed ELF. No full
+ * ELF buffer is retained by the primary. Name is 1-32 bytes, without a NUL or
+ * path prefix; parameters have the same contract as bp_control_start.
+ * ENOTSUP without application storage, ENOENT for a missing installed image. */
+__syscall int bp_control_start_file(const char *name, size_t name_length,
+	const void *parameters, size_t length);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

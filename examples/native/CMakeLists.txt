@@ -56,18 +56,3 @@ foreach(example ${native_examples})
   target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
 endforeach()
-
-# Embed a complete controller image in the primary ELF. LLEXT then loads it into
-# its own domain; the embedded source remains part of the primary's read-only data.
-add_custom_command(OUTPUT controller_image.o
-  COMMAND "$ENV{ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-objcopy"
-    -I binary -O elf32-littlearm -B arm
-    --set-section-alignment .data=4
-    --rename-section .data=.rodata,alloc,load,readonly,data,contents
-    --redefine-sym _binary_control_loop_elf_start=controller_image
-    --redefine-sym _binary_control_loop_elf_end=controller_end
-    --strip-symbol _binary_control_loop_elf_size
-    control_loop.elf controller_image.o
-  DEPENDS control_loop
-  VERBATIM)
-target_sources(control_background PRIVATE ${PROJECT_BINARY_DIR}/controller_image.o)

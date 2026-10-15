@@ -2,6 +2,8 @@
 #include <brickphyr.h>
 #include "py/objint.h"
 #include "py/runtime.h"
+#include "files.h"
+#include "application_private.h"
 #include <string.h>
 
 static void check(int result)
@@ -12,9 +14,17 @@ static void check(int result)
 static mp_obj_t control_start(size_t count, const mp_obj_t *args)
 {
 	mp_buffer_info_t image, parameters = {0};
-	mp_get_buffer_raise(args[0], &image, MP_BUFFER_READ);
 	if (count == 2) mp_get_buffer_raise(args[1], &parameters, MP_BUFFER_READ);
-	check(bp_control_start(image.buf, image.len, parameters.buf, parameters.len));
+	if (mp_obj_is_str(args[0])) {
+		size_t length;
+		const char *name = mp_obj_str_get_data(args[0], &length);
+		if (memchr(name, 0, length)) mp_raise_ValueError(MP_ERROR_TEXT("invalid resource name"));
+		struct python_resource file = python_files_resource(name);
+		check(application_control_resource(file.offset, file.length, parameters.buf, parameters.len));
+	} else {
+		mp_get_buffer_raise(args[0], &image, MP_BUFFER_READ);
+		check(bp_control_start(image.buf, image.len, parameters.buf, parameters.len));
+	}
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(control_start_obj, 1, 2, control_start);

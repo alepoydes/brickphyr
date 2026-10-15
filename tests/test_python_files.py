@@ -14,7 +14,7 @@ from smpclient.requests.file_management import FileUpload
 from test_native import native_console
 from test_python import completed, output
 
-from brickphyrdev import console
+from brickphyrdev import console, recording
 from brickphyrdev.application import (
     Format,
     Input,
@@ -125,8 +125,14 @@ print('native import recovered')
 
 
 def test_python_file_map_releases_system_heap():
-    source = b"""import native_module
+    source = b"""import native_module, gc
 assert native_module.add(30) == 42
+gc.collect()
+assert gc.mem_free() > 40000
+with open("payload.bin", "rb") as resource:
+    assert resource.read(1) == b"x"
+    resource.seek(-1, 2)
+    assert resource.read() == b"x"
 print('ready')
 input()
 print('returned 42')
@@ -136,7 +142,7 @@ print('returned 42')
         "native_module.mpy": (BUILD / "python-fixtures/native_module.mpy").read_bytes(),
         "payload.bin": b"x",
     }
-    # A full-size synthetic bundle retains a resource alongside real native code.
+    # A 32 KiB synthetic bundle retains a resource alongside real native code.
     entries["payload.bin"] = b"x" * (32768 - len(cbor2.dumps(entries)) - 1)
     image = cbor2.dumps(entries)
     assert len(image) == 32768
@@ -211,7 +217,7 @@ def test_python_file_admission():
             {"main.py": b"pass", "main.mpy": b"M\x06\0\x1f"},
             {"main.py": b"pass", "main.py/child.py": b""},
             {"main.py": "not a byte string"},
-            {"main.py": b"pass", "wrong.mpy": b"M\x07\0\x1f"},
+            {"main.py": b"pass", "wrong.mpy": b"M\xff\0\x1f"},
             {"main.py": b"pass", **{f"module{i}.py": b"" for i in range(64)}},
             {"": b"missing.py", "main.py": b"pass"},
             {"": b"../main.py", "main.py": b"pass"},
@@ -381,3 +387,53 @@ def test_python_directory_cli(tmp_path):
             assert result.returncode == 0 and expected in result.stdout, (
                 result.stdout + result.stderr
             )
+
+
+def test_controller_file_sources():
+    # Both RAM and stored Python packages reference their ELF resource directly;
+    # the native primary resolves the same installed controller by name.
+    controller = (BUILD / "control_probe.elf").read_bytes()
+    package = cbor2.dumps({
+        "main.py": b"""import brickphyr, gc, struct
+brickphyr.control_start('controller.elf', struct.pack('<4I', 0, 7, 0xfffffff8, 0))
+for _ in range(10000):
+    state = brickphyr.control_status()
+    if state['sequence'] >= 3:
+        break
+    gc.collect()
+else:
+    raise AssertionError('controller did not progress')
+print('resource controller passed')
+""",
+        "controller.elf": controller,
+    })
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            try:
+                for stored in (False, True):
+                    if stored:
+                        await install(client, package, "package", Format.FILES)
+                        await checked(client, RunStored(name="package"))
+                    else:
+                        await upload(client, transport, package, Format.FILES)
+                        await checked(client, Start())
+                    state = await completed(client)
+                    text = await output(client)
+                    assert state.result == state.cleanup == 0, (state, text)
+                    assert state.control_stack and b'resource controller passed' in text
+                    await checked(client, Stop())
+                    await checked(client, recording.Clear())
+                await install(client, controller, "controller", Format.NATIVE)
+                await upload(client, transport, (BUILD / "control_file_probe.elf").read_bytes())
+                await checked(client, Start())
+                state = await completed(client)
+                text = await output(client)
+                assert state.result == state.cleanup == 0, (state, text)
+                assert b'stored controller passed' in text and state.control_stack
+            finally:
+                await checked(client, Stop())
+                await checked(client, recording.Clear())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))

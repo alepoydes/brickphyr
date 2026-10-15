@@ -323,8 +323,8 @@ service, standard/Elite input, raw state, rumble and lifetime cleanup. Its codec
 uses SDL/Bluepad32, excluding the non-free reference binding. Known BLE 5.x
 report layouts are implemented; physical acceptance remains open. See
 [Xbox limits and usage](bluetooth.md#application-xbox-controller).
-`messaging.HubNetwork` ports the reference typed codec, per-sender inboxes and
-Classic star routing to the shared native service. Protected ARM checks cover
+With the optional Classic profile, `messaging.HubNetwork` ports the reference
+typed codec, per-sender inboxes and Classic star routing to the shared native service. Protected ARM checks cover
 connect/send, both network roles, forwarding, snapshots and lifetime cleanup.
 F4 leaf pairing, maximum frames and BLE coexistence have a synthetic Linux peer
 check; physical coordinator routing and Pybricks interoperability remain open. See

@@ -5,6 +5,7 @@ include(${MICROPY_DIR}/py/py.cmake)
 
 set(MICROPY_SOURCE_QSTR ${MICROPY_SOURCE_PY}
   ${CMAKE_CURRENT_SOURCE_DIR}/runtime.c ${CMAKE_CURRENT_SOURCE_DIR}/files.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/source.c
   ${CMAKE_CURRENT_SOURCE_DIR}/streams.c
   ${MICROPY_DIR}/shared/readline/readline.c
   ${MICROPY_DIR}/shared/runtime/pyexec.c

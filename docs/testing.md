@@ -383,6 +383,10 @@ explicit entry is checked with an ordinary module named `main` and all 64 files;
 invalid or duplicate entry metadata is rejected. The
 existing native storage tests cover LittleFS capacity failures through the shared
 publication path.
+`test_python_file_map_releases_system_heap` checks GC headroom and exact shared-heap
+reclamation for a synthetic RAM/stored package with a native import.
+`test_controller_file_sources` checks controllers loaded directly from package
+resources and from a named installed ELF, including a missing-file rejection.
 
 `test_python_io.py` covers standard text/binary streams, readline editing,
 input polling, bounded backpressure, catchable interrupts during execution and

@@ -5,7 +5,7 @@
 #include <limits.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
-#include <zcbor_decode.h>
+#include "python_source.h"
 #include "py/builtin.h"
 #include "py/lexer.h"
 #include "py/runtime.h"
@@ -15,242 +15,135 @@
  * Copyright (c) 2022 Damien P. George, MIT. Storage lookup remains this port's
  * existing program namespace; no VFS or second filesystem is instantiated. */
 
-/* Bound admission work without allocating a second file index. The image itself
- * lives with the application's heap and supplies all import bytes. */
-static const void *files;
-static size_t files_size;
-
-static bool path_valid(const char *path, size_t length)
-{
-	if (!length || length > PYTHON_PATH_LIMIT || memchr(path, 0, length)) {
-		return false;
-	}
-	for (size_t start = 0, end = 0; end <= length; end++) {
-		if (end != length && path[end] != '/') {
-			continue;
-		}
-		size_t n = end - start;
-		if (!n || (path[start] == '.' && (n == 1 || (n == 2 && path[start + 1] == '.')))) {
-			return false;
-		}
-		start = end + 1;
-	}
-	return true;
-}
-
-static bool prefix(const struct zcbor_string *a, const struct zcbor_string *b)
-{
-	return a->len < b->len && b->value[a->len] == '/' && !memcmp(a->value, b->value, a->len);
-}
-
-static bool explicit_entry(const void *image, size_t length, struct zcbor_string *entry)
-{
-	*entry = (struct zcbor_string){0};
-	ZCBOR_STATE_D(state, 2, image, length, 1, 0);
-	if (!zcbor_map_start_decode(state)) {
-		return false;
-	}
-	for (size_t count = 0; !zcbor_array_at_end(state); count++) {
-		struct zcbor_string name, data;
-		if (count > PYTHON_FILE_LIMIT || !zcbor_tstr_decode(state, &name) ||
-		    !zcbor_bstr_decode(state, &data)) {
-			return false;
-		}
-		if (!name.len) {
-			if (entry->len || !path_valid((const char *)data.value, data.len)) {
-				return false;
-			}
-			*entry = data;
-		}
-	}
-	return zcbor_map_end_decode(state) && zcbor_payload_at_end(state);
-}
+/* The package owner outlives every open reader. Only offsets cross the
+ * application boundary; buffers contain bounded copies owned by Python. */
+static struct python_source files;
 
 int python_files_check(const void *image, size_t length)
 {
-	struct zcbor_string entry;
-	if (!explicit_entry(image, length, &entry)) {
-		return -ENOEXEC;
-	}
-	ZCBOR_STATE_D(state, 2, image, length, 1, 0);
-	if (!zcbor_map_start_decode(state)) {
-		return -ENOEXEC;
-	}
-	size_t count = 0, entries = 0;
-	while (!zcbor_array_at_end(state)) {
-		struct zcbor_string name, data;
-		if (++count > PYTHON_FILE_LIMIT + !!entry.len) {
-			return -E2BIG;
-		}
-		if (!zcbor_tstr_decode(state, &name) || !zcbor_bstr_decode(state, &data)) {
-			return -ENOEXEC;
-		}
-		if (!name.len) {
-			continue;
-		}
-		if (!path_valid((const char *)name.value, name.len)) {
-			return -ENOEXEC;
-		}
-		/* Reject duplicate names and file/directory collisions. Both would
-		 * otherwise make the selected code depend on lookup order. */
-		ZCBOR_STATE_D(previous, 2, image, length, 1, 0);
-		if (!zcbor_map_start_decode(previous)) {
-			return -ENOEXEC;
-		}
-		for (size_t i = 1; i < count; i++) {
-			struct zcbor_string earlier, ignored;
-			if (!zcbor_tstr_decode(previous, &earlier) || !zcbor_bstr_decode(previous, &ignored) ||
-			    (name.len == earlier.len && !memcmp(name.value, earlier.value, name.len)) ||
-			    prefix(&name, &earlier) || prefix(&earlier, &name)) {
-				return -ENOEXEC;
-			}
-		}
-		bool mpy = name.len > 4 && !memcmp(name.value + name.len - 4, ".mpy", 4);
-		bool source = name.len > 3 && !memcmp(name.value + name.len - 3, ".py", 3);
-		if (mpy || source) {
-			int err = python_image_check(data.value, data.len,
-				mpy ? APPLICATION_MPY : APPLICATION_PYTHON);
-			if (err) {
-				return err;
-			}
-		}
-		entries += entry.len ? ((mpy || source) && name.len == entry.len &&
-			!memcmp(name.value, entry.value, name.len)) :
-			((name.len == 7 && !memcmp(name.value, "main.py", 7)) ||
-			 (name.len == 8 && !memcmp(name.value, "main.mpy", 8)));
-	}
-	return entries == 1 && zcbor_map_end_decode(state) && zcbor_payload_at_end(state) ?
-		0 : -ENOEXEC;
+	const struct python_source source = {python_source_memory, (void *)image, length};
+	return python_source_check(&source);
 }
 
-void python_files_set(const void *image, size_t length)
+void python_files_set_source(const struct python_source *source)
 {
-	files = image;
-	files_size = length;
+	files = source ? *source : (struct python_source){0};
 }
 
-static mp_import_stat_t find(const char *path, struct zcbor_string *data)
+static mp_import_stat_t find(const char *path, struct python_resource *file)
 {
-	if (!files) {
-		return MP_IMPORT_STAT_NO_EXIST;
-	}
-	if (*path == '/') {
-		path++;
-	}
-	size_t length = strlen(path);
-	if (!length) {
-		return MP_IMPORT_STAT_DIR;
-	}
-	if (!path_valid(path, length)) {
-		return MP_IMPORT_STAT_NO_EXIST;
-	}
-	struct zcbor_string wanted = {.value = (const uint8_t *)path, .len = length};
-	ZCBOR_STATE_D(state, 2, files, files_size, 1, 0);
-	if (!zcbor_map_start_decode(state)) {
-		return MP_IMPORT_STAT_NO_EXIST;
-	}
-	for (size_t i = 0; i <= PYTHON_FILE_LIMIT && !zcbor_array_at_end(state); i++) {
-		struct zcbor_string name, value;
-		if (!zcbor_tstr_decode(state, &name) || !zcbor_bstr_decode(state, &value)) {
-			break;
-		}
-		if (!name.len) {
-			continue;
-		}
-		if (name.len == length && !memcmp(path, name.value, length)) {
-			*data = value;
-			return MP_IMPORT_STAT_FILE;
-		}
-		if (prefix(&wanted, &name)) {
-			return MP_IMPORT_STAT_DIR;
-		}
-	}
-	return MP_IMPORT_STAT_NO_EXIST;
+	if (!files.read) return MP_IMPORT_STAT_NO_EXIST;
+	int type = python_source_find(&files, path, file);
+	if (type < 0) mp_raise_OSError(-type);
+	return type == PYTHON_RESOURCE_FILE ? MP_IMPORT_STAT_FILE :
+		type == PYTHON_RESOURCE_DIR ? MP_IMPORT_STAT_DIR : MP_IMPORT_STAT_NO_EXIST;
 }
 
 mp_import_stat_t mp_import_stat(const char *path)
 {
-	struct zcbor_string data;
-	return find(path, &data);
+	struct python_resource file;
+	return find(path, &file);
 }
 
 const char *python_files_entry(void)
 {
-	struct zcbor_string entry;
-	if (files && explicit_entry(files, files_size, &entry) && entry.len) {
-		return qstr_str(qstr_from_strn((const char *)entry.value, entry.len));
-	}
-	return mp_import_stat("main.py") == MP_IMPORT_STAT_FILE ? "main.py" : "main.mpy";
+	char path[PYTHON_PATH_LIMIT + 1];
+	int err = python_source_entry(&files, path, sizeof(path));
+	if (err) mp_raise_OSError(-err);
+	return qstr_str(qstr_from_str(path));
 }
 
-static struct zcbor_string read_file(qstr filename, enum application_format format)
+struct python_resource python_files_resource(const char *path)
 {
-	struct zcbor_string data;
-	if (find(qstr_str(filename), &data) != MP_IMPORT_STAT_FILE) {
-		mp_raise_OSError(ENOENT);
-	}
-	int err = python_image_check(data.value, data.len, format);
-	if (err) {
-		mp_raise_OSError(-err);
-	}
-	return data;
+	struct python_resource file;
+	mp_import_stat_t type = find(path, &file);
+	if (type != MP_IMPORT_STAT_FILE) mp_raise_OSError(type == MP_IMPORT_STAT_DIR ? EISDIR : ENOENT);
+	return file;
 }
 
-mp_lexer_t *mp_lexer_new_from_file(qstr filename)
-{
-	struct zcbor_string data = read_file(filename, APPLICATION_PYTHON);
-	return mp_lexer_new_from_str_len(filename, (const char *)data.value, data.len, 0);
-}
-
-struct bytecode_reader {
-	const uint8_t *data;
-	size_t remaining;
+struct source_reader {
+	struct python_source source;
+	struct python_resource file;
+	size_t offset, cursor, available;
+	bool bytecode;
+	uint8_t buffer[128];
 };
 
 static mp_uint_t read_byte(void *context)
 {
-	struct bytecode_reader *reader = context;
-	/* Returning EOF forever would hang upstream's varuint decoder on truncation. */
-	if (!reader->remaining) {
-		mp_raise_ValueError(MP_ERROR_TEXT("truncated .mpy"));
+	struct source_reader *reader = context;
+	if (reader->cursor == reader->available) {
+		if (reader->offset == reader->file.length) {
+			/* Upstream's varuint decoder does not terminate on a missing byte. */
+			if (reader->bytecode) mp_raise_ValueError(MP_ERROR_TEXT("truncated .mpy"));
+			return MP_READER_EOF;
+		}
+		size_t size = MIN(sizeof(reader->buffer), reader->file.length - reader->offset);
+		int err = python_source_read(&reader->source, reader->file.offset + reader->offset, reader->buffer, size);
+		if (err) mp_raise_OSError(-err);
+		reader->offset += size;
+		reader->cursor = 0;
+		reader->available = size;
 	}
-	reader->remaining--;
-	return *reader->data++;
+	return reader->buffer[reader->cursor++];
 }
 
 static void close_reader(void *context)
 {
-	m_del_obj(struct bytecode_reader, context);
+	m_del_obj(struct source_reader, context);
+}
+
+void python_reader_new_source(mp_reader_t *reader, const struct python_source *source,
+	struct python_resource file, bool bytecode)
+{
+	struct source_reader *stream = m_new_obj(struct source_reader);
+	*stream = (struct source_reader){.source = *source, .file = file, .bytecode = bytecode};
+	*reader = (mp_reader_t){.data = stream, .readbyte = read_byte, .close = close_reader};
 }
 
 void python_reader_new_mem(mp_reader_t *reader, const void *data, size_t length)
 {
-	struct bytecode_reader *memory = m_new_obj(struct bytecode_reader);
-	*memory = (struct bytecode_reader){.data = data, .remaining = length};
-	*reader = (mp_reader_t){.data = memory, .readbyte = read_byte, .close = close_reader};
+	const struct python_source source = {python_source_memory, (void *)data, length};
+	python_reader_new_source(reader, &source, (struct python_resource){0, length}, true);
+}
+
+mp_lexer_t *mp_lexer_new_from_file(qstr filename)
+{
+	mp_reader_t reader;
+	python_reader_new_source(&reader, &files, python_files_resource(qstr_str(filename)), false);
+	return mp_lexer_new(filename, reader);
 }
 
 void mp_reader_new_file(mp_reader_t *reader, qstr filename)
 {
-	struct zcbor_string data = read_file(filename, APPLICATION_MPY);
-	python_reader_new_mem(reader, data.value, data.len);
+	struct python_resource file = python_files_resource(qstr_str(filename));
+	uint8_t header[4];
+	int err = file.length < sizeof(header) ? -ENOEXEC : python_source_read(&files, file.offset, header, sizeof(header));
+	if (!err) err = python_image_check(header, sizeof(header), APPLICATION_MPY);
+	if (err) mp_raise_OSError(-err);
+	python_reader_new_source(reader, &files, file, true);
 }
 
 struct resource_file {
 	mp_obj_base_t base;
-	const uint8_t *data;
-	size_t length, offset;
+	struct python_resource resource;
+	size_t offset;
+	bool closed;
 };
 
 static mp_uint_t resource_read(mp_obj_t object, void *buffer, mp_uint_t size, int *error)
 {
 	struct resource_file *file = MP_OBJ_TO_PTR(object);
-	if (!file->data) {
+	if (file->closed) {
 		*error = EBADF;
 		return MP_STREAM_ERROR;
 	}
-	size = MIN(size, file->offset < file->length ? file->length - file->offset : 0);
-	memcpy(buffer, file->data + MIN(file->offset, file->length), size);
+	size = MIN(size, file->offset < file->resource.length ? file->resource.length - file->offset : 0);
+	int err = size ? python_source_read(&files, file->resource.offset + file->offset, buffer, size) : 0;
+	if (err) {
+		*error = -err;
+		return MP_STREAM_ERROR;
+	}
 	file->offset += size;
 	return size;
 }
@@ -259,10 +152,10 @@ static mp_uint_t resource_ioctl(mp_obj_t object, mp_uint_t request, uintptr_t ar
 {
 	struct resource_file *file = MP_OBJ_TO_PTR(object);
 	if (request == MP_STREAM_CLOSE) {
-		file->data = NULL;
+		file->closed = true;
 		return 0;
 	}
-	if (!file->data) {
+	if (file->closed) {
 		*error = EBADF;
 		return MP_STREAM_ERROR;
 	}
@@ -272,7 +165,7 @@ static mp_uint_t resource_ioctl(mp_obj_t object, mp_uint_t request, uintptr_t ar
 		switch (seek->whence) {
 		case MP_SEEK_SET: base = 0; break;
 		case MP_SEEK_CUR: base = file->offset; break;
-		case MP_SEEK_END: base = file->length; break;
+		case MP_SEEK_END: base = file->resource.length; break;
 		default: goto invalid;
 		}
 		if (seek->offset < -base || seek->offset > LONG_MAX - base) {
@@ -332,16 +225,16 @@ static mp_obj_t resource_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwa
 	    (mode_size == 2 && mode[1] != 'b' && mode[1] != 't') || memchr(name, 0, name_size)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("invalid file name or mode"));
 	}
-	struct zcbor_string data;
+	struct python_resource data;
 	mp_import_stat_t stat = find(name, &data);
 	if (stat != MP_IMPORT_STAT_FILE) {
 		mp_raise_OSError(stat == MP_IMPORT_STAT_DIR ? EISDIR : ENOENT);
 	}
 	struct resource_file *file = mp_obj_malloc(struct resource_file,
 		mode_size == 2 && mode[1] == 'b' ? &resource_binary_type : &resource_text_type);
-	file->data = data.value;
-	file->length = data.len;
+	file->resource = data;
 	file->offset = 0;
+	file->closed = false;
 	return MP_OBJ_FROM_PTR(file);
 }
 MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, resource_open);

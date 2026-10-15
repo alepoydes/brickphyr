@@ -141,16 +141,16 @@ int python_image_check(const void *program, size_t length, enum application_form
 	return 0;
 }
 
-int python_execute(const void *program, size_t length, enum application_format format,
+int python_execute_source(const struct python_source *source, enum application_format format,
 	void *heap, size_t heap_size, uintptr_t stack_bottom)
 {
 	volatile uintptr_t stack_top;
-	if ((!program && length) || !heap || heap_size < 4096 || stack_bottom >= (uintptr_t)&stack_top ||
+	if (!heap || heap_size < 4096 || stack_bottom >= (uintptr_t)&stack_top ||
 	    (uintptr_t)&stack_top - stack_bottom <= MICROPY_STACK_CHECK_MARGIN) {
 		return -EINVAL;
 	}
 	memset(&mp_state_ctx, 0, sizeof(mp_state_ctx));
-	python_files_set(format == APPLICATION_FILES ? program : NULL, length);
+	python_files_set_source(format == APPLICATION_FILES ? source : NULL);
 	mp_cstack_init_with_top((void *)&stack_top, (uintptr_t)&stack_top - stack_bottom);
 	gc_init(heap, (uint8_t *)heap + heap_size);
 	int result = 0;
@@ -163,7 +163,7 @@ int python_execute(const void *program, size_t length, enum application_format f
 		pb_type_Color_reset();
 		pb_module_tools_init();
 #endif
-		if (!program) {
+		if (!source) {
 			for (;;) {
 				int ret = pyexec_mode_kind == PYEXEC_MODE_RAW_REPL ?
 					pyexec_raw_repl() : pyexec_friendly_repl();
@@ -191,7 +191,7 @@ int python_execute(const void *program, size_t length, enum application_format f
 			if (format == APPLICATION_FILES) {
 				mp_reader_new_file(&reader, filename);
 			} else {
-				python_reader_new_mem(&reader, program, length);
+				python_reader_new_source(&reader, source, (struct python_resource){0, source->length}, true);
 			}
 			mp_module_context_t *context = m_new_obj(mp_module_context_t);
 			context->module.globals = mp_globals_get();
@@ -199,8 +199,14 @@ int python_execute(const void *program, size_t length, enum application_format f
 			mp_raw_code_load(&reader, &module);
 			function = mp_make_function_from_proto_fun(module.rc, context, MP_OBJ_NULL);
 		} else {
-			mp_lexer_t *lexer = format == APPLICATION_FILES ? mp_lexer_new_from_file(filename) :
-				mp_lexer_new_from_str_len(filename, program, length, 0);
+			mp_lexer_t *lexer;
+			if (format == APPLICATION_FILES) {
+				lexer = mp_lexer_new_from_file(filename);
+			} else {
+				mp_reader_t reader;
+				python_reader_new_source(&reader, source, (struct python_resource){0, source->length}, false);
+				lexer = mp_lexer_new(filename, reader);
+			}
 			qstr name = lexer->source_name;
 			mp_parse_tree_t tree = mp_parse(lexer, MP_PARSE_FILE_INPUT);
 			function = mp_compile(&tree, name, false);
@@ -216,6 +222,14 @@ int python_execute(const void *program, size_t length, enum application_format f
 	}
 	mp_deinit();
 	return result;
+}
+
+int python_execute(const void *program, size_t length, enum application_format format,
+	void *heap, size_t heap_size, uintptr_t stack_bottom)
+{
+	if (!program && length) return -EINVAL;
+	const struct python_source source = {python_source_memory, (void *)program, length};
+	return python_execute_source(program ? &source : NULL, format, heap, heap_size, stack_bottom);
 }
 
 void gc_collect(void)

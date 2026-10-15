@@ -43,6 +43,8 @@ struct application_status {
 int application_run_native(const void *image, size_t length);
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 int application_check_file(const char *path, size_t length);
+/* Preserve a live package before mutating its installed path; store lock held. */
+int application_preserve_file(const char *path);
 int application_run_file(const char *path, int program_id);
 /* Consume a validated persistent-format upload into a closed staging file.
  * Flash I/O does not hold the lifecycle lock; failure still consumes the upload. */

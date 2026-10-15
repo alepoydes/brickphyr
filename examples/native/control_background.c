@@ -4,7 +4,6 @@
 #include <string.h>
 
 BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU | BP_CAP_BATTERY | BP_CAP_PORTS, 2048);
-extern const uint8_t controller_image[], controller_end[];
 
 /* A native primary consumes observations while control_loop runs independently.
  * This example changes the observed port selection; it never drives motors.
@@ -12,7 +11,7 @@ extern const uint8_t controller_image[], controller_end[];
 int app_main(void)
 {
 	uint32_t mask = 3;
-	int err = bp_control_start(controller_image, controller_end - controller_image, &mask, sizeof(mask));
+	int err = bp_control_start_file("control_loop", sizeof("control_loop") - 1, &mask, sizeof(mask));
 	if (err) return err;
 	struct { struct control_record input; uint32_t port_mask, reserved; } record;
 	struct bp_record_request request = {

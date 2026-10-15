@@ -21,6 +21,11 @@ __syscall int application_message_read(uint32_t lease, size_t offset, void *data
 __syscall int application_message_send(uint32_t lease, const void *data, size_t length);
 __syscall int application_message_status(uint32_t lease, uint32_t request);
 __syscall int application_message_cancel(uint32_t lease, uint32_t request);
+/* Exact reads from this application's immutable source, serviced below control
+ * priority. The kernel validates every offset and destination. */
+__syscall int application_source_read(size_t offset, void *data, size_t length);
+__syscall int application_control_resource(size_t offset, size_t size,
+	const void *parameters, size_t length);
 /* One pending code reservation; commit(NULL, 0) cancels it after a loader error. */
 __syscall intptr_t application_code_reserve(size_t length);
 __syscall int application_code_commit(const void *data, size_t length);

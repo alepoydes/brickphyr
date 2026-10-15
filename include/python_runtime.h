@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "application.h"
+#include "python_source.h"
 
 #define PYTHON_FILE_LIMIT 64
 #define PYTHON_PATH_LIMIT 128
@@ -32,6 +33,8 @@ bool python_repl_reading(void);
  * One VM at a time; the caller owns the heap and reclaims it after joining.
  * stack_bottom is the lowest usable address of the downward-growing stack.
  * A NULL program with length zero selects interactive REPL. */
+int python_execute_source(const struct python_source *source, enum application_format format,
+	void *heap, size_t heap_size, uintptr_t stack_bottom);
 int python_execute(const void *program, size_t length, enum application_format format,
 	void *heap, size_t heap_size, uintptr_t stack_bottom);
 

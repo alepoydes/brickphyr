@@ -446,7 +446,7 @@ compiler settings, and instrumentation.
 
 Append `boards/spike_prime_f4_memory.conf` to the F4 build's existing
 `EXTRA_CONF_FILE` list to enable Zephyr's kernel Shell and heap counters. For
-example, the full Python profile uses:
+example, the full BLE Python profile uses:
 
 ```sh
 uv run west build -b spike_prime_f4/stm32f413xx -d build/python-memory . -- -DEXTRA_CONF_FILE='boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_memory.conf'
@@ -708,7 +708,9 @@ application size, stack use and the remaining sensor/timing limits.
 
 ## Experimental Python profile
 
-Add Python to the same Bluetooth/native configuration:
+Add full Python to the same Bluetooth/native configuration. This recipe retains
+the Pybricks library, client adapter and device bindings with BLE management and
+application BLE peers:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/python-apps -t firmware_package -- \
@@ -750,9 +752,39 @@ provides [temporary and installed Python programs](host.md#python-applications),
 including imports, through Brickphyr management. REPL and the Pybricks execution
 adapter have software and bounded Inventor F4 USB/BLE checks; remaining acceptance
 is listed in the [plan](python.md).
-This full profile includes [Classic HubNetwork](bluetooth.md#application-hub-network)
-alongside BLE; the reduced profiles below omit its Classic stack. Physical
-network acceptance and combined memory measurements remain pending.
+For [Classic HubNetwork](bluetooth.md#application-hub-network), append
+`boards/spike_prime_f4_python_classic.conf` after the Python fragment in
+`EXTRA_CONF_FILE`, using a separate build directory:
+
+```sh
+uv run --locked west build -b spike_prime_f4 -d build/python-classic-apps -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_python_classic.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+```
+
+The Classic fragment enables three network peers alongside the BLE management
+link and one application BLE device, enlarges the ACL receive buffer for network
+frames, and selects the Classic heap budget. Without it, the `HubNetwork` Python
+binding is absent; the rest of the full Python and Pybricks surface remains
+enabled. Physical network acceptance and combined memory measurements remain
+pending.
+
+Matching F4 builds with Zephyr 4.4.2 and the Zephyr SDK 1.0.1 ARM compiler
+have the following linked budgets. Both retain the full Python surface except
+for the Classic-only HubNetwork binding, with 64 KiB application image and
+64 KiB Python arena limits:
+
+| Full Python profile | Flash | Linked RAM, including heap | Shared system heap |
+| --- | ---: | ---: | ---: |
+| BLE | 693,072 B | 324,219 B | 223,232 B |
+| BLE + Classic | 738,048 B | 325,407 B | 199,808 B |
+
+Disabling Classic removes 44,976 B of flash and makes 23,424 B more heap available.
+Linked RAM includes that heap reservation; it does not measure live allocations
+or prove a combined application fits. Source backing, VM arena, native regions,
+recording and aligned stacks still compete within the shared heap. See
+[application memory limits](applications.md#experimental-python-profile).
+
 The experimental [Pybricks library](compatibility.md#implemented-library-subset)
 is enabled by default. `CONFIG_BRICKPHYR_PYBRICKS` selects that library;
 `CONFIG_BRICKPHYR_PYBRICKS_EXECUTION` independently selects the USB/BLE client
@@ -785,7 +817,8 @@ uv run --locked west build -b spike_prime_f4 -d build/native-profile-apps -t fir
   -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
 ```
 
-All three F4 profiles have compilation/package checks and bounded checks on one
+The earlier full Python + Classic, reduced Python and native F4 profiles have
+compilation/package checks and bounded checks on one
 Robot Inventor F4 (PCB revision unknown). Native-only USB/BLE checks cover
 a maximum-size RAM image and a stored application with
 80 KiB of writable data; see [native capacity](applications.md#experimental-native-profile).

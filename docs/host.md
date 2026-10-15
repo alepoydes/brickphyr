@@ -661,7 +661,7 @@ The reference client's module records are normalized to the common
 and application lifecycle. The first record is the entry point, including when
 Pybricks Code names it after the opened file instead of `__main__`; its original
 module name remains available to imports. The advertised transfer limit is
-31,728 bytes, leaving room for file-map metadata within the 32 KiB application
+64,496 bytes in the full F4 Python profile, leaving room for file-map metadata within the 64 KiB application
 limit. The receive buffer grows with accepted data instead of reserving that
 maximum for every program. Growth temporarily retains the old buffer; package
 normalization also needs space for the common file map. Allocation failure

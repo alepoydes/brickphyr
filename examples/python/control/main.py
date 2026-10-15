@@ -3,8 +3,7 @@ import gc
 import struct
 import brickphyr
 
-with open("control_loop.elf", "rb") as image:
-    brickphyr.control_start(image.read(), struct.pack("<I", 3))
+brickphyr.control_start("control_loop.elf", struct.pack("<I", 3))
 
 print("Native observation started; enter A/B port mask 0..3, or q to stop")
 while True:

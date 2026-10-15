@@ -30,9 +30,10 @@ VM objects or GC. See [concurrent control](#native-control-and-background-comput
 The `brickphyr` Python module uses the existing native ELF loader. Arguments are
 positional:
 
-- `control_start(image, parameters=b"")` copies/links an ELF from a readable
-  buffer and starts its `app_main()` in a separate protected thread. An ELF can
-  be a resource in the ordinary named or RAM Python package. One controller is
+- `control_start(image, parameters=b"")` links an ELF from a readable buffer or
+  a string naming a bundled resource and starts its `app_main()` in a separate
+  protected thread. Prefer `control_start("controller.elf", parameters)` for
+  resources: it reads the package directly, without an ELF-sized Python object. One controller is
   allowed; another start returns `EBUSY`. A rejected start leaves Python running.
 - `control_update(parameters)` copies a complete replacement and returns its
   positive revision. The block's size is fixed by `control_start`, at most
@@ -154,17 +155,22 @@ observed port mask at a step boundary. It sends no actuator commands. Build
 `control_background` with the [ordinary SDK procedure](builds.md#experimental-native-sdk):
 
 ```sh
-uv run cmake --build build/native-examples --target control_background -j4
+uv run cmake --build build/native-examples --target control_background control_loop -j4
+uv run brickphyrdev app install build/native-examples/control_loop.elf --name control_loop
 uv run brickphyrdev app run build/native-examples/control_background.elf
 uv run brickphyrdev app output
 uv run brickphyrdev app record reports/native-control.jsonl
 ```
 
-Add `--ble Brickphyr` after `app` for Bluetooth. The example embeds the controller
-ELF in the primary's read-only data. That source copy remains resident alongside
-the linked controller and counts toward peak and running memory; this example is
-not a zero-copy package format. Real numerical algorithms, candidate validation
-and rollback remain application code.
+Add `--ble Brickphyr` after `app` for Bluetooth. The primary calls
+`bp_control_start_file("control_loop", 12, parameters, size)` to load the installed
+controller through the same validator and LLEXT linker as a buffered start. The
+store remains locked through validation/linking; no complete controller ELF is
+embedded in the primary or retained after linking. Missing files return `ENOENT`,
+invalid images fail admission, and a rejected start leaves the primary alive.
+Without application storage the call returns `ENOTSUP`. Initial parameters,
+independent protection and the common stop/fault lifetime are unchanged.
+Real numerical algorithms, candidate validation and rollback remain application code.
 
 Protected ARM checks cover native primary progress, copied revisions,
 cross-domain faults, forced stop and complete heap reclamation, including a
@@ -450,8 +456,9 @@ fixed; append calls at the end and increase the minor version. Incompatible
 changes require a new major and table symbol. The table is generated from the
 public syscall declarations; bindings keep using the same implementation.
 
-The current version is 2.1. It adds explicit application user-data saving;
-2.0 ELF applications retain their existing table slots and remain supported.
+The current version is 2.2. It adds controller loading from a named installed
+ELF; 2.1 added explicit application user-data saving. ABI 2.0 and 2.1 ELF
+applications retain their existing table slots and remain supported.
 Version 2 retains each grouped motor command's per-port application and cleanup
 times instead of relying on mutable output snapshots.
 ELF files built for ABI 1 must be rebuilt with the matching SDK; they are rejected
@@ -1120,8 +1127,8 @@ Pybricks clients. See [SDK compilation](builds.md#experimental-python-profile).
 A separate 16 KiB code region is allocated
 from the system heap on first use, with up to 32 KiB transient allocator space
 needed for MPU alignment. This region is read/execute for the application; its
-ordinary data remains non-executable. A privileged, preemptible worker with a
-1 KiB stack initializes and publishes code below hardware-service priorities;
+ordinary data remains non-executable. The shared storage worker initializes and publishes code below control and
+hardware-service priorities. Builds without storage use a 1 KiB worker;
 large memory operations do not occupy the cooperative system workqueue.
 Committed code stays allocated until the
 application ends, including functions no longer referenced by Python. Exhaustion
@@ -1131,8 +1138,15 @@ raises `MemoryError`. Status reports its reservation as `code` and usage as
 admission rather than a GC-heap allocation: free Python heap alone cannot satisfy
 its system-heap capacity and alignment requirements.
 
-The 32 KiB upload limit also applies to Python. The retained source/bytecode shares
-the 64 KiB arena with the GC heap, so larger programs leave less runtime memory.
+The full F4 Python profile accepts packages up to 64 KiB. The 64 KiB Python
+arena holds the GC heap; package bytes live outside it. RAM uploads retain one
+immutable allocation, shared with a retained repeat upload when requested.
+Stored packages are read from LittleFS in bounded chunks. Imports, ordinary
+resource streams and controller resources use the same bounded reader; native
+controller linking still allocates its executable/data sections in protected RAM.
+RAM execution needs space for both the package and VM; stored execution avoids
+that package allocation. Neither image-size admission nor free GC bytes alone
+prove that the complete application will fit the shared heap.
 The Python profile requests a 12 KiB application stack; the F4 MPU rounds its
 allocation to 16 KiB. This allocation exists only while Python is loaded; a
 native application in the same image uses its own ABI requirement. Stack checking
@@ -1157,7 +1171,7 @@ devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
 The native-only profile provides a 229632-byte heap, including on-demand loader
-allocations and stacks. The full and core Python profiles provide 199808 and
+allocations and stacks. The BLE full and core Python profiles provide 223232 and
 224256 bytes, respectively, including the on-demand 64 KiB Python arena.
 Idle and native-only execution leave that capacity available to other allocations.
 Active stacks and native loader
@@ -1333,7 +1347,7 @@ modules can coexist, including packages with `__init__.py` or `__init__.mpy`.
 MicroPython owns module resolution and execution; this map supplies the file bytes.
 It introduces no second writable filesystem or package manager.
 
-The entire encoded image is limited to 32 KiB, at most 64 files plus optional entry
+The full F4 profile limits the encoded image to 64 KiB, at most 64 files plus optional entry
 metadata, and 128 bytes per relative path. Absolute paths, empty/`.`/`..` components, embedded NUL,
 duplicate keys and file/directory collisions are rejected. CBOR keys and values
 must be definite-length text and byte strings. Admission validates the complete
@@ -1341,12 +1355,22 @@ map and each Python/MPY format envelope; syntax and bytecode-body errors remain
 execution errors. Unsupported native architectures are checked again on import.
 
 Named images use the same LittleFS staging, validation, atomic rename, listing and
-removal as native ELF. Upload/install never starts or stops a program. On launch,
-the complete file set is copied into the Python execution arena alongside the GC
-heap. Later replacement or removal cannot change a running instance's imports,
-even when a module is imported again after removal from `sys.modules`. Validation
-and file loading temporarily require a complete image buffer in the system heap;
-memory exhaustion fails without replacing the installed version.
+removal as native ELF. Upload/install never starts or stops a program. Admission
+scans the map and code envelopes through bounded reads; execution keeps the
+read-only source open, without copying the complete package into RAM or GC.
+
+Later replacement or removal cannot change a running instance's imports, even
+when a module is imported again after removal from `sys.modules`. LittleFS does
+not pin all blocks of an unlinked read-only file, so before mutating the active
+source's installed path, the supervisor snapshots that old package into RAM.
+This allocation occurs only on replacement/removal of the running package.
+Insufficient memory rejects the mutation and preserves both the installed and
+running versions. Account for this snapshot in the update peak; stop first when
+that extra reservation is unwanted. Ordinary launch/read never writes flash.
+
+The source and any retained RAM upload have explicit references. Stop/fault joins
+both execution contexts and cancels pending reads before releasing the source;
+an accepted store writer retains its own reference until its write completes.
 
 Temporary directories use the same image and interpreter without any application
 storage write. `open()` and `io.open()` read bundled resources in text or binary
@@ -1355,6 +1379,15 @@ mode, with seeking, iteration and context-manager close. Write modes fail with
 in this same program namespace, never in the firmware filesystem. `__file__` and
 `sys.argv[0]` identify the root entry.
 See [CLI and terminal commands](host.md#python-applications).
+
+Protected ARM checks cover bounded resource reads, source/bytecode/native imports,
+running-version preservation during replacement/removal, and complete system-heap
+reclamation after RAM and stored execution. On one Robot Inventor F4, a synthetic
+64 KiB package with padding and a matching-SDK C module ran from RAM and LittleFS
+over USB; both left 62,944 B free after GC. USB/BLE checks also cover the native
+named-controller example and Python controllers loaded directly from RAM/stored
+package resources, with passive observations only. These bounded examples do not
+establish capacity for a complete Babybot workload.
 
 ### Persistent user data
 

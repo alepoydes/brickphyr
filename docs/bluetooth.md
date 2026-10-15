@@ -210,9 +210,10 @@ profile, or consume its advertisement. Recycled connection objects restart
 advertising only when no management owner and no active advertisement remain.
 Pending disconnects retain each distinct connection separately, so a slow HCI
 command cannot discard another rejected client's cleanup. These boundaries have
-synthetic checks with multiple connection slots. The Bluetooth profile reserves
-two slots: one management connection and one application peripheral. The full
-Python profile reserves five to also accommodate Classic HubNetwork links.
+synthetic checks with multiple connection slots. The Bluetooth and full BLE
+Python profiles reserve two slots: one management connection and one application
+peripheral. The optional Classic Python fragment raises this to five for
+HubNetwork links.
 Simultaneous physical BLE management/peripheral links remain an acceptance item.
 
 The local H:4 close-path correction discards partial framing and releases pending
@@ -343,8 +344,8 @@ access an unloaded interpreter. A new claim is rejected as busy until pending
 disconnection cleanup finishes, preventing early reuse of its buffers.
 
 The F4 profile enables optional pairing, including LE legacy pairing for older
-LEGO devices. Bond keys stay in RAM; the base BLE profile reserves two records,
-and the full Python profile reserves five for its additional Classic links.
+LEGO devices. Bond keys stay in RAM; the BLE profiles reserve two records,
+and the optional Classic Python fragment reserves five for its additional links.
 Unused records can be replaced when full. Pairing without a passkey does not
 authenticate the operator. Builds without the required central/GATT service
 return an unsupported error before starting device work.
@@ -421,9 +422,11 @@ licensed SDL/Bluepad32 sources; Pybricks' non-free Xbox source is excluded. See
 ### Application hub network
 
 `messaging.HubNetwork` uses Classic BR/EDR L2CAP alongside BLE management.
-The full F4 Python profile enables `CONFIG_BRICKPHYR_HUB_NETWORK`, three network
-peers, one BLE device and one computer connection. Reduced profiles omit Classic;
-constructing `HubNetwork` there reports `OSError(ENOTSUP)`.
+Append the [optional Classic Python fragment](builds.md#experimental-python-profile)
+to the full F4 Python profile to enable `CONFIG_BRICKPHYR_HUB_NETWORK`, three
+network peers, one BLE device and one computer connection. The full BLE Python
+and reduced profiles omit Classic and do not expose the `HubNetwork` Python
+binding. Native network operations report `ENOTSUP` in those builds.
 
 The service ports Pybricks' star routing and per-sender queues from
 [`pb_type_hub_network.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/pybricks/messaging/pb_type_hub_network.c)

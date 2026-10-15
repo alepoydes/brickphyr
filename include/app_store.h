@@ -2,6 +2,11 @@
 #pragma once
 #include <stddef.h>
 
+struct k_mutex;
+extern struct k_mutex store_lock;
+/* Caller owns store_lock. Resolve the common installed namespace. */
+int app_store_path(const char *name, char *path, size_t capacity);
+
 #define APP_NAME_MAX 32
 #define APP_STAGE "/apps/.incoming"
 struct app_file {
