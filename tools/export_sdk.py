@@ -2,16 +2,16 @@
 """Export a portable native SDK from Zephyr's EDK and optional Python tools."""
 
 import argparse
-import hashlib
 import json
 import re
 import shutil
-import subprocess
 import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import yaml
+
+from tools.build_record import verify
 
 
 def portable_cflags(edk: Path, configured: list[str], dsp: bool) -> str:
@@ -40,6 +40,7 @@ def portable_cflags(edk: Path, configured: list[str], dsp: bool) -> str:
 
 
 def export(build: Path, micropython: Path | None, dsp: list[Path] | None):
+    provenance = verify(build)
     info = yaml.safe_load((build / "build_info.yml").read_text())
     edk = Path(info["cmake"]["llext-edk"]["file"])
     output = build / "zephyr/brickphyr-sdk.tar.xz"
@@ -55,13 +56,6 @@ def export(build: Path, micropython: Path | None, dsp: list[Path] | None):
         sdk.mkdir()
         root = Path(__file__).resolve().parents[1]
         shutil.copy2(root / "LICENSE", sdk / "LICENSE")
-        provenance = {
-            "source": subprocess.check_output(
-                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
-            "dirty": bool(subprocess.check_output(
-                ["git", "-C", str(root), "status", "--porcelain=v1"], text=True)),
-            "config_sha256": hashlib.sha256((build / "zephyr/.config").read_bytes()).hexdigest(),
-        }
         (sdk / "build.json").write_text(json.dumps(provenance, indent=2) + "\n")
         headers = sdk / "include"
         headers.mkdir()

@@ -118,9 +118,13 @@ Release archives include the firmware ELF, configuration, devicetree,
 source licenses and matching native SDK. F4 archives
 also contain the installer ZIP. `provenance.json` records the frozen west manifest,
 MicroPython revision, toolchain version, ELF section sizes and member checksums.
-The SDK's `build.json` records its source revision and configuration hash; packaging
-rejects a stale SDK or one exported from a dirty tree. This metadata identifies
-the build, without adding restrictions to the [native ABI](applications.md).
+The build records source revisions, local-change hashes, configuration, devicetree
+and hashes of the linked image in `zephyr/brickphyr-build.json`. Exporting an SDK
+builds the firmware first and copies this record into the SDK's `build.json`.
+Packaging requires that both records, the current workspace, image hashes and
+release version agree; a stale image or dirty source tree is rejected.
+This metadata identifies the build, without adding restrictions to the
+[native ABI](applications.md).
 
 From a clean, pinned workspace, package an already built image with its version:
 

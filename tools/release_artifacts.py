@@ -17,6 +17,7 @@ import yaml
 from west.manifest import Manifest
 
 from tools import workspace_status
+from tools.build_record import verify
 from tools.package_firmware import license_notice
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +54,11 @@ def bundle_files(build: Path, output: Path, name: str, version: str,
     """Validate real build artifacts and atomically bundle their bytes."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
         raise ValueError("NAME must be one safe archive directory name")
+    build_record = verify(build, current=False, clean=True)
+    if build_record["state"]["sources"]["brickphyr"]["revision"] != provenance["root_head"]:
+        raise ValueError("Build source differs from requested provenance")
+    if build_record["state"]["version"] != version:
+        raise ValueError("Build version differs from requested release version")
     config_bytes = (build / "zephyr/.config").read_bytes()
     config = set(config_bytes.decode().splitlines())
     if not ARM_REQUIREMENTS <= config:
@@ -84,13 +90,11 @@ def bundle_files(build: Path, output: Path, name: str, version: str,
             if member is None:
                 raise ValueError("SDK build.json is missing")
             sdk_info = json.load(member)
-        if (sdk_info.get("source") != provenance["root_head"]
-                or sdk_info.get("dirty") is not False
-                or sdk_info.get("config_sha256") != hashlib.sha256(config_bytes).hexdigest()):
-            raise ValueError("SDK build metadata differs from this clean source and configuration")
+        if sdk_info != build_record:
+            raise ValueError("SDK build metadata differs from the linked firmware")
         files["brickphyr-sdk.tar.xz"] = sdk_archive.read_bytes()
 
-    record = {**provenance, "name": name, "release_version": version,
+    record = {**provenance, "name": name, "release_version": version, "build": build_record,
               "sha256": {key: hashlib.sha256(value).hexdigest()
                          for key, value in sorted(files.items())}}
     files["provenance.json"] = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
@@ -115,6 +119,7 @@ def bundle_files(build: Path, output: Path, name: str, version: str,
 def package(build: Path, output: Path, name: str, version: str) -> Path:
     if workspace_status.main(["--check"]):
         raise ValueError("West workspace differs from clean manifest pins")
+    verify(build, clean=True)
     info = yaml.safe_load((build / "build_info.yml").read_text())
     sdk = Path(info["cmake"]["toolchain"]["path"])
     provenance = source_provenance()

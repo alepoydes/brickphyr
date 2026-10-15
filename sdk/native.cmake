@@ -99,6 +99,7 @@ if(CONFIG_BRICKPHYR_PYTHON)
 endif()
 
 if(CONFIG_LLEXT_EDK)
+  include(${BRICKPHYR_ROOT}/cmake/build_record.cmake)
   set(sdk_python_args)
   if(CONFIG_BRICKPHYR_PYTHON)
     list(APPEND sdk_python_args --micropython ${WEST_TOPDIR}/pybricks-micropython/micropython)
@@ -109,9 +110,10 @@ if(CONFIG_LLEXT_EDK)
       ${ZEPHYR_CMSIS_DSP_MODULE_DIR}/LICENSE)
   endif()
   add_custom_target(brickphyr-sdk
-    COMMAND ${PYTHON_EXECUTABLE} ${BRICKPHYR_ROOT}/tools/export_sdk.py
+    COMMAND ${PYTHON_EXECUTABLE} -m tools.export_sdk
       ${CMAKE_BINARY_DIR} ${sdk_python_args} ${sdk_dsp_args}
-    DEPENDS llext-edk brickphyr_api
+    DEPENDS llext-edk brickphyr_api brickphyr-build-record
+    WORKING_DIRECTORY ${BRICKPHYR_ROOT}
     VERBATIM)
   if(CONFIG_BRICKPHYR_PYTHON)
     add_dependencies(brickphyr-sdk mpy_cross)
