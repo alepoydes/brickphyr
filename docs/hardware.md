@@ -484,8 +484,12 @@ idle HubNetwork construction and subsequent BLE output without IMU gaps.
 HubNetwork inbox allocation avoids clearing user-sized buffers with interrupts
 masked. Inventor F4 creation/stop checks with 1 KiB and 8 KiB per sender preserve
 IMU counters and both idle motor UART links. Sustained-load acceptance remains open.
-F4 can still report a UART overrun during startup and reconnect the device;
-eliminating these startup overruns remains pending.
+The UART overrun observed during the installer's initial connection was traced
+to Shell thread teardown. The [retained Shell worker](host.md#one-management-session)
+and [application-thread cleanup correction](ports.md#electrical-ownership-and-shutdown)
+address the reproduced teardown failures. Bounded reconnect, application-stop
+and software-reboot checks retain both ID-75 links without acquisition errors.
+Physical cold power-on and sustained combined-load acceptance remain open.
 
 ## Hub sound
 
