@@ -434,6 +434,31 @@ __syscall int bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
  * system ticks. Includes no allocation or device I/O. */
 __syscall int64_t bp_time_us(void);
 
+/* Primary context only (native or Python). Link one independent controller;
+ * both contexts end on either return/fault or application stop. The source ELF
+ * is copied/linked while the caller waits; its buffer may then be reused.
+ * Initial parameters are copied, fixed in size, at most BP_CONTROL_PARAMETERS_MAX.
+ * Start before using the primary's control waits or recorder writer. A second
+ * controller or an existing step/recording returns EBUSY. Failed admission
+ * leaves the primary running. No application memory is shared between contexts.
+ */
+__syscall int bp_control_start(const void *image, size_t size,
+	const void *parameters, size_t length);
+/* Copy a complete same-size revision; returns its positive revision number.
+ * The control context receives the latest one at its next successful wait. */
+__syscall int bp_control_update(const void *parameters, size_t length);
+__syscall int bp_control_get(struct bp_control_status *value);
+
+/* Primary context reads the same bounded recording as host collection, without
+ * consuming its cursor. ENODATA before recording begins. Whole-record read
+ * returns its length, zero if not written yet, ESTALE for an old generation,
+ * EOVERFLOW for overwritten data, or EMSGSIZE before copying undersized buffers.
+ * Copying includes the applied parameter values and step metadata atomically.
+ */
+__syscall int bp_record_get(struct bp_record_info *info);
+__syscall int bp_record_readinto(const struct bp_record_request *request,
+	struct bp_record_info *info, struct bp_control_step *step);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

@@ -7,6 +7,7 @@ import struct
 from pathlib import Path
 
 import cbor2
+import pytest
 
 from brickphyrdev import console, recording
 from brickphyrdev.application import Format, Start, Status, Stop, checked, connection, upload
@@ -241,6 +242,17 @@ print('record snapshots passed')
         asyncio.run(exercise(port))
 
 
+async def heap_allocated(transport, shell):
+    shell.clear()
+    await transport.write(b"kernel heap\r")
+    async with asyncio.timeout(2):
+        while not shell.endswith(b"brickphyr> "):
+            await asyncio.sleep(0.005)
+    match = re.search(rb"\r\nallocated:\s+(\d+)", shell)
+    assert match, bytes(shell)
+    return int(match[1])
+
+
 def test_python_control_fault_stop_and_heap_recovery():
     fault_source = """import brickphyr, struct
 private = bytearray(16)
@@ -262,17 +274,7 @@ input()
             transport,
             client,
         ):
-            async def heap_allocated():
-                shell.clear()
-                await transport.write(b"kernel heap\r")
-                async with asyncio.timeout(2):
-                    while not shell.endswith(b"brickphyr> "):
-                        await asyncio.sleep(0.005)
-                match = re.search(rb"\r\nallocated:\s+(\d+)", shell)
-                assert match, bytes(shell)
-                return int(match[1])
-
-            baseline = await heap_allocated()
+            baseline = await heap_allocated(transport, shell)
             try:
                 await upload(client, transport, bundle(fault_source), Format.FILES)
                 await checked(client, Start())
@@ -280,7 +282,7 @@ input()
                 assert fault.fault != 0, fault
                 await checked(client, Stop())
                 await checked(client, recording.Clear())
-                assert await heap_allocated() == baseline
+                assert await heap_allocated(transport, shell) == baseline
 
                 await upload(client, transport, bundle(spin_source), Format.FILES)
                 await checked(client, Start())
@@ -293,16 +295,57 @@ input()
                 assert stopped.state == 3 and stopped.cleanup == 0, stopped
                 assert 0 < stopped.control_unused < stopped.control_stack
                 await checked(client, recording.Clear())
-                assert await heap_allocated() == baseline
+                assert await heap_allocated(transport, shell) == baseline
 
                 await upload(client, transport, b"print('Python after controller')\n", Format.PYTHON)
                 await checked(client, Start())
                 returned = await completed(client)
                 assert returned.result == 0 and b"Python after controller" in await output(client)
                 await checked(client, Stop())
-                assert await heap_allocated() == baseline
+                assert await heap_allocated(transport, shell) == baseline
             finally:
                 await checked(client, Stop())
 
     with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+@pytest.mark.parametrize(('build', 'modes'), [
+    pytest.param(BUILD, (0, 1, 2, 0), id='full'),
+    pytest.param(BUILD.parent / 'native-smp-tests', (0,), id='native_only'),
+])
+def test_native_background_progress_isolation_and_reclamation(build, modes):
+    async def exercise(port):
+        shell = bytearray()
+        async with console.connection(shell.extend, management=True, port=port) as (transport, client):
+            baseline = await heap_allocated(transport, shell)
+            try:
+                # Normal return, cross-domain fault, forced stop, then reuse.
+                for mode in modes:
+                    await upload(client, transport, (build / f"background_{mode}.elf").read_bytes())
+                    await checked(client, Start())
+                    if mode == 2:
+                        async with asyncio.timeout(2):
+                            while (await checked(client, recording.Info())).next < 6:
+                                assert (await checked(client, Status())).state == 1
+                                await asyncio.sleep(0.005)
+                        await checked(client, Stop())
+                        state = await checked(client, Status())
+                        assert state.state == 3 and state.cleanup == 0, state
+                    else:
+                        state = await completed(client, state=4 if mode == 1 else 2)
+                        if mode == 1:
+                            assert state.fault, state
+                        else:
+                            assert state.result == state.fault == state.cleanup == 0, (state, await output(client))
+                            assert b"native background complete" in await output(client)
+                            assert any(row[4] == 2 for row in await records(client))
+                    assert 0 < state.control_unused < state.control_stack, state
+                    await checked(client, Stop())
+                    await checked(client, recording.Clear())
+                    assert await heap_allocated(transport, shell) == baseline
+            finally:
+                await checked(client, Stop())
+
+    with native_console(build) as port:
         asyncio.run(exercise(port))

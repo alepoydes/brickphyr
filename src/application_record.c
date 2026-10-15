@@ -5,7 +5,7 @@
 #include <zephyr/kernel.h>
 
 static struct k_spinlock lock;
-static struct application_record_info state;
+static struct bp_record_info state;
 static uint8_t *records;
 static uint8_t *configuration, *parameters, *applied_parameters;
 static size_t parameter_stride;
@@ -34,7 +34,7 @@ static void reset(bool active)
 	configuration = parameters = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
 	uint32_t generation = state.generation + 1;
-	state = (struct application_record_info){.generation = generation ? generation : 1,
+	state = (struct bp_record_info){.generation = generation ? generation : 1,
 		.active = active};
 	k_spin_unlock(&lock, key);
 	k_free(old);
@@ -53,7 +53,7 @@ void application_record_reset(void)
 void application_record_end(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (state.active) state.reason = RECORD_APPLICATION_END;
+	if (state.active) state.reason = BP_RECORD_APPLICATION_END;
 	state.active = false;
 	k_spin_unlock(&lock, key);
 }
@@ -123,7 +123,7 @@ int application_record_write(const void *data, size_t length)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = !records ? -ENODATA : !state.active ?
-		(state.reason == RECORD_TRIGGER_END ? -ENOSPC : -ENODATA) :
+		(state.reason == BP_RECORD_TRIGGER_END ? -ENOSPC : -ENODATA) :
 		length != state.spec.size ? -EMSGSIZE :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
@@ -163,7 +163,7 @@ int application_record_write(const void *data, size_t length)
 		if (state.next - state.first > state.spec.capacity) state.first++;
 		if (state.triggered && state.next - state.trigger == state.after) {
 			state.active = false;
-			state.reason = RECORD_TRIGGER_END;
+			state.reason = BP_RECORD_TRIGGER_END;
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -184,14 +184,14 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 		state.after = after;
 		if (!after) {
 			state.active = false;
-			state.reason = RECORD_TRIGGER_END;
+			state.reason = BP_RECORD_TRIGGER_END;
 		}
 	}
 	k_spin_unlock(&lock, key);
 	return err;
 }
 
-void application_record_info(struct application_record_info *info)
+void application_record_info(struct bp_record_info *info)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
@@ -199,7 +199,7 @@ void application_record_info(struct application_record_info *info)
 }
 
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
-	void *data, size_t capacity, struct application_record_info *info, struct bp_control_step *step)
+	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
@@ -218,7 +218,7 @@ int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 }
 
 int application_record_parameters_read(uint32_t generation, uint64_t index,
-	void *data, struct application_record_info *info, uint32_t *revision)
+	void *data, struct bp_record_info *info, uint32_t *revision)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
@@ -240,7 +240,7 @@ int application_record_parameters_read(uint32_t generation, uint64_t index,
 
 int application_record_copy(uint32_t generation, uint64_t index,
 	void *data, size_t capacity, void *params, size_t params_capacity,
-	struct application_record_info *info, struct bp_control_step *step)
+	struct bp_record_info *info, struct bp_control_step *step)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
@@ -263,7 +263,7 @@ int application_record_copy(uint32_t generation, uint64_t index,
 }
 
 int application_record_config_read(uint32_t generation, size_t offset,
-	void *data, size_t capacity, struct application_record_info *info)
+	void *data, size_t capacity, struct bp_record_info *info)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;

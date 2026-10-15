@@ -83,10 +83,12 @@ static size_t application_stack_size;
 static struct k_thread application_thread;
 static struct k_mem_domain application_domain;
 static bool domain_initialized;
-static struct llext *extension;
-static bool loader_initialized;
-/* One native image, standalone or alongside Python, with its own backing. */
-static void *native_memory;
+struct native_code {
+	struct llext *extension;
+	struct k_heap heap;
+	void *memory;
+};
+static struct native_code primary_code;
 static struct k_spinlock control_lock;
 static struct {
 	struct bp_control_step step;
@@ -106,7 +108,9 @@ static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
 	Z_GENERIC_SECTION(.brickphyr_execution);
 K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_memory),
 	K_MEM_PARTITION_P_RW_U_RW);
+#endif
 static struct native_control {
+	struct native_code code;
 	struct k_mem_domain domain;
 	struct k_thread *thread;
 	k_thread_stack_t *stack;
@@ -125,7 +129,6 @@ static K_SEM_DEFINE(control_done, 0, 1);
 static int start_controller(void);
 BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
 BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
-#endif
 /* ARMv8-M bounds dynamic regions at app_smem; this earlier arena would require
  * a corresponding region-boundary integration before using that MPU model. */
 BUILD_ASSERT(!IS_ENABLED(CONFIG_MPU_REQUIRES_NON_OVERLAPPING_REGIONS));
@@ -166,17 +169,24 @@ static K_SEM_DEFINE(record_done, 0, 1);
 static bool native_caller(void)
 {
 	struct k_thread *thread = k_sched_current_thread_query();
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller && controller->started && thread == controller->thread) return true;
-#endif
 	return atomic_get(&active) && status.format == APPLICATION_NATIVE && thread == &application_thread;
+}
+
+/* Only one context owns the step clock and recorder writer. */
+static bool control_caller(void)
+{
+	return native_caller() && (!controller || k_sched_current_thread_query() == controller->thread);
+}
+
+static bool primary_caller(void)
+{
+	return atomic_get(&active) && k_sched_current_thread_query() == &application_thread;
 }
 
 static enum bp_port_owner application_port_owner(void)
 {
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller && k_sched_current_thread_query() == controller->thread) return BP_PORT_CONTROLLER;
-#endif
 	return BP_PORT_APPLICATION;
 }
 
@@ -1536,9 +1546,7 @@ static inline int z_vrfy_bp_control_frame_get(uint32_t port_mask, struct bp_cont
 
 static size_t control_parameter_size(void)
 {
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller) return controller->parameter_size;
-#endif
 	return 0;
 }
 
@@ -1546,12 +1554,10 @@ static void control_release(struct bp_control_step *step, void *parameters,
 	uint32_t period_us, int64_t next_tick)
 {
 	k_spinlock_key_t key = k_spin_lock(&control_lock);
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller) {
 		if (step->parameter_size) memcpy(parameters, controller->parameters, step->parameter_size);
 		step->parameter_revision = controller->revision;
 	}
-#endif
 	control_clock.period_us = period_us;
 	control_clock.next_tick = next_tick;
 	control_clock.step = *step;
@@ -1562,7 +1568,7 @@ static void control_release(struct bp_control_step *step, void *parameters,
 int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 	void *parameters, size_t capacity)
 {
-	if (!native_caller()) return -EPERM;
+	if (!control_caller()) return -EPERM;
 	if (control_clock.step.sequence == UINT32_MAX) return -EOVERFLOW;
 	int64_t ticks = k_us_to_ticks_ceil64(period_us);
 	if (!period_us || k_ticks_to_us_ceil64(ticks) != period_us) return -EINVAL;
@@ -1601,7 +1607,7 @@ int z_impl_bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
 	struct bp_control_step *step, struct bp_control_frame *frame,
 	void *parameters, size_t capacity)
 {
-	if (!native_caller()) return -EPERM;
+	if (!control_caller()) return -EPERM;
 	if (control_clock.period_us) return -EINVAL;
 	if (control_clock.step.sequence == UINT32_MAX) return -EOVERFLOW;
 	size_t size = control_parameter_size();
@@ -1634,11 +1640,13 @@ static inline int z_vrfy_bp_control_imu_wait(uint32_t port_mask, uint32_t timeou
 }
 #include <zephyr/syscalls/bp_control_imu_wait_mrsh.c>
 
-#ifdef CONFIG_BRICKPHYR_PYTHON
-int z_impl_application_control_start(const void *image, size_t size,
+int z_impl_bp_control_start(const void *image, size_t size,
 	const void *parameters, size_t length)
 {
-	if (controller || atomic_get(&control_pending)) return -EBUSY;
+	if (controller || atomic_get(&control_pending) || control_clock.step.sequence) return -EBUSY;
+	struct bp_record_info info;
+	application_record_info(&info);
+	if (info.spec.size) return -EBUSY;
 	control_request.image = image;
 	control_request.size = size;
 	control_request.parameters = parameters;
@@ -1647,18 +1655,18 @@ int z_impl_application_control_start(const void *image, size_t size,
 	k_sem_take(&control_done, K_FOREVER);
 	return control_request.result;
 }
-static inline int z_vrfy_application_control_start(const void *image, size_t size,
+static inline int z_vrfy_bp_control_start(const void *image, size_t size,
 	const void *parameters, size_t length)
 {
-	verify_python_thread();
-	if (!size || size > APPLICATION_IMAGE_LIMIT || length > APPLICATION_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	if (!primary_caller()) return -EPERM;
+	if (!size || size > APPLICATION_IMAGE_LIMIT || length > BP_CONTROL_PARAMETERS_MAX) return -EINVAL;
 	user_memory_check(image, size, 1, false, __func__);
 	if (length) user_memory_check(parameters, length, 1, false, __func__);
-	return z_impl_application_control_start(image, size, parameters, length);
+	return z_impl_bp_control_start(image, size, parameters, length);
 }
-#include <zephyr/syscalls/application_control_start_mrsh.c>
+#include <zephyr/syscalls/bp_control_start_mrsh.c>
 
-int z_impl_application_control_update(const void *parameters, size_t length)
+int z_impl_bp_control_update(const void *parameters, size_t length)
 {
 	if (!controller || !controller->started) return -ENODATA;
 	if (length != controller->parameter_size) return -EMSGSIZE;
@@ -1671,16 +1679,16 @@ int z_impl_application_control_update(const void *parameters, size_t length)
 	k_spin_unlock(&control_lock, key);
 	return result;
 }
-static inline int z_vrfy_application_control_update(const void *parameters, size_t length)
+static inline int z_vrfy_bp_control_update(const void *parameters, size_t length)
 {
-	verify_python_thread();
-	if (length > APPLICATION_CONTROL_PARAMETERS_MAX) return -EINVAL;
+	if (!primary_caller()) return -EPERM;
+	if (length > BP_CONTROL_PARAMETERS_MAX) return -EINVAL;
 	if (length) user_memory_check(parameters, length, 1, false, __func__);
-	return z_impl_application_control_update(parameters, length);
+	return z_impl_bp_control_update(parameters, length);
 }
-#include <zephyr/syscalls/application_control_update_mrsh.c>
+#include <zephyr/syscalls/bp_control_update_mrsh.c>
 
-int z_impl_application_control_get(struct application_control_status *value)
+int z_impl_bp_control_get(struct bp_control_status *value)
 {
 	if (!controller || !controller->started) return -ENODATA;
 	k_spinlock_key_t key = k_spin_lock(&control_lock);
@@ -1689,47 +1697,47 @@ int z_impl_application_control_get(struct application_control_status *value)
 	value->period_us = control_clock.period_us;
 	value->stack_bytes = K_THREAD_STACK_LEN(controller->stack_size);
 	value->loader_bytes = controller->loader_size;
-	value->loaded_bytes = extension->alloc_size;
+	value->loaded_bytes = controller->code.extension->alloc_size;
 	k_spin_unlock(&control_lock, key);
 	return 0;
 }
-static inline int z_vrfy_application_control_get(struct application_control_status *value)
+static inline int z_vrfy_bp_control_get(struct bp_control_status *value)
 {
-	verify_python_thread();
+	if (!primary_caller()) return -EPERM;
 	user_memory_check(value, sizeof(*value), __alignof__(*value), true, __func__);
-	return z_impl_application_control_get(value);
+	return z_impl_bp_control_get(value);
 }
-#include <zephyr/syscalls/application_control_get_mrsh.c>
+#include <zephyr/syscalls/bp_control_get_mrsh.c>
 
-int z_impl_application_record_get(struct application_record_info *info)
+int z_impl_bp_record_get(struct bp_record_info *info)
 {
 	application_record_info(info);
 	return info->spec.size ? 0 : -ENODATA;
 }
-static inline int z_vrfy_application_record_get(struct application_record_info *info)
+static inline int z_vrfy_bp_record_get(struct bp_record_info *info)
 {
-	verify_python_thread();
+	if (!primary_caller()) return -EPERM;
 	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
-	return z_impl_application_record_get(info);
+	return z_impl_bp_record_get(info);
 }
-#include <zephyr/syscalls/application_record_get_mrsh.c>
+#include <zephyr/syscalls/bp_record_get_mrsh.c>
 
-int z_impl_application_record_readinto(const struct application_record_request *request,
-	struct application_record_info *info, struct bp_control_step *step)
+int z_impl_bp_record_readinto(const struct bp_record_request *request,
+	struct bp_record_info *info, struct bp_control_step *step)
 {
 	return application_record_copy(request->generation, request->index,
 		request->data, request->capacity, request->parameters, request->parameters_capacity,
 		info, step);
 }
-static inline int z_vrfy_application_record_readinto(const struct application_record_request *request,
-	struct application_record_info *info, struct bp_control_step *step)
+static inline int z_vrfy_bp_record_readinto(const struct bp_record_request *request,
+	struct bp_record_info *info, struct bp_control_step *step)
 {
-	verify_python_thread();
+	if (!primary_caller()) return -EPERM;
 	user_memory_check(request, sizeof(*request), __alignof__(*request), false, __func__);
-	struct application_record_request copy = *request;
-	/* The recorder bounds these copies regardless of the Python buffer size. */
+	struct bp_record_request copy = *request;
+	/* The recorder bounds these copies regardless of the caller's buffer size. */
 	copy.capacity = MIN(copy.capacity, 1024);
-	copy.parameters_capacity = MIN(copy.parameters_capacity, APPLICATION_CONTROL_PARAMETERS_MAX);
+	copy.parameters_capacity = MIN(copy.parameters_capacity, BP_CONTROL_PARAMETERS_MAX);
 	if (copy.capacity) user_memory_check(copy.data, copy.capacity, 1, true, __func__);
 	if (copy.parameters_capacity) user_memory_check(copy.parameters, copy.parameters_capacity, 1, true, __func__);
 	if (copy.capacity && copy.parameters_capacity &&
@@ -1737,10 +1745,9 @@ static inline int z_vrfy_application_record_readinto(const struct application_re
 	    (uintptr_t)copy.parameters < (uintptr_t)copy.data + copy.capacity) return -EINVAL;
 	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
 	user_memory_check(step, sizeof(*step), __alignof__(*step), true, __func__);
-	return z_impl_application_record_readinto(&copy, info, step);
+	return z_impl_bp_record_readinto(&copy, info, step);
 }
-#include <zephyr/syscalls/application_record_readinto_mrsh.c>
-#endif
+#include <zephyr/syscalls/bp_record_readinto_mrsh.c>
 
 int z_impl_bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request)
 {
@@ -1772,7 +1779,7 @@ int z_impl_bp_control_motor_group_set(const struct bp_motor_group_command *comma
 	struct bp_control_motor_result *result)
 {
 	*result = (struct bp_control_motor_result){0};
-	if (!native_caller()) return -EPERM;
+	if (!control_caller()) return -EPERM;
 	if (!control_clock.step.sequence) return -ENODATA;
 	int err = hub_motor_group_exchange(application_port_owner(), command,
 		&result->request, &result->previous);
@@ -1815,7 +1822,7 @@ int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void 
 static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
 	const void *config, size_t length)
 {
-	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (!control_caller()) return -EPERM;
 	if (length > 1024) return -EMSGSIZE;
 	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
 	if (length) user_memory_check(config, length, 1, false, __func__);
@@ -1830,7 +1837,7 @@ int z_impl_bp_control_record_begin(const struct bp_record_spec *spec, const void
 static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length)
 {
-	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (!control_caller()) return -EPERM;
 	if (length > 1024) return -EMSGSIZE;
 	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
 	if (length) user_memory_check(config, length, 1, false, __func__);
@@ -1844,7 +1851,7 @@ int z_impl_bp_record_begin(const struct bp_record_spec *spec)
 }
 static inline int z_vrfy_bp_record_begin(const struct bp_record_spec *spec)
 {
-	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (!control_caller()) return -EPERM;
 	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
 	return z_impl_bp_record_begin(spec);
 }
@@ -1856,6 +1863,7 @@ int z_impl_bp_record_write(const void *data, size_t length)
 }
 static inline int z_vrfy_bp_record_write(const void *data, size_t length)
 {
+	if (!control_caller()) return -EPERM;
 	if (length > 1024) return -EMSGSIZE;
 	if (length) user_memory_check(data, length, 1, false, __func__);
 	return z_impl_bp_record_write(data, length);
@@ -1868,7 +1876,7 @@ int z_impl_bp_record_trigger(uint32_t after)
 }
 static inline int z_vrfy_bp_record_trigger(uint32_t after)
 {
-	K_OOPS(K_SYSCALL_VERIFY(native_caller()));
+	if (!control_caller()) return -EPERM;
 	return z_impl_bp_record_trigger(after);
 }
 #include <zephyr/syscalls/bp_record_trigger_mrsh.c>
@@ -2389,26 +2397,21 @@ static int clear_domain(struct k_mem_domain *domain)
 }
 
 /* Domain mappings and live threads must be gone before releasing native code. */
-static int release_native(void)
+static int release_native(struct native_code *code)
 {
-	int err = extension ? llext_unload(&extension) : 0;
-	if (!err && loader_initialized) {
-		err = llext_heap_uninit();
-		if (!err) loader_initialized = false;
-	}
+	int err = code->extension ? llext_unload(&code->extension) : 0;
 	if (!err) {
-		k_free(native_memory);
-		native_memory = NULL;
+		k_free(code->memory);
+		code->memory = NULL;
 	}
 	return err;
 }
 
-#ifdef CONFIG_BRICKPHYR_PYTHON
 static int release_controller(void)
 {
 	if (!controller) return 0;
 	int err = controller->domain_initialized ? clear_domain(&controller->domain) : 0;
-	if (!err) err = release_native();
+	if (!err) err = release_native(&controller->code);
 	if (!err && controller->stack) {
 		err = k_thread_stack_free(controller->stack);
 		if (!err) controller->stack = NULL;
@@ -2420,7 +2423,6 @@ static int release_controller(void)
 	}
 	return err;
 }
-#endif
 
 static int release(void)
 {
@@ -2430,12 +2432,10 @@ static int release(void)
 	k_sem_reset(&record_done);
 	application_record_end();
 	int err = hub_ports_release(BP_PORT_APPLICATION);
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	int controller_error = hub_ports_release(BP_PORT_CONTROLLER);
 	if (!err) err = controller_error;
 	atomic_clear(&control_pending);
 	k_sem_reset(&control_done);
-#endif
 	int radio_error = hub_radio_release();
 	if (!err) err = radio_error;
 	int peer_error = hub_ble_peer_release();
@@ -2456,10 +2456,8 @@ static int release(void)
 	if (!err && domain_initialized) {
 		err = clear_domain(&application_domain);
 	}
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (!err) err = release_controller();
-#endif
-	if (!err) err = release_native();
+	if (!err) err = release_native(&primary_code);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A queued worker acquires lifecycle before reading the request. Joining
 	 * its caller and clearing pending here also cancels an unstarted copy. */
@@ -2497,11 +2495,9 @@ static int reap(bool stop)
 	}
 	bool primary_ended = k_thread_join(&application_thread, K_NO_WAIT) == 0;
 	bool ended = primary_ended;
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	bool controller_live = controller && controller->started;
 	bool controller_ended = controller_live && k_thread_join(controller->thread, K_NO_WAIT) == 0;
 	ended |= controller_ended;
-#endif
 	if (!ended && !stop) {
 		return -EAGAIN;
 	}
@@ -2512,13 +2508,11 @@ static int reap(bool stop)
 			return err;
 		}
 	}
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller_live && !controller_ended) {
 		k_thread_abort(controller->thread);
 		int err = k_thread_join(controller->thread, K_FOREVER);
 		if (err) return err;
 	}
-#endif
 	atomic_clear(&active);
 	int result = atomic_get(&return_value);
 	status.result = result;
@@ -2531,13 +2525,11 @@ static int reap(bool stop)
 	status.fault = fault ? fault - 1 : 0;
 	status.state = fault ? APPLICATION_FAULT : ended ? APPLICATION_RETURNED : APPLICATION_STOPPED;
 	(void)k_thread_stack_space_get(&application_thread, &status.stack_unused);
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (controller_live) {
 		size_t unused;
 		int measured = k_thread_stack_space_get(controller->thread, &unused);
 		status.control_stack_unused = measured ? measured : (int)unused;
 	}
-#endif
 	int err = release();
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A soft reset is a complete application lifetime boundary. Recursive
@@ -2646,18 +2638,14 @@ void application_poll(void)
 		return;
 	}
 	(void)reap(false);
-#ifdef CONFIG_BRICKPHYR_PYTHON
 	if (atomic_get(&control_pending)) {
 		control_request.result = start_controller();
 		atomic_clear(&control_pending);
 		k_sem_give(&control_done);
 	}
-#endif
 	if (atomic_get(&record_pending)) {
 		size_t parameter_size = 0;
-#ifdef CONFIG_BRICKPHYR_PYTHON
 		if (record_request.control && controller) parameter_size = controller->parameter_size;
-#endif
 		record_result = application_record_begin(&record_request.spec,
 			record_request.config, record_request.length, record_request.control, parameter_size);
 		atomic_clear(&record_pending);
@@ -2786,22 +2774,23 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 /* Keep thread-start/status scratch off the deeper ELF link call chain. */
 static __noinline int start_native(const void *function, size_t length, size_t heap_size)
 {
-	return start_thread(native_entry, extension, (void *)function, NULL,
+	return start_thread(native_entry, primary_code.extension, (void *)function, NULL,
 		(struct application_status){.format = APPLICATION_NATIVE, .image_bytes = length, .program_id = -1,
-			.loader_bytes = heap_size, .loaded_bytes = extension->alloc_size}, false);
+			.loader_bytes = heap_size, .loaded_bytes = primary_code.extension->alloc_size}, false);
 }
 
 /* One LLEXT implementation serves either native context. Backing has already
  * been reserved; no application can observe a partially linked image. */
-static int load_native(struct llext_loader *loader, size_t heap_size,
+static int load_native(struct native_code *code, const char *name,
+	struct llext_loader *loader, size_t heap_size,
 	struct k_mem_domain *domain, const void **function)
 {
-	int err = llext_heap_init(native_memory, heap_size);
-	if (err) return err;
-	loader_initialized = true;
+	k_heap_init(&code->heap, code->memory, heap_size);
 	struct llext_load_param parameters = LLEXT_LOAD_PARAM_DEFAULT;
-	err = llext_load(loader, "application", &extension, &parameters);
+	parameters.heap = &code->heap;
+	int err = llext_load(loader, name, &code->extension, &parameters);
 	if (err) return err;
+	struct llext *extension = code->extension;
 	*function = llext_find_sym(&extension->exp_tab, "app_main");
 	uintptr_t pc = (uintptr_t)*function & ~1U;
 	uintptr_t text = (uintptr_t)extension->mem[LLEXT_MEM_TEXT];
@@ -2822,16 +2811,15 @@ static int run_image(struct llext_loader *loader, size_t length,
 		k_free(memory);
 		return err;
 	}
-	native_memory = memory;
+	primary_code.memory = memory;
 	const void *function;
-	err = load_native(loader, heap_size, &application_domain, &function);
+	err = load_native(&primary_code, "application", loader, heap_size, &application_domain, &function);
 	if (!err) err = start_native(function, length, heap_size);
 	if (err) (void)release();
 	return err;
 }
 
-#ifdef CONFIG_BRICKPHYR_PYTHON
-/* The primary VM is blocked in control_start. lifecycle protects its source
+/* The primary context is blocked in control_start. lifecycle protects its source
  * image until this copy/link finishes, or cancels the pending request on stop. */
 static int start_controller(void)
 {
@@ -2858,18 +2846,18 @@ static int start_controller(void)
 	err = k_mem_domain_init(&controller->domain, 0, NULL);
 	if (err) goto failed;
 	controller->domain_initialized = true;
-	native_memory = k_malloc(requirements.heap_size);
-	if (!native_memory) {
+	controller->code.memory = k_malloc(requirements.heap_size);
+	if (!controller->code.memory) {
 		err = -ENOMEM;
 		goto failed;
 	}
 	struct llext_buf_loader loader = LLEXT_TEMPORARY_BUF_LOADER(control_request.image, control_request.size);
 	const void *function;
-	err = load_native(&loader.loader, requirements.heap_size, &controller->domain, &function);
+	err = load_native(&controller->code, "controller", &loader.loader, requirements.heap_size, &controller->domain, &function);
 	if (err) goto failed;
 	memset(&control_clock, 0, sizeof(control_clock));
 	k_thread_create(controller->thread, controller->stack, controller->stack_size,
-		native_entry, extension, (void *)function, NULL,
+		native_entry, controller->code.extension, (void *)function, NULL,
 		K_LOWEST_APPLICATION_THREAD_PRIO - 1, K_USER, K_FOREVER);
 	if (IS_ENABLED(CONFIG_THREAD_NAME)) (void)k_thread_name_set(controller->thread, "app-control");
 	k_thread_heap_assign(controller->thread, NULL);
@@ -2885,12 +2873,11 @@ static int start_controller(void)
 	k_thread_start(controller->thread);
 	return 0;
 failed:
-	/* A rejected controller leaves Python running and preserves its first error. */
+	/* A rejected controller leaves the primary running and preserves its first error. */
 	int cleanup = release_controller();
 	if (cleanup && !status.cleanup_error) status.cleanup_error = cleanup;
 	return err;
 }
-#endif
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 static int run_python(const void *program, size_t length, enum application_format format,

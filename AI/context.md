@@ -85,7 +85,7 @@ Resource optimization continues across these blocks. Babybot owns its models
 and learning algorithms. Reuse validated numerical code while adapting the robot's
 orchestration and recording to Brickphyr; its current interfaces are not constraints.
 
-Python can start one independent native ELF controller with copied parameter
+A native or Python primary can start one independent native ELF controller with copied parameter
 revisions, separate MPU memory and a common stop/fault lifetime. Periodic and
 IMU-triggered release retain step observations; measured timing acceptance and
 complete background-workload acceptance remain open. Python can read whole

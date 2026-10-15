@@ -6,17 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct application_record_info {
-	struct bp_record_spec spec;
-	uint32_t generation;
-	uint64_t first, next;
-	uint64_t trigger;
-	uint32_t config_size, after, parameter_size;
-	enum { RECORD_OPEN, RECORD_APPLICATION_END, RECORD_TRIGGER_END } reason;
-	bool triggered;
-	bool active;
-	bool control;
-};
 
 /* Supervisor serializes reset/begin/clear with application termination. Reads
  * and fixed-size writes use only the bounded recorder lock, never lifecycle. */
@@ -25,21 +14,21 @@ void application_record_end(void);
 void application_record_clear(void);
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size);
-/* Called by the sole native context after a successful control wait. */
+/* Called by the control context after a successful control wait. */
 void application_record_step(const struct bp_control_step *step, const void *parameters);
 int application_record_write(const void *data, size_t length);
 /* Zero generation selects the caller's current run; host requests bind a run. */
 int application_record_trigger(uint32_t generation, uint32_t after);
-void application_record_info(struct application_record_info *info);
+void application_record_info(struct bp_record_info *info);
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
-	void *data, size_t capacity, struct application_record_info *info, struct bp_control_step *step);
+	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step);
 int application_record_parameters_read(uint32_t generation, uint64_t index,
-	void *data, struct application_record_info *info, uint32_t *revision);
+	void *data, struct bp_record_info *info, uint32_t *revision);
 /* One complete observation and its applied parameters, atomically copied.
  * Zero means the next record is not written yet. A stale generation, overwritten
  * index or undersized buffer fails before copying either payload. */
 int application_record_copy(uint32_t generation, uint64_t index,
 	void *data, size_t capacity, void *params, size_t params_capacity,
-	struct application_record_info *info, struct bp_control_step *step);
+	struct bp_record_info *info, struct bp_control_step *step);
 int application_record_config_read(uint32_t generation, size_t offset,
-	void *data, size_t capacity, struct application_record_info *info);
+	void *data, size_t capacity, struct bp_record_info *info);

@@ -127,7 +127,7 @@ static int discard_write(struct smp_streamer *stream)
 	return MGMT_ERR_EOK;
 }
 
-static bool record_position(zcbor_state_t *zs, const struct application_record_info *info)
+static bool record_position(zcbor_state_t *zs, const struct bp_record_info *info)
 {
 	return number(zs, "generation", info->generation) &&
 		zcbor_tstr_put_lit(zs, "first") && zcbor_uint64_put(zs, info->first) &&
@@ -140,7 +140,7 @@ static bool record_position(zcbor_state_t *zs, const struct application_record_i
 
 static int record_info_read(struct smp_streamer *stream)
 {
-	struct application_record_info info;
+	struct bp_record_info info;
 	application_record_info(&info);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && number(zs, "size", info.spec.size) &&
@@ -165,7 +165,7 @@ static int record_read(struct smp_streamer *stream)
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
 	    !generation || offset == UINT32_MAX || index == UINT64_MAX) return MGMT_ERR_EINVAL;
 	uint8_t data[256];
-	struct application_record_info info;
+	struct bp_record_info info;
 	struct bp_control_step step;
 	BUILD_ASSERT(sizeof(step) == 32);
 	int length = application_record_read(generation, index, offset, data, sizeof(data), &info, &step);
@@ -192,7 +192,7 @@ static int record_parameters_read(struct smp_streamer *stream)
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
 	    !generation || index == UINT64_MAX) return MGMT_ERR_EINVAL;
 	uint8_t data[256];
-	struct application_record_info info;
+	struct bp_record_info info;
 	int length = application_record_parameters_read(generation, index, data, &info, &revision);
 	if (length < 0) return result(stream, length);
 	zcbor_state_t *zs = stream->writer->zs;
@@ -219,7 +219,7 @@ static int record_config_read(struct smp_streamer *stream)
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
 	    !generation || offset == UINT32_MAX) return MGMT_ERR_EINVAL;
 	uint8_t data[256];
-	struct application_record_info info;
+	struct bp_record_info info;
 	int length = application_record_config_read(generation, offset, data, sizeof(data), &info);
 	if (length < 0) return result(stream, length);
 	zcbor_state_t *zs = stream->writer->zs;

@@ -408,7 +408,7 @@ SPIKE/Babybot work. Python execution, including `.mpy`, is not planned for this
 hub. The full F4 profile retains native applications and Python, including source
 compilation, REPL and compatible `.mpy` modules. It also supports an independently scheduled native controller alongside Python
 with a shared application lifetime; see
-[concurrent control](applications.md#native-control-alongside-python).
+[concurrent control](applications.md#native-control-and-background-computation).
 
 The firmware advertises its actual engines and hardware capabilities. Application
 format chooses an installed engine; the original programming language does not.

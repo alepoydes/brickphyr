@@ -505,6 +505,17 @@ An ARM regression injects repeated section-read failures and checks that each
 attempt reaches the original I/O error rather than exhausting the loader heap;
 the relocatable LLEXT suite also passes. This correction is pending publication.
 
+Concurrent native images require local Zephyr commit `3e53777a` on
+`topic/llext-per-load-heap`, pending publication and manifest integration.
+An optional `llext_load_param.heap` directs the extension's metadata and regions
+to a caller-owned heap, retained through failed loading and unload. NULL preserves
+the configured global allocator. Harvard/memory-block allocation and experimental
+save/restore reject this option explicitly. Brickphyr uses one backing reservation
+per admitted ELF; it does not reserve an aggregate heap for every possible context.
+The upstream dynamic-heap suite checks independent simultaneous images and failed
+load/unload reclamation; protected Brickphyr checks exercise the caller heaps
+without initializing the default LLEXT heap.
+
 Installed application support additionally requires local Zephyr commit `d1fdd0b7`
 (on the same branch): `fs_mgmt_file_close()` exposes the standard file group's
 existing transfer cleanup. An application can close an incomplete transfer before

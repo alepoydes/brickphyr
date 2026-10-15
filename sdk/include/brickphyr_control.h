@@ -13,6 +13,12 @@ struct bp_control_step {
 	uint32_t sequence, skipped, parameter_revision, parameter_size;
 };
 
+#define BP_CONTROL_PARAMETERS_MAX 256
+struct bp_control_status {
+	struct bp_control_step step;
+	uint32_t revision, period_us, stack_bytes, loader_bytes, loaded_bytes;
+};
+
 /* One port publication, with explicit connection identity for each output.
  * Encoder coordinates are physical shaft millidegrees. sample_ms is parser
  * completion, not the sensor's physical sampling instant. Check error first.

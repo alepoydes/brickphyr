@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "application_private.h"
+#include <brickphyr.h>
 #include "py/objint.h"
 #include "py/runtime.h"
 #include <string.h>
@@ -14,7 +14,7 @@ static mp_obj_t control_start(size_t count, const mp_obj_t *args)
 	mp_buffer_info_t image, parameters = {0};
 	mp_get_buffer_raise(args[0], &image, MP_BUFFER_READ);
 	if (count == 2) mp_get_buffer_raise(args[1], &parameters, MP_BUFFER_READ);
-	check(application_control_start(image.buf, image.len, parameters.buf, parameters.len));
+	check(bp_control_start(image.buf, image.len, parameters.buf, parameters.len));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(control_start_obj, 1, 2, control_start);
@@ -23,7 +23,7 @@ static mp_obj_t control_update(mp_obj_t data)
 {
 	mp_buffer_info_t parameters;
 	mp_get_buffer_raise(data, &parameters, MP_BUFFER_READ);
-	int revision = application_control_update(parameters.buf, parameters.len);
+	int revision = bp_control_update(parameters.buf, parameters.len);
 	check(revision);
 	return mp_obj_new_int(revision);
 }
@@ -47,8 +47,8 @@ static mp_obj_t step_fields(const struct bp_control_step *step)
 
 static mp_obj_t control_status(void)
 {
-	struct application_control_status value;
-	check(application_control_get(&value));
+	struct bp_control_status value;
+	check(bp_control_get(&value));
 	mp_obj_t result = step_fields(&value.step);
 	number_field(result, MP_QSTR_revision, value.revision);
 	number_field(result, MP_QSTR_period_us, value.period_us);
@@ -61,8 +61,8 @@ static MP_DEFINE_CONST_FUN_OBJ_0(control_status_obj, control_status);
 
 static mp_obj_t record_info(void)
 {
-	struct application_record_info info;
-	check(application_record_get(&info));
+	struct bp_record_info info;
+	check(bp_record_get(&info));
 	mp_obj_t result = mp_obj_new_dict(0);
 	number_field(result, MP_QSTR_generation, info.generation);
 	number_field(result, MP_QSTR_first, info.first);
@@ -79,7 +79,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(record_info_obj, record_info);
 
 static mp_obj_t record_readinto(size_t count, const mp_obj_t *args)
 {
-	struct application_record_request request;
+	struct bp_record_request request;
 	if (!mp_obj_is_int(args[0]) || !mp_obj_is_int(args[1])) mp_raise_TypeError(MP_ERROR_TEXT("integer cursor required"));
 	mp_obj_int_to_bytes(args[0], sizeof(request.generation), (byte *)&request.generation, MP_ENDIANNESS_BIG, false, true);
 	mp_obj_int_to_bytes(args[1], sizeof(request.index), (byte *)&request.index, MP_ENDIANNESS_BIG, false, true);
@@ -90,9 +90,9 @@ static mp_obj_t record_readinto(size_t count, const mp_obj_t *args)
 	request.capacity = data.len;
 	request.parameters = parameters.buf;
 	request.parameters_capacity = parameters.len;
-	struct application_record_info info;
+	struct bp_record_info info;
 	struct bp_control_step step = {0};
-	int length = application_record_readinto(&request, &info, &step);
+	int length = bp_record_readinto(&request, &info, &step);
 	check(length);
 	if (!length) return mp_const_none;
 	mp_obj_t result = info.control ? step_fields(&step) : mp_obj_new_dict(0);

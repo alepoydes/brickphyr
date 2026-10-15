@@ -20,12 +20,12 @@ Zephyr syscall numbering are existing foundations, described below. Continue
 measuring loading peaks, stacks, buffers, reachable code and execution costs;
 linked RAM includes allocatable reserves and is not the firmware's live working set.
 
-The supervisor runs standalone native or Python applications, or one Python
-application with an independent native controller. Both contexts belong to one
+The supervisor runs standalone native or Python applications, or a native/Python
+primary context with an independent native controller. Both contexts belong to one
 application lifetime. Their memory is separate; the controller does not depend on
-VM objects or GC. See [concurrent control](#native-control-alongside-python).
+VM objects or GC. See [concurrent control](#native-control-and-background-computation).
 
-## Native control alongside Python
+## Native control and background computation
 
 The `brickphyr` Python module uses the existing native ELF loader. Arguments are
 positional:
@@ -88,10 +88,10 @@ parameters, and the caller chooses whether to retry or stop. Stop/fault handling
 can abort the sleeping context without leaving application memory in the IMU
 worker. Independent motor expiry remains necessary while waiting or recovering.
 
-On F4 Python runs at priority 15 and the controller at 14; Shell/logging remain
-at 13, below acquisition and management services. The controller preempts Python
-and GC, while essential services can still preempt or stop either application
-context. A controller that never yields can starve Python. This priority scheme
+On F4 the primary runs at priority 15 and the controller at 14; Shell/logging remain
+at 13, below acquisition and management services. The controller preempts the primary
+(including Python GC), while essential services can still preempt or stop either application
+context. A controller that never yields can starve the primary. This priority scheme
 is not a deadline guarantee: application work, interrupts and driver delays must
 be measured for the selected period. Motor command expiry remains enforced by
 the independent port service; a missed step alone does not abort an application.
@@ -104,7 +104,7 @@ combined-load timing acceptance remains open.
 
 The controller has its own dynamically allocated stack, MPU domain and loader
 memory. Neither context can access the other's mutable memory; parameter bytes
-are copied by the supervisor. Control ports use a separate owner from Python:
+are copied by the supervisor. Control ports use a separate owner from the primary:
 conflicting writes, motor setup and release return `EBUSY`, while read-only
 snapshots remain available. Singleton hub services such as the matrix and speaker
 still belong to the whole application; coordinate their use in application code.
@@ -115,8 +115,54 @@ joins both before releasing device claims, partitions, code, stacks and thread
 objects. Normal native destructors execute in that context on return; forced stop
 and faults do not rely on them. The first completion supplies the result/fault;
 cleanup errors are reported separately and retain resources for retry. Ordinary
-host disconnection leaves both contexts running. Keep Python alive while its
+host disconnection leaves both contexts running. Keep the primary alive while its
 controller is needed; independent component restart is not provided.
+
+### Native primary context
+
+Native ABI 1.10 exposes `bp_control_start`, `bp_control_update` and
+`bp_control_get` to the primary ELF. The Python bindings call these same services;
+no Python engine is required for native background work. Each ELF has its own
+on-demand loader backing, stack and MPU domain. A failed second-image load leaves
+the primary intact. The shared supervisor still joins both before unloading either.
+
+Start the controller before the primary uses control waits or initializes a
+recording; otherwise start returns `EBUSY`. With a controller running, only that
+context may advance the control clock or write/trigger the recorder. Competing
+primary calls return `EPERM`. The primary may read observations and publish
+parameters with its lower priority, without blocking the controller on its work.
+
+`bp_record_get` returns recording metadata. `bp_record_readinto` takes a
+`bp_record_request` containing generation/index and caller-owned data/parameter
+buffers. It copies one complete record, its applied parameters and step metadata;
+readers have independent cursors. Its buffer, gap and generation rules are the
+same as the Python calls below. It returns the payload length, or zero when the
+next observation has not been written. Neither reading nor updating allocates.
+
+The [native background example](../examples/native/control_background.c) starts
+the existing `control_loop` controller, reads 24 observations and changes the
+observed port mask at a step boundary. It sends no actuator commands. Build
+`control_background` with the [ordinary SDK procedure](builds.md#experimental-native-sdk):
+
+```sh
+uv run cmake --build build/native-examples --target control_background -j4
+uv run brickphyrdev app run build/native-examples/control_background.elf
+uv run brickphyrdev app output
+uv run brickphyrdev app record reports/native-control.jsonl
+```
+
+Add `--ble Brickphyr` after `app` for Bluetooth. The example embeds the controller
+ELF in the primary's read-only data. That source copy remains resident alongside
+the linked controller and counts toward peak and running memory; this example is
+not a zero-copy package format. Real numerical algorithms, candidate validation
+and rollback remain application code.
+
+Protected ARM checks cover native primary progress, copied revisions,
+cross-domain faults, forced stop and complete heap reclamation, including a
+firmware configuration without Python. On one Robot Inventor F4, the SDK example
+also passes through USB and BLE with real IMU/passive port observations and both
+parameter revisions retained. It makes no motor commands. This checks the shared
+native lifecycle and transport path, not a numerical workload's deadline budget.
 
 ### Reading observations from Python
 
@@ -524,7 +570,7 @@ provided. Sensor accuracy and sustained combined-load timing remain unverified.
 A bounded read-only probe also runs while the host requests cached IMU, encoder
 and battery snapshots over USB or BLE. USB traffic can extend a capture beyond
 5 ms even with batched SMP transmission. That experiment is not an admission
-budget for a controller; see [independent control](#native-control-alongside-python)
+budget for a controller; see [independent control](#native-control-and-background-computation)
 for the execution mechanism and its remaining timing acceptance.
 
 ## Application recording

@@ -696,11 +696,19 @@ application owner. Build before running the focused checks:
 
 ```sh
 uv run --locked cmake --build build/python-fpu-tests -j4
+uv run --locked cmake --build build/native-smp-tests -j4
 uv run --locked pytest -q -x tests/test_python_control.py
 ```
 
+The same collection's native-background case loads a primary ELF containing the
+controller fixture. Busy float work, copied revisions, primary-to-controller MPU
+faults, forced stop and exact heap reclamation use the same public ABI and SMP
+path. Its `native_only` variant uses `build/native-smp-tests` without Python;
+build that fixture separately before selecting this case. These tests do not
+silently compile their embedded controller or firmware.
+
 These are synthetic M4 execution checks. They do not establish a physical
-control deadline; see [concurrent control](applications.md#native-control-alongside-python)
+control deadline; see [concurrent control](applications.md#native-control-and-background-computation)
 for the bounded Inventor F4 evidence and remaining timing work.
 
 `tests/test_control_imu.py` uses the already-built `build/python-imu-tests` and

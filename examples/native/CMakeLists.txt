@@ -20,7 +20,7 @@ add_custom_command(OUTPUT application.ld
   DEPFILE application.ld.d
   VERBATIM COMMAND_EXPAND_LISTS)
 add_custom_target(application_layout DEPENDS application.ld)
-set(native_examples hello counter spin fault matrix imu control_frame control_group control_group_coast control_actuation control_actuation_coast control_record control_sample control_loop sound motor)
+set(native_examples hello counter spin fault matrix imu control_frame control_group control_group_coast control_actuation control_actuation_coast control_record control_sample control_loop control_background sound motor)
 set(dsp_library ${LLEXT_EDK_INSTALL_DIR}/lib/libcmsis-dsp.a)
 if(EXISTS ${dsp_library})
   list(APPEND native_examples imu_filter imu_record)
@@ -56,3 +56,18 @@ foreach(example ${native_examples})
   target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
 endforeach()
+
+# Embed a complete controller image in the primary ELF. LLEXT then loads it into
+# its own domain; the embedded source remains part of the primary's read-only data.
+add_custom_command(OUTPUT controller_image.o
+  COMMAND "$ENV{ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-objcopy"
+    -I binary -O elf32-littlearm -B arm
+    --set-section-alignment .data=4
+    --rename-section .data=.rodata,alloc,load,readonly,data,contents
+    --redefine-sym _binary_control_loop_elf_start=controller_image
+    --redefine-sym _binary_control_loop_elf_end=controller_end
+    --strip-symbol _binary_control_loop_elf_size
+    control_loop.elf controller_image.o
+  DEPENDS control_loop
+  VERBATIM)
+target_sources(control_background PRIVATE ${PROJECT_BINARY_DIR}/controller_image.o)
