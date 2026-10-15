@@ -98,6 +98,20 @@ dirty or missing projects (including Pybricks' MicroPython submodule), run
 `uv run --locked python tools/workspace_status.py` from Brickphyr. The utility
 reads local manifest and Git state; it does not fetch or change checkouts.
 
+Before a release build, require clean source trees and matching dependency
+revisions with:
+
+```sh
+uv run --locked python tools/workspace_status.py --check
+```
+
+This also checks selected submodule gitlinks and west's `manifest-rev` references,
+which supply imported and frozen manifests. A mismatch or missing reference
+returns a nonzero exit status. It does not establish remote availability or
+build correctness. During dependency development use the ordinary summary;
+publish and integrate the chosen revisions before resolving a clean release
+workspace. Do not run `west update` over local work merely to clear this check.
+
 Build the Prime F4 target and check the resulting image:
 
 ```sh

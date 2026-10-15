@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Show manifest pins and local Git state without changing the west workspace."""
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -31,10 +32,14 @@ def checkout_state(project, cwd=None):
     )
     count = len(changes.splitlines())
     status = f"dirty ({count} {'entry' if count == 1 else 'entries'})" if count else "clean"
-    return head, branch, status
+    return head, branch, status, bool(changes)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true",
+                        help="require clean trees, pinned revisions and matching west resolution")
+    args = parser.parse_args(argv)
     try:
         manifest = Manifest.from_topdir()
     except Exception as error:
@@ -53,13 +58,25 @@ def main():
             failed = True
             continue
         try:
-            head, branch, status = checkout_state(project)
+            head, branch, status, dirty = checkout_state(project)
             pin = (
                 "HEAD (manifest repository)"
                 if project.name == "manifest"
                 else display_revision(project.revision)
             )
             print(f"{label}: pin={pin} | HEAD={head[:12]} | branch={branch} | {status}")
+            if args.check:
+                failed |= dirty
+                if project.name != "manifest":
+                    expected = project.sha(project.revision)
+                    if head != expected:
+                        print(f"  CHECK: HEAD differs from resolved pin {expected[:12]}")
+                        failed = True
+                    # West imports and frozen manifests use manifest-rev, not
+                    # HEAD. A matching checkout alone cannot prove either one.
+                    if project.sha("refs/heads/manifest-rev") != expected:
+                        print("  CHECK: manifest-rev differs from the pin (stale west resolution)")
+                        failed = True
             if project.submodules is True:
                 tree = git_text(project, ["ls-tree", "-r", "HEAD"])
                 submodules = [
@@ -79,12 +96,14 @@ def main():
                     print(f"  {submodule}: gitlink={gitlink[:12]} | missing (not initialized)")
                     failed = True
                     continue
-                subhead, subbranch, subdirty = checkout_state(project, subpath)
+                subhead, subbranch, substatus, subdirty = checkout_state(project, subpath)
                 moved = "moved, " if subhead != gitlink else ""
                 print(
                     f"  {submodule}: gitlink={gitlink[:12]} | HEAD={subhead[:12]} | "
-                    f"branch={subbranch} | {moved}{subdirty}"
+                    f"branch={subbranch} | {moved}{substatus}"
                 )
+                if args.check:
+                    failed |= subdirty or subhead != gitlink
         except (OSError, subprocess.CalledProcessError) as error:
             if isinstance(error, subprocess.CalledProcessError) and error.stderr:
                 detail = error.stderr.decode(errors="replace").strip()

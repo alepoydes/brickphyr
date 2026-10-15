@@ -26,6 +26,7 @@ Limit compilation to four jobs, for example `export CMAKE_BUILD_PARALLEL_LEVEL=4
 | Settings or application persistence | `test_storage.py`, `test_app_data.py`, or the affected store case |
 | Crypto allocator or shared heap | `tests/crypto_heap` for cold AES/CMAC, allocation failure and cleanup |
 | Firmware packaging | `test_packaging.py` and `test_bringup.py -k image` |
+| Workspace release preflight | `test_workspace_status.py`; temporary Git repositories and submodule, no firmware or network |
 
 The shared crypto allocator has a Cortex-M4 fixture with known AES/CMAC vectors.
 It exhausts the real kernel heap, checks the reported error, releases memory and
