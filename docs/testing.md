@@ -706,7 +706,8 @@ for the bounded Inventor F4 evidence and remaining timing work.
 `tests/test_control_imu.py` uses the already-built `build/python-imu-tests` and
 its `control_imu_probe.elf`. The production acquisition and release paths run on
 ARM with synthetic I2C registers/ready edges. Checks cover distinct triggering
-samples, edge-to-step identity, skipped edges, copied Python parameter revisions,
+samples, edge-to-step identity and the application clock's shared timebase,
+skipped edges, copied Python parameter revisions,
 I/O failure, timeout without a new step, stop during a long wait and fresh
 control identity after restart. Guest virtual time separates these functional
 checks from pauses in host scheduling. The IMU fixture uses the F4 512-byte SMP

@@ -669,6 +669,17 @@ static inline int64_t z_vrfy_bp_time_ms(void)
 }
 #include <zephyr/syscalls/bp_time_ms_mrsh.c>
 
+int64_t z_impl_bp_time_us(void)
+{
+	return control_time_us();
+}
+
+static inline int64_t z_vrfy_bp_time_us(void)
+{
+	return z_impl_bp_time_us();
+}
+#include <zephyr/syscalls/bp_time_us_mrsh.c>
+
 int z_impl_bp_sleep(uint32_t milliseconds)
 {
 	if (milliseconds > INT32_MAX) {

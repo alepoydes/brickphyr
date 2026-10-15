@@ -429,6 +429,11 @@ __syscall int bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
 	struct bp_control_step *step, struct bp_control_frame *frame,
 	void *parameters, size_t capacity);
 
+/* Monotonic microseconds on the control-frame timebase. Resolution follows
+ * capture_resolution_us: a 64-bit hardware clock where available, otherwise
+ * system ticks. Includes no allocation or device I/O. */
+__syscall int64_t bp_time_us(void);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

@@ -54,6 +54,13 @@ their difference includes dispatch delay. `sequence` counts executed steps.
 The same call works in standalone ELF programs with an empty parameter block.
 There is no allocation, formatting, storage or host I/O in this release path.
 
+Native ABI 1.9 adds `bp_time_us()` on the same monotonic timebase. Use it after
+a control wait and after application computation to measure the complete path:
+`started_us` precedes parameter copying, recorder staging and syscall return.
+The clock uses hardware cycles where a 64-bit counter exists, otherwise system
+ticks; the input frame's `capture_resolution_us` describes its quantization.
+Reading it has syscall/clock overhead and does not establish a deadline bound.
+
 Native ABI 1.8 adds `bp_control_imu_wait(port_mask, timeout_ms, &step, &frame,
 parameters, capacity)` as an alternative. The first successful wait selects the
 release mode for that native context; switching between periodic and IMU waits
@@ -766,14 +773,29 @@ Both runs finish without application or cleanup errors; the concurrent run's
 retained 32 records match over USB and BLE. Consumer omissions are reported
 explicitly. Motors remain passive and stored applications are preserved.
 
-A separate bounded 2048-step read-only workload observes uninterrupted IMU acquisition
-but omitted consumer samples during USB management. After transport batching,
-with Python allocation/GC and four cached-source queries at a requested 20 Hz
-refresh, observed edge-to-step delay reaches 3.94 ms. The monitor completes 80
-requests per second; its BLE counterpart completes far fewer requests and is not
-an equal-load comparison. These checks do not establish an uninterrupted 833 Hz
-control rate or a combined-load deadline. Acquisition continuity alone does not
-prove that the controller consumed every sample.
+A bounded combined-load probe reads real IMU and passive A/B encoder observations
+while Python executes six learning batches on synthetic data. It measures the
+first `bp_time_us()` call after each sample wait, including parameter copying,
+recorder staging, syscall return and clock-read overhead. On the same Inventor F4:
+
+| Host activity | Python batch time | Steps in load phase | Omitted ready edges | Maximum edge-to-application timestamp |
+| --- | ---: | ---: | ---: | ---: |
+| USB output polling | 2785 ms | 2310 | 10 | 1983 us |
+| USB output polling plus four telemetry sources at 20 Hz | 3638 ms | 2623 | 403 | 5761 us |
+| BLE output polling | 3135 ms | 2605 | 9 | 1853 us |
+
+The load phase includes Python handoff around the timed batches. Output polling
+requests a 20 Hz refresh; that requested cadence does not establish an equal
+completed request load across transports. Acquisition missed/failure counters
+remain zero, with no source errors, IMU epoch changes or port-generation changes
+in these short runs.
+The bounded record ring retains diagnostic points rather than every observation;
+overwritten points are reported explicitly. One retained USB point has 2351 us
+between `started_us` and the application timestamp, which includes possible
+preemption and clock-read overhead, not just syscall execution cost.
+These checks do not establish an uninterrupted 833 Hz control rate or a deadline
+bound. Acquisition continuity alone does not prove that the controller consumed
+every sample; selecting a lower control rate still requires its own budget.
 
 ### Recorded group command
 

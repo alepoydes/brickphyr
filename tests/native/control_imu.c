@@ -31,6 +31,7 @@ int app_main(void)
 		struct bp_control_step step;
 		err = bp_control_imu_wait(0, parameters.mode == 3 ? 30000 : 30,
 			&step, &frame, &parameters, sizeof(parameters));
+		int64_t resumed_us = bp_time_us();
 		if (err) {
 			/* A failed wait does not create another step. The error record is
 			 * explicitly tagged and retains the preceding successful metadata. */
@@ -44,6 +45,7 @@ int app_main(void)
 		if (step.parameter_size != sizeof(parameters) ||
 		    !frame.imu.raw.sample_us || frame.imu.error ||
 		    step.scheduled_us != frame.imu.raw.sample_us ||
+		    resumed_us < step.started_us || resumed_us < frame.capture_end_us ||
 		    frame.capture_end_us < frame.capture_start_us ||
 		    frame.imu.raw.sequence == last.raw_sequence) return -EBADMSG;
 		if (!checked_mode) {
