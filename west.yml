@@ -2,21 +2,25 @@
 manifest:
   version: "1.2"
   projects:
+    - name: zcbor
+      url: https://github.com/alepoydes/zcbor
+      revision: f4b3f6975ea28c6f9e664d982710819759816d5b # Bounded unknown-field recursion
+      path: modules/lib/zcbor
     - name: ti-bt-service-packs
       url: https://git.ti.com/git/ti-bt/service-packs.git
       revision: 3aa1d75f3c2ae77f6e4d36194e3d281b899ab149
       path: modules/lib/ti-bt-service-packs
     - name: pybricksdev
       url: https://github.com/alepoydes/pybricksdev
-      revision: c970fb90e9c1027bdde93b5fb2806dd34008897b
+      revision: 973fe51b8960c3cac53ce56bed6129f0574c3919
     - name: pybricks
       url: https://github.com/alepoydes/pybricks-micropython
-      revision: a7b1b04ae4f8449dd46b3dfb97c420334439fd35 # Brickphyr helpers on v4.1.0b6
+      revision: f3bdff45f3b7521b064e8aa8fb82068323aba880 # Brickphyr integration on v4.1.0b6
       path: pybricks-micropython
       # Initialize only micropython with Git; west recursively fetches unused ports.
     - name: zephyr
       url: https://github.com/alepoydes/zephyr
-      revision: 29bbb539f73adee89fed53fef4b94d59c97962bf # Brickphyr integration on v4.4.2
+      revision: 847ed6edadc191a18725fefc8d4fa5929ad7c04a # Brickphyr integration on v4.4.2
       import:
         name-allowlist:
           - cmsis_6

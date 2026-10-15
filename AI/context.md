@@ -218,9 +218,10 @@ these physical items.
 
 ## Dependencies and local state
 
-Pybricks, pybricksdev and Zephyr are separate west repositories. Their local
-corrections support current builds and checks; publication and release pins
-remain pending under the [upstream workflow](../docs/upstream.md).
+Pybricks, pybricksdev and Zephyr are separate west repositories. The manifest
+pins published integration commits, including the zcbor override; Pybricks pins
+the required MicroPython fork through its submodule. See the
+[upstream workflow](../docs/upstream.md) for dependency corrections and ownership.
 Inspect intentional dependency edits before updating or resetting a workspace.
 Brickphyr-specific adaptations belong here, with licenses and provenance.
 

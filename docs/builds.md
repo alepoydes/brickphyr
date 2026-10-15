@@ -89,11 +89,9 @@ Bootstrap west fetches the sibling checkouts before uv resolves the editable
 pybricksdev dependency. Initialize MicroPython separately without `--recursive`:
 its revision is owned by the Pybricks gitlink, and its other platform libraries
 are not needed by Brickphyr. The workspace preflight still checks this required
-submodule. The published 0.1.1 pins include that release's coordinated
-[dependency changes](upstream.md#current-downstream-delta). The current hardware
-and native-application increments additionally require the local prerequisites
-listed in [upstream integration](upstream.md); publication and updated manifest
-pins are still pending.
+submodule. The manifest pins published `brickphyr/0.2.0` integration commits,
+including the required hardware, runtime and native-loader corrections. See
+[upstream integration](upstream.md) for their ownership and reasons.
 
 For a read-only summary of active manifest pins, checkout HEADs, branches and
 dirty or missing projects (including Pybricks' MicroPython submodule), run
@@ -190,7 +188,7 @@ uv run --locked west build -d build/technic-base -t firmware_package
 ```
 
 The package is `build/technic-base/zephyr/firmware.zip`. Packaging requires the
-[local metadata extension](upstream.md#technic-base-prerequisites); the board also
+[metadata extension](upstream.md#technic-base-prerequisites); the board also
 requires Zephyr's early chainload interrupt correction described there. The
 image checker validates the main-firmware range, reserved loader-selector SRAM,
 word alignment and space for the checksum word. Pybricks' package consumer adds
@@ -553,7 +551,7 @@ only after they work; keep local measurements and handoffs in ignored reports.
 
 The SDK/protected-loader, RAM transfers and LittleFS installation/run paths are
 implemented experimentally and checked on the Inventor F4 over USB and BLE.
-Dependency publication and a clean build from published pins remain release gates.
+A clean build from published dependency pins is required for each release.
 The goal is to build a separate native application, run it without writing flash,
 or install it alongside other applications and start it after a power cycle.
 The [application contract](applications.md#storage-and-launch-operations) owns
@@ -604,9 +602,8 @@ visual BLE-indication check remains a separate small hardware check.
 
 ## Experimental native SDK
 
-Native fixture builds require the [LLEXT build prerequisites](upstream.md#native-loader-prerequisites)
-in addition to the current manifest pin. They are not yet part of a release.
-With that Zephyr checkout, build the Bluetooth/native acceptance image:
+The manifest includes the [LLEXT build prerequisites](upstream.md#native-loader-prerequisites).
+Build the Bluetooth/native acceptance image with the pinned workspace:
 
 ```sh
 uv run --locked west build -b spike_prime_f4 -d build/native-apps -t firmware_package -- \
