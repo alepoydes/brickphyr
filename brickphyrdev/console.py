@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""One native console stream carrying Shell bytes and standard serial SMP."""
+"""One management connection: shared serial framing or separate BLE characteristics."""
 
 import asyncio
 import contextlib
@@ -7,9 +7,9 @@ import os
 
 import serial
 from bleak import BleakClient, BleakScanner
-from smp import packet
+from smp import header, packet
 from smpclient import SMPClient
-from smpclient.transport import SMPTransportDisconnected
+from smpclient.transport import SMP_CHARACTERISTIC_UUID, SMPTransportDisconnected
 from usb.util import dispose_resources
 
 from . import usb
@@ -90,15 +90,21 @@ class ConsoleTransport:
         self.writes = asyncio.Lock()
         self.requests = asyncio.Lock()
         self.serial = self.radio = self.hub = None
+        self.smp_characteristic = None
+        self.smp_buffer = bytearray()
         self.loop = asyncio.get_running_loop()
 
     @property
     def mtu(self):
-        return 127
+        return (
+            self.smp_characteristic.max_write_without_response_size
+            if self.smp_characteristic
+            else 127
+        )
 
     @property
     def max_unencoded_size(self):
-        return self.decoder.limit - 4
+        return self.decoder.limit if self.radio is not None else self.decoder.limit - 4
 
     def initialize(self, smp_server_transport_buffer_size):
         if not 16 <= smp_server_transport_buffer_size <= 65535:
@@ -122,12 +128,33 @@ class ConsoleTransport:
     def _feed(self, data):
         if not self.closed.is_set():
             try:
-                if self.management:
+                if self.management and self.radio is None:
                     self.decoder.feed(data)
                 else:
                     self.output(data)
             except Exception as error:
                 self._fail(error)
+
+    def _feed_smp(self, data):
+        if self.closed.is_set():
+            return
+        try:
+            if self.pending is None or self.pending.done():
+                raise ValueError("Unexpected SMP response")
+            self.smp_buffer.extend(data)
+            if len(self.smp_buffer) < header.Header.SIZE:
+                return
+            size = (
+                header.Header.loads(self.smp_buffer[: header.Header.SIZE]).length
+                + header.Header.SIZE
+            )
+            if size > self.decoder.limit or len(self.smp_buffer) > size:
+                raise ValueError("SMP response exceeds the negotiated capacity or message length")
+            if len(self.smp_buffer) == size:
+                self._response(bytes(self.smp_buffer))
+                self.smp_buffer.clear()
+        except Exception as error:
+            self._fail(error)
 
     def _read_serial(self):
         try:
@@ -163,6 +190,15 @@ class ConsoleTransport:
             if self.radio.services.get_service(SERVICE) is None:
                 raise RuntimeError("This hub does not provide the native Brickphyr terminal")
             await self.radio.start_notify(TX, lambda _, data: self._feed(data))
+            if self.management:
+                self.smp_characteristic = self.radio.services.get_characteristic(
+                    SMP_CHARACTERISTIC_UUID
+                )
+                if self.smp_characteristic is None:
+                    raise RuntimeError("This hub does not provide binary SMP over BLE")
+                await self.radio.start_notify(
+                    self.smp_characteristic, lambda _, data: self._feed_smp(data)
+                )
         else:
             port = self.port
             if port is None:
@@ -197,37 +233,42 @@ class ConsoleTransport:
         if first:
             raise first
 
+    async def _write_ble(self, characteristic, data, *, response):
+        offset = 0
+        while offset < len(data):
+            if self.closed.is_set():
+                raise self.error or SMPTransportDisconnected("Console closed")
+            capacity = min(512, characteristic.max_write_without_response_size)
+            chunk = data[offset : offset + capacity]
+            await self.radio.write_gatt_char(characteristic, chunk, response=response)
+            offset += len(chunk)
+
     async def write(self, data):
         async with self.writes, asyncio.timeout(5):
+            if self.radio is not None:
+                # Keep acknowledged writes for human input so a full Shell RX
+                # buffer is reported instead of silently losing keystrokes.
+                await self._write_ble(
+                    self.radio.services.get_characteristic(RX), data, response=True
+                )
+                return
             offset = 0
             while offset < len(data):
                 if self.closed.is_set():
                     raise self.error or SMPTransportDisconnected("Console closed")
-                if self.radio is not None:
-                    characteristic = self.radio.services.get_characteristic(RX)
-                    # Write requests and commands have the same three-byte ATT
-                    # header. This public limit avoids prepared writes; keep the
-                    # response so rejected input is never mistaken for accepted.
-                    capacity = min(512, characteristic.max_write_without_response_size)
-                    chunk = data[offset : offset + capacity]
-                    await self.radio.write_gatt_char(characteristic, chunk, response=True)
-                    offset += len(chunk)
-                else:
+                try:
+                    written = os.write(self.serial.fileno(), data[offset:])
+                    if written == 0:
+                        raise SMPTransportDisconnected("USB console stopped accepting input")
+                    offset += written
+                except BlockingIOError:
+                    ready = self.loop.create_future()
+                    fd = self.serial.fileno()
+                    self.loop.add_writer(fd, lambda: not ready.done() and ready.set_result(None))
                     try:
-                        written = os.write(self.serial.fileno(), data[offset:])
-                        if written == 0:
-                            raise SMPTransportDisconnected("USB console stopped accepting input")
-                        offset += written
-                    except BlockingIOError:
-                        ready = self.loop.create_future()
-                        fd = self.serial.fileno()
-                        self.loop.add_writer(
-                            fd, lambda: not ready.done() and ready.set_result(None)
-                        )
-                        try:
-                            await ready
-                        finally:
-                            self.loop.remove_writer(fd)
+                        await ready
+                    finally:
+                        self.loop.remove_writer(fd)
 
     async def send(self, data):
         if not self.management:
@@ -239,7 +280,11 @@ class ConsoleTransport:
         if len(data) > self.max_unencoded_size:
             raise ValueError("SMP request exceeds the negotiated capacity")
         self.pending = self.loop.create_future()
-        await self.write(b"".join(packet.encode(data)))
+        if self.radio is not None:
+            async with self.writes, asyncio.timeout(5):
+                await self._write_ble(self.smp_characteristic, data, response=False)
+        else:
+            await self.write(b"".join(packet.encode(data)))
 
     async def receive(self):
         if self.pending is None:

@@ -143,7 +143,8 @@ ZTEST(host, test_shared_shell_transports)
 		if (ble) {
 			zassert_ok(host_ble_acquire());
 			zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
-			zassert_false(host_ble_request_begin(), "SMP must not race an active Shell command");
+			zassert_true(host_ble_request_begin());
+			host_ble_request_end();
 			zassert_equal(host_ble_shell_receive(stale, "probe stale\r", 12), -ENOTCONN);
 			/* A contender's USB input must not enter the BLE terminal. */
 			host_connection_changed(true);
@@ -564,6 +565,9 @@ ZTEST(host, test_smp_ble_inflight_disconnect)
 	mgmt_register_group(&group);
 	wait_idle();
 	zassert_ok(host_ble_acquire());
+	char output[512];
+	zassert_ok(host_ble_shell_open(ble_output_ready, &terminal_session));
+	receive_until("brickphyr> ", output, sizeof(output));
 	sys_put_le32(1, seconds);
 	zassert_ok(settings_runtime_set("power/usb_idle_s", seconds, sizeof(seconds)));
 	int64_t now = k_uptime_get();
@@ -572,6 +576,9 @@ ZTEST(host, test_smp_ble_inflight_disconnect)
 		NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	zassert_ok(k_sem_take(&management_entered, K_SECONDS(1)));
 	zassert_false(host_ble_request_active(), "Grant leaked to a different thread");
+	/* A slow binary request must not monopolize the interactive Shell. */
+	send("probe concurrent\r", strlen("probe concurrent\r"));
+	receive_until("PROBE concurrent", output, sizeof(output));
 	host_ble_release(true);
 	host_interface_status(state);
 	zassert_true(state[2], "Released owner while accepted request still runs");
@@ -589,6 +596,7 @@ ZTEST(host, test_smp_ble_inflight_disconnect)
 	zassert_ok(k_thread_join(&worker, K_SECONDS(1)));
 	zassert_equal(ble_packet_result, MGMT_ERR_EUNKNOWN);
 	zassert_equal(management_calls, 1);
+	terminal_session = 0;
 	wait_idle();
 	zassert_equal(host_interface_current(), HOST_SHELL);
 	/* A stale queued packet reaches admission after closing; no handler runs. */
@@ -880,7 +888,7 @@ ZTEST(host, test_zpower_settings_and_idle_claim)
 	send("config get power\r", strlen("config get power\r"));
 	receive_until("Setting operation failed", output, sizeof(output));
 	send("config save\r", strlen("config save\r"));
-	receive_until("not available", output, sizeof(output));
+	receive_until("Setting operation failed: -95", output, sizeof(output));
 	uint8_t value[4];
 	zassert_equal(settings_runtime_get("power/usb_idle_s", value, sizeof(value)), 4);
 	zassert_equal(sys_get_le32(value), 2, "Rejected write changed the setting");

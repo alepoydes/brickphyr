@@ -44,6 +44,7 @@ static bool usb_open;
 static bool ble_occupied;
 static bool ble_closing;
 static bool ble_exit;
+static bool ble_managed;
 static struct k_sem *ble_idle_wake;
 /* The single stream/Shell can belong to USB or to the native BLE interface. */
 static bool ble_shell;
@@ -123,6 +124,11 @@ static enum mgmt_cb_return management_access(uint32_t event, enum mgmt_cb_return
 	}
 	bool ble_allowed = event == MGMT_EVT_OP_CMD_RECV ?
 		host_ble_command_allowed() : host_ble_request_active();
+	if (ble_allowed) {
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		ble_managed = true;
+		k_spin_unlock(&lock, key);
+	}
 	if (!shell_owner() && !ble_allowed) {
 		*rc = MGMT_ERR_EACCESSDENIED;
 		return MGMT_CB_ERROR_RC;
@@ -398,7 +404,10 @@ static int cmd_python(const struct shell *shell, size_t argc, char **argv)
 	if (shell != &host_shell || !shell_owner()) {
 		return -ENOTCONN;
 	}
-	if (managed_shell) {
+	k_spinlock_key_t access_key = k_spin_lock(&lock);
+	bool managed = managed_shell || (ble_shell && ble_managed);
+	k_spin_unlock(&lock, access_key);
+	if (managed) {
 		shell_error(shell, "SMP is active. Use brickphyrdev terminal --repl for Python.");
 		return -EBUSY;
 	}
@@ -518,6 +527,7 @@ static void host_work_run(struct k_work *work)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	bool changed = session_generation != generation;
 	bool open = occupied;
+	bool ble = ble_occupied;
 	uint8_t selected = stream_mode();
 	uint32_t current_generation = generation;
 	if (changed) {
@@ -538,10 +548,15 @@ static void host_work_run(struct k_work *work)
 				k_spin_unlock(&lock, key);
 			}
 		}
-		application_session_closed();
-		hub_matrix_session_closed();
-		hub_sound_session_closed();
-		hub_ports_session_closed(BP_PORT_TERMINAL);
+		/* BLE Shell and SMP share the connection's resources. Closing or
+		 * starting just the Shell must not clean up an accepted SMP command.
+		 * finish_ble_session joins both paths before releasing their owner. */
+		if (!ble) {
+			application_session_closed();
+			hub_matrix_session_closed();
+			hub_sound_session_closed();
+			hub_ports_session_closed(BP_PORT_TERMINAL);
+		}
 		smp_shell_rx_reset(&smp_input, &smp_serial);
 #ifdef CONFIG_BRICKPHYR_HOST_UART
 		host_protocol_reset(&protocol);
@@ -810,6 +825,7 @@ int host_ble_acquire(void)
 		err = -ESHUTDOWN;
 	} else {
 		ble_occupied = true;
+		ble_managed = false;
 	}
 	k_spin_unlock(&lock, key);
 	return err;
@@ -852,7 +868,7 @@ void host_ble_release(bool exit_compatibility)
 bool host_ble_request_begin(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool valid = ble_occupied && !ble_closing && !ble_request_thread && !ble_shell;
+	bool valid = ble_occupied && !ble_closing && !ble_request_thread;
 	if (valid) {
 		ble_request_thread = k_current_get();
 	}
@@ -899,7 +915,7 @@ int host_ble_shell_open(void (*tx_ready)(void), uint32_t *session)
 	int err = 0;
 	if (!ble_occupied || ble_closing) {
 		err = -ENOTCONN;
-	} else if (ble_shell || ble_request_thread || !ready || first_error) {
+	} else if (ble_shell || !ready || first_error) {
 		err = -EBUSY;
 	} else {
 		ble_shell = true;

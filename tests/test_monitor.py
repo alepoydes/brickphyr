@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 import serial
-from smp import packet
+from smp import header, packet
 from smpclient.requests.os_management import EchoWrite
 from smpclient.transport import SMPTransportDisconnected
 from test_management import firmware
@@ -40,6 +40,22 @@ def test_console_framing_boundaries():
     decoder = console._Decoder(lambda _: None, lambda _: None)
     with pytest.raises(ValueError, match="negotiated capacity"):
         decoder.feed(b"".join(packet.encode(b"x" * 600)))
+
+
+def test_console_raw_smp_rejects_fragmented_oversize():
+    async def exercise():
+        transport = console.ConsoleTransport(lambda _: None, ble="fixture")
+        transport.initialize(32)
+        transport.pending = asyncio.get_running_loop().create_future()
+        response_header = bytes.fromhex("0300002100000000")  # 33-byte body plus header
+        transport._feed_smp(response_header[:3])
+        assert not transport.closed.is_set()
+        transport._feed_smp(response_header[3:])
+        with pytest.raises(ValueError, match="negotiated capacity"):
+            await transport.receive()
+        assert transport.closed.is_set()
+
+    asyncio.run(exercise())
 
 
 def test_monitor_waits_for_output_boundary():
@@ -71,17 +87,27 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
         instances = []
 
         class FakeRadio:
-            # Standard fake boundary: only byte delivery is simulated. The peer
-            # is the real Zephyr Shell/SMP, not a mocked telemetry response.
+            # Only BLE delivery is simulated. The peer remains the real Zephyr
+            # Shell/SMP fixture reached through its serial console.
             def __init__(self, device, disconnected_callback, **kwargs):
                 self.disconnected = disconnected_callback
                 self.rx = SimpleNamespace(max_write_without_response_size=20)
+                self.smp = SimpleNamespace(max_write_without_response_size=20)
                 self.services = SimpleNamespace(
                     get_service=lambda uuid: uuid == console.SERVICE,
-                    get_characteristic=lambda uuid: self.rx if uuid == console.RX else None,
+                    get_characteristic=lambda uuid: (
+                        self.rx
+                        if uuid == console.RX
+                        else self.smp
+                        if uuid == console.SMP_CHARACTERISTIC_UUID
+                        else None
+                    ),
                 )
                 self.max_write = 0
-                self.callback = None
+                self.shell_callback = self.smp_callback = None
+                self.decoder = console._Decoder(self.notify_shell, self.notify_smp)
+                self.decoder.limit = 65535
+                self.smp_request = bytearray()
                 self.serial = None
                 self.pause_writes = False
                 instances.append(self)
@@ -90,23 +116,51 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
                 self.serial = serial.Serial(port, timeout=0, exclusive=True)
 
             async def start_notify(self, uuid, callback):
-                assert uuid == console.TX
-                self.callback = callback
-                asyncio.get_running_loop().add_reader(self.serial.fileno(), self.read)
+                if uuid == console.TX:
+                    self.shell_callback = callback
+                    asyncio.get_running_loop().add_reader(self.serial.fileno(), self.read)
+                else:
+                    assert uuid is self.smp
+                    self.smp_callback = callback
+
+            def notify_shell(self, data):
+                for offset in range(0, len(data), 7):
+                    self.shell_callback(None, data[offset : offset + 7])
+
+            def notify_smp(self, data):
+                for offset in range(0, len(data), 7):
+                    self.smp_callback(None, data[offset : offset + 7])
 
             def read(self):
-                data = self.serial.read(127)
-                for offset in range(0, len(data), 7):
-                    self.callback(None, data[offset : offset + 7])
+                self.decoder.feed(self.serial.read(127))
 
             async def write_gatt_char(self, characteristic, data, response):
-                assert characteristic is self.rx and response
-                assert len(data) <= self.rx.max_write_without_response_size
+                assert characteristic in (self.rx, self.smp)
+                assert response == (characteristic is self.rx)
+                assert len(data) <= characteristic.max_write_without_response_size
                 self.max_write = max(self.max_write, len(data))
                 if self.pause_writes:
                     await asyncio.Event().wait()
-                self.serial.write(data)
-                await asyncio.sleep(0)
+                if characteristic is self.smp:
+                    self.smp_request.extend(data)
+                    if len(self.smp_request) < header.Header.SIZE:
+                        return
+                    size = (
+                        header.Header.loads(self.smp_request[: header.Header.SIZE]).length
+                        + header.Header.SIZE
+                    )
+                    if len(self.smp_request) < size:
+                        return
+                    assert len(self.smp_request) == size
+                    wire = b"".join(packet.encode(bytes(self.smp_request)))
+                    self.smp_request.clear()
+                else:
+                    wire = data
+                for offset in range(0, len(wire), 20):
+                    chunk = wire[offset : offset + 20]
+                    while chunk:
+                        chunk = chunk[self.serial.write(chunk) :]
+                        await asyncio.sleep(0)
 
             async def disconnect(self):
                 if self.serial:
@@ -130,8 +184,9 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
             ):
                 assert "power" in (await telemetry.info(client)).sources
                 if ble:
-                    assert instances[0].max_write == 20
+                    assert 0 < instances[0].max_write <= 20
                     instances[0].rx.max_write_without_response_size = 61
+                    instances[0].smp.max_write_without_response_size = 61
                 # SMP traffic between pieces of a human command cannot enter
                 # Shell editing state; keyboard traffic cannot split SMP frames.
                 await stream.write(b"config set power/usb_idle_s 19")

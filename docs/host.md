@@ -493,9 +493,15 @@ frame size, independently of the Pybricks event limit. Notifications and acknowl
 client writes respect the negotiated capacity; peers at MTU 23 still use 20-byte
 chunks. The CLI reads Bleak's public single-packet write limit, retaining write
 responses to detect rejected input. Larger MTUs do not change the stream format.
-SMP GATT requests cannot execute concurrently with an open terminal stream.
-The combined terminal/monitor instead carries standard serial SMP framing inside
-that same native stream; the client separates responses from human Shell output.
+The combined client uses binary SMP on the standard SMP GATT characteristic
+alongside the native terminal characteristics, on one BLE connection. Requests
+are serialized; terminal input and output remain independent of SMP framing.
+This requires firmware supporting both channels together. USB retains standard
+serial SMP framing in the Shell stream. BLE stream teardown joins accepted
+Shell handlers and SMP packets before releasing the connection's resources.
+Concurrent binary echo, Shell input and read-only device observations have a
+bounded Linux/Inventor F4 check. Sustained capture throughput is separate work;
+this check does not establish battery-powered robot timing.
 A stalled notification sender closes its link after three seconds without progress;
 output is never silently truncated. USB and BLE use the same settings and power hold.
 Commands such as `reboot dfu`, `shutdown`, and `bluetooth off` can close the link

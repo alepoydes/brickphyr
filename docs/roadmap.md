@@ -13,6 +13,40 @@ compatible `.mpy` modules and the agreed Pybricks behavior. Native Technic/Contr
 remains a desirable secondary port; it must not delay the SPIKE/Babybot path.
 Python on Technic and WASM are outside this milestone.
 
+## Measurement bench
+
+The next delivery adds repeatable experiments without compiling a robot-specific
+recorder. Battery-powered F4 with BLE is the primary acceptance path; USB remains
+available for development. Extend the shared recorder, hardware services and
+Zephyr Shell, rather than adding a second command interpreter or device owner.
+
+1. Transfer retained records in binary SMP blocks alongside the terminal on one
+   BLE connection. Keep metadata outside the sample stream, save a binary host
+   file and resume interrupted downloads. Measure payload throughput, command
+   latency and memory before tuning transport buffers or request concurrency.
+2. Add built-in RAM recording with selected sources/rate, duration or full-buffer
+   stop, preflight memory sizing and explicit ownership. Finite captures freeze
+   their beginning instead of silently overwriting it. Preserve source times,
+   errors and gaps; retain completed data for download/reconnection, with a power
+   hold until explicit completion or critical-battery protection takes precedence.
+3. Apply grouped motor outputs at a shared PWM boundary through the common driver,
+   covering start, changes, reversal, brake, coast and expiry. Preserve device
+   claims and generation checks. Electrical timing requires physical measurement;
+   software timestamps alone do not establish simultaneous outputs.
+4. Prepare, inspect, validate, run and cancel finite schedules through the Shell.
+   Recording and actuation use one hub-local time origin. Preparation cannot
+   actuate; execution requires an explicit start. Command files use that same
+   Shell parser. Cancellation, errors and link loss stop diagnostic drive while
+   retaining observations; autonomous application disconnect behavior is unchanged.
+5. Drain the same binary records during capture, independently of display updates.
+   Slow consumers cannot block sampling/control; overflow is explicit. Compare
+   live streaming with frozen capture/download over BLE, including reconnects,
+   repeated experiments, command responsiveness and complete record recovery.
+
+Deliver each block with focused checks and a usable outcome. Physical motor
+operation remains a separately authorized check. Do not substitute USB timing or
+synthetic devices for the final BLE and electrical measurements.
+
 ## Starting point
 
 The F4 implementation already includes protected ELF loading, a versioned SDK,

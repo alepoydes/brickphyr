@@ -66,10 +66,12 @@ Shell output arrives while the monitor is visible, the client returns to the
 Shell so that output is not hidden or discarded. While viewing the monitor,
 ordinary keyboard input is ignored; switch back before typing commands.
 
-The combined client uses standard serial SMP framing inside the existing native
-USB/BLE console stream, with one writer and connection owner. BLE does not open
-the separate SMP GATT service at the same time. A cancelled or timed-out exchange
-ends that console session so a late response cannot belong to another request.
+The combined client has one connection owner. USB uses standard serial SMP
+framing inside the console stream. BLE uses the standard binary SMP GATT
+characteristic alongside the native Shell characteristics on that same link;
+machine responses never pass through the terminal's text channel. A cancelled
+or timed-out exchange ends the connection so a late response cannot belong to
+another request.
 
 `--log FILE` creates a new JSONL file on the computer and refuses to overwrite an
 existing file. Nothing is logged to hub flash. The first record identifies the
