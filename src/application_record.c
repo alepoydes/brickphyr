@@ -13,6 +13,7 @@ static size_t parameter_stride, step_size;
 static unsigned int block_shift, block_mask;
 static uint16_t free_parameters;
 static size_t retained_bytes;
+static uint32_t full_reason;
 struct recorded_step {
 	struct bp_control_step value;
 	uint16_t parameters;
@@ -57,6 +58,7 @@ static void reset(bool active)
 	retained_bytes = 0;
 	configuration = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
+	full_reason = BP_RECORD_OPEN;
 	uint32_t generation = state.generation + 1;
 	state = (struct bp_record_info){.generation = generation ? generation : 1,
 		.active = active};
@@ -120,8 +122,8 @@ int application_record_budget(size_t size, size_t capacity, size_t length,
 	return err;
 }
 
-int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, size_t parameter_size)
+static int begin(const struct bp_record_spec *spec, const void *config, size_t length,
+	bool control, size_t parameter_size, uint32_t completion_reason)
 {
 	struct record_layout layout;
 	int err = record_layout(spec->size, spec->capacity, length, control, parameter_size, &layout);
@@ -163,6 +165,7 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	state.config_size = length;
 	state.control = control;
 	state.parameter_size = parameter_size;
+	full_reason = completion_reason;
 	step_size = step_bytes;
 	parameter_stride = stride;
 	block_shift = layout.shift;
@@ -174,6 +177,31 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	retained_bytes = layout.bytes;
 	k_spin_unlock(&lock, key);
 	return 0;
+}
+
+int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
+	bool control, size_t parameter_size)
+{
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN);
+}
+
+int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
+	size_t length, uint32_t reason)
+{
+	if (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION) return -EINVAL;
+	return begin(spec, config, length, false, 0, reason);
+}
+
+void application_record_finish(uint32_t reason)
+{
+	__ASSERT_NO_MSG(reason == BP_RECORD_DURATION || reason == BP_RECORD_CANCELLED ||
+		reason == BP_RECORD_ERROR);
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (full_reason != BP_RECORD_OPEN && state.active) {
+		state.active = false;
+		state.reason = reason;
+	}
+	k_spin_unlock(&lock, key);
 }
 
 size_t application_record_memory(void)
@@ -201,10 +229,13 @@ int application_record_write(const void *data, size_t length)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = !records ? -ENODATA : !state.active ?
-		(state.reason == BP_RECORD_TRIGGER_END ? -ENOSPC : -ENODATA) :
+		(state.reason == BP_RECORD_TRIGGER_END ||
+			(full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) ?
+			-ENOSPC : -ENODATA) :
 		length != state.spec.size ? -EMSGSIZE :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
+		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
 		state.next == UINT64_MAX ? -EOVERFLOW : 0;
 	if (!err) {
 		size_t index = state.next % state.spec.capacity;
@@ -238,8 +269,13 @@ int application_record_write(const void *data, size_t length)
 		}
 		memcpy(record_data(index), data, length);
 		state.next++;
-		if (state.next - state.first > state.spec.capacity) state.first++;
-		if (state.triggered && state.next - state.trigger == state.after) {
+		if (full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) {
+			state.active = false;
+			state.reason = full_reason;
+		} else if (state.next - state.first > state.spec.capacity) {
+			state.first++;
+		}
+		if (state.active && state.triggered && state.next - state.trigger == state.after) {
 			state.active = false;
 			state.reason = BP_RECORD_TRIGGER_END;
 		}
@@ -252,6 +288,7 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = generation && generation != state.generation ? -ESTALE :
+		full_reason != BP_RECORD_OPEN ? -ENOTSUP :
 		state.triggered ? -EALREADY :
 		!records || !state.active || !state.next ? -ENODATA :
 		after >= state.spec.capacity ? -EINVAL :

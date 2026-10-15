@@ -334,6 +334,14 @@ config BRICKPHYR_NATIVE
 	help
 	  One separately built application, with a compatible versioned SDK.
 
+config BRICKPHYR_CAPTURE
+	bool "Built-in finite RAM observations"
+	depends on BRICKPHYR_NATIVE && BRICKPHYR_TELEMETRY && SHELL
+	default y if BOARD_SPIKE_PRIME_F4 || TEST
+	help
+	  Record selected passive observations through the shared recorder and SMP.
+	  Buffer and sampling stack are allocated only for an explicit capture.
+
 config BRICKPHYR_NATIVE_FIXTURES
 	bool "Embed native lifecycle test images"
 	depends on BRICKPHYR_NATIVE

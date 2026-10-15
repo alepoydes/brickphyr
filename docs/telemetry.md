@@ -20,9 +20,92 @@ unbounded telemetry queue. A management connection retains the existing
 [power hold](settings.md#inactivity-shutdown); closing it leaves an autonomous
 application running.
 
-The [platform roadmap](roadmap.md) separately plans bounded binary recording of
-each control step's actual inputs and actuation results. The current monitor and
-JSONL log below provide sampled observations, not that cycle history.
+The built-in capture below records selected observations at hub-local deadlines.
+The text monitor provides client-requested snapshots. Application control-step
+records remain available through the same [binary recorder](applications.md#application-recording).
+Synchronized outputs and finite actuation schedules are [planned work](roadmap.md#measurement-bench).
+
+## Finite RAM capture
+
+With `CONFIG_BRICKPHYR_CAPTURE`, the shared USB/BLE Shell can record observations
+without uploading an application. Connect with `uv run brickphyrdev terminal`;
+the default target is `Brickphyr` over BLE. These commands run in the hub Shell:
+
+```text
+capture sources
+capture prepare 20 1000 imu battery encoder.A encoder.B motor.A motor.B
+capture start
+capture status
+```
+
+`prepare` takes a period in milliseconds, a duration in milliseconds or `full`,
+then one or more source names, or `all` for every available source. It validates
+the plan and reports the record size,
+capacity, recorder bytes, worker/stack reservations and current free heap without
+allocating or starting capture. `start` allocates those resources before sampling;
+fragmentation or intervening allocations can still cause `ENOMEM`. The current
+record/configuration budget is 32 KiB, shared with the application recorder.
+An oversized duration fails before starting and reports the available window.
+`full` stops when the allocated buffer fills. No old samples are overwritten.
+
+Sources are raw `imu`, `imu.calibrated`, `battery`, and `encoder.A`/`motor.A`
+through the board's last port. Encoder and motor blocks describe separate input
+and output validity, including connection generations. Empty ports and devices
+without an encoder produce explicit errors. Selection neither changes sensor
+modes nor claims or energizes motors. Other sensor quantities are not yet exposed
+by this capture format; they remain readable with `observe sensor.A` and peers.
+
+The worker copies existing service snapshots at absolute deadlines; it does not
+perform device transactions or allocate per sample. Missed releases are skipped,
+not executed in a catch-up burst. Record times distinguish the scheduled release,
+copy start/end and each source's acquisition/completion times. Repeated source
+sequence numbers mean no new device sample. A periodic snapshot is not a
+simultaneous physical measurement or a guarantee of fresh data at every period.
+
+`capture stop` joins the worker and retains its records. The worker stack and
+scratch buffer are reclaimed after completion; retained records remain allocated.
+The capture exclusively owns the recorder until `capture clear`: application
+start and `app record-clear` return `EBUSY` during that ownership, including after
+sampling. Starting capture refuses an existing application recording with
+`EEXIST`; collect it and explicitly use `app record-clear` first. Preparation and
+rejected starts do not discard it. Capture is currently an idle-hub diagnostic;
+concurrent application recording uses the application's existing SDK interface.
+
+Closing the terminal does not stop this passive capture. To collect it, close the
+terminal with `Ctrl+]`, then use the existing recorder client:
+
+```sh
+uv run brickphyrdev app --ble Brickphyr record capture.cbor
+uv run brickphyrdev app --ble Brickphyr record capture.cbor --resume
+uv run brickphyrdev record-info capture.cbor
+```
+
+Use `--resume` only for an interrupted download. Collection can follow a running
+capture and finishes when it freezes. The binary file contains the original
+packed bytes, without duplicating decoded values; the offline `Recording` reader
+provides named values in `Frame.values`. The schema is `brickphyr.capture/1`.
+The terminal and this collector still have separate entry points; combined
+interactive capture collection is a later bench increment.
+
+The final `recording-end` event distinguishes `full`, `duration`, `cancelled` and
+`error` from an application's result. A duration outcome includes the total
+missed releases, including an unobserved tail. Successful downloading does not
+turn a cancelled or failed capture into a completed experiment. Source errors
+and skipped sample releases remain separate from transfer gaps.
+
+Reconnect to the terminal and use `capture clear` after collecting the data.
+Until then, a recording power hold prevents inactivity shutdown even without a
+host. Explicit shutdown, reboot and critical-battery protection still take
+precedence; RAM data cannot survive power loss or reset. Downloading is
+non-consuming and does not automatically release that hold.
+
+The Shell/lifecycle, finite buffer and binary collection path have protected
+ARM/QEMU checks with synthetic devices. A bounded BLE check on one Robot Inventor
+F4 (PCB revision unknown), powered through USB, also captures every supported
+source group, retains data across reconnection, decodes the binary file and
+releases the recording hold. The observed motor duties remain zero. This does
+not establish sustained sampling latency, battery-only BLE performance or
+electrical output timing.
 
 ## Text monitor and recording
 

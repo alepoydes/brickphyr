@@ -641,7 +641,14 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 		if (state == RADIO_FAILED) {
 			shell_print(shell, "%s failed: %d; reboot required", failed_operation, radio_error);
 		}
-		if (state == RADIO_ON) bt_conn_foreach(BT_CONN_TYPE_LE, print_connection, (void *)shell);
+		if (state == RADIO_ON) {
+			struct bt_le_local_features features;
+			if (!bt_le_get_local_features(&features)) {
+				shell_print(shell, "BLE controller: ACL length %u, packets %u",
+					features.acl_mtu, features.acl_pkts);
+			}
+			bt_conn_foreach(BT_CONN_TYPE_LE, print_connection, (void *)shell);
+		}
 		return 0;
 	}
 	bool enable = !strcmp(argv[1], "on");

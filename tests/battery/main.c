@@ -8,6 +8,7 @@
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/kernel.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/shell/shell_dummy.h>
 #include <zephyr/ztest.h>
 
@@ -86,8 +87,37 @@ static void wait_critical(bool critical)
 
 static void check_critical_shutdown(void)
 {
-	/* Production ADC/filter/power path, synthetic voltages. Hosts and running
-	 * applications inhibit idle shutdown, never critical-battery protection. */
+	/* Exercise recording admission, idle release, and the critical override with
+	 * virtual policy time; the existing ADC fixture supplies the battery state. */
+	const uint8_t timeout[] = {1, 0, 0, 0};
+	zassert_ok(settings_runtime_set("power/usb_idle_s", timeout, sizeof(timeout)));
+	zassert_false(hub_power_update(1, false, 10000));
+	zassert_true(hub_power_recording(true));
+	zassert_false(hub_power_update(1, false, 12000), "Recording lost the idle hold");
+	struct hub_power_state power;
+	hub_power_get(&power);
+	zassert_true(power.recording);
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "power"));
+	size_t length;
+	const char *output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "retained recording"));
+	shell_backend_dummy_clear_output(shell);
+	zassert_ok(shell_execute_cmd(shell, "observe power"));
+	output = shell_backend_dummy_get_output(shell, &length);
+	zassert_not_null(strstr(output, "recording=1"));
+	int64_t release_started = k_uptime_get();
+	zassert_true(hub_power_recording(false));
+	hub_power_get(&power);
+	zassert_false(power.recording);
+	zassert_true(power.idle_since_ms >= release_started);
+	zassert_true(power.idle_since_ms <= k_uptime_get());
+	zassert_false(hub_power_update(1, false, power.idle_since_ms + 999),
+		"Release did not restart the idle deadline");
+	zassert_true(hub_power_recording(true));
+	/* Production ADC/filter/power path, synthetic voltages. Hosts, apps and
+	 * recordings inhibit idle shutdown, never critical-battery protection. */
 	zassert_true(hub_power_connection(HUB_USB));
 	zassert_true(hub_power_application(true));
 	zassert_false(hub_power_update(1, false, 10000));
@@ -114,7 +144,9 @@ static void check_critical_shutdown(void)
 	zassert_true(hub_power_update(0, false, 33000));
 	zassert_false(hub_power_connection(HUB_BLE));
 	zassert_false(hub_power_application(true));
+	zassert_false(hub_power_recording(true));
 	zassert_true(hub_power_application(false));
+	zassert_true(hub_power_recording(false));
 	error[1] = 0;
 }
 

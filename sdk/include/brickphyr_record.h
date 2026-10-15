@@ -34,4 +34,7 @@ struct bp_record_request {
 	size_t capacity, parameters_capacity;
 };
 
-enum bp_record_reason { BP_RECORD_OPEN, BP_RECORD_APPLICATION_END, BP_RECORD_TRIGGER_END };
+enum bp_record_reason {
+	BP_RECORD_OPEN, BP_RECORD_APPLICATION_END, BP_RECORD_TRIGGER_END,
+	BP_RECORD_FULL, BP_RECORD_DURATION, BP_RECORD_CANCELLED, BP_RECORD_ERROR,
+};

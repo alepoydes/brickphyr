@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import io
 import uuid
 from pathlib import Path
 
@@ -145,8 +146,11 @@ def _metadata(reply, capacity, *, config_size=0):
         if trigger is not None or after != 0 or config_size != 0:
             raise RuntimeError("Incomplete recording capture metadata")
         reason = 0 if reply.active else 1
-    if reason not in (0, 1, 2) or reply.active != (reason == 0):
+    if reason not in (0, 1, *record_codec.END_REASONS) or reply.active != (reason == 0):
         raise RuntimeError("Invalid recording end reason")
+    if reason >= 3 and (trigger is not None or reply.first or reply.next > capacity or
+                        reason == 3 and reply.next != capacity):
+        raise RuntimeError("Invalid finite recording boundary")
     if trigger is None:
         if after != 0 or reason == 2:
             raise RuntimeError("Invalid recording trigger metadata")
@@ -196,7 +200,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         not 32 <= ord(char) <= 126 for char in info.record_schema
     ):
         raise RuntimeError("Invalid recording schema")
-    record_codec.check_size(info.record_schema, info.size)
+    if info.record_schema != "brickphyr.capture/1":
+        record_codec.check_size(info.record_schema, info.size)
     block = getattr(info, "block", 0)
     if not 0 <= block <= 1024:
         raise RuntimeError("Invalid recording block capacity")
@@ -252,6 +257,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                  (current.first, current.next, *state))
         info = current
         trigger, trigger_after, reason = state
+
+    record_codec.check_size(info.record_schema, info.size, bytes(config))
 
     tag = getattr(info, "tag", None)
     if tag is not None and len(tag) != 16:
@@ -362,6 +369,13 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 }
             if reason == 2:
                 event["reason"] = "trigger"
+            elif reason >= 3:
+                # The passive producer is independent of the last application;
+                # its old result/fault cannot describe this recording.
+                event = {"type": "recording-end", "reason": record_codec.END_REASONS[reason],
+                         "next": next}
+                if reason == 4:
+                    event["missed"] = info.capacity - next
             write_event(log, event)
             return
 
@@ -429,9 +443,10 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             record = {"type": "record", "index": index, "data": bytes(data)}
             if info.control:
                 record["control"] = step
-            values = record_codec.decode(info.record_schema, data)
-            if values is not None:
-                record["values"] = values
+            if isinstance(log, io.TextIOBase):
+                values = record_codec.decode(info.record_schema, data, bytes(config))
+                if values is not None:
+                    record["values"] = values
             write_event(log, record)
             counts["records"] += 1
             if info.control:

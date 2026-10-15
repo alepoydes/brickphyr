@@ -3,6 +3,10 @@
 
 import struct
 
+from . import capture_codec
+
+END_REASONS = {2: "trigger", 3: "full", 4: "duration", 5: "cancelled", 6: "error"}
+
 _CONTROL_SCHEMA = "brickphyr.control-input/1"
 _CONTROL_RECORD = struct.Struct("<8q10i6I2q4i4I")
 _CONTROL_STEP = struct.Struct("<qq4I")
@@ -231,13 +235,18 @@ _DECODERS = {
 }
 
 
-def check_size(schema, size):
+def check_size(schema, size, config=b""):
+    if schema == capture_codec.SCHEMA:
+        capture_codec.check_size(size, config)
+        return
     decoder = _DECODERS.get(schema)
     if decoder and size != decoder[0]:
         raise RuntimeError(f"Invalid {schema} record length")
 
 
-def decode(schema, data) -> dict | None:
-    check_size(schema, len(data))
+def decode(schema, data, config=b"") -> dict | None:
+    check_size(schema, len(data), config)
+    if schema == capture_codec.SCHEMA:
+        return capture_codec.decode(data, config)
     decoder = _DECODERS.get(schema)
     return decoder[1](data) if decoder else None

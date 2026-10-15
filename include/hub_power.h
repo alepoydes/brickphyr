@@ -16,6 +16,7 @@ struct hub_power_state {
 	bool connected; /* Management reservation, including disconnect cleanup. */
 	enum hub_connection transport; /* Live accepted connection, excluding cleanup. */
 	bool application;
+	bool recording;
 	bool shutting_down;
 };
 
@@ -28,6 +29,8 @@ bool hub_power_connection(enum hub_connection transport);
 void hub_power_link_closed(enum hub_connection transport);
 /* An autonomous application's lifetime holds power independently of a host. */
 bool hub_power_application(bool running);
+/* A retained recording holds power independently of an app or host. */
+bool hub_power_recording(bool retained);
 /* Explicit shutdown also closes admission, even with an active owner. */
 void hub_power_request_shutdown(void);
 /* The hub loop publishes OFF only after quiescing devices and releasing power.

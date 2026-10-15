@@ -199,4 +199,59 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	application_record_clear();
 }
 
+ZTEST(record_memory, test_finite_capture_freezes_without_overwriting)
+{
+	const struct bp_record_spec spec = {.size = 2, .capacity = 3, .schema = "finite/1"};
+	const uint8_t expected[] = {1, 2, 3, 4, 5, 6};
+	const uint32_t reasons[] = {BP_RECORD_FULL, BP_RECORD_DURATION};
+	uint8_t actual[sizeof(expected)];
+	struct bp_record_info info;
+	application_record_reset();
+	zassert_equal(application_record_begin_finite(&spec, NULL, 0, BP_RECORD_CANCELLED), -EINVAL);
+	application_record_info(&info);
+	zassert_equal(info.spec.capacity, 0);
+	for (size_t mode = 0; mode < ARRAY_SIZE(reasons); mode++) {
+		application_record_reset();
+		zassert_ok(application_record_begin_finite(&spec, NULL, 0, reasons[mode]));
+		application_record_info(&info);
+		uint32_t generation = info.generation;
+		for (size_t index = 0; index < spec.capacity; index++) {
+			zassert_ok(application_record_write(expected + index * spec.size, spec.size));
+		}
+		application_record_info(&info);
+		zassert_false(info.active);
+		zassert_equal(info.reason, reasons[mode]);
+		zassert_equal(info.first, 0);
+		zassert_equal(info.next, spec.capacity);
+		zassert_equal(application_record_write(expected, spec.size), -ENOSPC);
+		application_record_finish(BP_RECORD_ERROR);
+		zassert_equal(application_record_read_block(generation, 0, 0, actual, sizeof(actual), &info),
+			sizeof(actual));
+		zassert_mem_equal(actual, expected, sizeof(expected));
+		zassert_equal(info.reason, reasons[mode]);
+		zassert_equal(info.first, 0);
+		zassert_equal(info.next, spec.capacity);
+	}
+
+	application_record_reset();
+	zassert_ok(application_record_begin_finite(&spec, NULL, 0, BP_RECORD_DURATION));
+	zassert_ok(application_record_write(expected, spec.size));
+	application_record_finish(BP_RECORD_DURATION);
+	application_record_finish(BP_RECORD_CANCELLED);
+	application_record_info(&info);
+	zassert_false(info.active);
+	zassert_equal(info.reason, BP_RECORD_DURATION);
+	zassert_equal(info.next, 1);
+
+	application_record_reset();
+	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
+	for (size_t index = 0; index < spec.capacity + 1; index++) {
+		zassert_ok(application_record_write(expected, spec.size));
+	}
+	application_record_info(&info);
+	zassert_equal(info.first, 1, "Reset left the finite mode enabled");
+	zassert_equal(info.next, spec.capacity + 1);
+	application_record_clear();
+}
+
 ZTEST_SUITE(record_memory, NULL, NULL, NULL, NULL, NULL);

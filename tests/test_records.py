@@ -4,6 +4,7 @@
 import copy
 import io
 import json
+import struct
 
 import cbor2
 import pytest
@@ -138,6 +139,26 @@ def test_incomplete_collection_never_reports_completion():
     source = _source(_events()).getvalue() + '{"type":'
     with pytest.raises(ValueError, match=r"<recording>:9:"):
         list(Recording(io.StringIO(source)).frames(allow_gaps=True, allow_incomplete=True))
+
+
+def test_finite_header_boundary_is_checked_before_incomplete_replay():
+    config = struct.pack("<4I", 1, 20, 40, 1)
+    events = [
+        {"type": "session", "schema": "brickphyr.records/1", "session": "finite",
+         "recording": dict(generation=1, size=84, capacity=2, first=0, next=1,
+                           active=False, reason=4, schema="brickphyr.capture/1",
+                           config_size=16, config=config.hex(), control=False)},
+        {"type": "record", "index": 0, "data": "00" * 84},
+    ]
+    recording = Recording(_source(events))
+    assert len(list(recording.frames(allow_incomplete=True))) == 1
+    assert not recording.complete
+
+    for changes in ({"reason": 3}, {"first": 1}):
+        damaged = copy.deepcopy(events)
+        damaged[0]["recording"].update(changes)
+        with pytest.raises(ValueError, match="Invalid finite recording boundary"):
+            Recording(_source(damaged))
 
 
 def test_resume_preserves_progress_parameters_and_control_order():

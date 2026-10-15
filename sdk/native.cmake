@@ -19,6 +19,7 @@ add_dependencies(app brickphyr_api)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application.c ${BRICKPHYR_ROOT}/src/native_image.c ${BRICKPHYR_ROOT}/src/native_api.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c ${BRICKPHYR_ROOT}/src/control_frame.c
   ${BRICKPHYR_ROOT}/src/application_record.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_CAPTURE app PRIVATE ${BRICKPHYR_ROOT}/src/capture.c)
 # The resident table is an application entry point, so retain only SVC wrappers.
 set_source_files_properties(${BRICKPHYR_ROOT}/src/native_api.c PROPERTIES
   COMPILE_DEFINITIONS __ZEPHYR_USER__)

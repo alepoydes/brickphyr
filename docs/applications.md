@@ -859,6 +859,13 @@ collector binds a random host-generated tag; later collectors obtain that same
 tag. Resetting or clearing the recorder discards it. This distinguishes a
 retained capture from another boot that happens to reuse its generation number.
 
+The [built-in passive capture](telemetry.md#finite-ram-capture) uses this same
+recorder with finite, non-overwriting semantics. It owns the recorder while
+running and while retaining data; application launch and ordinary record clearing
+return `EBUSY` until `capture clear`. The application ring/trigger behavior above
+is unchanged. Capture rejects the application's retained data instead of replacing
+it implicitly. Its end reasons describe capture completion, not application exit.
+
 ```sh
 uv run brickphyrdev app run build/native-examples/control_record.elf
 uv run brickphyrdev app record control.jsonl

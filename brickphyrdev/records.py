@@ -128,12 +128,14 @@ class Recording:
                 if self._trigger is not None or self._after != 0 or config_size:
                     raise ValueError("Incomplete recording capture metadata")
                 self._reason = 0 if self._active else 1
-            if type(self._reason) is not int or self._reason not in (0, 1, 2) or (
+            if type(self._reason) is not int or self._reason not in (0, 1, *record_codec.END_REASONS) or (
                 self._active != (self._reason == 0)
             ):
                 raise ValueError("Invalid recording end reason")
             self._capture(self._trigger, self._after, self._next, self._reason == 2)
-            record_codec.check_size(self.schema, self.size)
+            if self._reason >= 3:
+                self._finite_boundary(self._reason, self._next)
+            record_codec.check_size(self.schema, self.size, self.config)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             raise self._error(error) from error
 
@@ -177,7 +179,26 @@ class Recording:
             if next_index > target or complete != (next_index == target):
                 raise ValueError("Inconsistent capture boundary")
 
+    def _finite_boundary(self, reason, next_index):
+        if (self._trigger is not None or self._first or next_index > self._capacity or
+            reason == 3 and next_index != self._capacity):
+            raise ValueError("Invalid finite recording boundary")
+
     def _outcome(self, event, next_index):
+        reason = event.get("reason")
+        finite_reasons = {name: value for value, name in record_codec.END_REASONS.items() if value >= 3}
+        if event["type"] == "recording-end" and reason in finite_reasons:
+            if self._reason not in (0, finite_reasons[reason]):
+                raise ValueError("End event differs from recording end reason")
+            if event.get("capture") is not None:
+                raise ValueError("Invalid finite recording boundary")
+            self._finite_boundary(finite_reasons[reason], next_index)
+            if (_integer(event["next"], "capture next index") != next_index or
+                next_index < self._next or not self._active and next_index != self._next):
+                raise ValueError("Final index differs from recording metadata")
+            if reason == "duration" and _integer(event["missed"], "missed releases") != self._capacity - next_index:
+                raise ValueError("Missed releases differ from recording metadata")
+            return
         for field in ("state", "result", "fault", "cleanup"):
             _integer(event[field], field, -(1 << 31), (1 << 32) - 1)
         if next_index < self._next or not self._active and next_index != self._next:
@@ -283,7 +304,7 @@ class Recording:
                     self.next_index = index
                     self.last_control = control.copy() if control is not None else None
                     frame = Frame(index - 1, data, parameters, control, gap,
-                                  record_codec.decode(self.schema, data))
+                                  record_codec.decode(self.schema, data, self.config))
                     gap = 0
                     yield frame
                 elif kind in ("application-end", "recording-end"):

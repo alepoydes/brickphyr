@@ -26,6 +26,7 @@
 #include "control_frame.h"
 #include "hub_clock.h"
 #include "application_record.h"
+#include "capture.h"
 #include "uart_settings.h"
 #include "hub_power.h"
 #include "hub_reset.h"
@@ -172,6 +173,7 @@ static bool upload_pybricks;
 static atomic_t session_generation;
 static atomic_val_t upload_generation;
 static bool shutting_down;
+static bool capture_owned;
 static struct k_spinlock button_lock;
 static uint32_t stop_buttons;
 static uint32_t observed_buttons;
@@ -2731,6 +2733,9 @@ static int release(bool keep_python_memory)
 /* lifecycle is held; a joined thread no longer holds its memory domain. */
 static int reap(bool stop, bool keep_python_memory)
 {
+	/* The built-in recorder has no application thread. Its worker and retained
+	 * data belong to capture until explicit release, including after sampling. */
+	if (capture_owned) return 0;
 	if (!atomic_get(&active)) {
 		return release(keep_python_memory);
 	}
@@ -2799,11 +2804,50 @@ int application_clear_recording(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	(void)reap(false, false);
-	int err = atomic_get(&active) ? -EBUSY : 0;
+	int err = atomic_get(&active) || capture_owned ? -EBUSY : 0;
 	if (!err) application_record_clear();
 	k_mutex_unlock(&lifecycle);
 	return err;
 }
+
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+int application_capture_begin(const struct bp_record_spec *spec, const void *config, size_t size,
+	uint32_t full_reason)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	int err = shutting_down ? -ESHUTDOWN : capture_owned ? -EBUSY : reap(false, false);
+	if (err == -EAGAIN) err = -EBUSY;
+	struct bp_record_info info;
+	application_record_info(&info);
+	if (!err && info.spec.size) err = -EEXIST;
+	if (!err && !hub_power_recording(true)) err = -ESHUTDOWN;
+	if (!err) {
+		application_record_reset();
+		err = application_record_begin_finite(spec, config, size, full_reason);
+		if (err) {
+			application_record_clear();
+			hub_power_recording(false);
+		} else capture_owned = true;
+	}
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+
+int application_capture_release(void)
+{
+	k_mutex_lock(&lifecycle, K_FOREVER);
+	struct bp_record_info info;
+	application_record_info(&info);
+	int err = !capture_owned ? -ENODATA : info.active ? -EBUSY : 0;
+	if (!err) {
+		application_record_clear();
+		capture_owned = false;
+		hub_power_recording(false);
+	}
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+#endif
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 int application_input(const void *data, size_t length)
@@ -2869,16 +2913,20 @@ int application_interrupt(void)
 
 int application_shutdown(void)
 {
+	/* Capture commands acquire capture -> lifecycle. Join outside lifecycle so
+	 * concurrent preparation cannot deadlock shutdown, and close admission first. */
+	int capture_error = capture_shutdown();
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	shutting_down = true;
 	int err = reap(true, false);
 	discard_upload();
 	k_mutex_unlock(&lifecycle);
-	return err;
+	return capture_error ? capture_error : err;
 }
 
 void application_poll(void)
 {
+	capture_poll();
 	/* A named controller needs the same store -> lifecycle lock order as a
 	 * host launch. Never wait for flash operations in the hub service loop. */
 	bool store_locked = false;
@@ -2948,6 +2996,7 @@ void application_buttons(uint32_t buttons)
 /* lifecycle is held; neither engine may replace a thread before it is joined. */
 static int prepare(size_t stack_size, bool keep_python_memory)
 {
+	if (capture_owned) return -EBUSY;
 	if (shutting_down) {
 		return -ESHUTDOWN;
 	}
@@ -3061,6 +3110,7 @@ static int load_native(struct llext **result, const char *name,
 static int run_image(struct llext_loader *loader, size_t length,
 	const struct native_image_requirements *requirements)
 {
+	if (capture_owned) return -EBUSY;
 	/* A distinct name prevents LLEXT from retaining the running image instead
 	 * of loading its replacement. Both can coexist until preparation succeeds. */
 	const char *name = primary_extension && !strcmp(primary_extension->name, "application-a") ?
@@ -3300,6 +3350,7 @@ failed:
 static int run_python(struct python_backing *backing, size_t length, enum application_format format,
 	bool soft_reset, int program_id, size_t stack_size)
 {
+	if (capture_owned) return -EBUSY;
 	if (!stack_size) stack_size = CONFIG_BRICKPHYR_PYTHON_STACK_SIZE;
 	/* Compiling/importing needs more than the native entry/exit minimum.
 	 * 4 KiB admits the measured small-script/import path plus the VM margin;

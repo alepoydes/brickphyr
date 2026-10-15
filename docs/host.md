@@ -242,8 +242,8 @@ The experimental application management group is SMP group 65, API version 1:
 | 11 | Write Python interrupt | Discard queued input and request `KeyboardInterrupt`; forced termination remains command 3 |
 | 12 | Write REPL entry | Start fresh interactive Python or reattach to the existing REPL; reject another running application with `EBUSY` |
 | 13 | Read output and state | At most 256 bytes in `data`, plus `state`, `result`, `fault`, `cleanup`, `dropped`, `queued`, and `repl`; `queued` is the output remaining after this read |
-| 14 | Read recording metadata | `generation`, record `size`, retained `capacity`, `first`, `next`, `active`, application-defined `schema`, `config_size`, nullable `trigger`, `after`, end `reason` (0 open, 1 application end, 2 completed trigger), `control`, and `parameter_size` |
-| 14 | Write clear recording | No arguments; rejects a live application with `EBUSY` |
+| 14 | Read recording metadata | `generation`, record `size`, retained `capacity`, `first`, `next`, `active`, producer-defined `schema`, `config_size`, nullable `trigger`, `after`, end `reason` (0 open, 1 application end, 2 completed trigger, 3 full, 4 duration, 5 cancelled, 6 capture error), `control`, and `parameter_size` |
+| 14 | Write clear recording | No arguments; rejects a live application or built-in capture ownership with `EBUSY`; use `capture clear` for the latter |
 | 15 | Read recording fragment | Required `generation`, record `index` and byte `off`; returns at most 256 bytes in `data` (224 with control metadata), plus current `generation`, `first`, `next`, `active`, `trigger`, `after`, `reason`, and binary `step` |
 | 16 | Read recording configuration | Required `generation`, byte `off`; returns at most 256 bytes in `data`, current `generation` and configuration `total` |
 | 16 | Write recording trigger | Required `generation`, `after`; freeze after that many further records without stopping the application |

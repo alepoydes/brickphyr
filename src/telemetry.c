@@ -143,6 +143,7 @@ static void capture(enum source source, struct observation *out)
 		field(out, "usb_idle_s", value.usb_idle_s);
 		field(out, "connected", value.connected);
 		field(out, "application", value.application);
+		field(out, "recording", value.recording);
 		field(out, "shutdown", value.shutting_down);
 	} else if (source == CENTER || source == SIDE) {
 		const struct device *dev = source == CENTER ?

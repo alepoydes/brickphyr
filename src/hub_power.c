@@ -24,6 +24,7 @@ static int source = -ENODEV;
 static enum hub_connection connected;
 static enum hub_connection link;
 static bool application;
+static bool recording;
 static enum hub_power_phase phase;
 static int64_t idle_since;
 static int64_t sampled_ms;
@@ -35,7 +36,8 @@ void hub_power_get(struct hub_power_state *state)
 	*state = (struct hub_power_state){
 		.sampled_ms = sampled_ms, .idle_since_ms = idle_since, .source = source,
 		.battery_idle_s = timeout_s[0], .usb_idle_s = timeout_s[1],
-		.connected = connected, .application = application, .shutting_down = phase != HUB_POWER_RUNNING,
+		.connected = connected, .application = application, .recording = recording,
+		.shutting_down = phase != HUB_POWER_RUNNING,
 		.transport = link,
 	};
 	k_spin_unlock(&lock, key);
@@ -151,6 +153,18 @@ bool hub_power_application(bool running)
 	return allowed;
 }
 
+bool hub_power_recording(bool retained)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool allowed = !retained || phase == HUB_POWER_RUNNING;
+	if (allowed && recording != retained) {
+		recording = retained;
+		idle_since = k_uptime_get();
+	}
+	k_spin_unlock(&lock, key);
+	return allowed;
+}
+
 bool hub_power_update(int vbus, bool activity, int64_t now)
 {
 	struct bp_battery_sample battery;
@@ -161,12 +175,12 @@ bool hub_power_update(int vbus, bool activity, int64_t now)
 		source = vbus;
 		idle_since = now;
 	}
-	if (!connected && !application && source >= 0 && source <= 1 && timeout_s[source] &&
+	if (!connected && !application && !recording && source >= 0 && source <= 1 && timeout_s[source] &&
 	    now - idle_since >= (int64_t)timeout_s[source] * 1000) {
 		if (phase == HUB_POWER_RUNNING) phase = HUB_POWER_STOPPING;
 	}
 	/* Reference Pybricks battery protection: three seconds continuously below
-	 * the hysteretic critical threshold. An app or host cannot inhibit it.
+	 * the hysteretic critical threshold. No idle hold can inhibit it.
 	 * Read failures retain a previously established critical condition. */
 	if (!critical) critical_since = -1;
 	else if (critical_since < 0) critical_since = now;
@@ -183,6 +197,7 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 	int vbus = state.source;
 	bool owner = state.connected;
 	bool running = state.application;
+	bool retained = state.recording;
 	bool stopping = state.shutting_down;
 	uint32_t battery = state.battery_idle_s;
 	uint32_t usb = state.usb_idle_s;
@@ -194,6 +209,7 @@ static int cmd_power(const struct shell *shell, size_t argc, char **argv)
 		battery, usb);
 	const char *inhibit = stopping ? "shutdown pending" : owner ? "active management session" :
 		running ? "running application" :
+		retained ? "retained recording" :
 		vbus < 0 ? "power source unavailable" : !seconds ? "timeout disabled" : NULL;
 	if (inhibit) {
 		shell_print(shell, "Automatic shutdown: %s", inhibit);

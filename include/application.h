@@ -101,6 +101,14 @@ void application_session_closed(void);
 int application_stop(void);
 /* Discard retained records only after the application has terminated. */
 int application_clear_recording(void);
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+struct bp_record_spec;
+/* Reserve the idle recorder for a built-in capture. Existing records are never
+ * discarded implicitly. The capture owner joins its worker before release. */
+int application_capture_begin(const struct bp_record_spec *spec, const void *config, size_t size,
+	uint32_t full_reason);
+int application_capture_release(void);
+#endif
 /* Close application admission and quiesce resources without requesting power-off.
  * Reboot/DFU callers must retain power and their connection until reset. */
 int application_shutdown(void);

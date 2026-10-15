@@ -271,6 +271,10 @@ or interrupted firmware writes. See [watchdog checks](testing.md#watchdog).
 
 Inactivity means an idle hub with no running user application. Automatic shutdown
 is a firmware responsibility and must not require a keep-alive user program.
+An active or retained [built-in capture](telemetry.md#finite-ram-capture) also
+holds power until `capture clear`, independently of a host or application. The
+`power` command and `observe power` expose this hold. It cannot veto explicit
+shutdown or critical-battery protection.
 The policy distinguishes three conditions:
 
 | Condition | Policy |

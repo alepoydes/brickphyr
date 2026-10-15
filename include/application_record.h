@@ -21,6 +21,12 @@ void application_record_end(void);
 void application_record_clear(void);
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size);
+/* Fixed-capacity capture: no control metadata or overwrite. The final slot
+ * completes with FULL or DURATION, as selected at admission. */
+int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
+	size_t length, uint32_t full_reason);
+/* Finish a finite capture; an earlier FULL/finish reason remains authoritative. */
+void application_record_finish(uint32_t reason);
 /* Called by the control context after a successful control wait. */
 void application_record_step(const struct bp_control_step *step, const void *parameters);
 int application_record_write(const void *data, size_t length);
