@@ -279,6 +279,47 @@ information-diffusion C call also permits native progress and host stop; the USB
 stop round trip plus status read takes about 7 ms, followed by a successful fresh
 Python/controller run. Neither probe commands actuators.
 
+### Native learning workload
+
+On the same Inventor F4, the original numerical learning functions also run as
+a native primary ELF in the full firmware, with Python present but inactive.
+A separate native context reads
+real IMU, battery and passive A/B encoder snapshots every 15 ms. Learning uses
+synthetic observations; it does not identify the connected robot. The 30-row
+fixture uses 3/5/4 ms intervals; the larger fragmented fixture uses 15 ms. Complete
+60-byte model revisions pass through the common control API and recorder.
+
+| Bounded workload | Learning time | Largest release-to-post-record timestamp interval |
+| --- | --- | --- |
+| Six 30-row updates, USB | 437–444 ms per update | 1861 µs |
+| Same ELF and inputs, BLE | 429–433 ms per update | 2265 µs |
+| One 320-row fragmented update, USB | 6937 ms | 2141 µs |
+
+All three runs have no skipped periodic releases through the first recorded
+application of the final candidate. The applied models and final information
+history match the same C calculation on the host bit for bit. The timestamp
+interval includes observation copying, optional recording, preemption and clock
+reads; final diagnostic bookkeeping follows it. The loop only acquires sensors,
+so these measurements do not establish an observer/actuator deadline. Host output
+polling is best-effort and does not impose equal USB/BLE traffic.
+
+The larger workload accumulates ten independent 30-row synthetic fragments and
+one 20-row fragment at 15 ms spacing using the existing learning implementation.
+It reuses a 1440-byte scratch tape, a 3032-byte learning workspace and a 544-byte
+history. Its 19144-byte ELF reserves 56251 bytes for loading; LLEXT reports
+26837 allocated bytes after loading. The controller separately reserves/reports
+9429/2559 bytes. Observed primary/controller stack use is 6120/648 bytes from
+16384/2048-byte allocations. These figures exclude the source upload, recorder,
+kernel thread metadata and other platform services; loaded bytes are not a peak
+heap measurement.
+
+Processing those 320 rows takes longer than their 4.8 s input budget. Applications
+must choose retention and update frequency to match available computation;
+independent execution does not promise processing of every acquired observation.
+The current conservative loader reservation and MPU padding remain optimization
+work. Clear an already-collected recording before admitting a large application
+when its retained allocation prevents loading; a rejected start preserves it.
+
 ## Experimental native profile
 
 The opt-in F4 and Technic profiles run one ARM ELF32 relocatable C image through

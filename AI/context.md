@@ -96,6 +96,9 @@ On Inventor F4, a bounded USB/BLE check runs Babybot's existing learning C code
 on synthetic recorded observations, publishes a complete model and reproduces
 the recorded predictions on the host. This is numerical integration evidence;
 physical timing and full robot migration remain open.
+The same C learning kernel also runs as a native primary beside passive hardware
+sampling on F4 over USB/BLE. A larger USB check processes 320 synthetic observations
+in bounded fragments; see [workload limits](../docs/applications.md#native-learning-workload).
 Hard-float, FPU context
 fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native `.mpy` requires the matching SDK;

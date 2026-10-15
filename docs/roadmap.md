@@ -132,8 +132,11 @@ work before adding another worker or queue. A bounded F4 check now exercises
 existing learning code on synthetic recorded observations and replays the applied
 model's predictions; see [concurrent execution evidence](applications.md#concurrent-execution-example-and-evidence).
 The native primary now uses the same start/update/record-reading interfaces, with
-its own ELF backing and protection. Realistic workload budgets and complete robot
-identification acceptance remain open.
+its own ELF backing and protection. Bounded native learning runs have F4 USB/BLE
+evidence, including a larger fragmented USB workload with host-matching results;
+see [native workload limits](applications.md#native-learning-workload). Its measured
+cost requires application-level observation selection and update cadence. Complete
+robot identification and control timing acceptance remain open.
 
 ## Retained optimization work
 
