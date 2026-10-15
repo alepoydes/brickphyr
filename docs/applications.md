@@ -854,12 +854,17 @@ buffer. Older firmware retains single-record reads. Every response
 reports the current generation and retained index range. A client must discard
 a partial record if it was overwritten, and must not combine generations.
 Generations identify runs within one boot, not persistent experiment identities.
+Firmware with resumable transfer also retains a 16-byte capture tag. The first
+collector binds a random host-generated tag; later collectors obtain that same
+tag. Resetting or clearing the recorder discards it. This distinguishes a
+retained capture from another boot that happens to reuse its generation number.
 
 ```sh
 uv run brickphyrdev app run build/native-examples/control_record.elf
 uv run brickphyrdev app record control.jsonl
 uv run brickphyrdev app --ble Brickphyr record control-again.jsonl
 uv run brickphyrdev app --ble Brickphyr record control.cbor
+uv run brickphyrdev app --ble Brickphyr record control.cbor --resume
 uv run brickphyrdev record-info control.cbor
 uv run brickphyrdev app record-clear
 ```
@@ -871,8 +876,15 @@ JSONL with hex strings. `--format cbor` or `--format jsonl` overrides that choic
 for collection and `record-info`. `app run/start --record FILE` follows the same
 suffix convention. Both encodings use the same event schema and offline reader;
 a truncated CBOR event is rejected rather than treated as a complete sample.
-It collects the
-retained tail and follows a live application until it ends or the user interrupts
+`--resume` opens an incomplete file, validates its existing events, then checks
+the hub's capture tag, generation and metadata before appending. A mismatch
+leaves the file unchanged. Collection restarts at the first missing whole record;
+the file retains interrupted collection endings and explicit `resume` events,
+with cumulative record/gap counts. Overwritten records remain explicit gaps.
+Resume requires a tagged recording and cannot be combined with `--after`.
+Malformed/truncated files are rejected; no automatic repair discards their bytes.
+
+Collection reads the retained tail and follows a live application until it ends or the user interrupts
 collection. It does not stop that application. Session metadata identifies the
 firmware, board, ABI and application status; each record retains its exact binary
 bytes as hex. Explicit gap events mark missing record ranges. A final event

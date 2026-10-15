@@ -140,6 +140,87 @@ def test_incomplete_collection_never_reports_completion():
         list(Recording(io.StringIO(source)).frames(allow_gaps=True, allow_incomplete=True))
 
 
+def test_resume_preserves_progress_parameters_and_control_order():
+    events = _events()
+    events[0]["recording"]["tag"] = "01" * 16
+    failed_end = {"type": "end", "session": "fixture", "reason": "error",
+                  "records": 1, "gaps": 1}
+    resume = {"type": "resume", "session": "fixture", "from": 3,
+              "resumed_utc": "2026-10-16T12:00:00Z"}
+    events[5:5] = [failed_end, resume]
+    recording = Recording(_source(events))
+    assert recording.tag == b"\x01" * 16
+    nullable = _events()
+    nullable[0]["recording"]["tag"] = None
+    assert Recording(_source(nullable)).tag is None
+    binary = _binary_events()
+    binary[0]["recording"]["tag"] = b"\x01" * 16
+    assert Recording(io.BytesIO(cbor2.dumps(binary[0]))).tag == b"\x01" * 16
+    assert (recording.next_index, recording.parameter_revision,
+            recording.parameters, recording.last_control) == (0, None, None, None)
+    frames = recording.frames(allow_gaps=True)
+    first = next(frames)
+    assert recording.next_index == 3
+    assert recording.parameter_revision == 2 and recording.parameters == b"\x12"
+    first.control["sequence"] = 99
+    assert recording.last_control["sequence"] == 1
+    assert [frame.index for frame in frames] == [3]
+    assert recording.complete and recording.end["reason"] == "completed"
+    assert (recording.count, recording.gaps, recording.revisions, recording.next_index) == (
+        2, 1, 2, 4
+    )
+    assert recording.parameter_revision == 3 and recording.parameters == b"\x56"
+    assert recording.last_control["sequence"] == 2
+
+    unended = copy.deepcopy(events)
+    del unended[5]
+    without_end = Recording(_source(unended))
+    assert len(list(without_end.frames(allow_gaps=True))) == 2
+    assert without_end.complete and without_end.next_index == 4
+
+    # The latest parameter event is resume state even without a following frame.
+    prefix = Recording(_source(events[:5]))
+    list(prefix.frames(allow_gaps=True, allow_incomplete=True))
+    assert prefix.tag == b"\x01" * 16
+    assert (prefix.next_index, prefix.parameter_revision, prefix.parameters) == (3, 3, b"\x56")
+
+    bad = copy.deepcopy(events)
+    bad[7]["control"]["sequence"] = 1
+    with pytest.raises(ValueError, match="moved backwards or changed"):
+        list(Recording(_source(bad)).frames(allow_gaps=True))
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"session": "other"}, "another session"),
+    ({"from": 2}, "Resume index differs"),
+    ({"from": True}, "Invalid resume index"),
+])
+def test_resume_rejects_wrong_identity_or_position(change, message):
+    events = _events()
+    events.insert(4, {"type": "resume", "session": "fixture", "from": 3,
+                      "resumed_utc": "2026-10-16T12:00:00Z"} | change)
+    with pytest.raises(ValueError, match=message):
+        list(Recording(_source(events)).frames(allow_gaps=True))
+
+
+@pytest.mark.parametrize("cut", [7, 8])
+def test_resume_rejects_application_outcome_and_completed_end(cut):
+    events = _events()
+    events.insert(cut, {"type": "resume", "session": "fixture", "from": 4,
+                        "resumed_utc": "2026-10-16T12:00:00Z"})
+    with pytest.raises(ValueError, match="Cannot resume terminated recording"):
+        list(Recording(_source(events)).frames(allow_gaps=True))
+
+
+@pytest.mark.parametrize("tag", ["00" * 16, "01" * 15, b"\x01" * 15])
+def test_reader_rejects_invalid_capture_tag(tag):
+    events = _events()
+    events[0]["recording"]["tag"] = tag
+    source = io.BytesIO(b"".join(cbor2.dumps(event) for event in events))
+    with pytest.raises(ValueError, match="capture tag"):
+        Recording(source)
+
+
 def test_trigger_capture_reports_running_application_and_rejects_false_completion():
     events = _events()
     events[0]["recording"].update(trigger=3, after=1, reason=2)

@@ -172,4 +172,31 @@ ZTEST(record_memory, test_blocks_cross_slots_headers_and_ring_wrap)
 	}
 }
 
+ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
+{
+	const struct bp_record_spec spec = {.size = 1, .capacity = 1, .schema = "tag/1"};
+	const uint8_t original[16] = {1}, other[16] = {2}, empty[16] = {0};
+	uint8_t tag[16];
+	struct bp_record_info info;
+	application_record_reset();
+	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
+	application_record_snapshot(&info, tag);
+	zassert_mem_equal(tag, empty, sizeof(tag));
+	uint32_t generation = info.generation;
+	zassert_equal(application_record_bind(generation, empty, tag), -EINVAL);
+	zassert_ok(application_record_bind(generation, original, tag));
+	zassert_mem_equal(tag, original, sizeof(tag));
+	application_record_end();
+	zassert_ok(application_record_bind(generation, other, tag));
+	zassert_mem_equal(tag, original, sizeof(tag));
+	application_record_reset();
+	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
+	zassert_equal(application_record_bind(generation, original, tag), -ESTALE);
+	application_record_snapshot(&info, tag);
+	zassert_mem_equal(tag, empty, sizeof(tag));
+	zassert_ok(application_record_bind(info.generation, other, tag));
+	zassert_mem_equal(tag, other, sizeof(tag));
+	application_record_clear();
+}
+
 ZTEST_SUITE(record_memory, NULL, NULL, NULL, NULL, NULL);

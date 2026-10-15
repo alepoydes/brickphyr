@@ -253,6 +253,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 20 | Read image budget | Optional `name` (empty: completed RAM upload), `resource` (controller ELF within a Python package), `control` (default false), `stack` and `parameters` (default zero); returns integer `format`, `image`, `source_ram`, `source_flash`, `transfer`, `stack`, `user_stack`, `priv_stack`, `arena`, `code_limit`, `native`, `alignment`, `supervisor` |
 | 21 | Read recorder budget | `size`, `capacity`, `config`, `control`, `parameters`; returns `bytes` for the firmware recorder allocation excluding allocator metadata |
 | 22 | Read recording block | Required `generation`, starting `index` and slot byte `off`; returns consecutive slot bytes in `data` and the current position/capture fields, without a separate `step` field |
+| 23 | Write recording identity | Required `generation` and nonzero 16-byte `tag`; bind an untagged capture or retain its existing tag; returns `generation` and the retained `tag` |
 
 Recording metadata (command 14) advertises the maximum block payload as `block`.
 Its absence means only command 15 is available. A block slot consists of the
@@ -263,6 +264,11 @@ remain command 17 and are fetched once per observed revision. Generation/range
 checks apply equally to single-record and block reads; missing data is never
 silently replaced. Block copying is bounded and performs no allocation or I/O
 while holding the recorder lock.
+Command 14 also returns the capture `tag` (16 zero bytes before binding).
+Tag and metadata are sampled under the same lock. The tag is immutable until
+recorder reset/clear; it does not change the native SDK's recording ABI.
+A resuming client must compare its saved tag before requesting records and must
+never bind a new tag to make a mismatched capture look resumable.
 
 [Application recording](applications.md#application-recording) uses non-consuming
 cursors. A mismatched generation or an index outside `[first, next)` returns
@@ -513,6 +519,12 @@ Shell handlers and SMP packets before releasing the connection's resources.
 Concurrent binary echo, Shell input and read-only device observations have a
 bounded Linux/Inventor F4 check. Sustained capture throughput is separate work;
 this check does not establish battery-powered robot timing.
+The F4 profile requests a 7.5 ms connection interval during SMP exchange through
+Zephyr's existing connection-parameter control, restoring its preferred idle
+parameters after five seconds without SMP traffic. The central may choose other
+parameters. `bluetooth` prints the actual interval, peripheral latency and ATT
+MTU for each connected BLE link; these values do not by themselves establish
+payload throughput.
 A stalled notification sender closes its link after three seconds without progress;
 output is never silently truncated. USB and BLE use the same settings and power hold.
 Commands such as `reboot dfu`, `shutdown`, and `bluetooth off` can close the link

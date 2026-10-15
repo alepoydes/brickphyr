@@ -6,6 +6,7 @@
 
 static struct k_spinlock lock;
 static struct bp_record_info state;
+static uint8_t capture_tag[APPLICATION_RECORD_TAG_SIZE];
 static uint8_t **records;
 static uint8_t *configuration, *applied_parameters;
 static size_t parameter_stride, step_size;
@@ -59,6 +60,7 @@ static void reset(bool active)
 	uint32_t generation = state.generation + 1;
 	state = (struct bp_record_info){.generation = generation ? generation : 1,
 		.active = active};
+	memset(capture_tag, 0, sizeof(capture_tag));
 	k_spin_unlock(&lock, key);
 	free_records(old, count);
 }
@@ -269,9 +271,30 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 
 void application_record_info(struct bp_record_info *info)
 {
+	application_record_snapshot(info, NULL);
+}
+
+void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE])
+{
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
+	if (tag) memcpy(tag, capture_tag, sizeof(capture_tag));
 	k_spin_unlock(&lock, key);
+}
+
+int application_record_bind(uint32_t generation, const uint8_t candidate[APPLICATION_RECORD_TAG_SIZE],
+	uint8_t tag[APPLICATION_RECORD_TAG_SIZE])
+{
+	const uint8_t empty[APPLICATION_RECORD_TAG_SIZE] = {0};
+	if (!memcmp(candidate, empty, sizeof(empty))) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = generation != state.generation ? -ESTALE : !records ? -ENODATA : 0;
+	if (!err) {
+		if (!memcmp(capture_tag, empty, sizeof(empty))) memcpy(capture_tag, candidate, sizeof(capture_tag));
+		memcpy(tag, capture_tag, sizeof(capture_tag));
+	}
+	k_spin_unlock(&lock, key);
+	return err;
 }
 
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,

@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import Field
 from smp import message
 
-from . import application, monitor, record_codec, telemetry
+from . import application, monitor, record_codec, records, telemetry
 from .recording_io import write_event
 from .smp import checked, connection
 
@@ -31,6 +31,7 @@ class InfoResponse(message.ReadResponse):
     control: bool = False
     parameter_size: int = 0
     block: int = 0
+    tag: bytes | None = None
 
 
 class Info(application._Group, message.ReadRequest):
@@ -72,6 +73,20 @@ class BlockResponse(RecordResponse):
 class Block(Record):
     _COMMAND_ID = 22
     _Response = BlockResponse
+
+
+class BindResponse(message.WriteResponse):
+    _GROUP_ID = application.GROUP
+    _COMMAND_ID = 23
+    generation: int
+    tag: bytes
+
+
+class Bind(application._Group, message.WriteRequest):
+    _COMMAND_ID = 23
+    _Response = BindResponse
+    generation: int
+    tag: bytes
 
 
 class ConfigResponse(message.ReadResponse):
@@ -156,7 +171,9 @@ def _advance(old, new):
         raise RuntimeError("Recording trigger state changed")
 
 
-async def collect(client, log, session, counts, *, after=None, wait=False):
+async def collect(client, log, session, counts, *, after=None, wait=False, resume=None):
+    if resume is not None and after is not None:
+        raise ValueError("Cannot trigger a recording while resuming its download")
     info = await checked(client, Info())
     while wait and info.size == 0 and info.active:
         await asyncio.sleep(0.05)
@@ -236,45 +253,76 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
         info = current
         trigger, trigger_after, reason = state
 
-    identity = await telemetry.info(client)
-    status = await checked(client, application.Status())
-    write_event(
-        log,
-        {
-            "type": "session",
-            "schema": "brickphyr.records/1",
-            "session": session,
-            "started_utc": monitor.utc_now(),
-            "firmware": identity.firmware,
-            "build": identity.build,
-            "board": identity.board,
-            "application": status.model_dump(
-                exclude={"header", "version", "sequence", "smp_data"}
-            ),
-            "recording": {
-                "generation": info.generation,
-                "size": info.size,
-                "capacity": info.capacity,
-                "first": info.first,
-                "next": info.next,
-                "active": info.active,
-                "schema": info.record_schema,
-                "config": bytes(config),
-                "config_size": info.config_size,
-                "trigger": trigger,
-                "after": trigger_after,
-                "reason": reason,
-                "control": info.control,
-                "parameter_size": info.parameter_size,
+    tag = getattr(info, "tag", None)
+    if tag is not None and len(tag) != 16:
+        raise RuntimeError("Invalid recording tag")
+    if resume is not None:
+        saved = resume.session["recording"]
+        if not resume.tag or tag != resume.tag or generation != saved["generation"]:
+            raise RuntimeError("Recording identity changed; cannot resume this download")
+        if _identity(info) != (
+            saved["size"], saved["capacity"], saved["schema"], saved.get("config_size", 0),
+            saved.get("control", False), saved.get("parameter_size", 0),
+        ) or bytes(config) != resume.config:
+            raise RuntimeError("Recording metadata changed; cannot resume this download")
+        _advance((saved["first"], saved["next"], saved.get("trigger"),
+                  saved.get("after", 0), saved["reason"]),
+                 (info.first, info.next, trigger, trigger_after, reason))
+        if resume.next_index > info.next:
+            raise RuntimeError("Recording index range moved backwards")
+        if resume.needs_separator:
+            log.write("\n")
+        write_event(log, {"type": "resume", "session": session, "from": resume.next_index,
+                          "resumed_utc": monitor.utc_now()})
+    else:
+        if tag is not None:
+            bound = await checked(client, Bind(generation=generation, tag=uuid.uuid4().bytes))
+            if bound.generation != generation or len(bound.tag) != 16 or not any(bound.tag):
+                raise RuntimeError("Invalid bound recording identity")
+            tag = bound.tag
+        identity = await telemetry.info(client)
+        status = await checked(client, application.Status())
+        write_event(
+            log,
+            {
+                "type": "session",
+                "schema": "brickphyr.records/1",
+                "session": session,
+                "started_utc": monitor.utc_now(),
+                "firmware": identity.firmware,
+                "build": identity.build,
+                "board": identity.board,
+                "application": status.model_dump(
+                    exclude={"header", "version", "sequence", "smp_data"}
+                ),
+                "recording": {
+                    "generation": info.generation,
+                    "size": info.size,
+                    "capacity": info.capacity,
+                    "first": info.first,
+                    "next": info.next,
+                    "active": info.active,
+                    "schema": info.record_schema,
+                    "config": bytes(config),
+                    "config_size": info.config_size,
+                    "trigger": trigger,
+                    "after": trigger_after,
+                    "reason": reason,
+                    "control": info.control,
+                    "parameter_size": info.parameter_size,
+                    "tag": tag,
+                },
             },
-        },
-    )
+        )
 
     first, next, active = info.first, info.next, info.active
-    index = 0
+    index = resume.next_index if resume else 0
     partial = bytearray()
     partial_step = None
-    last_sequence = last_revision = cached_revision = None
+    previous = resume.last_control if resume else None
+    last_sequence = previous["sequence"] if previous else None
+    last_revision = previous["parameter_revision"] if previous else None
+    cached_revision = resume.parameter_revision if resume else None
     while True:
         if index < first:
             write_event(log, {"type": "gap", "from": index, "to": first})
@@ -394,10 +442,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False):
 
 
 @contextlib.contextmanager
-def session(log):
-    session_id = str(uuid.uuid4())
+def session(log, *, resume=None):
+    session_id = resume.session["session"] if resume else str(uuid.uuid4())
     failure = None
-    counts = {"records": 0, "gaps": 0}
+    counts = {"records": resume.count if resume else 0, "gaps": resume.gaps if resume else 0}
+    offset = log.tell() if resume else None
     try:
         yield session_id, counts
     except BaseException as error:
@@ -417,31 +466,45 @@ def session(log):
         }
         if failure and str(failure):
             end["error"] = str(failure)
-        if failure:
+        if resume and log.tell() == offset:
+            pass  # Failed identity/connection checks leave the original file intact.
+        elif failure:
             with contextlib.suppress(Exception):
                 write_event(log, end)
         else:
             write_event(log, end)
 
 
-async def _record(args, log):
-    with session(log) as (session_id, counts):
+async def _record(args, log, *, resume=None):
+    with session(log, resume=resume) as (session_id, counts):
         async with connection(ble=args.ble, port=args.port, serial_number=args.serial) as (
             client,
             _,
         ):
-            await collect(client, log, session_id, counts, after=getattr(args, "after", None))
+            await collect(client, log, session_id, counts, after=getattr(args, "after", None),
+                          resume=resume)
 
 
 @contextlib.contextmanager
-def open_log(path, format=None):
+def open_log(path, format=None, *, resume=False):
     selected = format or ("cbor" if path and Path(path).suffix.lower() == ".cbor" else "jsonl")
     if selected not in ("cbor", "jsonl"):
         raise ValueError("Recording format must be cbor or jsonl")
-    with monitor.recording(path, binary=selected == "cbor") as log:
+    with monitor.recording(path, binary=selected == "cbor", resume=resume) as log:
         yield log
 
 
 def run(args):
-    with open_log(args.file, getattr(args, "format", None)) as log:
-        asyncio.run(_record(args, log))
+    resume = getattr(args, "resume", False)
+    with open_log(args.file, getattr(args, "format", None), resume=resume) as log:
+        saved = None
+        if resume:
+            saved = records.Recording(log)
+            for _ in saved.frames(allow_gaps=True, allow_incomplete=True):
+                pass
+            if not saved.tag:
+                raise ValueError("Recording has no capture identity; cannot resume")
+            if saved.complete or saved.outcome is not None:
+                raise ValueError("Recording payload is already complete")
+            log.seek(0, 2)
+        asyncio.run(_record(args, log, resume=saved))

@@ -141,7 +141,9 @@ def main():
     record = app_commands.add_parser("record", help="Collect retained cycle records")
     record.add_argument("file", help="New file; .cbor selects binary, otherwise JSONL")
     record.add_argument("--format", choices=("jsonl", "cbor"), help="Override the file encoding")
-    record.add_argument(
+    capture = record.add_mutually_exclusive_group()
+    capture.add_argument("--resume", action="store_true", help="Continue an incomplete recording file")
+    capture.add_argument(
         "--after", type=int, metavar="N",
         help="Trigger capture and freeze after N further records without stopping the app",
     )

@@ -62,6 +62,10 @@ def _fixture(monkeypatch, fragments, info, *, terminal_info=None, infos=None,
         if isinstance(request, recording.Config):
             reads.append(("config", request.off))
             return next(configs)
+        if isinstance(request, recording.Bind):
+            if not any(info.tag):
+                info.tag = request.tag
+            return SimpleNamespace(generation=info.generation, tag=info.tag)
         if isinstance(request, recording.Parameters):
             reads.append(("parameters", request.index))
             return next(params)
@@ -403,3 +407,46 @@ def test_blocks_combine_records_and_split_control_headers(monkeypatch, control):
     if control:
         assert [frame.parameters for frame in frames] == [b'AB', b'AB', b'CD']
         assert [frame.control['sequence'] for frame in frames] == [1, 2, 3]
+
+
+@pytest.mark.parametrize("suffix", ["jsonl", "cbor"])
+def test_resume_retries_partial_record_and_rejects_replaced_capture(monkeypatch, tmp_path, suffix):
+    @contextlib.asynccontextmanager
+    async def connection(**_kwargs):
+        yield object(), None
+
+    monkeypatch.setattr(recording, "connection", connection)
+    info = _info(next=2, active=False, block=256, tag=bytes(16))
+
+    def interrupted():
+        yield _fragment(next=2, active=False, data=b"abcdEF")
+        raise ConnectionError("link lost")
+
+    _fixture(monkeypatch, interrupted(), info, terminal_info=info)
+    path = tmp_path / f"capture.{suffix}"
+    args = SimpleNamespace(file=path, ble=None, port=None, serial=None, after=None, resume=False)
+    with pytest.raises(ConnectionError, match="link lost"):
+        recording.run(args)
+    if suffix == "jsonl":
+        path.write_bytes(path.read_bytes().rstrip(b"\n"))
+    before = path.read_bytes()
+    args.resume = True
+    replaced = _info(next=2, active=False, block=256, tag=b"x" * 16)
+    _fixture(monkeypatch, iter(()), replaced)
+    with pytest.raises(RuntimeError, match="identity changed"):
+        recording.run(args)
+    assert path.read_bytes() == before
+
+    reads = _fixture(monkeypatch, iter((
+        _fragment(next=2, active=False, data=b"EFGH"),
+    )), info, terminal_info=info)
+    recording.run(args)
+    assert reads == [(1, 0)]
+    with path.open("rb" if suffix == "cbor" else "r") as source:
+        saved = Recording(source)
+        assert [frame.data for frame in saved.frames()] == [b"abcd", b"EFGH"]
+        assert saved.complete and saved.next_index == 2 and saved.count == 2
+    complete = path.read_bytes()
+    with pytest.raises(ValueError, match="already complete"):
+        recording.run(args)
+    assert path.read_bytes() == complete

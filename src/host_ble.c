@@ -623,6 +623,15 @@ BT_CONN_CB_DEFINE(host_ble_callbacks) = {
 	.connected = connected, .disconnected = disconnected, .recycled = recycled,
 };
 
+static void print_connection(struct bt_conn *conn, void *data)
+{
+	struct bt_conn_info info;
+	if (bt_conn_get_info(conn, &info) || info.state != BT_CONN_STATE_CONNECTED) return;
+	shell_print(data, "BLE %s: interval %u us, latency %u, ATT MTU %u",
+		info.role == BT_CONN_ROLE_PERIPHERAL ? "host" : "peer",
+		info.le.interval_us, info.le.latency, bt_gatt_get_mtu(conn));
+}
+
 static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 {
 	if (argc == 1) {
@@ -632,6 +641,7 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 		if (state == RADIO_FAILED) {
 			shell_print(shell, "%s failed: %d; reboot required", failed_operation, radio_error);
 		}
+		if (state == RADIO_ON) bt_conn_foreach(BT_CONN_TYPE_LE, print_connection, (void *)shell);
 		return 0;
 	}
 	bool enable = !strcmp(argv[1], "on");

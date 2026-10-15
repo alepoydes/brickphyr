@@ -75,6 +75,9 @@ class Recording:
         self.count = self.gaps = self.missing = self.revisions = 0
         self.end = self.outcome = None
         self.complete = False
+        self.needs_separator = False
+        self.next_index = 0
+        self.parameter_revision = self.parameters = self.last_control = None
         try:
             self.session = self._read()
             if not self.session or self.session.get("type") != "session" or (
@@ -85,6 +88,14 @@ class Recording:
             if not isinstance(self._session_id, str) or not self._session_id:
                 raise ValueError("Missing session identity")
             meta = self.session["recording"]
+            self.tag = None
+            if meta.get("tag") is not None:
+                tag = meta["tag"]
+                if isinstance(tag, str) and len(tag) != 32:
+                    raise ValueError("Invalid capture tag length")
+                self.tag = _blob(tag, 16, "capture tag")
+                if not any(self.tag):
+                    raise ValueError("Invalid zero capture tag")
             self.schema = meta["schema"]
             if not isinstance(self.schema, str) or not 1 <= len(self.schema) <= 47 or any(
                 not 32 <= ord(char) <= 126 for char in self.schema
@@ -148,6 +159,7 @@ class Recording:
         line = next(self._lines, None)
         if line is None:
             return None
+        self.needs_separator = not line.endswith("\n")
         self._line += 1
         event = json.loads(line)
         if not isinstance(event, dict):
@@ -198,6 +210,19 @@ class Recording:
         try:
             while (event := self._read()) is not None:
                 kind = event.get("type")
+                if kind == "resume":
+                    if self.outcome is not None or (
+                        self.end is not None and self.end["reason"] == "completed"
+                    ):
+                        raise ValueError("Cannot resume terminated recording")
+                    if event["session"] != self._session_id:
+                        raise ValueError("Resume event belongs to another session")
+                    if _integer(event["from"], "resume index") != index:
+                        raise ValueError("Resume index differs from collected range")
+                    if not isinstance(event["resumed_utc"], str) or not event["resumed_utc"]:
+                        raise ValueError("Invalid resume timestamp")
+                    self.end = None
+                    continue
                 if self.end is not None or self.outcome is not None and kind != "end":
                     raise ValueError("Event after recording termination")
                 if kind == "gap":
@@ -212,6 +237,7 @@ class Recording:
                     self.missing += next_index - index
                     self.gaps += 1
                     index = next_index
+                    self.next_index = index
                 elif kind == "parameters":
                     if not self.control:
                         raise ValueError("Parameters on an ordinary recording")
@@ -220,6 +246,8 @@ class Recording:
                                         (1 << 32) - 1)
                     parameters = _blob(event["data"], self.parameter_size, "parameters")
                     self.revisions += 1
+                    self.parameter_revision = revision
+                    self.parameters = parameters
                 elif kind == "record":
                     if _integer(event["index"], "record index", self._first,
                                 (1 << 64) - 2) != index:
@@ -252,6 +280,8 @@ class Recording:
                         raise ValueError("Control step on an ordinary recording")
                     self.count += 1
                     index += 1
+                    self.next_index = index
+                    self.last_control = control.copy() if control is not None else None
                     frame = Frame(index - 1, data, parameters, control, gap,
                                   record_codec.decode(self.schema, data))
                     gap = 0

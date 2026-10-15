@@ -34,9 +34,10 @@ def options(parser):
 
 
 @contextlib.contextmanager
-def recording(path, *, binary=False):
+def recording(path, *, binary=False, resume=False):
     # Refuse replacement before acquiring a hub connection.
-    stream = (open(path, "xb") if binary else open(path, "x", encoding="utf-8")) if path else None
+    mode = "r+" if resume else "x"
+    stream = (open(path, mode + "b") if binary else open(path, mode, encoding="utf-8")) if path else None
     try:
         yield stream
     except BaseException:

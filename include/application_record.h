@@ -27,6 +27,12 @@ int application_record_write(const void *data, size_t length);
 /* Zero generation selects the caller's current run; host requests bind a run. */
 int application_record_trigger(uint32_t generation, uint32_t after);
 void application_record_info(struct bp_record_info *info);
+/* Host-supplied capture identity, retained until reset/clear. All-zero means
+ * unbound. Binding an existing capture returns its original tag unchanged. */
+#define APPLICATION_RECORD_TAG_SIZE 16
+void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
+int application_record_bind(uint32_t generation, const uint8_t candidate[APPLICATION_RECORD_TAG_SIZE],
+	uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step);
 /* Consecutive slots, each containing the optional 32-byte control step followed
