@@ -8,7 +8,6 @@
 #include "python_source.h"
 
 #define PYTHON_FILE_LIMIT 64
-#define PYTHON_PATH_LIMIT 128
 #define PYTHON_STACK_MIN 4096
 /* Maximum expansion of the reference module records into the common file map. */
 #define PYTHON_PYBRICKS_HEADROOM (16 * (PYTHON_FILE_LIMIT + 1))

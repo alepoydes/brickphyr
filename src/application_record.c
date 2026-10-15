@@ -81,23 +81,21 @@ void application_record_end(void)
 	k_spin_unlock(&lock, key);
 }
 
-int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, size_t parameter_size)
+struct record_layout {
+	size_t step, stride, slot, count, bytes;
+	unsigned int shift;
+};
+
+static int record_layout(size_t size, size_t capacity, size_t length, bool control,
+	size_t parameter_size, struct record_layout *layout)
 {
-	if (!spec->size || spec->size > 1024 || !spec->capacity ||
+	if (!size || size > 1024 || !capacity ||
 	    length > 1024 || parameter_size > 256 || (!control && parameter_size) ||
-	    spec->capacity > 32768 / spec->size || !spec->schema[0] ||
-	    !memchr(spec->schema, 0, sizeof(spec->schema))) return -EINVAL;
-	for (size_t i = 0; spec->schema[i]; i++) {
-		if (spec->schema[i] < 32 || spec->schema[i] > 126) return -EINVAL;
-	}
-	/* The supervisor owns configuration and the caller is blocked. Allocate
-	 * before publication; no allocator or transport runs inside the data lock. */
-	if (records) return -EALREADY;
+	    capacity > 32768 / size) return -EINVAL;
 	size_t step_bytes = control ? sizeof(struct recorded_step) : 0;
 	size_t stride = parameter_size ? ROUND_UP(sizeof(struct parameter_slot) + parameter_size, 4) : 0;
-	size_t slot_bytes = step_bytes + stride + spec->size;
-	if (slot_bytes * spec->capacity + parameter_size + length > 32768) return -EINVAL;
+	size_t slot_bytes = step_bytes + stride + size;
+	if (slot_bytes * capacity + parameter_size + length > 32768) return -EINVAL;
 	/* Protected arenas and stacks can split otherwise sufficient free memory.
 	 * Keep complete slots in small blocks; a power-of-two slot count gives
 	 * constant-time lookup without padding each record to metadata alignment.
@@ -105,7 +103,36 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	unsigned int shift = 0;
 	while ((2U << shift) <= 1024 / slot_bytes) shift++;
 	size_t slots = 1U << shift;
-	size_t count = DIV_ROUND_UP(spec->capacity, slots);
+	size_t count = DIV_ROUND_UP(capacity, slots);
+	*layout = (struct record_layout){step_bytes, stride, slot_bytes, count,
+		count * sizeof(*records) + parameter_size + length + slot_bytes * capacity, shift};
+	return 0;
+}
+
+int application_record_budget(size_t size, size_t capacity, size_t length,
+	bool control, size_t parameter_size, size_t *bytes)
+{
+	struct record_layout layout;
+	int err = record_layout(size, capacity, length, control, parameter_size, &layout);
+	if (!err) *bytes = layout.bytes;
+	return err;
+}
+
+int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
+	bool control, size_t parameter_size)
+{
+	struct record_layout layout;
+	int err = record_layout(spec->size, spec->capacity, length, control, parameter_size, &layout);
+	if (err) return err;
+	if (!spec->schema[0] || !memchr(spec->schema, 0, sizeof(spec->schema))) return -EINVAL;
+	for (size_t i = 0; spec->schema[i]; i++) {
+		if (spec->schema[i] < 32 || spec->schema[i] > 126) return -EINVAL;
+	}
+	/* The supervisor owns configuration and the caller is blocked. Allocate
+	 * before publication; no allocator or transport runs inside the data lock. */
+	if (records) return -EALREADY;
+	size_t step_bytes = layout.step, stride = layout.stride, slot_bytes = layout.slot;
+	size_t slots = 1U << layout.shift, count = layout.count;
 	uint8_t **memory = k_malloc(count * sizeof(*memory) + parameter_size + length);
 	if (!memory) return -ENOMEM;
 	uint8_t *applied = (void *)(memory + count);
@@ -136,13 +163,13 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	state.parameter_size = parameter_size;
 	step_size = step_bytes;
 	parameter_stride = stride;
-	block_shift = shift;
+	block_shift = layout.shift;
 	block_mask = slots - 1;
 	applied_parameters = applied;
 	configuration = config_data;
 	free_parameters = 0;
 	records = memory;
-	retained_bytes = count * sizeof(*memory) + parameter_size + length + slot_bytes * spec->capacity;
+	retained_bytes = layout.bytes;
 	k_spin_unlock(&lock, key);
 	return 0;
 }

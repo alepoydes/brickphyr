@@ -117,6 +117,36 @@ watermark is unsupported on ARM. This snapshot does not guarantee that a new
 allocation or application replacement will fit fragmented heap memory. See
 [memory semantics](applications.md#experimental-native-profile).
 
+Use `app budget` to inspect a completed RAM upload or an installed name before
+starting it. It reads the actual image through firmware validation and does not
+upload, start, stop, consume the ready upload or write flash. Install the SDK
+`control_loop` controller as in [the native example](applications.md#native-primary-context),
+then stage its `control_background` primary in RAM:
+
+```sh
+uv run brickphyrdev app upload build/native-examples/control_background.elf
+uv run brickphyrdev app budget --controller control_loop --parameters 4 \
+  --record-size 184 --record-count 32 --record-config 4
+```
+
+For the [Python control package](applications.md#concurrent-execution-example-and-evidence)
+installed as `control`:
+
+```sh
+uv run brickphyrdev app budget control --resource control_loop.elf --parameters 4 \
+  --record-size 184 --record-count 32 --record-config 4
+```
+
+Omit the name to check a ready RAM package. `--stack BYTES` declares a Python stack request;
+native ELF stack size comes from its ABI. `--native-code` accounts for the Python
+native-code limit, and `--dynamic BYTES` declares other application allocations.
+Without both record size and count, recorder storage remains unknown. JSON lists
+the primary/controller, declared or unknown recorder/dynamic bytes, current heap
+and stack snapshot, current staging, possible active-source republish snapshot,
+and separately named load/replacement accounting phases. Native admission is a
+conservative bound; neither an accounted amount nor free heap guarantees a fit
+or predicts a peak. See [budget semantics](applications.md#experimental-native-profile).
+
 `app run` normally starts the application and closes the connection. To accompany
 its execution, use `--follow`; `--record FILE` also collects application cycle
 records and implies `--follow`:
@@ -220,6 +250,8 @@ The experimental application management group is SMP group 65, API version 1:
 | 17 | Read applied control parameters | Required `generation`, record `index`; returns current `generation`, `first`, `next`, applied `revision`, and its exact `data` (at most 256 bytes) |
 | 18 | Read memory snapshot | `heap_total`, `heap_used`, `heap_free`, `heap_peak`, `source_ram`, `source_flash`, `staging`, `python_arena`, `primary_native`, `control_native`, `code`, `code_used`, `records`, `gc_used`, `gc_free`, `gc_age_ms`, `stack_min`, `stack_max`, `stack_default`, `active` |
 | 19 | Read thread stack | Required zero-based `index`; `present=false` ends the list, otherwise returns `name`, `kind`, `requested`, `user`, `unused`, `privileged`, `priv_unused`, `next` |
+| 20 | Read image budget | Optional `name` (empty: completed RAM upload), `resource` (controller ELF within a Python package), `control` (default false), `stack` and `parameters` (default zero); returns integer `format`, `image`, `source_ram`, `source_flash`, `transfer`, `stack`, `user_stack`, `priv_stack`, `arena`, `code_limit`, `native`, `alignment`, `supervisor` |
+| 21 | Read recorder budget | `size`, `capacity`, `config`, `control`, `parameters`; returns `bytes` for the firmware recorder allocation excluding allocator metadata |
 
 [Application recording](applications.md#application-recording) uses non-consuming
 cursors. A mismatched generation or an index outside `[first, next)` returns
@@ -249,8 +281,9 @@ bit in `formats` reports admission support. Older servers omit these fields and
 support only native ELF. Group errors carry the positive Zephyr errno;
 malformed requests use standard SMP errors. This group adds application operations,
 not another framing or firmware-update protocol. The versioned definitions are
-in [the firmware handler](../src/application_mgmt.c) and
-[the client](../brickphyrdev/application.py).
+in [the firmware handler](../src/application_mgmt.c),
+[the application client](../brickphyrdev/application.py) and
+[the budget client](../brickphyrdev/budget.py).
 
 Shell and SMP can share a serial channel through Zephyr's existing SMP transport.
 SMP output wakes the shared stream when a complete packet has been encoded or

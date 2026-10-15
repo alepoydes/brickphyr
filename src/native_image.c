@@ -290,6 +290,7 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 	if (!abi || !entry || !symtabs) {
 		return -ENOEXEC;
 	}
+	size_t alignment = 1;
 	for (unsigned int i = 0; i < ARRAY_SIZE(regions); i++) {
 		const struct region *region = &regions[i];
 		if (!region->alignment) {
@@ -298,12 +299,14 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 		size_t span = region->end - ROUND_DOWN(region->first, region->alignment);
 		size_t block = 1U << LOG2CEIL(MAX(32U, MAX(span, region->alignment)));
 		budget += block;
+		alignment = MAX(alignment, block);
 	}
 	if (budget > HEAP_LIMIT) {
 		return -ENOMEM;
 	}
 	requirements->heap_size = budget;
 	requirements->stack_size = stack_size;
+	requirements->alignment = alignment;
 	return 0;
 }
 

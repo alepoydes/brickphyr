@@ -3070,6 +3070,77 @@ static int control_read_memory(void *context, size_t offset, void *data, size_t 
 	return 0;
 }
 
+static int budget_source(native_image_read_fn read, void *context, size_t length,
+	enum application_format format, size_t ram, const struct application_budget_request *request,
+	struct application_budget *value)
+{
+	if (request->parameters > 256 || (!request->control && request->parameters)) return -EINVAL;
+	struct control_source source = {read, context, 0, length};
+	int err;
+	if (request->resource[0]) {
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		if (!request->control || format != APPLICATION_FILES) return -EINVAL;
+		struct python_source package = {read, context, length};
+		struct python_resource file;
+		err = python_source_find(&package, request->resource, &file);
+		if (err != PYTHON_RESOURCE_FILE) return err < 0 ? err : -ENOENT;
+		source.offset = file.offset;
+		source.length = file.length;
+		format = APPLICATION_NATIVE;
+#else
+		return -ENOTSUP;
+#endif
+	}
+	*value = (struct application_budget){.format = format, .image = source.length};
+	if (format == APPLICATION_NATIVE) {
+		if (request->stack) return -ENOTSUP;
+		struct native_image_requirements requirements;
+		err = native_image_check(control_read, &source, source.length, &requirements);
+		if (err) return err;
+		value->stack = request->control ? MAX(2048, requirements.stack_size) : requirements.stack_size;
+		value->native = requirements.heap_size;
+		value->alignment = requirements.alignment;
+		if (request->control) value->supervisor = sizeof(struct native_control) +
+			request->parameters + sizeof(struct k_thread);
+		else value->transfer = ram;
+	} else {
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		if (request->control) return -ENOEXEC;
+		value->stack = request->stack ? request->stack : CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+		if (value->stack < PYTHON_STACK_MIN || value->stack > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) return -EINVAL;
+		if (format == APPLICATION_FILES) {
+			struct python_source package = {read, context, length};
+			err = length > APPLICATION_IMAGE_LIMIT ? -EFBIG : python_source_check(&package);
+			if (err) return err;
+		}
+		value->source_ram = ram;
+		value->source_flash = ram ? 0 : length;
+		value->arena = APPLICATION_MEMORY_LIMIT;
+		value->alignment = APPLICATION_MEMORY_LIMIT;
+		value->code_limit = PYTHON_CODE_CAPACITY;
+		value->supervisor = sizeof(struct python_backing);
+#else
+		return -ENOTSUP;
+#endif
+	}
+	value->user_stack = K_THREAD_STACK_LEN(value->stack);
+	value->priv_stack = CONFIG_PRIVILEGED_STACK_SIZE;
+	value->alignment = MAX(value->alignment, Z_THREAD_STACK_OBJ_ALIGN(value->stack));
+	return 0;
+}
+
+int application_budget_uploaded(const struct application_budget_request *request,
+	struct application_budget *value)
+{
+	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return -EBUSY;
+	/* Inspect exactly the admitted waiting upload. Do not expire, consume, copy
+	 * or replace it as a side effect of asking about memory. */
+	int err = upload_requirements.heap_size ? budget_source(control_read_memory, upload,
+		upload_size, upload_format, upload_capacity, request, value) : -ENODATA;
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+
 struct control_loader {
 	struct llext_loader loader;
 	struct control_source *source;
@@ -3429,6 +3500,27 @@ static __noinline int stored_size(const char *path, size_t *length)
 	}
 	*length = info.size;
 	return 0;
+}
+
+int application_budget_file(const char *path, const struct application_budget_request *request,
+	struct application_budget *value)
+{
+	size_t length;
+	int err = stored_size(path, &length);
+	if (err) return err;
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	err = fs_open(&file, path, FS_O_READ);
+	if (err) return err;
+	uint8_t magic[4];
+	err = length < sizeof(magic) ? -ENOEXEC : read_file(&file, 0, magic, sizeof(magic));
+	if (!err) {
+		enum application_format format = memcmp(magic, "\x7f" "ELF", sizeof(magic)) ?
+			APPLICATION_FILES : APPLICATION_NATIVE;
+		err = budget_source(read_file, &file, length, format, 0, request, value);
+	}
+	int closed = fs_close(&file);
+	return err ? err : closed;
 }
 
 /* Keep the linker's cache off the file admission and Python paths. */

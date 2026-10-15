@@ -3,7 +3,7 @@
 
 import argparse
 
-from . import application, compiler, monitor, records, terminal, usb
+from . import application, budget, compiler, monitor, records, terminal, usb
 
 
 def main():
@@ -116,6 +116,26 @@ def main():
         "--interval", type=float, metavar="SECONDS",
         help="Stream one JSON snapshot per positive interval until Ctrl+C",
     )
+    app_budget = app_commands.add_parser("budget", help="Inspect read-only application memory budget")
+    app_budget.set_defaults(handler=budget.run)
+    app_budget.add_argument("name", nargs="?", help="Installed name; omit for the ready RAM upload")
+    app_budget.add_argument("--stack", type=int, default=0, metavar="BYTES",
+                            help="Requested Python stack; default uses firmware selection")
+    control = app_budget.add_mutually_exclusive_group()
+    control.add_argument("--controller", metavar="NAME", help="Installed native controller")
+    control.add_argument("--resource", metavar="PATH", help="Controller ELF in the Python package")
+    app_budget.add_argument("--parameters", type=int, default=0, metavar="BYTES",
+                            help="Controller parameter payload bytes")
+    app_budget.add_argument("--record-size", type=int, metavar="BYTES",
+                            help="Record payload bytes; requires --record-count")
+    app_budget.add_argument("--record-count", type=int, metavar="COUNT",
+                            help="Record capacity; requires --record-size")
+    app_budget.add_argument("--record-config", type=int, default=0, metavar="BYTES",
+                            help="Recorder configuration bytes")
+    app_budget.add_argument("--native-code", action="store_true",
+                            help="Account for Python native-code arena limit")
+    app_budget.add_argument("--dynamic", type=int, metavar="BYTES",
+                            help="Declared other runtime allocation bytes")
     record = app_commands.add_parser("record", help="Collect retained cycle records to JSONL")
     record.add_argument("file", help="New JSONL file; existing files are never replaced")
     record.add_argument(

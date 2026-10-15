@@ -57,6 +57,21 @@ struct application_stack_info {
 	bool present;
 };
 
+/* Preflight accounting, not a fit guarantee. Native bytes are the admission
+ * bound; stacks use the target's rounding. Allocator/object overhead and runtime
+ * requests remain separate. No image linking or application execution. */
+struct application_budget {
+	enum application_format format;
+	size_t image, source_ram, source_flash, transfer;
+	size_t stack, user_stack, priv_stack, arena, code_limit;
+	size_t native, alignment, supervisor;
+};
+struct application_budget_request {
+	const char *resource;
+	size_t stack, parameters;
+	bool control;
+};
+
 /* Privileged lifecycle. All callers share this one instance. */
 #ifdef CONFIG_BRICKPHYR_NATIVE
 int application_run_native(const void *image, size_t length);
@@ -98,6 +113,13 @@ int application_observe(struct application_status *status);
 /* Read-only snapshots; EBUSY during lifecycle work. No background sampler. */
 int application_memory_get(struct application_memory *memory);
 int application_stack_get(size_t index, struct application_stack_info *stack);
+int application_budget_uploaded(const struct application_budget_request *request,
+	struct application_budget *budget);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+/* Caller holds store_lock. */
+int application_budget_file(const char *path, const struct application_budget_request *request,
+	struct application_budget *budget);
+#endif
 size_t application_output(void *data, size_t capacity);
 /* Drain output and capture its remaining count/state against one lifecycle.
  * Like get_status, this may finish cleanup of a terminated application. */

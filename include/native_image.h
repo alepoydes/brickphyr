@@ -6,6 +6,7 @@
 struct native_image_requirements {
 	size_t heap_size;
 	size_t stack_size;
+	size_t alignment;
 };
 
 /* Read exactly size bytes at offset, or return a negative error. Admission

@@ -10,10 +10,11 @@ from test_python import output
 from test_python_files import BUILD
 
 from brickphyrdev import application as app
-from brickphyrdev import recording
+from brickphyrdev import budget, recording
 
 
 def test_live_memory_and_python_stack():
+    resource = "c" * 124 + ".elf"  # Longest valid package path, including its suffix.
     image = cbor2.dumps({
         "main.py": b"""import gc, brickphyr, struct, native_module
 assert native_module.add(30) == 42
@@ -21,8 +22,8 @@ brickphyr.control_start('controller.elf', struct.pack('<4I', 0, 7, 0xfffffff8, 0
 gc.collect()
 print('ready')
 input()
-""",
-        "controller.elf": (BUILD / "control_probe.elf").read_bytes(),
+""".replace(b"controller.elf", resource.encode()),
+        resource: (BUILD / "control_probe.elf").read_bytes(),
         "native_module.mpy": (BUILD / "python-fixtures/native_module.mpy").read_bytes(),
     })
 
@@ -32,10 +33,17 @@ input()
             for stored, stack in ((False, 4096), (True, 8192)):
                 if stored:
                     await app.install(client, image, "memory", app.Format.FILES)
-                    await app.checked(client, app.RunStoredWithStack(name="memory", stack=stack))
                 else:
                     await app.upload(client, transport, image, app.Format.FILES)
-                    await app.checked(client, app.StartWithStack(stack=stack))
+                before = await app.checked(client, app.Memory())
+                primary = await app.checked(client, budget.ImageBudget(name="memory" if stored else "", stack=stack))
+                control = await app.checked(client, budget.ImageBudget(
+                    name="memory" if stored else "", resource=resource, control=True, parameters=16))
+                recorder = await app.checked(client, budget.RecordBudget(size=48, capacity=16, control=True, parameters=16))
+                after = await app.checked(client, app.Memory())
+                assert not after.active and after.heap_used == before.heap_used
+                assert after.staging == before.staging
+                await app.checked(client, app.RunStoredWithStack(name="memory", stack=stack) if stored else app.StartWithStack(stack=stack))
                 text = bytearray()
                 async with asyncio.timeout(3):
                     while b"ready" not in text:
@@ -48,6 +56,9 @@ input()
                 assert live.active and live.python_arena == 65536
                 assert live.code_used > 0 and live.code >= live.code_used
                 assert live.control_native > 0 and live.records > 0
+                assert primary.arena == live.python_arena and primary.source_ram == live.source_ram
+                assert primary.source_flash == live.source_flash and primary.code_limit == live.code
+                assert control.native >= live.control_native and recorder.bytes == live.records
                 assert live.gc_free > 40000 and 0 <= live.gc_age_ms < 1000
                 assert live.source_ram == (0 if stored else len(image))
                 assert live.source_flash == (len(image) if stored else 0)
@@ -60,6 +71,10 @@ input()
                 assert control["requested"] == control["user"] == 2048
                 assert primary["privileged"] > 0 and primary["priv_unused"] < 0
                 if stored:
+                    generation = (await app.checked(client, recording.Info())).generation
+                    with pytest.raises(RuntimeError, match="RecordBudget rejected"):
+                        await app.checked(client, budget.RecordBudget(size=1024, capacity=32768))
+                    assert (await app.checked(client, recording.Info())).generation == generation
                     with pytest.raises(RuntimeError, match="RunStoredWithStack rejected"):
                         await app.checked(client, app.RunStoredWithStack(name="memory", stack=1))
                     assert (await app.checked(client, app.Status())).state == 1

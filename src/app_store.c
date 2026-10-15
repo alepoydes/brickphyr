@@ -227,6 +227,17 @@ int app_store_run(const char *name, size_t stack_size)
 	return err;
 }
 
+int app_store_budget(const char *name, const struct application_budget_request *request,
+	struct application_budget *budget)
+{
+	char path[sizeof("/apps/") + APP_NAME_MAX];
+	k_mutex_lock(&store_lock, K_FOREVER);
+	int err = app_store_path(name, path, sizeof(path));
+	if (!err) err = application_budget_file(path, request, budget);
+	k_mutex_unlock(&store_lock);
+	return err;
+}
+
 #ifdef CONFIG_MCUMGR
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>

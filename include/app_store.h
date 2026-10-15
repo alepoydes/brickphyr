@@ -24,3 +24,7 @@ int app_store_publish(const char *name, size_t length);
 /* Install the common validated RAM upload; also owns reserved @0..@127 slots. */
 int app_store_publish_upload(const char *name);
 int app_store_run(const char *name, size_t stack_size);
+struct application_budget_request;
+struct application_budget;
+int app_store_budget(const char *name, const struct application_budget_request *request,
+	struct application_budget *budget);

@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#define PYTHON_PATH_LIMIT 128
+
 /* Exact, bounded reads from an immutable package. The owner keeps the backing
  * RAM or file alive; readers retain offsets, never pointers into that backing. */
 struct python_source {

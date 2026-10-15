@@ -10,6 +10,9 @@
 /* Requested bytes retained by the recorder, including its block index and
  * parameter metadata, excluding allocator overhead. */
 size_t application_record_memory(void);
+/* Same layout/limits as begin, without allocating or changing a recording. */
+int application_record_budget(size_t size, size_t capacity, size_t config_size,
+	bool control, size_t parameter_size, size_t *bytes);
 
 /* Supervisor serializes reset/begin/clear with application termination. Reads
  * and fixed-size writes use only the bounded recorder lock, never lifecycle. */

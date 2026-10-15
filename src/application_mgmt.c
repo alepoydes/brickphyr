@@ -3,8 +3,9 @@
 #include "application.h"
 #include "application_record.h"
 #include "native_image.h"
-#ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_store.h"
+#include "python_source.h"
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
 #endif
 
@@ -139,6 +140,68 @@ static int stack_read(struct smp_streamer *stream)
 		number(zs, "unused", value.unused) && number(zs, "privileged", value.privileged) &&
 		number(zs, "priv_unused", value.priv_unused) && number(zs, "next", value.next);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int budget_read(struct smp_streamer *stream)
+{
+	struct zcbor_string name = {0}, resource = {0};
+	uint32_t stack = 0, parameters = 0;
+	bool control = false;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("name", zcbor_tstr_decode, &name),
+		ZCBOR_MAP_DECODE_KEY_DECODER("resource", zcbor_tstr_decode, &resource),
+		ZCBOR_MAP_DECODE_KEY_DECODER("stack", zcbor_uint32_decode, &stack),
+		ZCBOR_MAP_DECODE_KEY_DECODER("parameters", zcbor_uint32_decode, &parameters),
+		ZCBOR_MAP_DECODE_KEY_DECODER("control", zcbor_bool_decode, &control),
+	};
+	char installed[APP_NAME_MAX + 1], path[PYTHON_PATH_LIMIT + 1];
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    name.len >= sizeof(installed) || resource.len >= sizeof(path) ||
+	    (name.len && memchr(name.value, 0, name.len)) ||
+	    (resource.len && memchr(resource.value, 0, resource.len))) return MGMT_ERR_EINVAL;
+	if (name.len) memcpy(installed, name.value, name.len);
+	installed[name.len] = 0;
+	if (resource.len) memcpy(path, resource.value, resource.len);
+	path[resource.len] = 0;
+	struct application_budget_request request = {path, stack, parameters, control};
+	struct application_budget value;
+	int err;
+	if (installed[0]) {
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+		err = app_store_budget(installed, &request, &value);
+#else
+		err = -ENOTSUP;
+#endif
+	} else err = application_budget_uploaded(&request, &value);
+	if (err) return result(stream, err);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = number(zs, "format", value.format) && number(zs, "image", value.image) &&
+		number(zs, "source_ram", value.source_ram) && number(zs, "source_flash", value.source_flash) &&
+		number(zs, "transfer", value.transfer) && number(zs, "stack", value.stack) &&
+		number(zs, "user_stack", value.user_stack) && number(zs, "priv_stack", value.priv_stack) &&
+		number(zs, "arena", value.arena) && number(zs, "code_limit", value.code_limit) &&
+		number(zs, "native", value.native) && number(zs, "alignment", value.alignment) &&
+		number(zs, "supervisor", value.supervisor);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_budget_read(struct smp_streamer *stream)
+{
+	uint32_t size = 0, capacity = 0, config = 0, parameters = 0;
+	bool control = false;
+	size_t decoded, bytes;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("size", zcbor_uint32_decode, &size),
+		ZCBOR_MAP_DECODE_KEY_DECODER("capacity", zcbor_uint32_decode, &capacity),
+		ZCBOR_MAP_DECODE_KEY_DECODER("config", zcbor_uint32_decode, &config),
+		ZCBOR_MAP_DECODE_KEY_DECODER("parameters", zcbor_uint32_decode, &parameters),
+		ZCBOR_MAP_DECODE_KEY_DECODER("control", zcbor_bool_decode, &control),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded)) return MGMT_ERR_EINVAL;
+	int err = application_record_budget(size, capacity, config, control, parameters, &bytes);
+	if (err) return result(stream, err);
+	return number(stream->writer->zs, "bytes", bytes) ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
 static int stop_write(struct smp_streamer *stream)
@@ -424,6 +487,8 @@ static const struct mgmt_handler handlers[] = {
 	[17] = {.mh_read = record_parameters_read},
 	[18] = {.mh_read = memory_read},
 	[19] = {.mh_read = stack_read},
+	[20] = {.mh_read = budget_read},
+	[21] = {.mh_read = record_budget_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

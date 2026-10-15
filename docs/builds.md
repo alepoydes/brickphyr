@@ -666,7 +666,10 @@ receive buffer and loaded regions coexist; the receive buffer is then released.
 File loading reserves no ELF receive buffer and reports the same admission budget
 and loaded bytes for the same image. Use `app memory` for current heap and stack
 reservations; component counts exclude allocator metadata, and a live stack
-watermark is an estimate while the thread runs.
+watermark is an estimate while the thread runs. Before starting a matching-SDK
+ELF or a Python package, use the read-only [host budget preflight](host.md#native-applications)
+to inspect the actual completed upload or installed image and optional controller;
+its accounted amounts are not a fit guarantee.
 
 ### Optional CMSIS-DSP native SDK
 

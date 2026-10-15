@@ -630,6 +630,35 @@ mark (`priv_unused` is `-ENOTSUP`). Live stack scans can race execution and do
 not bound future stack use. Heap counters do not reveal the largest contiguous
 free block or prove that loading, replacement, or concurrent components will fit.
 
+`brickphyrdev app budget [NAME]` checks a completed RAM upload (no name) or an
+installed application without starting it. It validates the real native ELF or
+Python package through the firmware's admission readers; `--controller NAME`
+checks a separately installed ELF, while `--resource PATH` checks an ELF inside
+the selected Python package. Native image and recorder budgets come from the
+same firmware validators used at launch, including target stack rounding and
+recorder layout. The command does not stop an application, consume a ready
+upload, install another one or write flash. Declared record size/count/configuration,
+controller parameter bytes, Python native code and other dynamic bytes are
+accounted only when supplied; a wrong declaration is not enforced against later
+application behavior.
+
+The report separates current `app memory` measurements from candidate accounting.
+`resident_accounted` sums declared components, and `phases.load.accounted` also
+includes candidate transfer bytes. `phases.replacement.before_release_accounted`
+counts the current heap plus allocations prepared before releasing the old
+primary; it reuses an existing Python arena and does not count a ready RAM source
+twice. Controller, recorder and native-code allocations occur later. These phase
+amounts exclude allocator/kernel-object metadata and transient loader allocations;
+native admission `native` is a conservative bound, not measured retained memory.
+Alignment, fragmentation and undeclared runtime allocations leave both phase
+peaks and overall fit unknown unless the minimum known arena, stack and source
+bytes already exceed the heap. `potential_store_mutation_snapshot` describes a
+possible RAM copy when republishing an active stored source, not normal start.
+On Inventor F4, USB checks compare RAM/stored package and controller estimates
+with live allocations and verify that preflight leaves staging and execution
+unchanged. A native-image preflight also passes over BLE. These bounded checks
+do not establish peak usage or fit for arbitrary application code.
+
 Protected ARM checks and bounded USB/BLE checks on one Robot Inventor F4
 (PCB revision unknown) cover live GC/stack reads, RAM and stored Python starts
 with 4/8 KiB user stacks, a native module and a passive native controller. On F4
@@ -1282,30 +1311,53 @@ native SMP fixture now configures a 147456-byte shared heap, including the on-de
 64 KiB arena and stack, instead of an 80 KiB heap plus a static 64 KiB arena;
 it does not establish F4 USB/BLE driver overhead or other programs' compiler needs.
 
-On one Robot Inventor F4 (PCB revision unknown), the full Python profile with
-Zephyr's optional memory counters also runs a synthetic 32,768-byte file map
-from RAM and LittleFS over USB. Most of the image is an unused resource; the
-program imports a dynamic C module and creates default HubNetwork inboxes without
-connecting peers. With Zephyr 4.4.2, Zephyr SDK 1.0.1 and the earlier 64 KiB
-system-heap configuration with a separate static application stack, the observed
-budgets were:
+### Concurrent Python memory workload
 
-| Allocation | Observed bytes |
-| --- | ---: |
-| System heap with the complete RAM upload | 32,772 |
-| System heap with native code and HubNetwork inboxes active | 19,464 |
-| Python GC allocated/free after imports and collection | 1,872 / 30,128 |
-| Application stack used/reserved after return | 1,968 / 16,384 |
-| Native code used/reserved | 352 / 16,384 |
-| Peak system-heap allocation through a separate 31,728-byte Pybricks upload | 48,728 |
+On one Robot Inventor F4 (PCB revision unknown), the full BLE-only Python profile
+runs a 43,702-byte package containing Babybot's C learning module and an independent
+native observer. The Python primary retains all 320 input rows (15,360 bytes),
+320 flags, a 3,032-byte learning workspace and 544-byte history. The inputs repeat
+a 16-row synthetic fixture with rebased timestamps. Twenty incremental append
+calls and GC collections precede one model update; this is a numerical and memory
+workload, not a recorded continuous robot trajectory.
 
-The system-heap allocation counter returns to zero after cleanup. The Pybricks
-upload's normalized file is read back exactly; it is not executed in this workload.
-Allocator counters include rounding and differ from payload sizes. These figures
-cover this workload and build, not arbitrary source compilation, fragmentation,
-simultaneous active peer traffic or the largest possible allocation. Those figures
-used optional Zephyr kernel diagnostics; ordinary native builds provide
-`app memory`. Other workloads still need their own GC, stack and system-heap budget.
+The observer runs every 15 ms, receives copied 60-byte model revisions and keeps
+64 records of 176 bytes, plus control metadata. The package is retained once
+outside GC for RAM execution, or read directly from LittleFS for stored execution.
+The controller ELF is read through that source without an extra whole-image copy;
+its MPU-rounded executable/data regions are separate allocations.
+
+| Live allocation | RAM start | Stored start |
+| --- | ---: | ---: |
+| System heap configured | 223,232 B | 223,232 B |
+| System heap used | 185,208 B | 141,500 B |
+| System heap free | 37,760 B | 81,472 B |
+| Retained RAM package | 43,702 B | 0 B |
+| Python GC used/free reported after learning | 28,928 / 35,072 B | 28,928 / 35,072 B |
+| Python native code used/reserved | 11,472 / 16,384 B | 11,472 / 16,384 B |
+| Loaded controller regions | 18,276 B | 18,276 B |
+| Recorder requested allocation | 18,108 B | 18,108 B |
+| Primary stack used/reserved | 5,848 / 8,192 B | 5,848 / 8,192 B |
+| Controller stack used/reserved | 2,888 / 8,192 B | 2,888 / 8,192 B |
+
+The table shows USB snapshots; BLE runs have the same system-heap counts and
+35,072–35,712 bytes free inside GC. GC belongs to the allocated Python arena and
+cannot directly satisfy native allocations. Heap counters include allocator rounding, while
+component sizes exclude allocator metadata. Each application context also
+reserves a 1,024-byte privileged stack whose high-water mark is unavailable.
+These live counts and observed stack use do not bound transient peaks, future
+execution or a different application's contiguous-memory requirements.
+
+USB and BLE RAM/stored checks reproduce the learned model/history and retained
+observer results bit for bit on the host. Learning with GC takes 8.15 s over USB
+and 7.22–7.23 s over BLE while the independent controller continues. Host polling
+differs between transports; neither time is an isolated numerical-kernel benchmark.
+Both exceed the 4.8 s represented by 320 rows at 15 ms.
+The robot must select its update frequency and retained data accordingly.
+Normal completion and USB forced stop during learning reclaim both execution
+contexts. Clearing the retained recording then restores the initial system-heap
+usage exactly. No sensors or actuators participate in this workload; complete
+robot migration and sustained timing acceptance remain separate work.
 
 Output uses the shared [bounded queue](#python-input-and-output), with flow control
 for subscribed Pybricks output and counted overflow for detached logging.
