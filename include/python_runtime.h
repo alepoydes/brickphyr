@@ -9,6 +9,7 @@
 
 #define PYTHON_FILE_LIMIT 64
 #define PYTHON_STACK_MIN 4096
+#define PYTHON_ARENA_SIZE CONFIG_BRICKPHYR_PYTHON_HEAP_SIZE
 /* Maximum expansion of the reference module records into the common file map. */
 #define PYTHON_PYBRICKS_HEADROOM (16 * (PYTHON_FILE_LIMIT + 1))
 #define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - PYTHON_PYBRICKS_HEADROOM)

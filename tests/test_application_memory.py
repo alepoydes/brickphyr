@@ -13,6 +13,45 @@ from brickphyrdev import application as app
 from brickphyrdev import budget, recording
 
 
+def test_native_budget_independent_of_python():
+    """Map a real 64 KiB BSS, probe its pages and use an 8 KiB stack beside idle Python."""
+    image = (BUILD / "capacity_probe.elf").read_bytes()
+
+    async def exercise(port):
+        async with app.connection(port=port) as (client, transport):
+            baseline = await app.checked(client, app.Memory())
+            assert baseline.stack_max == 16384 and baseline.stack_default == 12288
+            await app.upload(client, transport, image, app.Format.NATIVE)
+            estimate = await app.checked(client, budget.ImageBudget())
+            assert estimate.native > 65536 and estimate.stack == 8192 and estimate.arena == 0
+            await app.checked(client, app.Start())
+            text = bytearray()
+            async with asyncio.timeout(3):
+                while True:
+                    text.extend(await output(client))
+                    state = await app.checked(client, app.Status())
+                    if state.state != 1:
+                        break
+                    await asyncio.sleep(.005)
+            text.extend(await output(client))
+            assert state.state == 2 and state.result == state.fault == state.cleanup == 0, state
+            assert state.stack == 8192 and b"CAPACITY_OK" in text
+            assert (await app.checked(client, app.Memory())).heap_used == baseline.heap_used
+
+            # The native limit must not enlarge the arena or default Python stack.
+            await app.upload(client, transport, b"input()", app.Format.PYTHON)
+            estimate = await app.checked(client, budget.ImageBudget())
+            assert estimate.native == 0 and estimate.arena == 65536 and estimate.stack == 12288
+            await app.checked(client, app.Start())
+            live = await app.checked(client, app.Memory())
+            assert live.active and live.python_arena == 65536
+            await app.checked(client, app.Stop())
+            assert (await app.checked(client, app.Memory())).heap_used == baseline.heap_used
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
 def test_live_memory_and_python_stack():
     resource = "c" * 124 + ".elf"  # Longest valid package path, including its suffix.
     image = cbor2.dumps({

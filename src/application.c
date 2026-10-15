@@ -108,7 +108,7 @@ static struct {
 /* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
 K_APP_BMEM(python_partition) static uintptr_t python_stack_bottom;
 /* The privileged descriptor owns the allocation; only Python maps it. */
-BUILD_ASSERT(IS_POWER_OF_TWO(APPLICATION_MEMORY_LIMIT));
+BUILD_ASSERT(IS_POWER_OF_TWO(PYTHON_ARENA_SIZE));
 struct python_backing {
 	struct python_source source;
 	atomic_ptr_t data;
@@ -121,7 +121,7 @@ struct python_backing {
 static struct python_backing *python_backing, *upload_backing;
 static int backing_release(struct python_backing *backing);
 static struct k_mem_partition execution_partition = {
-	.size = APPLICATION_MEMORY_LIMIT, .attr = K_MEM_PARTITION_P_RW_U_RW,
+	.size = PYTHON_ARENA_SIZE, .attr = K_MEM_PARTITION_P_RW_U_RW,
 };
 #endif
 static struct native_control {
@@ -2571,7 +2571,7 @@ static void python_entry(void *memory, void *size, void *format)
 	size_t length = (uintptr_t)size;
 	const struct python_source source = {python_read, NULL, length};
 	int result = python_execute_source(length ? &source : NULL,
-		(uintptr_t)format, memory, APPLICATION_MEMORY_LIMIT, python_stack_bottom);
+		(uintptr_t)format, memory, PYTHON_ARENA_SIZE, python_stack_bottom);
 	application_finished(result);
 }
 #endif
@@ -3106,7 +3106,7 @@ static int budget_source(native_image_read_fn read, void *context, size_t length
 	} else {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (request->control) return -ENOEXEC;
-		value->stack = request->stack ? request->stack : CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+		value->stack = request->stack ? request->stack : CONFIG_BRICKPHYR_PYTHON_STACK_SIZE;
 		if (value->stack < PYTHON_STACK_MIN || value->stack > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) return -EINVAL;
 		if (format == APPLICATION_FILES) {
 			struct python_source package = {read, context, length};
@@ -3115,8 +3115,8 @@ static int budget_source(native_image_read_fn read, void *context, size_t length
 		}
 		value->source_ram = ram;
 		value->source_flash = ram ? 0 : length;
-		value->arena = APPLICATION_MEMORY_LIMIT;
-		value->alignment = APPLICATION_MEMORY_LIMIT;
+		value->arena = PYTHON_ARENA_SIZE;
+		value->alignment = PYTHON_ARENA_SIZE;
 		value->code_limit = PYTHON_CODE_CAPACITY;
 		value->supervisor = sizeof(struct python_backing);
 #else
@@ -3271,7 +3271,7 @@ failed:
 static int run_python(struct python_backing *backing, size_t length, enum application_format format,
 	bool soft_reset, int program_id, size_t stack_size)
 {
-	if (!stack_size) stack_size = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+	if (!stack_size) stack_size = CONFIG_BRICKPHYR_PYTHON_STACK_SIZE;
 	/* Compiling/importing needs more than the native entry/exit minimum.
 	 * 4 KiB admits the measured small-script/import path plus the VM margin;
 	 * it is not a promise that arbitrary C extensions or recursion fit. */
@@ -3281,7 +3281,7 @@ static int run_python(struct python_backing *backing, size_t length, enum applic
 	 * contexts and removed their mappings. Cleanup failure retains ownership.
 	 */
 	void *memory = (void *)execution_partition.start;
-	if (!memory) memory = k_aligned_alloc(APPLICATION_MEMORY_LIMIT, APPLICATION_MEMORY_LIMIT);
+	if (!memory) memory = k_aligned_alloc(PYTHON_ARENA_SIZE, PYTHON_ARENA_SIZE);
 	if (!memory) return -ENOMEM;
 	int err = prepare(stack_size, true);
 	if (err) {
@@ -3290,7 +3290,7 @@ static int run_python(struct python_backing *backing, size_t length, enum applic
 	}
 	execution_partition.start = (uintptr_t)memory;
 	/* Newly mapped heap storage must not expose a previous owner's contents. */
-	memset(memory, 0, APPLICATION_MEMORY_LIMIT);
+	memset(memory, 0, PYTHON_ARENA_SIZE);
 	python_backing = backing;
 	err = k_mem_domain_add_partition(&application_domain, &execution_partition);
 	if (!err) {
@@ -3301,7 +3301,7 @@ static int run_python(struct python_backing *backing, size_t length, enum applic
 		err = start_thread(python_entry, memory, (void *)length, (void *)(uintptr_t)format,
 			(struct application_status){.format = format, .image_bytes = length, .repl = !backing,
 				.program_id = program_id,
-				.loader_bytes = APPLICATION_MEMORY_LIMIT, .loaded_bytes = APPLICATION_MEMORY_LIMIT},
+				.loader_bytes = PYTHON_ARENA_SIZE, .loaded_bytes = PYTHON_ARENA_SIZE},
 			soft_reset);
 	}
 	if (!err) {
@@ -3586,8 +3586,8 @@ static int complete_upload(void)
 		err = python_image_check(upload, upload_size, upload_format);
 		if (!err) {
 			upload_requirements = (struct native_image_requirements){
-				.heap_size = APPLICATION_MEMORY_LIMIT,
-				.stack_size = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE};
+				.heap_size = PYTHON_ARENA_SIZE,
+				.stack_size = CONFIG_BRICKPHYR_PYTHON_STACK_SIZE};
 		}
 		return err;
 	}
@@ -3806,8 +3806,9 @@ int application_memory_get(struct application_memory *value)
 	}
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	value->stack_min = PYTHON_STACK_MIN;
-	value->stack_max = value->stack_default = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
-	value->python_arena = execution_partition.start ? APPLICATION_MEMORY_LIMIT : 0;
+	value->stack_max = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+	value->stack_default = CONFIG_BRICKPHYR_PYTHON_STACK_SIZE;
+	value->python_arena = execution_partition.start ? PYTHON_ARENA_SIZE : 0;
 	value->code = code_memory ? PYTHON_CODE_CAPACITY : 0;
 	value->code_used = code_used;
 	if (python_backing) {

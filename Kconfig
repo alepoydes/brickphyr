@@ -351,7 +351,8 @@ config BRICKPHYR_APPLICATION_STACK_SIZE
 	default 2048
 	range 2048 32768
 	help
-	  Admission limit for native ABI requirements and the Python stack size.
+	  Admission limit for native ABI requirements and explicit Python stack
+	  requests. The default Python stack is configured separately.
 	  Stacks are allocated only while an application is loaded, rounded for
 	  MPU protection, with a 2048-byte minimum for the native entry/exit path.
 	  Python compilation and exception reporting require more stack than the
@@ -365,17 +366,14 @@ config BRICKPHYR_APPLICATION_IMAGE_SIZE
 	  Admission limit, not a reservation. A RAM upload also needs this much
 	  free system heap alongside the loaded program and its stack.
 
-config BRICKPHYR_APPLICATION_MEMORY_SIZE
-	int "Application execution memory limit"
+config BRICKPHYR_NATIVE_MEMORY_SIZE
+	int "Native image execution memory limit"
 	default 65536
 	range 8192 262144
 	help
 	  Bounds each native image's admitted region and loader metadata cost.
 	  Individual allocations use the system heap; loading and stack allocation
 	  can still fail if it lacks sufficiently large aligned free blocks.
-	  An active Python program allocates an arena of this size from the same
-	  heap, requiring power-of-two size/alignment for MPU protection. Stopping
-	  Python returns this memory for other applications and platform services.
 
 config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"
@@ -384,6 +382,25 @@ config BRICKPHYR_PYTHON
 	help
 	  MicroPython core with source compilation, bytecode loading and GC.
 	  Host integration and Pybricks bindings are under development.
+
+config BRICKPHYR_PYTHON_HEAP_SIZE
+	int "Python execution arena bytes"
+	depends on BRICKPHYR_PYTHON && BRICKPHYR_NATIVE
+	default 65536
+	range 8192 262144
+	help
+	  Allocated from the system heap only while Python runs and released after
+	  its thread is joined. Must be a power of two for MPU size/alignment.
+	  This does not limit native ELF regions or reserve memory for idle Python.
+
+config BRICKPHYR_PYTHON_STACK_SIZE
+	int "Default Python stack bytes"
+	depends on BRICKPHYR_PYTHON && BRICKPHYR_NATIVE
+	default 12288
+	range 4096 BRICKPHYR_APPLICATION_STACK_SIZE
+	help
+	  Used when a Python launch does not request a stack size. The shared
+	  maximum application stack limit still applies to explicit requests.
 
 config BRICKPHYR_PYBRICKS
 	bool "Experimental Pybricks Python library"

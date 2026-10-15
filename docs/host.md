@@ -208,7 +208,7 @@ changes may require rebuilding stored applications. See
 For Python, `--stack BYTES` on `app run` or `app start` requests a user stack
 before upload/start. The client checks the firmware's advertised minimum and
 maximum first; omitting the option uses its default. On the full F4 Python
-profile the request is 4096–12288 bytes, default 12288 bytes, and the MPU rounds
+profile the request is 4096–16384 bytes, default 12288 bytes, and the MPU rounds
 that default allocation to 16384 bytes. Native ELF stack size remains its ABI
 declaration; a nonzero override is rejected. The hub Shell accepts
 `app run NAME STACK` for a stored Python program and `app run --stack BYTES`

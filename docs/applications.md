@@ -581,16 +581,20 @@ a 1024-byte queue with counted overflow; writing never waits for a reader. The
 remains available without a host, including during LLEXT's deferred-log flush.
 
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
-`CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
-builds, sets the on-demand execution arena's size. The F4 native profile permits
-64 KiB of ELF and a 214144-byte loader budget in a 229632-byte shared system heap.
+`CONFIG_BRICKPHYR_NATIVE_MEMORY_SIZE` limits each native image's loader budget.
+`CONFIG_BRICKPHYR_PYTHON_HEAP_SIZE` independently sets the on-demand Python arena
+(64 KiB on F4); an idle Python engine reserves none of it. Both F4 profiles permit
+64 KiB of ELF and a 214144-byte native loader budget. Their shared system heaps
+are 228992 bytes for native-only and 223232 bytes with full BLE Python.
 The Technic native profile permits 4 KiB images and a 16 KiB loader budget in a
 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
-images with large BSS can still exceed it. The native-only profile permits a
-2048-byte user stack. Its privileged syscall stack, guard and allocation metadata
+images with large BSS can still exceed it. `CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE`
+limits the requested user stack: 16 KiB in both F4 profiles, 2 KiB on Technic.
+Native applications allocate only their declared ABI requirement, rounded for the MPU;
+raising the maximum reserves no memory. The privileged syscall stack, guard and allocation metadata
 also come from the shared heap. The supervisor reserves a replacement's stack
 before stopping the current program; insufficient heap or alignment space leaves
 that program running. It joins the thread before freeing the stack on return,
@@ -678,6 +682,14 @@ errors, and leave existing stored files unchanged across the profile switch.
 Those checks used the earlier per-image arena allocator: reported loaded
 allocations were 66258 and 83037 bytes, with 136864/170291-byte arena reservations.
 These synthetic memory workloads establish neither capacity under maximum peripheral/communication load nor a worst-case stack bound.
+
+With the system-heap loader, the full BLE Python profile also runs a native ELF
+with 64 KiB BSS and an 8 KiB stack on the Inventor F4 over USB and BLE. The program
+checks every byte; its native admission budget is 71072 bytes, above the former
+64 KiB limit. A subsequent Python start retains its separate 64 KiB arena and
+12 KiB default stack request. Both exits restore the pre-run heap usage and leave
+stored files unchanged. The corresponding protected ARM regression probes pages
+and the final byte rather than repeating the full memory sweep.
 
 With that earlier allocator, separate USB checks on the same F4 with Zephyr heap
 statistics enabled measured system-heap allocation peaks of 203368 bytes for the RAM workload and 171260 bytes
@@ -1205,10 +1217,11 @@ controller linking still allocates its executable/data sections in protected RAM
 RAM execution needs space for both the package and VM; stored execution avoids
 that package allocation. Neither image-size admission nor free GC bytes alone
 prove that the complete application will fit the shared heap.
-The default Python profile requests a 12 KiB application stack; the F4 MPU
+`CONFIG_BRICKPHYR_PYTHON_STACK_SIZE` independently sets the default Python stack
+request to 12 KiB; the F4 MPU
 rounds its allocation to 16 KiB. The CLI `--stack BYTES` option on `app run` or
 `app start` can request a Python user stack from 4 KiB through the configured
-12 KiB maximum on this profile; the actual allocation is MPU-rounded. Native
+16 KiB maximum on this profile; the actual allocation is MPU-rounded. Native
 ELF stack size remains its declared ABI requirement. The Python stack allocation
 exists only while Python is loaded; a native application in the same image uses
 its own ABI requirement. Stack checking
@@ -1232,7 +1245,7 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native-only profile provides a 229632-byte heap, including on-demand loader
+The native-only profile provides a 228992-byte heap, including on-demand loader
 allocations and stacks. The BLE full and core Python profiles provide 223232 and
 224256 bytes, respectively, including the on-demand 64 KiB Python arena.
 Idle and native-only execution leave that capacity available to other allocations.

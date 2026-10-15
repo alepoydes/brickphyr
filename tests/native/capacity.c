@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <brickphyr.h>
 
-BRICKPHYR_APPLICATION();
+#ifndef CAPACITY_STACK_SIZE
+#define CAPACITY_STACK_SIZE 2048
+#endif
+#ifndef CAPACITY_STRIDE
+#define CAPACITY_STRIDE 1
+#endif
+BRICKPHYR_APPLICATION_REQUIRES(0, CAPACITY_STACK_SIZE);
 
 /* User-owned memory must be zeroed before first use and remain writable across
  * the entire mapped region, including its final page. */
@@ -14,16 +20,19 @@ static uint8_t pattern(size_t index)
 
 int app_main(void)
 {
-	for (size_t i = 0; i < sizeof(capacity); i++) {
+	if (capacity[sizeof(capacity) - 1] != 0) return 1;
+	for (size_t i = 0; i < sizeof(capacity); i += CAPACITY_STRIDE) {
 		if (capacity[i] != 0) return 1;
 	}
 
-	for (size_t i = 0; i < sizeof(capacity); i++) {
+	for (size_t i = 0; i < sizeof(capacity); i += CAPACITY_STRIDE) {
 		capacity[i] = pattern(i);
 	}
-	for (size_t i = 0; i < sizeof(capacity); i++) {
+	capacity[sizeof(capacity) - 1] = pattern(sizeof(capacity) - 1);
+	for (size_t i = 0; i < sizeof(capacity); i += CAPACITY_STRIDE) {
 		if (capacity[i] != pattern(i)) return 2;
 	}
+	if (capacity[sizeof(capacity) - 1] != pattern(sizeof(capacity) - 1)) return 2;
 
 	int64_t before = bp_time_ms();
 	if (bp_sleep(2)) return 3;

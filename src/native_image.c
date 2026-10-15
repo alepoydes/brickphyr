@@ -9,7 +9,7 @@
 
 /* The SDK emits ELF32 ARM relocatable objects. Bound parser work and
  * memory before giving an untrusted image to the privileged linker. */
-#define HEAP_LIMIT APPLICATION_MEMORY_LIMIT
+#define HEAP_LIMIT NATIVE_MEMORY_LIMIT
 #define SECTION_LIMIT 64
 
 struct image {
