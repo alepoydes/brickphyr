@@ -98,6 +98,25 @@ uv run brickphyrdev app --ble Brickphyr output
 uv run brickphyrdev app stop
 ```
 
+For a current heap and thread-stack snapshot, use either transport. The optional
+interval streams one JSON object per sample until Ctrl+C; disconnecting does not
+stop the application:
+
+```sh
+uv run brickphyrdev app memory
+uv run brickphyrdev app --ble Brickphyr memory --interval 1
+```
+
+The object has an `overview` and a `stacks` list. It includes system-heap
+allocated/free bytes and peak since boot, current source/staging, Python arena,
+native code and recorder reservations, plus each thread's requested and actual
+user stack and untouched bytes. The GC sample arrives on the VM's next poll;
+`-1` means unavailable and `gc_age_ms` shows how old an earlier sample is.
+The privileged-stack reservation is reported for user-mode threads, but its
+watermark is unsupported on ARM. This snapshot does not guarantee that a new
+allocation or application replacement will fit fragmented heap memory. See
+[memory semantics](applications.md#experimental-native-profile).
+
 `app run` normally starts the application and closes the connection. To accompany
 its execution, use `--follow`; `--record FILE` also collects application cycle
 records and implies `--follow`:
@@ -156,6 +175,20 @@ name uses the waiting RAM upload. In either hub terminal, use `app list`,
 changes may require rebuilding stored applications. See
 [storage semantics](applications.md#installed-native-files).
 
+For Python, `--stack BYTES` on `app run` or `app start` requests a user stack
+before upload/start. The client checks the firmware's advertised minimum and
+maximum first; omitting the option uses its default. On the full F4 Python
+profile the request is 4096–12288 bytes, default 12288 bytes, and the MPU rounds
+that default allocation to 16384 bytes. Native ELF stack size remains its ABI
+declaration; a nonzero override is rejected. The hub Shell accepts
+`app run NAME STACK` for a stored Python program and `app run --stack BYTES`
+for a waiting RAM upload. For example:
+
+```sh
+uv run brickphyrdev app run examples/python/hello.py --stack 8192
+uv run brickphyrdev app start fibonacci --stack 8192
+```
+
 `--serial NUMBER` chooses among USB hubs; `--port PATH` selects an explicit serial
 port for an already selected Shell interface or a simulator. `--ble` accepts a
 Bluetooth name or address. The CLI reuses `smpclient` for both transports.
@@ -166,7 +199,7 @@ The experimental application management group is SMP group 65, API version 1:
 | --- | --- | --- |
 | 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag; `control_stack`/`control_unused` describe an independent controller's stack |
 | 1 | Write upload fragment | `off`, `total`, `data`, optional `format` (default native); returns accepted `off` |
-| 2 | Write start | Start the completed RAM image |
+| 2 | Write start | Start the completed RAM image; optional `stack` bytes for Python (0 or absent selects firmware default) |
 | 3 | Write stop | Confirm application termination and release |
 | 4 | Read output | At most 128 bytes in `data` |
 | 4 | Write Python output attachment | Required boolean `attached`: enable interruptible output backpressure, or detach and resume counted nonblocking logging |
@@ -174,7 +207,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 6 | Read installed files | `name`: lexical cursor (empty for first); returns next `name`, `size`, `available` bytes; empty name ends iteration |
 | 7 | Write publish | `name`, `size`: validate and atomically publish `/apps/.incoming` |
 | 8 | Write remove | `name`: remove an installed image |
-| 9 | Write stored start | `name`: start an installed image |
+| 9 | Write stored start | `name`: start an installed image; optional `stack` bytes for Python |
 | 10 | Write Python input | `data`: at most 128 bytes; accepted atomically or rejected with `EAGAIN` when full |
 | 11 | Write Python interrupt | Discard queued input and request `KeyboardInterrupt`; forced termination remains command 3 |
 | 12 | Write REPL entry | Start fresh interactive Python or reattach to the existing REPL; reject another running application with `EBUSY` |
@@ -185,6 +218,8 @@ The experimental application management group is SMP group 65, API version 1:
 | 16 | Read recording configuration | Required `generation`, byte `off`; returns at most 256 bytes in `data`, current `generation` and configuration `total` |
 | 16 | Write recording trigger | Required `generation`, `after`; freeze after that many further records without stopping the application |
 | 17 | Read applied control parameters | Required `generation`, record `index`; returns current `generation`, `first`, `next`, applied `revision`, and its exact `data` (at most 256 bytes) |
+| 18 | Read memory snapshot | `heap_total`, `heap_used`, `heap_free`, `heap_peak`, `source_ram`, `source_flash`, `staging`, `python_arena`, `primary_native`, `control_native`, `code`, `code_used`, `records`, `gc_used`, `gc_free`, `gc_age_ms`, `stack_min`, `stack_max`, `stack_default`, `active` |
+| 19 | Read thread stack | Required zero-based `index`; `present=false` ends the list, otherwise returns `name`, `kind`, `requested`, `user`, `unused`, `privileged`, `priv_unused`, `next` |
 
 [Application recording](applications.md#application-recording) uses non-consuming
 cursors. A mismatched generation or an index outside `[first, next)` returns

@@ -444,24 +444,35 @@ compiler settings, and instrumentation.
 
 ### Memory diagnostics
 
-Append `boards/spike_prime_f4_memory.conf` to the F4 build's existing
-`EXTRA_CONF_FILE` list to enable Zephyr's kernel Shell and heap counters. For
-example, the full BLE Python profile uses:
+The ordinary F4 native and Python profiles include heap counters and `app memory`
+in their available USB/BLE Shell. `brickphyrdev app memory` returns the same
+current budget and a list of kernel/application stacks as JSON; `--interval SECONDS` streams
+samples until Ctrl+C. `app status` instead retains the last application's
+image, admission and stack high-water fields after it ends. Python GC values in
+`app memory` are sampled at the VM's next poll, may be `-1` until available, and
+remain separate from the Python arena. Bounded USB/BLE checks on one Robot
+Inventor F4 cover live sampling and cleanup; neither free bytes nor the reported components
+prove that a fragmented heap can fit the next load.
+
+Append `boards/spike_prime_f4_memory.conf` only when Zephyr's additional kernel
+Shell commands, including `kernel heap`, are needed. For example, build the
+full BLE Python profile with that fragment:
 
 ```sh
-uv run west build -b spike_prime_f4/stm32f413xx -d build/python-memory . -- -DEXTRA_CONF_FILE='boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_memory.conf'
+uv run west build -b spike_prime_f4/stm32f413xx -d build/python-memory -t firmware_package -- \
+  '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_memory.conf' \
+  -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
 ```
 
-Run `kernel heap` before loading, after loading and after application cleanup.
-The peak counter persists until reboot; a fresh boot separates unrelated workloads.
-Use `app status` for application stack/native-code figures and Python's
-`gc.mem_free()`/`gc.mem_alloc()` for its own heap. See
-[the memory boundaries](applications.md#experimental-python-profile).
+Run `kernel heap` before loading, after loading and after cleanup to inspect
+Zephyr's counters. Its peak counter persists until reboot;
+a fresh boot separates unrelated workloads. See
+[the memory boundaries](applications.md#experimental-native-profile).
 
 This fragment also exposes upstream kernel commands such as `kernel reboot`,
 which bypass Brickphyr's supervised shutdown. Use the ordinary `reboot` command
-to preserve its application cleanup and user-data saving behavior. The diagnostic
-fragment is not part of the normal Python profile.
+to preserve its application cleanup and user-data saving behavior. The extra
+kernel-Shell fragment is not part of the normal Python profile.
 
 ## Acceptance milestones
 
@@ -653,7 +664,9 @@ image size, admission budget and loaded bytes; the budget is not a reserved buff
 or measured peak. During RAM loading, the
 receive buffer and loaded regions coexist; the receive buffer is then released.
 File loading reserves no ELF receive buffer and reports the same admission budget
-and loaded bytes for the same image.
+and loaded bytes for the same image. Use `app memory` for current heap and stack
+reservations; component counts exclude allocator metadata, and a live stack
+watermark is an estimate while the thread runs.
 
 ### Optional CMSIS-DSP native SDK
 

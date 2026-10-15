@@ -38,6 +38,25 @@ struct application_status {
 	int32_t program_id;
 };
 
+/* Current reservations, unlike status (which retains the previous run). These
+ * components exclude allocator metadata; heap totals include all owners. */
+struct application_memory {
+	size_t heap_total, heap_used, heap_free, heap_peak;
+	size_t source_ram, source_flash, staging, python_arena;
+	size_t primary_native, control_native, code, code_used, records;
+	int gc_used, gc_free, gc_age_ms;
+	size_t stack_min, stack_max, stack_default;
+	bool active;
+};
+
+struct application_stack_info {
+	char name[32];
+	enum { APPLICATION_STACK_KERNEL, APPLICATION_STACK_PRIMARY, APPLICATION_STACK_CONTROL } kind;
+	int requested, user, unused, privileged, priv_unused;
+	int next;
+	bool present;
+};
+
 /* Privileged lifecycle. All callers share this one instance. */
 #ifdef CONFIG_BRICKPHYR_NATIVE
 int application_run_native(const void *image, size_t length);
@@ -45,7 +64,7 @@ int application_run_native(const void *image, size_t length);
 int application_check_file(const char *path, size_t length);
 /* Preserve a live package before mutating its installed path; store lock held. */
 int application_preserve_file(const char *path);
-int application_run_file(const char *path, int program_id);
+int application_run_file(const char *path, int program_id, size_t stack_size);
 /* Consume a validated persistent-format upload into a closed staging file.
  * Flash I/O does not hold the lifecycle lock; failure still consumes the upload. */
 int application_write_upload(const char *path);
@@ -56,7 +75,7 @@ int application_write_upload(const char *path);
 int application_upload(enum application_format format, size_t offset, size_t total,
 	const void *data, size_t length, size_t *next);
 /* Retention permits explicit repeat without another transfer. */
-int application_run_uploaded(bool retain);
+int application_run_uploaded(bool retain, size_t stack_size);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* Pybricks announces the size after its last fragment. */
 int application_upload_finish(size_t total);
@@ -76,6 +95,9 @@ void application_buttons(uint32_t buttons);
 void application_get_status(struct application_status *status);
 /* No cleanup, expiration, output consumption or wait; EBUSY during lifecycle work. */
 int application_observe(struct application_status *status);
+/* Read-only snapshots; EBUSY during lifecycle work. No background sampler. */
+int application_memory_get(struct application_memory *memory);
+int application_stack_get(size_t index, struct application_stack_info *stack);
 size_t application_output(void *data, size_t capacity);
 /* Drain output and capture its remaining count/state against one lifecycle.
  * Like get_status, this may finish cleanup of a terminated application. */

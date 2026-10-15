@@ -23,4 +23,4 @@ int app_store_remove(const char *name);
 int app_store_publish(const char *name, size_t length);
 /* Install the common validated RAM upload; also owns reserved @0..@127 slots. */
 int app_store_publish_upload(const char *name);
-int app_store_run(const char *name);
+int app_store_run(const char *name, size_t stack_size);

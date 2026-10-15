@@ -97,6 +97,10 @@ def main():
     start_parser.add_argument("name", nargs="?")
     for launch in (run_parser, start_parser):
         launch.add_argument(
+            "--stack", type=int, default=0, metavar="BYTES",
+            help="Requested Python user stack in bytes; default uses firmware selection",
+        )
+        launch.add_argument(
             "--follow", action="store_true",
             help="Show application output until exit; Ctrl+C detaches without stopping",
         )
@@ -107,6 +111,11 @@ def main():
     app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
     for command in ("list", "status", "stop", "output", "discard", "interrupt"):
         app_commands.add_parser(command)
+    app_memory = app_commands.add_parser("memory", help="Show heap and stack usage as JSON")
+    app_memory.add_argument(
+        "--interval", type=float, metavar="SECONDS",
+        help="Stream one JSON snapshot per positive interval until Ctrl+C",
+    )
     record = app_commands.add_parser("record", help="Collect retained cycle records to JSONL")
     record.add_argument("file", help="New JSONL file; existing files are never replaced")
     record.add_argument(

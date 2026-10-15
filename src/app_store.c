@@ -209,7 +209,7 @@ int app_store_publish_upload(const char *name)
 	return err;
 }
 
-int app_store_run(const char *name)
+int app_store_run(const char *name, size_t stack_size)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
@@ -221,7 +221,7 @@ int app_store_run(const char *name)
 			slot = 0;
 			for (size_t i = 1; name[i]; i++) slot = 10 * slot + name[i] - '0';
 		}
-		err = application_run_file(path, slot);
+		err = application_run_file(path, slot, stack_size);
 	}
 	k_mutex_unlock(&store_lock);
 	return err;

@@ -1892,7 +1892,7 @@ ZTEST(python_ble, test_slot_capacity_preserves_previous_image)
 		snprintk(name, sizeof(name), "@%u", slot);
 		zassert_ok(app_store_remove(name));
 	}
-	zassert_ok(app_store_run("named"));
+	zassert_ok(app_store_run("named", 0));
 	struct application_status status;
 	int64_t deadline = k_uptime_get() + 1000;
 	do {
@@ -1967,7 +1967,7 @@ ZTEST(python_ble, test_slots_preserve_installed_programs)
 	zassert_ok(app_store_next("@1", &entry, &available));
 	zassert_str_equal(entry.name, "@2");
 	zassert_ok(app_store_remove("@2"));
-	zassert_equal(app_store_run("@2"), -ENOENT);
+	zassert_equal(app_store_run("@2", 0), -ENOENT);
 	zassert_ok(host_protocol_select_slot(0));
 }
 #endif
@@ -1983,7 +1983,7 @@ ZTEST(python_ble, test_disabled_adapter_preserves_native_output)
 		source, sizeof(source) - 1, &next));
 	/* This is the same attachment used by native SMP output reads. */
 	application_output_stream(true);
-	zassert_ok(application_run_uploaded(false));
+	zassert_ok(application_run_uploaded(false, 0));
 	struct application_status status;
 	int64_t deadline = k_uptime_get() + 1000;
 	do {

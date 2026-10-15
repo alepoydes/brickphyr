@@ -9,6 +9,7 @@
 
 #define PYTHON_FILE_LIMIT 64
 #define PYTHON_PATH_LIMIT 128
+#define PYTHON_STACK_MIN 4096
 /* Maximum expansion of the reference module records into the common file map. */
 #define PYTHON_PYBRICKS_HEADROOM (16 * (PYTHON_FILE_LIMIT + 1))
 #define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - PYTHON_PYBRICKS_HEADROOM)
@@ -25,6 +26,9 @@ void python_interrupt(void);
 void python_stop(void);
 int python_interrupt_char(void);
 bool python_repl_reading(void);
+/* Request a GC sample at the VM's next poll; return the previous complete
+ * sample, with its age. Negative fields mean no sample is available yet. */
+void python_memory_get(uint32_t now_ms, int *used, int *free, int *age_ms);
 
 /* REPL Ctrl-D asks the supervisor to release the old application and restart. */
 #define PYTHON_RESTART 1

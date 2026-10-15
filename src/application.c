@@ -112,7 +112,7 @@ BUILD_ASSERT(IS_POWER_OF_TWO(APPLICATION_MEMORY_LIMIT));
 struct python_backing {
 	struct python_source source;
 	atomic_ptr_t data;
-	size_t references;
+	size_t references, capacity;
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 	struct fs_file_t file;
 	char path[sizeof("/apps/") + APP_NAME_MAX];
@@ -263,7 +263,7 @@ static void refresh_input(void)
 }
 
 static int run_python(struct python_backing *backing, size_t length, enum application_format format,
-	bool soft_reset, int program_id);
+	bool soft_reset, int program_id, size_t stack_size);
 
 /* Allocated only when a program first compiles/loads native code. The allocator
  * needs up to twice this size transiently for MPU alignment. */
@@ -2752,7 +2752,7 @@ static int reap(bool stop, bool keep_python_memory)
 	/* A soft reset is a complete application lifetime boundary. Recursive
 	 * preparation sees an already joined thread and cannot restart it again. */
 	if (!err && restart) {
-		return run_python(NULL, 0, APPLICATION_PYTHON, true, 128);
+		return run_python(NULL, 0, APPLICATION_PYTHON, true, 128, 0);
 	}
 #endif
 	return err;
@@ -2989,6 +2989,7 @@ static int start_thread(k_thread_entry_t entry, void *first, void *second, void 
 	k_thread_create(&application_thread, application_stack,
 			application_stack_size, entry, first, second, third,
 			K_LOWEST_APPLICATION_THREAD_PRIO, K_USER, K_FOREVER);
+	(void)k_thread_name_set(&application_thread, "app-primary");
 	k_thread_heap_assign(&application_thread, NULL);
 	int err = k_mem_domain_add_thread(&application_domain, &application_thread);
 	if (err) {
@@ -3197,8 +3198,13 @@ failed:
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
 static int run_python(struct python_backing *backing, size_t length, enum application_format format,
-	bool soft_reset, int program_id)
+	bool soft_reset, int program_id, size_t stack_size)
 {
+	if (!stack_size) stack_size = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+	/* Compiling/importing needs more than the native entry/exit minimum.
+	 * 4 KiB admits the measured small-script/import path plus the VM margin;
+	 * it is not a promise that arbitrary C extensions or recursion fit. */
+	if (stack_size < PYTHON_STACK_MIN || stack_size > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) return -EINVAL;
 	/* Reserve before stopping the current program. A live Python replacement
 	 * reuses its arena, but cannot modify it until prepare has joined both
 	 * contexts and removed their mappings. Cleanup failure retains ownership.
@@ -3206,7 +3212,7 @@ static int run_python(struct python_backing *backing, size_t length, enum applic
 	void *memory = (void *)execution_partition.start;
 	if (!memory) memory = k_aligned_alloc(APPLICATION_MEMORY_LIMIT, APPLICATION_MEMORY_LIMIT);
 	if (!memory) return -ENOMEM;
-	int err = prepare(CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE, true);
+	int err = prepare(stack_size, true);
 	if (err) {
 		if (memory != (void *)execution_partition.start) k_free(memory);
 		return err;
@@ -3242,7 +3248,7 @@ int application_repl(void)
 	if (err == -EAGAIN) {
 		err = status.repl ? 0 : -EBUSY;
 	} else if (!err && !atomic_get(&active)) {
-		err = run_python(NULL, 0, APPLICATION_PYTHON, false, 128);
+		err = run_python(NULL, 0, APPLICATION_PYTHON, false, 128, 0);
 	}
 	k_mutex_unlock(&lifecycle);
 	return err;
@@ -3399,6 +3405,7 @@ int application_preserve_file(const char *path)
 				backing->source.read = python_source_memory;
 				backing->source.context = data;
 				backing->path[0] = 0;
+				backing->capacity = backing->source.length;
 				/* Publish the complete snapshot to the lock-free RAM reader. */
 				atomic_ptr_set(&backing->data, data);
 			}
@@ -3432,7 +3439,7 @@ static __noinline int run_native_file(const char *path, size_t length,
 	return run_image(&loader.loader, length, requirements);
 }
 
-int application_run_file(const char *path, int program_id)
+int application_run_file(const char *path, int program_id, size_t stack_size)
 {
 	size_t length;
 	int err = stored_size(path, &length);
@@ -3446,12 +3453,12 @@ int application_run_file(const char *path, int program_id)
 		k_mutex_lock(&lifecycle, K_FOREVER);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 		if (backing) {
-			err = run_python(backing, length, APPLICATION_FILES, false, program_id);
+			err = run_python(backing, length, APPLICATION_FILES, false, program_id, stack_size);
 			if (!err) backing = NULL;
 		} else
 #endif
 		{
-			err = run_native_file(path, length, &requirements);
+			err = stack_size ? -ENOTSUP : run_native_file(path, length, &requirements);
 		}
 		k_mutex_unlock(&lifecycle);
 	}
@@ -3621,7 +3628,7 @@ out:
 	return err;
 }
 
-int application_run_uploaded(bool retain)
+int application_run_uploaded(bool retain, size_t stack_size)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	expire_upload();
@@ -3634,19 +3641,20 @@ int application_run_uploaded(bool retain)
 				if (upload_backing) {
 					upload_backing->references = 1;
 					atomic_ptr_set(&upload_backing->data, upload);
+					upload_backing->capacity = upload_capacity;
 					upload_backing->source = (struct python_source){python_source_memory, upload, upload_size};
 				}
 			}
 			if (!upload_backing) err = -ENOMEM;
 			else {
 				upload_backing->references++;
-				err = run_python(upload_backing, upload_size, upload_format, false, upload_pybricks ? 0 : -1);
+					err = run_python(upload_backing, upload_size, upload_format, false, upload_pybricks ? 0 : -1, stack_size);
 				if (err) (void)backing_release(upload_backing);
 			}
 		} else
 #endif
 		{
-			err = run_native_buffer(upload, upload_size, &upload_requirements);
+			err = stack_size ? -ENOTSUP : run_native_buffer(upload, upload_size, &upload_requirements);
 		}
 		if (!err && !retain) {
 			/* The temporary buffer loader copies all retained sections. */
@@ -3677,6 +3685,94 @@ int application_observe(struct application_status *value)
 		return -EBUSY;
 	}
 	copy_status(value);
+	k_mutex_unlock(&lifecycle);
+	return 0;
+}
+
+int application_memory_get(struct application_memory *value)
+{
+	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return -EBUSY;
+	*value = (struct application_memory){
+		.active = atomic_get(&active), .staging = upload_capacity,
+		.primary_native = primary_extension ? primary_extension->alloc_size : 0,
+		.control_native = controller && controller->extension ? controller->extension->alloc_size : 0,
+		.records = application_record_memory(), .gc_used = -1, .gc_free = -1, .gc_age_ms = -1,
+	};
+	/* Reuse the system heap and runtime statistics used by Zephyr's heap Shell
+	 * command. Cortex-M targets are single-core; this short copy also excludes
+	 * ISR allocation. Component sizes below exclude allocator metadata. */
+	extern struct k_heap _system_heap;
+	struct sys_memory_stats heap;
+	unsigned int key = irq_lock();
+	int err = sys_heap_runtime_stats_get(&_system_heap.heap, &heap);
+	irq_unlock(key);
+	if (!err) {
+		value->heap_total = CONFIG_HEAP_MEM_POOL_SIZE;
+		value->heap_used = heap.allocated_bytes;
+		value->heap_free = heap.free_bytes;
+		value->heap_peak = heap.max_allocated_bytes;
+	}
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	value->stack_min = PYTHON_STACK_MIN;
+	value->stack_max = value->stack_default = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE;
+	value->python_arena = execution_partition.start ? APPLICATION_MEMORY_LIMIT : 0;
+	value->code = code_memory ? PYTHON_CODE_CAPACITY : 0;
+	value->code_used = code_used;
+	if (python_backing) {
+		value->source_ram = python_backing->capacity;
+		value->source_flash = atomic_ptr_get(&python_backing->data) ? 0 : python_backing->source.length;
+		/* A retained repeat upload may share this one allocation with the VM. */
+		if (upload_backing == python_backing) value->staging = 0;
+	}
+	if (value->active && status.format != APPLICATION_NATIVE) {
+		python_memory_get(k_uptime_get_32(), &value->gc_used, &value->gc_free, &value->gc_age_ms);
+		k_sem_give(&io_ready);
+	}
+#endif
+	k_mutex_unlock(&lifecycle);
+	return err;
+}
+
+struct stack_query { size_t index; struct application_stack_info *value; };
+
+static void stack_read(const struct k_thread *thread, void *context)
+{
+	struct stack_query *query = context;
+	struct application_stack_info *value = query->value;
+	if (value->present) return;
+	if (query->index) { query->index--; return; }
+	value->present = true;
+	const char *name = k_thread_name_get((k_tid_t)thread);
+	strncpy(value->name, name && name[0] ? name : "unnamed", sizeof(value->name) - 1);
+	value->user = thread->stack_info.size;
+	size_t unused;
+	int err = k_thread_stack_space_get(thread, &unused);
+	value->unused = err ? err : (int)unused;
+	if (thread == &application_thread) {
+		value->kind = APPLICATION_STACK_PRIMARY;
+		value->requested = application_stack_size;
+	} else if (controller && thread == controller->thread) {
+		value->kind = APPLICATION_STACK_CONTROL;
+		value->requested = controller->stack_size;
+	}
+	if (value->kind != APPLICATION_STACK_KERNEL) {
+		value->privileged = CONFIG_PRIVILEGED_STACK_SIZE;
+		/* The pinned ARM port has no privileged-stack watermark API. */
+		value->priv_unused = -ENOTSUP;
+	}
+}
+
+int application_stack_get(size_t index, struct application_stack_info *value)
+{
+	if (index > INT_MAX - 1) return -EINVAL;
+	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) return -EBUSY;
+	*value = (struct application_stack_info){.requested = -1, .unused = -1, .next = index + 1};
+	struct stack_query query = {index, value};
+	/* Firmware service threads have static storage. lifecycle prevents reclaiming
+	 * either dynamic app context while the unlocked iterator scans its stack;
+	 * interrupts stay enabled during the potentially long watermark scan. */
+	k_thread_foreach_unlocked(stack_read, &query);
+	if (!value->present) value->next = -1;
 	k_mutex_unlock(&lifecycle);
 	return 0;
 }
@@ -3715,6 +3811,39 @@ size_t application_read_output(void *data, size_t capacity, struct application_s
 
 static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "memory")) {
+		struct application_memory value;
+		int err = application_memory_get(&value);
+		if (err) return err;
+		shell_print(shell, "Heap: configured %zu, used %zu, free %zu, peak %zu", value.heap_total,
+			value.heap_used, value.heap_free, value.heap_peak);
+		shell_print(shell, "Source: RAM %zu, flash %zu; separate staging %zu; Python arena %zu",
+			value.source_ram, value.source_flash, value.staging, value.python_arena);
+		shell_print(shell, "Native: primary %zu, controller %zu; Python code %zu/%zu; recorder %zu",
+			value.primary_native, value.control_native, value.code_used, value.code, value.records);
+		shell_print(shell, "GC: used %d, free %d, sample age %d ms (-1: not sampled)",
+			value.gc_used, value.gc_free, value.gc_age_ms);
+		for (size_t i = 0;; i++) {
+			struct application_stack_info stack;
+			err = application_stack_get(i, &stack);
+			if (err || !stack.present) return err;
+			shell_print(shell, "%s: requested %d, user %d, unused %d; privileged %d, unused %d",
+				stack.name, stack.requested, stack.user, stack.unused, stack.privileged, stack.priv_unused);
+		}
+	}
+	if (argc == 4 && !strcmp(argv[1], "run")) {
+		int err = 0;
+		unsigned long stack = shell_strtoul(argv[3], 10, &err);
+		if (err || !stack || stack > CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE) return -EINVAL;
+		if (!strcmp(argv[2], "--stack")) err = application_run_uploaded(false, stack);
+#ifdef CONFIG_BRICKPHYR_APP_STORAGE
+		else err = app_store_run(argv[2], stack);
+#else
+		else err = -ENOTSUP;
+#endif
+		shell_print(shell, "Run: %d", err);
+		return err;
+	}
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	if (argc >= 2 && !strcmp(argv[1], "input")) {
 		size_t length = argc == 3 ? strlen(argv[2]) : 0;
@@ -3738,7 +3867,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 #endif
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 	if (argc == 3 && (!strcmp(argv[1], "run") || !strcmp(argv[1], "remove"))) {
-		int err = !strcmp(argv[1], "run") ? app_store_run(argv[2]) : app_store_remove(argv[2]);
+		int err = !strcmp(argv[1], "run") ? app_store_run(argv[2], 0) : app_store_remove(argv[2]);
 		shell_print(shell, "%s: %d", argv[1], err);
 		return err;
 	}
@@ -3763,7 +3892,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 #endif
 
 	if (argc == 2 && !strcmp(argv[1], "run")) {
-		int err = application_run_uploaded(false);
+		int err = application_run_uploaded(false, 0);
 		shell_print(shell, "Run: %d", err);
 		return err;
 	}
@@ -3788,7 +3917,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 		return 0;
 	}
 	if (argc != 1 && (argc != 2 || strcmp(argv[1], "status"))) {
-		shell_error(shell, "Usage: app [status | run [name] | list | remove name | stop | output | discard"
+		shell_error(shell, "Usage: app [status | memory | run [name [stack] | --stack bytes] | list | remove name | stop | output | discard"
 #ifdef CONFIG_BRICKPHYR_PYTHON
 			" | input [text] | interrupt"
 #endif
@@ -3822,4 +3951,4 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_ARG_REGISTER(app, NULL, "Application lifecycle and I/O.", cmd_app, 1, 2);
+SHELL_CMD_ARG_REGISTER(app, NULL, "Application lifecycle, memory and I/O.", cmd_app, 1, 3);

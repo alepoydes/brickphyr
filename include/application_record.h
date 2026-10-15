@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+
 #include <brickphyr_control.h>
 #include <brickphyr_record.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+/* Requested bytes retained by the recorder, including its block index and
+ * parameter metadata, excluding allocator overhead. */
+size_t application_record_memory(void);
 
 /* Supervisor serializes reset/begin/clear with application termination. Reads
  * and fixed-size writes use only the bounded recorder lock, never lifecycle. */

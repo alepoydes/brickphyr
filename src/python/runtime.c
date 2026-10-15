@@ -25,10 +25,13 @@
 static atomic_t interrupt_pending;
 static atomic_t interrupt_character = 3;
 static atomic_t repl_reading;
+static atomic_t memory_sequence, memory_used, memory_free, memory_time;
+static size_t memory_capacity;
 
 void python_input_reset(bool soft_reset, bool repl)
 {
 	atomic_clear(&interrupt_pending);
+	atomic_clear(&memory_sequence);
 	/* Typeahead can precede the VM's first timeslice. A REPL control byte
 	 * must already belong to readline, not raise outside its exception frame. */
 	atomic_set(&interrupt_character, repl ? -1 : 3);
@@ -78,6 +81,17 @@ void mp_hal_set_interrupt_char(int value)
 void python_poll(void)
 {
 	atomic_val_t pending = atomic_set(&interrupt_pending, 0);
+	if (pending & 4) {
+		/* Only the VM scans its own GC state. No collection, allocation or
+		 * supervisor suspension of a possibly interrupted allocator. */
+		gc_info_t info;
+		gc_info_fast(&info);
+		atomic_inc(&memory_sequence);
+		atomic_set(&memory_used, info.used);
+		atomic_set(&memory_free, info.free);
+		atomic_set(&memory_time, k_uptime_get_32());
+		atomic_inc(&memory_sequence);
+	}
 	if (pending & 2) {
 		/* Preallocate like KeyboardInterrupt, keeping traceback references
 		 * visible to GC when application code catches and retains the error. */
@@ -86,6 +100,25 @@ void python_poll(void)
 	} else if (pending & 1) {
 		mp_sched_keyboard_interrupt();
 	}
+}
+
+void python_memory_get(uint32_t now_ms, int *used, int *free, int *age_ms)
+{
+	/* Called by the supervisor: this user-compiled unit must not issue a
+	 * forced user syscall on its caller's kernel-only stack. */
+	*used = *free = *age_ms = -1;
+	atomic_val_t sequence = atomic_get(&memory_sequence);
+	if (sequence && !(sequence & 1)) {
+		int allocated = atomic_get(&memory_used), available = atomic_get(&memory_free);
+		uint32_t age = now_ms - (uint32_t)atomic_get(&memory_time);
+		if (sequence == atomic_get(&memory_sequence) && allocated >= 0 && available >= 0 &&
+		    allocated <= memory_capacity && available <= memory_capacity - allocated) {
+			*used = allocated;
+			*free = available;
+			*age_ms = MIN(age, INT32_MAX);
+		}
+	}
+	atomic_set_bit(&interrupt_pending, 2);
 }
 
 void mp_hal_delay_ms(mp_uint_t duration)
@@ -153,6 +186,7 @@ int python_execute_source(const struct python_source *source, enum application_f
 	python_files_set_source(format == APPLICATION_FILES ? source : NULL);
 	mp_cstack_init_with_top((void *)&stack_top, (uintptr_t)&stack_top - stack_bottom);
 	gc_init(heap, (uint8_t *)heap + heap_size);
+	memory_capacity = heap_size;
 	int result = 0;
 	nlr_buf_t nlr;
 	if (nlr_push(&nlr) == 0) {

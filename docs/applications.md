@@ -594,10 +594,10 @@ images with large BSS can still exceed it. The native-only profile permits a
 also come from the shared heap. The supervisor reserves a replacement's stack
 before stopping the current program; insufficient heap or alignment space leaves
 that program running. It joins the thread before freeing the stack on return,
-fault or explicit stop. `app status`
-reports the image, admission budget (`heap`), LLEXT allocation and stack high-water
-mark after termination. LLEXT's allocation count excludes allocator overhead and
-is not the peak RAM requirement.
+fault or explicit stop. `app status` reports the image, admission budget (`heap`),
+LLEXT allocation and stack high-water mark from the last run after termination;
+it is not a live memory snapshot. LLEXT's allocation count excludes allocator
+overhead and is not the peak RAM requirement.
 
 For Python with an independent controller, status also retains `control_stack`
 (allocated user-stack bytes) and `control_unused` (untouched bytes). The latter is
@@ -607,6 +607,35 @@ control and live status polling perform no stack scan. `control_stack == 0`
 means this run did not start a controller. The Shell's `app status` shows these
 values too. Stack filling estimates the observed high-water use, not the maximum
 required by paths that have not run.
+
+`app memory` in the USB/BLE Shell and `brickphyrdev app memory` through SMP report
+current shared-heap allocated/free bytes and the allocation peak since boot.
+`heap_total` is the configured heap size; the counters and component sizes are
+different views of the same heap, not additive free-space budgets. The snapshot
+also identifies RAM or flash Python source, separate upload staging, the Python
+arena, native primary/controller allocations, native Python code reservation and
+use, and retained recording storage. Component counts exclude allocator metadata;
+flash source bytes do not consume system heap. Python GC `gc_used`/`gc_free` are
+inside the Python arena and must not be added to it. Each memory request asks
+the VM for a sample at its next poll, without forcing a collection. Until a
+sample arrives, or when no Python VM runs, GC values and `gc_age_ms` are `-1`;
+the age identifies an older sample when the VM has not polled again.
+
+The same command lists kernel, primary and controller thread stacks. `requested`
+is `-1` where no request size is known; `user` is the actual usable stack size
+after alignment, and `unused` estimates untouched bytes at the scan. A negative
+`unused` is an inspection error. User-mode contexts also report their reserved
+privileged syscall stack, but the pinned ARM port cannot measure its high-water
+mark (`priv_unused` is `-ENOTSUP`). Live stack scans can race execution and do
+not bound future stack use. Heap counters do not reveal the largest contiguous
+free block or prove that loading, replacement, or concurrent components will fit.
+
+Protected ARM checks and bounded USB/BLE checks on one Robot Inventor F4
+(PCB revision unknown) cover live GC/stack reads, RAM and stored Python starts
+with 4/8 KiB user stacks, a native module and a passive native controller. On F4
+this small workload uses 2128 user-stack bytes in Python and 560 in the controller;
+these are observations, not general stack recommendations. Stop releases both
+contexts; clearing retained records returns the system heap to its pre-run usage.
 
 A protected ARM check loads a 64 KiB padded ELF containing a 64 KiB zero-initialized
 array, verifies every byte through the application, and reclaims its memory on exit.
@@ -1147,9 +1176,13 @@ controller linking still allocates its executable/data sections in protected RAM
 RAM execution needs space for both the package and VM; stored execution avoids
 that package allocation. Neither image-size admission nor free GC bytes alone
 prove that the complete application will fit the shared heap.
-The Python profile requests a 12 KiB application stack; the F4 MPU rounds its
-allocation to 16 KiB. This allocation exists only while Python is loaded; a
-native application in the same image uses its own ABI requirement. Stack checking
+The default Python profile requests a 12 KiB application stack; the F4 MPU
+rounds its allocation to 16 KiB. The CLI `--stack BYTES` option on `app run` or
+`app start` can request a Python user stack from 4 KiB through the configured
+12 KiB maximum on this profile; the actual allocation is MPU-rounded. Native
+ELF stack size remains its declared ABI requirement. The Python stack allocation
+exists only while Python is loaded; a native application in the same image uses
+its own ABI requirement. Stack checking
 uses the actual lower bound with a 512-byte MicroPython margin. These are
 admission limits, not guarantees that every image
 within them has enough compiler memory or stack. Status reports an execution error
@@ -1226,14 +1259,11 @@ stack and Python with a 16 KiB stack over USB/BLE. USB checks also cover a
 their contents. These standalone checks do not establish sustained memory-pressure
 behavior; the separate concurrent checks are described above.
 
-The optional [memory diagnostics profile](builds.md#memory-diagnostics) includes
-Zephyr's `kernel heap` Shell command. It reports
-current free/allocated system-heap bytes and the allocation high-water mark since
-boot. This heap holds uploads, receive-buffer growth, executable native code and
-application stacks; its free bytes are not the Python GC budget. In REPL, `gc.mem_free()` and
-`gc.mem_alloc()` report the separate GC heap. Use `app status` after a program
-ends to inspect its stack high-water and native-code usage. A live application's
-`unused` stack field is not a current stack measurement.
+The normal native profile exposes live `app memory` diagnostics; the optional
+[memory diagnostics profile](builds.md#memory-diagnostics) adds Zephyr's `kernel heap`
+Shell command. In REPL, `gc.mem_free()` and `gc.mem_alloc()` report the separate
+GC heap. Use `app status` after a program ends for its retained stack high-water and
+native-code usage; its live `unused` field is not a current scan.
 
 Measure cold upload, start and cleanup separately. Pybricks reception reserves
 1,040 extra bytes for normalization into the common file map within the same
@@ -1273,9 +1303,9 @@ The system-heap allocation counter returns to zero after cleanup. The Pybricks
 upload's normalized file is read back exactly; it is not executed in this workload.
 Allocator counters include rounding and differ from payload sizes. These figures
 cover this workload and build, not arbitrary source compilation, fragmentation,
-simultaneous active peer traffic or the largest possible allocation. Normal
-firmware omits the diagnostic commands. Other workloads still need their own
-GC, stack and system-heap budget.
+simultaneous active peer traffic or the largest possible allocation. Those figures
+used optional Zephyr kernel diagnostics; ordinary native builds provide
+`app memory`. Other workloads still need their own GC, stack and system-heap budget.
 
 Output uses the shared [bounded queue](#python-input-and-output), with flow control
 for subscribed Pybricks output and counted overflow for detached logging.

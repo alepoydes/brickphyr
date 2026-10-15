@@ -11,6 +11,7 @@ static uint8_t *configuration, *applied_parameters;
 static size_t parameter_stride, step_size;
 static unsigned int block_shift, block_mask;
 static uint16_t free_parameters;
+static size_t retained_bytes;
 struct recorded_step {
 	struct bp_control_step value;
 	uint16_t parameters;
@@ -52,6 +53,7 @@ static void reset(bool active)
 	uint8_t **old = records;
 	size_t count = old ? DIV_ROUND_UP(state.spec.capacity, block_mask + 1) : 0;
 	records = NULL;
+	retained_bytes = 0;
 	configuration = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
 	uint32_t generation = state.generation + 1;
@@ -140,8 +142,17 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
 	configuration = config_data;
 	free_parameters = 0;
 	records = memory;
+	retained_bytes = count * sizeof(*memory) + parameter_size + length + slot_bytes * spec->capacity;
 	k_spin_unlock(&lock, key);
 	return 0;
+}
+
+size_t application_record_memory(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	size_t size = retained_bytes;
+	k_spin_unlock(&lock, key);
+	return size;
 }
 
 void application_record_step(const struct bp_control_step *step, const void *data)

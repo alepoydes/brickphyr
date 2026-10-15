@@ -143,7 +143,7 @@ int main(void)
 	const void *large = native_fixture_capacity(&large_size);
 	CHECK(application_upload(APPLICATION_NATIVE, 0, large_size, large, large_size, &large_next) == 0);
 	CHECK(large_next == large_size);
-	CHECK(application_run_uploaded(false) == 0);
+	CHECK(application_run_uploaded(false, 0) == 0);
 	int64_t capacity_deadline = k_uptime_get() + 500;
 	do {
 		k_sleep(K_TICKS(1));
@@ -414,7 +414,7 @@ int main(void)
 	application_poll();
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING && status.upload_size == 0);
-	CHECK(application_run_uploaded(false) == -ENODATA);
+	CHECK(application_run_uploaded(false, 0) == -ENODATA);
 	CHECK(application_upload(APPLICATION_NATIVE, 0, size - 1, image, size - 1, &next) == -ENOEXEC);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING && status.upload_size == 0);
@@ -430,7 +430,7 @@ int main(void)
 	application_session_closed();
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RUNNING && status.upload_ready);
-	CHECK(application_run_uploaded(false) == 0);
+	CHECK(application_run_uploaded(false, 0) == 0);
 	k_msleep(60);
 	application_get_status(&status);
 	CHECK(status.state == APPLICATION_RETURNED && status.result == 0 && status.upload_size == 0);

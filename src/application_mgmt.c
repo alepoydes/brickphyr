@@ -89,7 +89,56 @@ static int upload_write(struct smp_streamer *stream)
 
 static int run_write(struct smp_streamer *stream)
 {
-	return result(stream, application_run_uploaded(false));
+	uint32_t stack = 0;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("stack", zcbor_uint32_decode, &stack),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded)) return MGMT_ERR_EINVAL;
+	return result(stream, application_run_uploaded(false, stack));
+}
+
+static int memory_read(struct smp_streamer *stream)
+{
+	struct application_memory value;
+	int err = application_memory_get(&value);
+	if (err) return result(stream, err);
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = number(zs, "heap_total", value.heap_total) && number(zs, "heap_used", value.heap_used) &&
+		number(zs, "heap_free", value.heap_free) && number(zs, "heap_peak", value.heap_peak) &&
+		number(zs, "source_ram", value.source_ram) && number(zs, "source_flash", value.source_flash) &&
+		number(zs, "staging", value.staging) && number(zs, "python_arena", value.python_arena) &&
+		number(zs, "primary_native", value.primary_native) && number(zs, "control_native", value.control_native) &&
+		number(zs, "code", value.code) && number(zs, "code_used", value.code_used) &&
+		number(zs, "records", value.records) && number(zs, "gc_used", value.gc_used) &&
+		number(zs, "gc_free", value.gc_free) && number(zs, "gc_age_ms", value.gc_age_ms) &&
+		number(zs, "stack_min", value.stack_min) && number(zs, "stack_max", value.stack_max) &&
+		number(zs, "stack_default", value.stack_default) &&
+		zcbor_tstr_put_lit(zs, "active") && zcbor_bool_put(zs, value.active);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int stack_read(struct smp_streamer *stream)
+{
+	uint32_t index = 0;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint32_decode, &index),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded)) return MGMT_ERR_EINVAL;
+	struct application_stack_info value;
+	int err = application_stack_get(index, &value);
+	if (err) return result(stream, err);
+	zcbor_state_t *zs = stream->writer->zs;
+	if (!zcbor_tstr_put_lit(zs, "present") || !zcbor_bool_put(zs, value.present)) return MGMT_ERR_EMSGSIZE;
+	if (!value.present) return MGMT_ERR_EOK;
+	static const char *const kinds[] = {"kernel", "primary", "controller"};
+	bool ok = zcbor_tstr_put_lit(zs, "name") && zcbor_tstr_encode_ptr(zs, value.name, strlen(value.name)) &&
+		zcbor_tstr_put_lit(zs, "kind") && zcbor_tstr_encode_ptr(zs, kinds[value.kind], strlen(kinds[value.kind])) &&
+		number(zs, "requested", value.requested) && number(zs, "user", value.user) &&
+		number(zs, "unused", value.unused) && number(zs, "privileged", value.privileged) &&
+		number(zs, "priv_unused", value.priv_unused) && number(zs, "next", value.next);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 
 static int stop_write(struct smp_streamer *stream)
@@ -284,13 +333,14 @@ static int repl_write(struct smp_streamer *stream)
 
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 static int file_arguments(struct smp_streamer *stream, char *name, size_t capacity,
-			  uint32_t *length)
+			  uint32_t *length, uint32_t *stack)
 {
 	struct zcbor_string text = {0};
 	size_t decoded;
 	struct zcbor_map_decode_key_val fields[] = {
 		ZCBOR_MAP_DECODE_KEY_DECODER("name", zcbor_tstr_decode, &text),
 		ZCBOR_MAP_DECODE_KEY_DECODER("size", zcbor_uint32_decode, length),
+		ZCBOR_MAP_DECODE_KEY_DECODER("stack", zcbor_uint32_decode, stack),
 	};
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
 	    !text.value || text.len >= capacity || memchr(text.value, 0, text.len)) {
@@ -304,8 +354,8 @@ static int file_arguments(struct smp_streamer *stream, char *name, size_t capaci
 static int list_read(struct smp_streamer *stream)
 {
 	char after[APP_NAME_MAX + 1];
-	uint32_t ignored = 0;
-	int err = file_arguments(stream, after, sizeof(after), &ignored);
+	uint32_t ignored = 0, stack = 0;
+	int err = file_arguments(stream, after, sizeof(after), &ignored, &stack);
 	struct app_file entry;
 	size_t available;
 	if (!err) {
@@ -324,8 +374,8 @@ static int list_read(struct smp_streamer *stream)
 static int file_operation(struct smp_streamer *stream, unsigned int command)
 {
 	char name[APP_NAME_MAX + 1];
-	uint32_t length = UINT32_MAX;
-	int err = file_arguments(stream, name, sizeof(name), &length);
+	uint32_t length = UINT32_MAX, stack = 0;
+	int err = file_arguments(stream, name, sizeof(name), &length, &stack);
 	if (!err) {
 		if (command == 7) {
 			/* All file uploads and publication run serially on SMP's worker.
@@ -335,7 +385,7 @@ static int file_operation(struct smp_streamer *stream, unsigned int command)
 				err = app_store_publish(name, length);
 			}
 		} else {
-			err = command == 8 ? app_store_remove(name) : app_store_run(name);
+			err = command == 8 ? app_store_remove(name) : app_store_run(name, stack);
 		}
 	}
 	return result(stream, err);
@@ -372,6 +422,8 @@ static const struct mgmt_handler handlers[] = {
 	[15] = {.mh_read = record_read},
 	[16] = {.mh_read = record_config_read, .mh_write = record_trigger_write},
 	[17] = {.mh_read = record_parameters_read},
+	[18] = {.mh_read = memory_read},
+	[19] = {.mh_read = stack_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

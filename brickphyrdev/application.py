@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import math
 import re
 import sys
 from enum import IntEnum
@@ -103,6 +104,10 @@ class Start(_Group, message.WriteRequest):
     _Response = Done
 
 
+class StartWithStack(Start):
+    stack: int
+
+
 class Stop(_Group, message.WriteRequest):
     _COMMAND_ID = 3
     _Response = Done
@@ -181,6 +186,10 @@ class RunStored(_Group, message.WriteRequest):
     name: str
 
 
+class RunStoredWithStack(RunStored):
+    stack: int
+
+
 class Input(_Group, message.WriteRequest):
     _COMMAND_ID = 10
     _Response = Done
@@ -195,6 +204,85 @@ class Interrupt(_Group, message.WriteRequest):
 class Repl(_Group, message.WriteRequest):
     _COMMAND_ID = 12
     _Response = Done
+
+
+class MemoryResponse(message.ReadResponse):
+    _GROUP_ID = GROUP
+    _COMMAND_ID = 18
+    heap_total: int
+    heap_used: int
+    heap_free: int
+    heap_peak: int
+    source_ram: int
+    source_flash: int
+    staging: int
+    python_arena: int
+    primary_native: int
+    control_native: int
+    code: int
+    code_used: int
+    records: int
+    gc_used: int
+    gc_free: int
+    gc_age_ms: int
+    stack_min: int
+    stack_max: int
+    stack_default: int
+    active: bool
+
+
+class Memory(_Group, message.ReadRequest):
+    _COMMAND_ID = 18
+    _Response = MemoryResponse
+
+
+class StackResponse(message.ReadResponse):
+    _GROUP_ID = GROUP
+    _COMMAND_ID = 19
+    name: str = ""
+    requested: int = -1
+    user: int = 0
+    unused: int = -1
+    privileged: int = 0
+    priv_unused: int = -1
+    kind: str = "kernel"
+    next: int = -1
+    present: bool
+
+
+class Stack(_Group, message.ReadRequest):
+    _COMMAND_ID = 19
+    _Response = StackResponse
+    index: int
+
+
+_RESPONSE_FIELDS = {"header", "version", "sequence", "smp_data"}
+
+
+async def memory_snapshot(client):
+    overview = await checked(client, Memory())
+    stacks = []
+    index = 0
+    while True:
+        entry = await checked(client, Stack(index=index))
+        if not entry.present:
+            break
+        stacks.append(entry.model_dump(exclude=_RESPONSE_FIELDS | {"next", "present"}))
+        if entry.next < 0:
+            break
+        if entry.next <= index:
+            raise RuntimeError("Stack listing did not advance")
+        index = entry.next
+    return {"overview": overview.model_dump(exclude=_RESPONSE_FIELDS), "stacks": stacks}
+
+
+async def check_stack(client, size):
+    if size < 0:
+        raise ValueError("Stack size must be nonnegative")
+    if size:
+        bounds = await checked(client, Memory())
+        if not bounds.stack_min <= size <= bounds.stack_max:
+            raise ValueError(f"Stack size must be {bounds.stack_min} through {bounds.stack_max} bytes")
 
 
 def installed_name(name, *, allow_slot=False):
@@ -308,22 +396,39 @@ async def upload(client, transport, image, format=Format.NATIVE):
 
 
 async def launch(client, transport, args):
+    stack = getattr(args, "stack", 0)
+    if args.command in ("run", "start"):
+        await check_stack(client, stack)
     if args.command in ("run", "upload"):
         image, format = read_image(
             args.image, Format[args.format.upper()] if args.format else None
         )
+        if stack and format == Format.NATIVE:
+            raise ValueError("Native ELF stack size is declared by its ABI")
         await upload(client, transport, image, format)
     if args.command == "start" and args.name:
-        await checked(client, RunStored(name=installed_name(args.name, allow_slot=True)))
+        name = installed_name(args.name, allow_slot=True)
+        request = RunStoredWithStack(name=name, stack=stack) if stack else RunStored(name=name)
+        await checked(client, request)
     elif args.command in ("run", "start"):
-        await checked(client, Start())
+        await checked(client, StartWithStack(stack=stack) if stack else Start())
 
 
 async def execute(args):
+    if args.command == "memory":
+        interval = getattr(args, "interval", None)
+        if interval is not None and (not math.isfinite(interval) or interval <= 0):
+            raise ValueError("Memory interval must be a positive finite number of seconds")
     async with connection(ble=args.ble, port=args.port, serial_number=args.serial) as (
         client,
         transport,
     ):
+        if args.command == "memory":
+            while True:
+                print(json.dumps(await memory_snapshot(client)))
+                if interval is None:
+                    return
+                await asyncio.sleep(interval)
         if args.command == "record-clear":
             from .recording import Clear
 
@@ -379,4 +484,8 @@ def run(args):
 
         recording.run(args)
         return
-    asyncio.run(execute(args))
+    try:
+        asyncio.run(execute(args))
+    except KeyboardInterrupt:
+        if args.command != "memory":
+            raise

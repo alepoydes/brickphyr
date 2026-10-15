@@ -31,7 +31,7 @@ static void store_slot(struct k_work *work)
 {
 	char name[5];
 	snprintk(name, sizeof(name), "@%u", slot_target);
-	slot_result = slot_install ? app_store_publish_upload(name) : app_store_run(name);
+	slot_result = slot_install ? app_store_publish_upload(name) : app_store_run(name, 0);
 	k_sem_give(&slot_done);
 }
 static K_WORK_DEFINE(slot_work, store_slot);
@@ -245,7 +245,7 @@ uint8_t host_protocol_command(struct host_protocol *protocol, const uint8_t *com
 			if (status.upload_ready && status.upload_format == APPLICATION_NATIVE) {
 				return PBIO_PYBRICKS_ERROR_INVALID_COMMAND;
 			}
-			err = application_run_uploaded(true);
+			err = application_run_uploaded(true, 0);
 #endif
 		}
 		if (err == -ENOENT || err == -ENODATA) {
