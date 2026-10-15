@@ -656,7 +656,12 @@ native management. Unchanged [Pybricks Code over BLE](bluetooth.md#pybricks-code
 also passes upload, imports, input/output, stop, repeat and reconnect checks on
 that hub. This does not establish complete library compatibility. Persistent slots
 additionally have ARM checks for selection, transfer failure, storage exhaustion and coexistence
-with named programs. Physical slot retention across power loss remains unverified.
+with named programs. On Inventor F4, disconnecting USB midway through a download
+and disconnecting BLE after all payload bytes but before final metadata both
+preserve the installed program. Reconnecting through the other transport rejects
+completion of the abandoned upload, runs the installed program and accepts a new
+download. These checks use deliberate client disconnection, not power removal or
+loss during flash publication. Physical slot retention across power loss remains unverified.
 Slot contents and execution after a software reboot pass on the Inventor F4;
 this does not establish retention across complete power removal.
 Subscribed output applies backpressure through the common
