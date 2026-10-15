@@ -520,6 +520,14 @@ blocks, rewind offsets, canaries and reclamation. This avoids false allocation
 failures but cannot make fragmented space contiguous. The change is pending
 publication and manifest integration.
 
+Local Zephyr commit `25272928` clears the complete allocated LLEXT region,
+including MPU-rounded tail bytes that are visible to the application. Previously
+these tails could retain another heap owner's data. An ARM MPU regression loads
+an extension from temporary storage into a deliberately dirtied heap and checks
+both initialized data and mapped tails. This applies to heap-backed regions;
+directly mapped persistent ELF buffers are outside this correction. Publication
+and manifest integration remain pending.
+
 The earlier commit `3e53777a` adds optional `llext_load_param.heap` for a caller-owned
 heap. NULL selects the configured allocator. Harvard/memory-block allocation and
 experimental save/restore reject explicit per-load heaps. The upstream dynamic

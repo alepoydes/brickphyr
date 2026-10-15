@@ -102,9 +102,9 @@ in bounded fragments; see [workload limits](../docs/applications.md#native-learn
 Hard-float, FPU context
 fixes, optional CMSIS-DSP, the versioned native ELF API and on-demand allocations are foundations
 to preserve, not tasks to restart. Native ELF regions now use the system heap
-individually; failed loading preserves the old application. The full Python arena
-remains reserved. Native `.mpy` requires the matching SDK;
-ordinary compatible Pybricks bytecode remains supported.
+individually; failed loading preserves the old application. Python's 64 KiB arena
+is allocated from the shared heap only while Python runs. Native `.mpy` requires
+the matching SDK; ordinary compatible Pybricks bytecode remains supported.
 The native [recording channel](../docs/applications.md#application-recording)
 retains bounded application-defined binary records for USB/BLE collection;
 immutable configuration and triggered prehistory/post-event capture are supported;

@@ -313,19 +313,23 @@ Observed primary/controller stack use is 6120/648 bytes from 16384/2048-byte
 allocations. These figures exclude the source upload, recorder, kernel thread
 metadata and other platform services; loaded bytes are not a peak heap measurement.
 
-The 30-row ELF runs over USB and BLE with the system-heap backend and unchanged
-134272-byte full-profile heap. A separate USB capacity probe declaring a 320-row
-BSS array links successfully but fails to allocate its stack with `ENOMEM`.
-About 60 KiB remains free at that point, without a contiguous block satisfying
-the stack's 16 KiB alignment and privileged-storage requirements. This does not
-establish capacity for keeping that whole tape in the application: neither the
-admission budget nor total free bytes account for fragmentation and alignment.
+With the full profile's 199808-byte shared heap and no idle Python reservation,
+a separate 18592-byte USB capacity probe also runs on the Inventor F4. It reserves
+a 320-row BSS array but computes only six 30-row updates; each result matches the
+same host C calculation, with no skipped controller releases. LLEXT reports
+56203 loader bytes and 51373 loaded bytes; primary/controller stacks are
+16384/2048 bytes. Cold start and a start after Python cleanup both pass. This
+establishes storage capacity for that fixture, not computation of all 320 rows.
+The identical ELF previously failed stack allocation with a permanent Python
+arena and a 134272-byte shared heap, despite about 60 KiB total free space.
+Contiguous space and MPU alignment still constrain other workloads.
 
 Processing those 320 rows takes longer than their 4.8 s input budget. Applications
 must choose retention and update frequency to match available computation;
 independent execution does not promise processing of every acquired observation.
 The system-heap backend now returns alignment padding outside regions to the
-shared heap. MPU rounding inside regions and the fixed Python arena remain costs.
+shared heap. MPU rounding inside regions and the active Python arena's size and
+alignment remain costs.
 Clear an already-collected recording before admitting a large application when
 its retained allocation prevents loading; a rejected start preserves it.
 
@@ -421,10 +425,16 @@ an application replaces the running one.
 On the current ARMv7-M targets, LLEXT allocates each native region and its metadata
 from the shared system heap, returning them individually after successful cleanup.
 Alignment padding outside each allocation remains available to other users of
-that heap. Native regions retain their individual MPU permissions. Python retains
-its own fixed, power-of-two, size-aligned arena as one MPU partition. Native execution never uses that arena,
-including in Python-enabled builds. The arena has no flash initialization image;
-both engines initialize their allocations and accept arbitrary initial contents.
+that heap. Native regions retain their individual MPU permissions. Active Python
+allocates a 64 KiB, power-of-two, size-aligned arena from the same heap and maps it
+as one MPU partition after zeroing it. Native execution never uses that arena,
+including in Python-enabled builds; idle and native-only execution hold no Python
+arena. A live Python replacement reuses it only after the previous threads have
+joined and their domain mappings have been removed, without a second arena. It
+is freed after successful device, domain and thread cleanup. The arena has no
+flash initialization image. ARM checks cover replacement, fault cleanup and heap
+reclamation. Inventor F4 USB/BLE checks cover live Python replacement, native-code
+REPL reset and stop; the USB capacity check above also runs after Python cleanup.
 
 The native admission budget includes merged ELF region spans rounded for the MPU,
 symbol/string tables and loader bookkeeping. It excludes metadata that is only
@@ -505,9 +515,10 @@ remains available without a host, including during LLEXT's deferred-log flush.
 
 `CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
 `CONFIG_BRICKPHYR_APPLICATION_MEMORY_SIZE` limits the loader budget and, in Python
-builds, reserves the execution arena. The F4 native profile permits 64 KiB of ELF
-and a 214144-byte loader budget in a 235264-byte shared system heap. The Technic native
-profile permits 4 KiB images and a 16 KiB loader budget in a 25 KiB shared heap.
+builds, sets the on-demand execution arena's size. The F4 native profile permits
+64 KiB of ELF and a 214144-byte loader budget in a 235264-byte shared system heap.
+The Technic native profile permits 4 KiB images and a 16 KiB loader budget in a
+25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
 fits; another retained upload or firmware allocation can leave insufficient heap.
 Alignment, symbols and scratch space count against the loader budget; small
@@ -1071,10 +1082,12 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native profile provides a 235264-byte heap, including on-demand loader allocations
-and stacks. The full Python profile provides 134272 bytes and the core Python
-profile 164352 bytes; both retain a 64 KiB Python arena. Active stacks and native
-loader allocations, including a concurrent controller, come from that heap.
+The native-only profile provides a 235264-byte heap, including on-demand loader
+allocations and stacks. The full and core Python profiles provide 199808 and
+229888 bytes, respectively, including the on-demand 64 KiB Python arena.
+Idle and native-only execution leave that capacity available to other allocations.
+Active stacks and native loader
+allocations, including a concurrent controller, also come from that heap.
 These F4 profiles assign available linker RAM to
 the shared heap, below the 319 KiB firmware RAM boundary; the loader-selector
 SRAM remains reserved.
@@ -1146,8 +1159,9 @@ full buffers for the last fragment; if that allocation fails, an exact-size
 request may still admit the fragment. Heap counters do not report the largest
 contiguous allocation or prove absence of fragmentation.
 ARM/QEMU checks exercise a synthetic 32 KiB bundle with a native import through
-RAM and stored starts and verify system-heap reclamation. Its fixture uses a
-80 KiB system heap, including the on-demand stack, and a 64 KiB execution arena;
+RAM and stored starts and verify system-heap reclamation. The Python-enabled
+native SMP fixture now configures a 147456-byte shared heap, including the on-demand
+64 KiB arena and stack, instead of an 80 KiB heap plus a static 64 KiB arena;
 it does not establish F4 USB/BLE driver overhead or other programs' compiler needs.
 
 On one Robot Inventor F4 (PCB revision unknown), the full Python profile with

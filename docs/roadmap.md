@@ -21,8 +21,8 @@ power management, and device services. Hard-float execution, FPU context fixes,
 optional CMSIS-DSP and an ABI independent of Zephyr syscall numbering are existing
 foundations. On-demand UART metadata, motor/paired-controller state and the
 individual native loader allocations, plus recovered linker space, are completed
-optimizations to preserve. The Python profile still reserves its own fixed
-execution arena.
+optimizations to preserve. Python now allocates its execution arena from the
+shared heap only while active.
 The owning [application](applications.md), [hardware](hardware.md) and
 [Python](python.md) documents distinguish implemented behavior from acceptance.
 

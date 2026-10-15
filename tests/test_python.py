@@ -146,6 +146,16 @@ def test_engine_replacement():
                 assert text in await output(client)
                 if state == 2:
                     assert status.result == 0
+            # A live Python replacement must reuse its 64 KiB arena after the
+            # old VM and its MPU mapping have stopped.
+            await upload(client, transport, b"while True: pass\n", Format.PYTHON)
+            await checked(client, Start())
+            await upload(client, transport, b"print('Python after Python')\n", Format.PYTHON)
+            assert (await checked(client, Status())).state == 1
+            await checked(client, Start())
+            status = await completed(client)
+            assert status.format == Format.PYTHON and status.result == 0
+            assert b"Python after Python" in await output(client)
             await upload(client, transport, b"while True: pass\n", Format.PYTHON)
             await checked(client, Start())
             await upload(client, transport, (build / "hello.elf").read_bytes())

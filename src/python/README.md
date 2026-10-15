@@ -36,7 +36,11 @@ has its own partition. Partition descriptors remain in privileged firmware memor
 granting the VM write access to those descriptors would weaken its isolation.
 The engine neither allocates a separate permanent heap nor creates its own system
 thread. The application supervisor supplies its memory domain, lifecycle and output,
-reusing the same execution arena for Python and native applications. Its protected
+allocating and zeroing a 64 KiB aligned arena from the shared heap when Python starts.
+It reuses that arena across a live Python replacement after the old threads and
+domain mappings are removed, and frees it only after cleanup succeeds. Native
+applications allocate their own regions from the shared heap; no Python arena is
+held while the firmware is idle or running only native code. Python's protected
 thread supplies the actual stack lower bound for MicroPython's stack checks.
 
 The maintained `MP_PLAT_COMMIT_EXEC` hook publishes native code through a bounded

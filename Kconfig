@@ -364,14 +364,14 @@ config BRICKPHYR_APPLICATION_MEMORY_SIZE
 	  Bounds each native image's admitted region and loader metadata cost.
 	  Individual allocations use the system heap; loading and stack allocation
 	  can still fail if it lacks sufficiently large aligned free blocks.
-	  Python separately reserves an execution arena of this size, requiring
-	  power-of-two size/alignment for MPU protection. Native code never uses it.
+	  An active Python program allocates an arena of this size from the same
+	  heap, requiring power-of-two size/alignment for MPU protection. Stopping
+	  Python returns this memory for other applications and platform services.
 
 config BRICKPHYR_PYTHON
 	bool "Experimental MicroPython engine"
 	depends on BRICKPHYR_NATIVE || (TEST && (ARCH_POSIX || (CPU_CORTEX_M && USERSPACE)))
 	depends on ZCBOR
-	select USERSPACE_STACKS_EARLY if CPU_CORTEX_M && MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT && !CMAKE_LINKER_GENERATOR
 	help
 	  MicroPython core with source compilation, bytecode loading and GC.
 	  Host integration and Pybricks bindings are under development.

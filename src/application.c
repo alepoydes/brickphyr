@@ -97,12 +97,11 @@ static struct {
 #ifdef CONFIG_BRICKPHYR_PYTHON
 /* The user-mode entry may read VM-owned launch data, not supervisor pointers. */
 K_APP_BMEM(python_partition) static uintptr_t python_stack_bottom;
-/* Only Python maps this arena. A controller never receives VM pointers. */
-static uint8_t execution_memory[APPLICATION_MEMORY_LIMIT]
-	__aligned(APPLICATION_MEMORY_LIMIT)
-	Z_GENERIC_SECTION(.brickphyr_execution);
-K_MEM_PARTITION_DEFINE(execution_partition, execution_memory, sizeof(execution_memory),
-	K_MEM_PARTITION_P_RW_U_RW);
+/* The privileged descriptor owns the allocation; only Python maps it. */
+BUILD_ASSERT(IS_POWER_OF_TWO(APPLICATION_MEMORY_LIMIT));
+static struct k_mem_partition execution_partition = {
+	.size = APPLICATION_MEMORY_LIMIT, .attr = K_MEM_PARTITION_P_RW_U_RW,
+};
 #endif
 static struct native_control {
 	struct llext *extension;
@@ -124,8 +123,8 @@ static K_SEM_DEFINE(control_done, 0, 1);
 static int start_controller(void);
 BUILD_ASSERT(CONFIG_SHELL_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
 BUILD_ASSERT(CONFIG_LOG_PROCESS_THREAD_PRIORITY < K_LOWEST_APPLICATION_THREAD_PRIO - 1);
-/* ARMv8-M bounds dynamic regions at app_smem; this earlier arena would require
- * a corresponding region-boundary integration before using that MPU model. */
+/* Dynamic application allocations require a corresponding region-boundary
+ * integration before using a non-overlapping MPU model. */
 BUILD_ASSERT(!IS_ENABLED(CONFIG_MPU_REQUIRES_NON_OVERLAPPING_REGIONS));
 static struct application_status status;
 static atomic_t return_value;
@@ -2357,12 +2356,13 @@ static void native_entry(void *ext, void *function, void *unused)
 }
 
 #ifdef CONFIG_BRICKPHYR_PYTHON
-static void python_entry(void *program, void *size, void *format)
+static void python_entry(void *memory, void *size, void *format)
 {
 	size_t length = (uintptr_t)size;
-	size_t heap_size = sizeof(execution_memory) - ROUND_UP(length, 16);
+	size_t heap_size = APPLICATION_MEMORY_LIMIT - ROUND_UP(length, 16);
+	void *program = length ? (uint8_t *)memory + heap_size : NULL;
 	int result = python_execute(program, length,
-		(uintptr_t)format, execution_memory, heap_size,
+		(uintptr_t)format, memory, heap_size,
 		python_stack_bottom);
 	application_finished(result);
 }
@@ -2414,8 +2414,9 @@ static int release_controller(void)
 	return err;
 }
 
-static int release(void)
+static int release(bool keep_python_memory)
 {
+	ARG_UNUSED(keep_python_memory);
 	/* Caller has joined the application. Retain its bounded record tail even
 	 * after a fault; cancellation prevents allocation from an abandoned begin. */
 	atomic_clear(&record_pending);
@@ -2472,16 +2473,22 @@ static int release(void)
 		status.cleanup_error = err;
 	}
 	if (!err) {
+#ifdef CONFIG_BRICKPHYR_PYTHON
+		if (!keep_python_memory) {
+			k_free((void *)execution_partition.start);
+			execution_partition.start = 0;
+		}
+#endif
 		hub_power_application(false);
 	}
 	return err;
 }
 
 /* lifecycle is held; a joined thread no longer holds its memory domain. */
-static int reap(bool stop)
+static int reap(bool stop, bool keep_python_memory)
 {
 	if (!atomic_get(&active)) {
-		return release();
+		return release(keep_python_memory);
 	}
 	bool primary_ended = k_thread_join(&application_thread, K_NO_WAIT) == 0;
 	bool ended = primary_ended;
@@ -2520,12 +2527,16 @@ static int reap(bool stop)
 		int measured = k_thread_stack_space_get(controller->thread, &unused);
 		status.control_stack_unused = measured ? measured : (int)unused;
 	}
-	int err = release();
+#ifdef CONFIG_BRICKPHYR_PYTHON
+	bool restart = finished_source == 1 && ended && !stop && !fault && status.repl &&
+		result == PYTHON_RESTART && !shutting_down;
+	keep_python_memory |= restart;
+#endif
+	int err = release(keep_python_memory);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	/* A soft reset is a complete application lifetime boundary. Recursive
-	 * prepare/reap(true) sees an already joined thread and cannot restart it. */
-	if (!err && finished_source == 1 && ended && !stop && !fault && status.repl &&
-	    result == PYTHON_RESTART && !shutting_down) {
+	 * preparation sees an already joined thread and cannot restart it again. */
+	if (!err && restart) {
 		return run_python(NULL, 0, APPLICATION_PYTHON, true, 128);
 	}
 #endif
@@ -2535,7 +2546,7 @@ static int reap(bool stop)
 int application_stop(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	int err = reap(true);
+	int err = reap(true, false);
 	k_mutex_unlock(&lifecycle);
 	return err;
 }
@@ -2543,7 +2554,7 @@ int application_stop(void)
 int application_clear_recording(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
+	(void)reap(false, false);
 	int err = atomic_get(&active) ? -EBUSY : 0;
 	if (!err) application_record_clear();
 	k_mutex_unlock(&lifecycle);
@@ -2557,7 +2568,7 @@ int application_input(const void *data, size_t length)
 		return -EINVAL;
 	}
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
+	(void)reap(false, false);
 	int err = -ESRCH;
 	if (atomic_get(&active) && status.format != APPLICATION_NATIVE) {
 		int interrupt_char = python_interrupt_char();
@@ -2591,7 +2602,7 @@ int application_input(const void *data, size_t length)
 int application_interrupt(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
+	(void)reap(false, false);
 	int err = -ESRCH;
 	if (atomic_get(&active) && status.format != APPLICATION_NATIVE) {
 		k_spinlock_key_t key = k_spin_lock(&input_lock);
@@ -2616,7 +2627,7 @@ int application_shutdown(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	shutting_down = true;
-	int err = reap(true);
+	int err = reap(true, false);
 	discard_upload();
 	k_mutex_unlock(&lifecycle);
 	return err;
@@ -2627,7 +2638,7 @@ void application_poll(void)
 	if (k_mutex_lock(&lifecycle, K_NO_WAIT)) {
 		return;
 	}
-	(void)reap(false);
+	(void)reap(false, false);
 	if (atomic_get(&control_pending)) {
 		control_request.result = start_controller();
 		atomic_clear(&control_pending);
@@ -2670,14 +2681,14 @@ void application_buttons(uint32_t buttons)
 		} else
 #endif
 		{
-			(void)reap(true);
+			(void)reap(true, false);
 		}
 	}
 	k_mutex_unlock(&lifecycle);
 }
 
 /* lifecycle is held; neither engine may replace a thread before it is joined. */
-static int prepare(size_t stack_size)
+static int prepare(size_t stack_size, bool keep_python_memory)
 {
 	if (shutting_down) {
 		return -ESHUTDOWN;
@@ -2695,7 +2706,7 @@ static int prepare(size_t stack_size)
 		LOG_ERR("Application stack allocation failed: %zu user bytes", stack_size);
 		return -ENOMEM;
 	}
-	int err = reap(true);
+	int err = reap(true, keep_python_memory);
 	if (err) {
 		goto failed;
 	}
@@ -2798,7 +2809,7 @@ static int run_image(struct llext_loader *loader, size_t length,
 	struct llext *candidate = NULL;
 	const void *function;
 	int err = load_native(&candidate, name, loader, &function);
-	if (!err) err = prepare(MAX(requirements->stack_size, 2048));
+	if (!err) err = prepare(MAX(requirements->stack_size, 2048), false);
 	if (err) {
 		(void)release_native(&candidate);
 		return err;
@@ -2806,7 +2817,7 @@ static int run_image(struct llext_loader *loader, size_t length,
 	primary_extension = candidate;
 	err = llext_add_domain(primary_extension, &application_domain);
 	if (!err) err = start_native(function, length, requirements->heap_size);
-	if (err) (void)release();
+	if (err) (void)release(false);
 	return err;
 }
 
@@ -2870,13 +2881,23 @@ failed:
 static int run_python(const void *program, size_t length, enum application_format format,
 	bool soft_reset, int program_id)
 {
-	int err = prepare(CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE);
+	/* Reserve before stopping the current program. A live Python replacement
+	 * reuses its arena, but cannot modify it until prepare has joined both
+	 * contexts and removed their mappings. Cleanup failure retains ownership.
+	 */
+	void *memory = (void *)execution_partition.start;
+	if (!memory) memory = k_aligned_alloc(APPLICATION_MEMORY_LIMIT, APPLICATION_MEMORY_LIMIT);
+	if (!memory) return -ENOMEM;
+	int err = prepare(CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE, true);
 	if (err) {
+		if (memory != (void *)execution_partition.start) k_free(memory);
 		return err;
 	}
-	void *retained = NULL;
+	execution_partition.start = (uintptr_t)memory;
+	/* Newly mapped heap storage must not expose a previous owner's contents. */
+	memset(memory, 0, APPLICATION_MEMORY_LIMIT);
 	if (program) {
-		retained = execution_memory + sizeof(execution_memory) - ROUND_UP(length, 16);
+		void *retained = (uint8_t *)memory + APPLICATION_MEMORY_LIMIT - ROUND_UP(length, 16);
 		memcpy(retained, program, length);
 	}
 	err = k_mem_domain_add_partition(&application_domain, &execution_partition);
@@ -2885,23 +2906,23 @@ static int run_python(const void *program, size_t length, enum application_forma
 	}
 	if (!err) {
 		python_stack_bottom = (uintptr_t)K_THREAD_STACK_BUFFER(application_stack);
-		err = start_thread(python_entry, retained, (void *)length, (void *)(uintptr_t)format,
+		err = start_thread(python_entry, memory, (void *)length, (void *)(uintptr_t)format,
 			(struct application_status){.format = format, .image_bytes = length, .repl = !program,
 				.program_id = program_id,
-				.loader_bytes = sizeof(execution_memory), .loaded_bytes = sizeof(execution_memory)},
+				.loader_bytes = APPLICATION_MEMORY_LIMIT, .loaded_bytes = APPLICATION_MEMORY_LIMIT},
 			soft_reset);
 	}
 	if (!err) {
 		return 0;
 	}
-	(void)release();
+	(void)release(false);
 	return err;
 }
 
 int application_repl(void)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	int err = reap(false);
+	int err = reap(false, false);
 	if (err == -EAGAIN) {
 		err = status.repl ? 0 : -EBUSY;
 	} else if (!err && !atomic_get(&active)) {
@@ -3098,7 +3119,7 @@ static int complete_upload(void)
 		err = python_image_check(upload, upload_size, upload_format);
 		if (!err) {
 			upload_requirements = (struct native_image_requirements){
-				.heap_size = sizeof(execution_memory),
+				.heap_size = APPLICATION_MEMORY_LIMIT,
 				.stack_size = CONFIG_BRICKPHYR_APPLICATION_STACK_SIZE};
 		}
 		return err;
@@ -3282,7 +3303,7 @@ int application_observe(struct application_status *value)
 void application_get_status(struct application_status *value)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
+	(void)reap(false, false);
 	expire_upload();
 	copy_status(value);
 	k_mutex_unlock(&lifecycle);
@@ -3304,7 +3325,7 @@ size_t application_output(void *data, size_t capacity)
 size_t application_read_output(void *data, size_t capacity, struct application_status *value)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
-	(void)reap(false);
+	(void)reap(false, false);
 	size_t count = application_output(data, capacity);
 	copy_status(value);
 	k_mutex_unlock(&lifecycle);

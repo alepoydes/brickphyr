@@ -202,7 +202,7 @@ transitions after an MPU fault. The UART fixture has no physical USB/BLE detach
 signal; it checks client reconnection, not radio or USB session cleanup.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
 uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/test_python_files.py tests/test_python_io.py tests/test_python_repl.py tests/test_python_modules.py tests/test_pybricks_tools.py tests/test_python_hub.py tests/test_python_speaker.py tests/test_python_system.py
 ```
 
@@ -218,7 +218,7 @@ admission/import check:
 
 ```sh
 uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-fpu-tests -- \
-  -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=../native/fpu.conf
+  '-DEXTRA_CONF_FILE=python.conf;../native/fpu.conf'
 uv run --locked pytest -q tests/test_python_fpu.py
 ```
 
@@ -320,8 +320,8 @@ not become synthetic sensor gaps. Its finest clock resolution is for functional
 execution, not a model of STM32 instruction timing.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
 uv run --locked pytest -q tests/test_python_imu.py
 ```
 
@@ -331,7 +331,7 @@ are absent. The Bluetooth fixture checks the complementary configuration with
 wireless peers and no local devices. These use synthetic peripherals on ARM/QEMU.
 
 ```sh
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-passive-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DCONFIG_BRICKPHYR_PORT_UART=n -DCONFIG_BRICKPHYR_MOTOR_CONTROL=n
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-passive-tests -- -DEXTRA_CONF_FILE=python.conf -DCONFIG_BRICKPHYR_PORT_UART=n -DCONFIG_BRICKPHYR_MOTOR_CONTROL=n
 uv run --locked pytest -q tests/test_python_pupdevice.py::test_passive_profile_keeps_input_and_dc_output
 ```
 
@@ -411,7 +411,7 @@ alone does not provide that notification in QEMU.
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
 uv run --locked pytest -q tests/test_native.py -k uart-cmsdk
 uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
-  -DCONFIG_BRICKPHYR_PYTHON=y '-DEXTRA_CONF_FILE=host.conf;../native/fpu.conf'
+  '-DEXTRA_CONF_FILE=python.conf;host.conf;../native/fpu.conf'
 uv run --locked pytest -q tests/test_python_shell.py
 ```
 
@@ -427,7 +427,7 @@ client execution adapter off:
 
 ```sh
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-core-host-tests -- \
-  -DCONFIG_BRICKPHYR_PYTHON=y -DCONFIG_BRICKPHYR_PYBRICKS=n -DEXTRA_CONF_FILE=host.conf
+  -DCONFIG_BRICKPHYR_PYBRICKS=n '-DEXTRA_CONF_FILE=python.conf;host.conf'
 uv run --locked west build -b mps2/an385 -s tests/python_ble -d build/python-core-ble-tests -- \
   -DCONFIG_BRICKPHYR_PYBRICKS=n
 uv run --locked pytest -q -x tests/test_python_profiles.py tests/test_native.py -k 'without_compatibility or python-core-ble'
@@ -640,9 +640,9 @@ uv run --locked west build -b mps2/an385 -s tests/native -d build/native-app-tes
 uv run --locked west build -b mps2/an385 -s tests/imu_processing -d build/imu-processing-tests
 uv run --locked west build -b mps2/an385 -s tests/motor_control -d build/motor-control-arm-tests
 uv run --locked west build -b mps2/an385 -s tests/python -d build/python-arm-tests -- -DEXTRA_CONF_FILE=arm.conf
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DCONFIG_BRICKPHYR_PYTHON=y
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-smp-tests -- -DEXTRA_CONF_FILE=python.conf
 uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/python-host-tests -- \
-  -DCONFIG_BRICKPHYR_PYTHON=y '-DEXTRA_CONF_FILE=host.conf;../native/fpu.conf'
+  '-DEXTRA_CONF_FILE=python.conf;host.conf;../native/fpu.conf'
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t brickphyr-sdk
 mkdir -p build/native-smp-sdk
@@ -889,7 +889,7 @@ Build fixtures separately; the focused checks below do not rebuild them:
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/drivebase -d build/drivebase-tests
-uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- -DCONFIG_BRICKPHYR_PYTHON=y -DEXTRA_CONF_FILE=imu.conf -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 build/drivebase-tests/zephyr/zephyr.exe
 uv run --locked pytest -q tests/test_python_drivebase.py
 uv run --locked pytest -q tests/test_python_car.py
