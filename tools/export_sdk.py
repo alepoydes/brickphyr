@@ -2,8 +2,11 @@
 """Export a portable native SDK from Zephyr's EDK and optional Python tools."""
 
 import argparse
+import hashlib
+import json
 import re
 import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -50,7 +53,16 @@ def export(build: Path, micropython: Path | None, dsp: list[Path] | None):
         edk_root = roots[0]
         sdk = stage / "brickphyr-sdk"
         sdk.mkdir()
-        shutil.copy2(Path(__file__).resolve().parents[1] / "LICENSE", sdk / "LICENSE")
+        root = Path(__file__).resolve().parents[1]
+        shutil.copy2(root / "LICENSE", sdk / "LICENSE")
+        provenance = {
+            "source": subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
+            "dirty": bool(subprocess.check_output(
+                ["git", "-C", str(root), "status", "--porcelain=v1"], text=True)),
+            "config_sha256": hashlib.sha256((build / "zephyr/.config").read_bytes()).hexdigest(),
+        }
+        (sdk / "build.json").write_text(json.dumps(provenance, indent=2) + "\n")
         headers = sdk / "include"
         headers.mkdir()
         public = Path(__file__).resolve().parents[1] / "sdk/include"

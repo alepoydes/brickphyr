@@ -1,11 +1,11 @@
 # Workspace and builds
 
-The experimental `spike_prime_f4` target builds a diagnostic firmware image.
+The experimental `spike_prime_f4` target builds native and full Python firmware.
 Zephyr, CMSIS, STM32 HAL, and Pybricks revisions are resolved through [west.yml](../west.yml);
 Python tools are locked in [uv.lock](../uv.lock). The SDK version comes from the
 pinned Zephyr checkout's `SDK_VERSION`. The current
-[hardware results](hardware.md) cover installation and USB shell behavior on one
-Inventor F4. Runtime profiles below remain selected designs.
+[hardware results](hardware.md) distinguish implemented services and checks on one
+Inventor F4 from remaining acceptance. WASM is unimplemented.
 
 ## Repository layout
 
@@ -38,12 +38,10 @@ the pinned Pybricks fork supplies host tools and shared button/LED helpers. See
 in separate repositories and pin any explicit overrides.
 Do not put invented SHAs or floating `main` / `master` refs in a runnable manifest.
 
-Python and WASM dependencies are not part of this bring-up build. Pybricks already
-depends on MicroPython and other libraries. Resolve one intended
-MicroPython source and its necessary submodules; do not accidentally build both
-an imported upstream MicroPython and Pybricks' different fork. WAMR must likewise
-have one owner in the resolved manifest. The reference firmware in
-[hardware](hardware.md) is evidence, not automatic approval of all its dependencies.
+Python uses the MicroPython submodule selected by the Pybricks gitlink, including
+the coordinated runtime/compiler corrections described in [upstream](upstream.md).
+It does not build a second MicroPython from Zephyr's manifest. A future WASM
+runtime must likewise have one owner in the resolved manifest.
 
 Use upstream Zephyr CMake, Kconfig, devicetree, SDK, and west interfaces. Python
 tooling uses `pyproject.toml` and a committed `uv.lock`; use `uv run --locked`
@@ -115,6 +113,26 @@ returns a nonzero exit status. It does not establish remote availability or
 build correctness. During dependency development use the ordinary summary;
 publish and integrate the chosen revisions before resolving a clean release
 workspace. Do not run `west update` over local work merely to clear this check.
+
+Release archives include the firmware ELF, configuration, devicetree,
+source licenses and matching native SDK. F4 archives
+also contain the installer ZIP. `provenance.json` records the frozen west manifest,
+MicroPython revision, toolchain version, ELF section sizes and member checksums.
+The SDK's `build.json` records its source revision and configuration hash; packaging
+rejects a stale SDK or one exported from a dirty tree. This metadata identifies
+the build, without adding restrictions to the [native ABI](applications.md).
+
+From a clean, pinned workspace, package an already built image with its version:
+
+```sh
+uv run --locked python -m tools.release_artifacts build/prime \
+  dist/brickphyr-spike-prime-f4-native.tar.xz \
+  --name spike-prime-f4-native --version 0.2.0-alpha.1
+```
+
+This command does not build firmware or establish hardware acceptance. Run it
+after completing the build and its selected checks. Publishing a release is a
+separate operation.
 
 Build the Prime F4 target and check the resulting image:
 

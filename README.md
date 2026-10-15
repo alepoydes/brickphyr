@@ -31,10 +31,12 @@ adds temporary and installed programs, source/bytecode/native imports and the sa
 shared lifecycle. REPL and pybricksdev workflows have bounded F4 USB/BLE checks;
 Pybricks Code has BLE checks. Complete client and hardware acceptance remains open. See the
 [Python plan](docs/python.md) for implemented bindings and their limits.
-Native and Python execution currently alternate. The [roadmap](docs/roadmap.md)
-adds independent native control alongside Python, timed observations/actuation
-and experiment recording while completing SPIKE support and reducing resource
-costs. WASM remains unimplemented and outside this milestone.
+One application can run a native controller alongside a native or Python primary
+context, with separate protected memory and copied parameters. Timed observations,
+grouped motor commands and experiment recording support robot integration and
+offline replay. Sustained combined-load acceptance and complete SPIKE support
+remain in the [roadmap](docs/roadmap.md). WASM remains unimplemented and outside
+this milestone.
 LEGO restoration and interrupted-transfer recovery remain unverified. See
 [hardware](docs/hardware.md) for evidence and limitations and [builds](docs/builds.md)
 for setup and commands.

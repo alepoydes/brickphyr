@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: Apache-2.0
+name: F4 firmware and SDK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: brickphyr
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: brickphyr
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.12.13'
+          python-version: '3.13'
+          working-directory: brickphyr
+          enable-cache: true
+      - name: Install host prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential device-tree-compiler gperf libusb-1.0-0 libglib2.0-0 libpixman-1-0 libslirp0
+      - name: Resolve the public workspace
+        run: |
+          uvx --from west==1.5.0 west init -l .
+          uvx --from west==1.5.0 west update --narrow -o=--depth=1
+          git -C ../pybricks-micropython submodule update --init --checkout --depth=1 micropython
+          uv sync --locked --group sdk
+          uv run --locked python tools/workspace_status.py --check
+          uv run --locked python - <<'PY'
+          import os
+          from pathlib import Path
+          version = Path('../zephyr/SDK_VERSION').read_text().strip()
+          sdk = Path.cwd().parent / 'toolchains' / ('zephyr-sdk-' + version)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'ZEPHYR_SDK_VERSION={version}\nZEPHYR_SDK_INSTALL_DIR={sdk}\n')
+          PY
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: sdk-cache
+        with:
+          path: toolchains
+          key: zephyr-sdk-${{ env.ZEPHYR_SDK_VERSION }}-${{ runner.os }}-${{ runner.arch }}-arm
+      - name: Install the pinned ARM toolchain
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: uv run --locked --group sdk west sdk install --gnu-toolchains arm-zephyr-eabi --install-base ../toolchains
+      - name: Build F4 native and Python images
+        run: |
+          uv run --locked west build -b spike_prime_f4 -d build/prime -t firmware_package -- \
+            '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_dsp.conf' \
+            -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+          uv run --locked west build -d build/prime -t brickphyr-sdk
+          uv run --locked west build -b spike_prime_f4 -d build/python-ble-full -t firmware_package -- \
+            '-DEXTRA_CONF_FILE=boards/spike_prime_f4_bluetooth.conf;boards/spike_prime_f4_native.conf;boards/spike_prime_f4_python.conf;boards/spike_prime_f4_dsp.conf' \
+            -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
+          uv run --locked west build -d build/python-ble-full -t brickphyr-sdk
+      - name: Build the Cortex-M4 application simulator
+        run: |
+          uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-smp-tests -t brickphyr-sdk -- \
+            '-DEXTRA_CONF_FILE=python.conf;../../boards/spike_prime_f4_dsp.conf'
+          uv run --locked west build -d build/python-smp-tests
+      - name: Check package, runtime and isolation boundaries
+        run: |
+          uv run --locked pytest -q \
+            tests/test_workspace_status.py tests/test_release_artifacts.py \
+            'tests/test_packaging.py::test_package_roundtrip_and_rejection[prime-prime_hub_f4]' \
+            tests/test_python_fpu.py \
+            tests/test_native_mpy.py::test_native_mpy_protection_and_stop \
+            tests/test_application_memory.py::test_native_budget_independent_of_python \
+            tests/test_python_control.py::test_python_control_runs_during_gc_and_copies_updates
+      - name: Read and check the release version
+        run: |
+          uv run --locked python - <<'PY'
+          import json, os, tomllib
+          from zipfile import ZipFile
+          from packaging.version import Version
+          with ZipFile('build/prime/zephyr/firmware.zip') as archive:
+              version = json.loads(archive.read('firmware.metadata.json'))['firmware-version']
+          with open('pyproject.toml', 'rb') as source:
+              assert Version(version) == Version(tomllib.load(source)['project']['version'])
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == 'v' + version
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('BRICKPHYR_RELEASE_VERSION=' + version + '\n')
+          PY
+      - name: Assemble checked artifacts
+        run: |
+          uv run --locked python -m tools.release_artifacts build/prime "dist/brickphyr-$BRICKPHYR_RELEASE_VERSION-spike-prime-f4-native.tar.xz" --name spike-prime-f4-native --version "$BRICKPHYR_RELEASE_VERSION"
+          uv run --locked python -m tools.release_artifacts build/python-ble-full "dist/brickphyr-$BRICKPHYR_RELEASE_VERSION-spike-prime-f4-python.tar.xz" --name spike-prime-f4-python --version "$BRICKPHYR_RELEASE_VERSION"
+          uv run --locked python -m tools.release_artifacts build/python-smp-tests "dist/brickphyr-$BRICKPHYR_RELEASE_VERSION-qemu-cortex-m4.tar.xz" --name qemu-cortex-m4 --version "$BRICKPHYR_RELEASE_VERSION"
+          cd dist
+          sha256sum *.tar.xz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: brickphyr-${{ env.BRICKPHYR_RELEASE_VERSION }}-${{ github.sha }}
+          path: brickphyr/dist/
+          if-no-files-found: error
+          compression-level: 0

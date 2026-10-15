@@ -1,6 +1,6 @@
 [project]
 name = "brickphyrdev"
-version = "0.1.1"
+version = "0.2.0a1"
 description = "Host tools for Brickphyr hubs"
 requires-python = ">=3.12"
 license = "Apache-2.0"
