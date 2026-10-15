@@ -6,6 +6,7 @@
 #include "control.h"
 #include "wiring.h"
 #include "../lump/captures.h"
+#include <lego/device.h>
 #include <string.h>
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/pwm/pwm_fake.h>
@@ -29,6 +30,7 @@ static uint32_t battery_raw = 3100;
 static uint32_t pwm_delay;
 static bool block_pwm;
 static atomic_t block_observer;
+static atomic_t fail_observer;
 static K_SEM_DEFINE(worker_entered, 0, 1);
 static K_SEM_DEFINE(worker_continue, 0, 1);
 
@@ -44,6 +46,7 @@ int __wrap_motor_control_observe(struct motor_control *motor, uint32_t ticks,
 		k_sem_give(&worker_entered);
 		zassert_ok(k_sem_take(&worker_continue, K_MSEC(100)));
 	}
+	if (!coast && atomic_cas(&fail_observer, 1, 0)) return -EIO;
 	return __real_motor_control_observe(motor, ticks, measured, coast, out);
 }
 
@@ -122,6 +125,106 @@ static struct bp_motor_state completed(void)
 	}
 }
 
+static void ready(void);
+
+static struct bp_motor_group_state group_settled(uint32_t request, bool active)
+{
+	int64_t deadline = k_uptime_get() + 150;
+	struct bp_motor_group_state group;
+	do {
+		zassert_ok(hub_motor_group_get(&group));
+		if (group.request == request && !group.pending && group.active == active) return group;
+		zassert_true(k_uptime_get() < deadline, "Group %u did not settle", request);
+		k_msleep(1);
+	} while (true);
+}
+
+static struct bp_motor_group_command group_command(uint32_t generation_a, uint32_t generation_b,
+	int32_t duty_a, int32_t duty_b, int64_t deadline)
+{
+	struct bp_motor_group_command command = {
+		.port_mask = BIT(0) | BIT(1), .deadline_ms = deadline,
+	};
+	command.ports[0].generation = generation_a;
+	command.ports[1].generation = generation_b;
+	command.ports[0].duty_permille = duty_a;
+	command.ports[1].duty_permille = duty_b;
+	return command;
+}
+
+static struct bp_motor_observation observation_after(uint32_t generation, uint32_t frames,
+	int64_t completed_ms)
+{
+	int64_t deadline = k_uptime_get() + 100;
+	struct bp_motor_observation sample;
+	do {
+		zassert_ok(hub_motor_observation_get(0, generation, 20, &sample));
+		if (!sample.error && sample.frames > frames && sample.sample_ms > completed_ms) return sample;
+		zassert_true(k_uptime_get() < deadline, "Observer error %d, frames %u", sample.error, sample.frames);
+		k_msleep(1);
+	} while (true);
+}
+
+static void group_observation(uint32_t generation_a)
+{
+	struct bp_port_state port_b;
+	zassert_ok(hub_port_get(1, &port_b));
+	uint32_t observe_request, group_request;
+	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, generation_a, &observe_request));
+	zassert_ok(completed().error);
+	struct bp_motor_observation sample = observation_after(generation_a, 0, 0);
+	struct bp_battery_sample battery;
+	zassert_ok(hub_battery_get(&battery));
+	zassert_ok(battery.error);
+	struct bp_motor_group_command command = group_command(generation_a, port_b.generation,
+		500, -400, k_uptime_get() + 300);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &group_request));
+	struct bp_motor_group_state group = group_settled(group_request, true);
+	zassert_ok(group.error);
+	zassert_equal(group.applied_mask, group.port_mask);
+	sample = observation_after(generation_a, sample.frames, group.completed_ms);
+	zassert_equal(sample.applied_mv, (int64_t)500 * battery.voltage_mv / 1000);
+	zassert_true(state().control.observing);
+	uint32_t frames = sample.frames;
+	command = group_command(generation_a, port_b.generation, -600, 350, k_uptime_get() + 300);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &group_request));
+	group = group_settled(group_request, true);
+	zassert_ok(group.error);
+	sample = observation_after(generation_a, frames, group.completed_ms);
+	zassert_equal(sample.applied_mv, (int64_t)-600 * battery.voltage_mv / 1000);
+	zassert_true(sample.frames > frames, "Group replacement reset the observer");
+
+	/* A model-frame failure coasts both members and retains the first error. */
+	atomic_set(&fail_observer, 1);
+	group = group_settled(group_request, false);
+	zassert_equal(group.error, -EIO);
+	zassert_equal(group.cleanup_mask, group.port_mask);
+	struct bp_motor_state motor_b;
+	zassert_ok(hub_motor_get(1, &motor_b));
+	zassert_equal(state().mode, BP_MOTOR_COAST);
+	zassert_equal(motor_b.mode, BP_MOTOR_COAST);
+	zassert_equal(state().error, -EIO);
+	zassert_ok(hub_motor_observation_get(0, generation_a, 20, &sample));
+	zassert_equal(sample.error, -EIO);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	ready();
+
+	/* Deadline expiry follows the same group-wide cleanup while observing. */
+	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, generation_a, &observe_request));
+	zassert_ok(completed().error);
+	sample = observation_after(generation_a, 0, 0);
+	command = group_command(generation_a, port_b.generation, 250, -250, k_uptime_get() + 40);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &group_request));
+	group_settled(group_request, true);
+	group = group_settled(group_request, false);
+	zassert_equal(group.error, -ETIMEDOUT);
+	zassert_equal(group.cleanup_mask, group.port_mask);
+	zassert_ok(hub_motor_get(1, &motor_b));
+	zassert_equal(state().mode, BP_MOTOR_COAST);
+	zassert_equal(motor_b.mode, BP_MOTOR_COAST);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+}
+
 static void ready(void)
 {
 	int64_t deadline = k_uptime_get() + 100;
@@ -149,6 +252,7 @@ static void connect_motor(void)
 	zassert_ok(adc_emul_raw_value_func_set(adc, 11, voltage, NULL));
 	fake_pwm_set_cycles_fake.custom_fake = pwm;
 	pup_test_circuits[0].kind = UART_DEVICE;
+	pup_test_circuits[1].kind = TRAIN_MOTOR;
 	int64_t deadline = k_uptime_get() + 1000;
 	struct bp_port_state port;
 	do {
@@ -171,6 +275,13 @@ static void connect_motor(void)
 		zassert_true(k_uptime_get() < deadline, "Sensor %d battery %d", sample.error, battery.error);
 		k_msleep(1);
 	}
+	deadline = k_uptime_get() + 1000;
+	do {
+		zassert_ok(hub_port_get(1, &port));
+		if (!port.error && port.type_id == LEGO_DEVICE_TYPE_ID_LPF2_TRAIN) break;
+		zassert_true(k_uptime_get() < deadline, "Second motor not ready: %d", port.error);
+		k_msleep(1);
+	} while (true);
 }
 
 static struct bp_motor_command run(uint32_t duration, uint8_t finish)
@@ -279,6 +390,9 @@ ZTEST(regulated_motors, test_control_lifetime)
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
 	zassert_equal(allocated_bytes(), heap_before_control);
 	ready();
+	group_observation(port.generation);
+	ready();
+	zassert_equal(allocated_bytes(), heap_before_control);
 	zassert_ok(hub_motor_observe(BP_PORT_APPLICATION, 0, port.generation, &observe_request));
 	zassert_ok(completed().error);
 	zassert_ok(hub_motor_observation_get(0, port.generation, 100, &observation));
@@ -345,6 +459,19 @@ ZTEST(regulated_motors, test_control_lifetime)
 	zassert_true(value.control.active && value.valid);
 	zassert_equal(value.owner, BP_PORT_APPLICATION);
 	zassert_true(value.duty > 0 && value.control.applied_mv <= value.control.requested_mv);
+	struct bp_motor_state second_motor;
+	zassert_ok(hub_motor_get(1, &second_motor));
+	struct bp_motor_group_command rejected_group = group_command(port.generation,
+		second_motor.generation, 100, -100, k_uptime_get() + 100);
+	struct bp_motor_group_state before_group, after_group;
+	zassert_ok(hub_motor_group_get(&before_group));
+	uint32_t rejected_request = 0;
+	zassert_equal(hub_motor_group_set(BP_PORT_APPLICATION, &rejected_group, &rejected_request), -EBUSY);
+	zassert_ok(hub_motor_group_get(&after_group));
+	zassert_equal(after_group.request, before_group.request);
+	zassert_equal(state().request, value.request);
+	zassert_ok(hub_motor_get(1, &second_motor));
+	zassert_equal(second_motor.owner, BP_PORT_UNOWNED);
 	zassert_equal(hub_motor_control(BP_PORT_TERMINAL, 0, &command), -EBUSY);
 	uint32_t request = value.request;
 	command.speed_mdeg_s = INT32_MAX;

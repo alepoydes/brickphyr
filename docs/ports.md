@@ -501,8 +501,12 @@ outputs within that mask. Other members use signed physical duty in permille
 are not applied. Each member must carry its current connection generation.
 
 All members are checked before any claim or command changes. Admission rejects
-stale/disconnected devices, conflicting owners, pending writes and ports with a
-motor observer or DriveBase. One group may be live at a time. A completed live
+stale/disconnected devices, conflicting owners, pending writes and ports with an
+active regulated motor mode or DriveBase. An already running passive observer
+owned by the same caller continues through group PWM, brake and coast commands;
+it uses the successfully applied output and cached battery voltage without
+resetting its history. A model/feedback error cancels and coasts the whole group,
+preserving the first error. One group may be live at a time. A completed live
 group can be replaced with the same membership; pending work or a different
 live mask returns `EBUSY`. An individual drive cannot interleave with a live
 group. Coast or release of any member cancels the whole group with `ECANCELED`.
@@ -1123,7 +1127,10 @@ ongoing regulation from historical values.
 same PBIO observer used by regulation. `observe control.A` then includes
 `observing`, `observation_ms`, `speed_mdps`, `load_mnm` and `dc_stalled`, alongside the existing
 trajectory fields. A regulated command starts observation automatically.
-Subsequent duty, brake and coast commands retain it; release ends it.
+Subsequent individual or grouped duty, brake and coast commands retain it;
+release ends it. Start observation and await its coast completion before issuing
+a group. Calling `observe` during a live group still requests coast and cancels
+that group; it is not an operation for enabling observation without changing output.
 Monitoring without a claim does not start the model or change an output.
 
 Native applications use `bp_motor_observe(port, generation, &request)` and wait
@@ -1154,7 +1161,9 @@ reading, while nonzero duty prediction requires a valid cached battery voltage.
 
 Native simulation covers cold observer start, externally moved encoder samples,
 idle PWM inactivity, direct-drive stall, release and feedback loss, alongside
-regulated-command lifetime and driver failures. These checks do not establish
+regulated-command lifetime and driver failures. Grouped-PWM checks cover observer
+continuity, applied voltage, regulation conflicts and group-wide coast after a
+model error or expired deadline. These checks do not establish
 physical sensor accuracy or multi-motor scheduling margins. The Python `Motor`
 binding uses this service; its control-settings interface remains unfinished.
 

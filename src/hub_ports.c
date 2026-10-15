@@ -2463,7 +2463,9 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 		if (!(command->port_mask & BIT(i))) continue;
 		struct port *p = &ports[i];
 		err = motor_connection_error(p, owner, command->ports[i].generation);
-		if (!err) err = p->motor.pending || p->motor.control.observing ? -EBUSY : output_device_error(p, false);
+		/* Observation shares the applied-output path and does not write PWM.
+		 * Regulated modes still own output, including a completed hold. */
+		if (!err) err = p->motor.pending || p->motor.mode >= BP_MOTOR_SPEED ? -EBUSY : output_device_error(p, false);
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 		if (!err && p->drivebase) err = -EBUSY;
 #endif

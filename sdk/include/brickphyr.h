@@ -271,8 +271,10 @@ __syscall int bp_motor_set_voltage(uint32_t port, uint32_t generation, int32_t m
  * a replacement device. Completion is unowned + valid coast, or cleanup_error. */
 __syscall int bp_motor_close(uint32_t port, uint32_t generation);
 /* Claim a negotiated encoder motor, coast and start continuous observation.
- * A regulated command also starts observation. Coast/brake/DC retain it;
- * release, disconnect or observation failure stop it. Match request completion. */
+ * A regulated command also starts observation. Individual/group coast/brake/DC
+ * retain it; release, disconnect or observation failure stop it. Wait for this
+ * request's completion before starting a group; observing during a live group
+ * cancels that group through the requested coast. */
 __syscall int bp_motor_observe(uint32_t port, uint32_t generation, uint32_t *request);
 /* Snapshot only, no I/O. window_ms rounds to the nearest 5 ms (3..302 ms).
  * Inspect error; stale/absent observations never masquerade as zero speed. */
@@ -363,6 +365,7 @@ __syscall int bp_control_frame_get(uint32_t port_mask, struct bp_control_frame *
  * any output/claim. Replacing a pending group or changing a live mask is EBUSY.
  * Fault, expiry or a coast/release of a member cancels and coasts the whole group.
  * Other individual drive commands cannot interleave with a live group.
+ * A passive observer of the same owner continues; regulated modes conflict.
  */
 __syscall int bp_motor_group_set(const struct bp_motor_group_command *command, uint32_t *request);
 __syscall int bp_motor_group_get(struct bp_motor_group_state *state);
