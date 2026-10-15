@@ -296,13 +296,13 @@ Publication and manifest pinning remain pending.
 
 ## Crypto configuration prerequisite
 
-The local TF-PSA-Crypto `topic/config-header-order` branch, commit `11672770f`,
-includes the platform-requirements header before loading user configuration in
-`tf_psa_crypto_config.c`. User configuration
-may include system headers, so feature macros must precede it, as they do in
-ordinary library sources. Without this order, a Zephyr allocator configuration
-fails to compile with Picolibc's Annex K types. The F4 image and focused ARM
-crypto fixture compile with the correction; publication and pinning remain pending.
+The F4 allocator configuration includes Zephyr headers from TF-PSA's user
+configuration. Picolibc needs `__STDC_WANT_LIB_EXT1__=1` before the first libc
+header to declare the Annex K types used by TF-PSA. Defining it in the user
+header is too late for Zephyr callers that have already included libc.
+`cmake/runtime_memory.cmake` sets the compiler definition through Zephyr's build
+interface only for this allocator configuration. The full F4 Python/BLE/DSP
+image builds with unmodified TF-PSA; no TF-PSA fork is required.
 
 ## Python runtime prerequisites
 
