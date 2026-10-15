@@ -6,6 +6,6 @@ BRICKPHYR_APPLICATION();
 
 int app_main(void)
 {
-	*(volatile uint32_t *)(uintptr_t)&bp_api_v1 = 0;
+	*(volatile uint32_t *)(uintptr_t)&BP_API_SYMBOL = 0;
 	return 1;
 }

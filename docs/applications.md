@@ -387,7 +387,8 @@ Zephyr LLEXT. Technic support is build-only; see its
 [profile limits](builds.md#experimental-technic-base).
 The SDK emits calls through a versioned, read-only firmware API table. Its resident
 wrappers enter the existing Zephyr syscall verifiers; applications do not embed
-Zephyr syscall numbers. Only `bp_api_v1` may be imported. TLS, other unresolved
+Zephyr syscall numbers. Only the current versioned API table (`bp_api_v2`) may be
+imported. TLS, other unresolved
 imports and incompatible ARM/float formats are rejected before replacement.
 The F4 hard-float build uses Thumb, single-precision hardware floating point and
 the matching SDK's static C library for operations such as compiler-generated
@@ -423,7 +424,7 @@ and sustained combined load remain unverified.
 
 `.brickphyr.abi` carries a 20-byte, little-endian record: the `BPA1` magic,
 16-bit major/minor versions, then 32-bit architecture, required-capability mask
-and stack requirement. Version 1 uses fixed-width public structures, 32-bit
+and stack requirement. The ABI uses fixed-width public structures, 32-bit
 pointers and ARM EABI5/AAPCS. F4 and Technic use ARMv7E-M Thumb with FPv4-SP-D16 hard float;
 the ARMv7-M software-float fixture is a distinct architecture, not interchangeable.
 
@@ -445,6 +446,13 @@ existing function slots, signatures, structure layouts, units and semantics are
 fixed; append calls at the end and increase the minor version. Incompatible
 changes require a new major and table symbol. The table is generated from the
 public syscall declarations; bindings keep using the same implementation.
+
+The current version is 2.0. It retains each grouped motor command's per-port
+application and cleanup times instead of relying on mutable output snapshots.
+ELF files built for ABI 1 must be rebuilt with the matching SDK; they are rejected
+before replacing a running application. Firmware updates preserve stored files
+but do not convert their ABI. Python source and compatible `.mpy` formats are
+unaffected by this ELF version change.
 
 The exported native SDK contains public Brickphyr headers and the CPU/ABI flags
 selected from the actual build, with optional CMSIS-DSP headers/archive. It does
@@ -973,8 +981,8 @@ uv run brickphyrdev app --ble Brickphyr record group-again.jsonl
 uv run brickphyrdev app record-clear
 ```
 
-Its `brickphyr.control-group/1` records are 384 bytes each, with four retained
-slots (1536 bytes). The first 176 bytes use the input schema above and remain
+Its `brickphyr.control-group/2` records are 440 bytes each, with four retained
+slots (1760 bytes). The first 176 bytes use the input schema above and remain
 unchanged throughout the command. Later fields contain the requested duties,
 connection generations, deadline, admission result, group state and per-port
 driver outputs. The CLI decodes these into `input`, command fields, `group` and
@@ -986,7 +994,13 @@ Group and output reads are separate snapshots. Match the command and group
 request IDs, then each port's `completed`/`generation` against its
 `group_request`/`group_generation`; a later coast has a different completion ID.
 Check admission, read, output and cleanup errors before interpreting successful
-output. The sample's 1 ms polling may miss an intermediate phase under load; an
+output. The group retains each member's original `group_mode`, `group_duty_permille`,
+`group_applied_us` and subsequent `group_cleanup_us`; the group's `applied_mask`
+and `cleanup_mask` qualify those times. These survive expiry and cancellation
+even when the latest port snapshot has already changed. The record includes
+`timestamp_resolution_us`. The decoder also accepts the earlier `/1` schema,
+which does not contain these retained times.
+The sample's 1 ms polling may miss an intermediate phase under load; an
 absent applied observation is not evidence that no output occurred. Driver
 completion timestamps do not measure physical voltage or shaft response.
 This is one command experiment, not a scheduled controller or a lossless trace
@@ -1012,13 +1026,14 @@ uv run brickphyrdev app run build/native-examples/control_actuation_coast.elf
 uv run brickphyrdev app record actuation.jsonl
 ```
 
-Both build from the same source and use `brickphyr.control-actuation/1`: a
-little-endian 312-byte record, 32 retained slots and eight configuration bytes
+Both build from the same source and use `brickphyr.control-actuation/2`: a
+little-endian 368-byte record, 32 retained slots and eight configuration bytes
 containing the requested period in microseconds and step count as two `uint32`
 values. Each of the 16 command records holds the exact input frame, commanded duty/generation,
 absolute deadline, admission error and request ID. The atomic previous-group
-snapshot includes its request, per-port request/generation, applied mask, first
-operation and cleanup errors, and the control sequence that issued it. A final
+snapshot includes its request, per-port request/generation, original mode/duty,
+application and cleanup timestamps with qualifying masks and clock resolution,
+first operation and cleanup errors, and the control sequence that issued it. A final
 seventeenth record reports completion of the last coast under that same step's
 control metadata. `phase` is 0 for an issue and 1 for that final observation.
 The host decoder exposes `input`, `command` and `previous`
@@ -1031,7 +1046,10 @@ event queue. A rejected issue may report that previous group still pending.
 retained result cannot restore an input record lost to ring overwrite. Input and
 group results are separate snapshots: correlate each input port's `completed`
 and `output_generation` with the prior result's per-port request and generation
-before interpreting it as that command's output. Driver
+before interpreting it as that command's current output. For original application
+and cleanup edges, use the retained `previous.ports` timestamps and corresponding
+masks; later port updates cannot overwrite them. The host decoder retains `/1`
+support for earlier recordings. Driver
 completion does not measure electrical output or shaft response. The example
 stops after 16 releases; its requested cadence is not a deadline guarantee.
 Protected ARM/SMP checks cover the 17-record sequence, request and origin IDs,

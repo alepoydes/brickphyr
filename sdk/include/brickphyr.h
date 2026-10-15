@@ -25,7 +25,7 @@
 #include <zephyr/toolchain.h>
 #include <zephyr/syscall.h>
 
-/* ABI v1 slots follow declaration order. Append new calls at the end; changing
+/* ABI slots follow declaration order. Append new calls at the end; changing
  * existing signatures or public structure layouts requires a new ABI major. */
 
 /* Monotonic milliseconds since hub boot. No allocation. */

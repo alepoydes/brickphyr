@@ -7,7 +7,7 @@
  * A call from an application therefore still enters the verifier through SVC.
  * This table and its wrappers reside in user-readable/executable RO flash. */
 #define CAP(name) (IS_ENABLED(CONFIG_BRICKPHYR_##name) ? BP_CAP_##name : 0)
-const struct bp_api bp_api_v1 = {
+const struct bp_api BP_API_SYMBOL = {
 	.capabilities = CAP(LIGHT) | CAP(MATRIX) | CAP(IMU) | CAP(SOUND) |
 		CAP(BATTERY) | CAP(CHARGER) | CAP(PORTS) | CAP(PORT_UART) |
 		CAP(MOTORS) | CAP(MOTOR_CONTROL) | CAP(RADIO) | CAP(BLE_PEER) |
@@ -16,4 +16,4 @@ const struct bp_api bp_api_v1 = {
 };
 #undef CAP
 
-EXPORT_GROUP_SYMBOL(BRICKPHYR, bp_api_v1);
+EXPORT_GROUP_SYMBOL(BRICKPHYR, BP_API_SYMBOL);

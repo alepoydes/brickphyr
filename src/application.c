@@ -23,6 +23,7 @@
 #include "hub_charger.h"
 #include "hub_ports.h"
 #include "control_frame.h"
+#include "hub_clock.h"
 #include "application_record.h"
 #include "uart_settings.h"
 #include "hub_power.h"
@@ -683,7 +684,7 @@ static inline int64_t z_vrfy_bp_time_ms(void)
 
 int64_t z_impl_bp_time_us(void)
 {
-	return control_time_us();
+	return hub_time_us();
 }
 
 static inline int64_t z_vrfy_bp_time_us(void)
@@ -1589,7 +1590,7 @@ int z_impl_bp_control_wait(uint32_t period_us, struct bp_control_step *step,
 		due += missed * ticks;
 	}
 	struct bp_control_step value = {
-		.scheduled_us = k_ticks_to_us_floor64(due), .started_us = control_time_us(),
+		.scheduled_us = k_ticks_to_us_floor64(due), .started_us = hub_time_us(),
 		.sequence = control_clock.step.sequence + 1, .skipped = skipped, .parameter_size = size,
 	};
 	control_release(&value, parameters, period_us, due + ticks);
@@ -1619,7 +1620,7 @@ int z_impl_bp_control_imu_wait(uint32_t port_mask, uint32_t timeout_ms,
 		control_clock.imu_triggered, timeout_ms, frame);
 	if (err) return err;
 	struct bp_control_step value = {
-		.scheduled_us = frame->imu.raw.sample_us, .started_us = control_time_us(),
+		.scheduled_us = frame->imu.raw.sample_us, .started_us = hub_time_us(),
 		.sequence = control_clock.step.sequence + 1,
 		.skipped = control_clock.imu_triggered ? frame->imu.raw.sequence - control_clock.imu_sequence - 1 : 0,
 		.parameter_size = size,

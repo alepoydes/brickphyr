@@ -10,7 +10,7 @@ from test_native import native_console
 from test_python import completed
 from test_python_hub import shell
 
-from brickphyrdev import console, recording
+from brickphyrdev import console, record_codec, recording
 from brickphyrdev.application import Start, Stop, checked, upload
 from brickphyrdev.records import Recording
 from brickphyrdev.telemetry import snapshot
@@ -61,6 +61,8 @@ def test_group_example_records_input_command_applied_output_and_expiry():
                     final = rows[-1]
                     assert not final["group"]["active"] and not final["group"]["pending"]
                     assert final["group"]["applied_mask"] == 3
+                    assert final["group"]["cleanup_mask"] == (0 if coast else 3)
+                    assert final["group"]["timestamp_resolution_us"] == final["input"]["capture_resolution_us"]
                     # Wire errors use Zephyr/Picolibc numbers, not host errno.
                     assert final["group"]["error"] == (0 if coast else -116)
                     assert final["group"]["cleanup_error"] == 0
@@ -74,12 +76,29 @@ def test_group_example_records_input_command_applied_output_and_expiry():
                             assert p["mode"] == 1 and p["valid"] and not p["pending"]
                             assert p["completed"] == p["group_request"] == p["request"]
                             assert p["applied_ms"] >= applied["group"]["requested_ms"]
-                    for p in final["ports"]:
+                            assert p["group_mode"] == 1 and p["group_duty_permille"] == p["duty_permille"]
+                            assert p["group_applied_us"] > 0 and p["group_cleanup_us"] == 0
+                    for port_index, p in enumerate(final["ports"]):
                         assert p["mode"] == p["duty_permille"] == p["error"] == p["cleanup_error"] == 0
                         assert p["valid"] and not p["pending"]
                         assert p["generation"] == p["group_generation"]
                         assert p["completed"] == p["request"]
                         assert p["completed"] >= p["group_request"]
+                        assert p["group_mode"] == (0 if coast else 1)
+                        assert p["group_duty_permille"] == final["command_duty"][port_index]
+                        assert p["group_applied_us"] > 0
+                        if coast:
+                            assert p["group_cleanup_us"] == 0
+                        else:
+                            assert p["group_applied_us"] == applied["ports"][port_index]["group_applied_us"]
+                            assert p["group_cleanup_us"] >= p["group_applied_us"]
+                    # The previous schema used the same input and common fields,
+                    # with shorter group and per-port sections.
+                    raw = bytes.fromhex(records[-1]["data"])
+                    legacy = raw[:288] + raw[296:344] + raw[368:416]
+                    old = record_codec.decode("brickphyr.control-group/1", legacy)
+                    assert old["group"]["applied_mask"] == final["group"]["applied_mask"]
+                    assert old["ports"][0]["group_request"] == final["ports"][0]["group_request"]
                     for name in ("motor.A", "motor.B"):
                         sample = await snapshot(client, name)
                         assert sample.values["owner"] == sample.values["mode"] == 0
@@ -152,12 +171,17 @@ def test_periodic_actuation_retains_previous_completion_and_origin_step():
                             assert previous["control_sequence"] == original.control["sequence"]
                             assert previous["request"] == origin_command["request"] != 0
                             assert previous["port_mask"] == previous["applied_mask"] == 3
+                            assert previous["cleanup_mask"] == 0
+                            assert previous["timestamp_resolution_us"] == row["input"]["capture_resolution_us"]
                             assert not previous["pending"]
                             assert previous["error"] == previous["cleanup_error"] == 0
                             assert previous["completed_ms"] >= previous["requested_ms"] >= origin_command["issued_ms"]
                             for member, result in enumerate(previous["ports"]):
                                 assert result["generation"] == origin_command["generation"][member]
                                 assert result["error"] == result["cleanup_error"] == 0
+                                assert result["mode"] == (0 if origin_command["coast_mask"] else 1)
+                                assert result["duty_permille"] == origin_command["duty_permille"][member]
+                                assert result["applied_us"] > 0 and result["cleanup_us"] == 0
                                 if (row["input"]["completed"][member] == result["request"] and
                                     row["input"]["output_generation"][member] == result["generation"]):
                                     matched_outputs += 1
@@ -168,6 +192,11 @@ def test_periodic_actuation_retains_previous_completion_and_origin_step():
                         else:
                             assert command["request"] == 0 and not previous["active"]
                     assert matched_outputs > 0
+                    raw = frames[-1].data
+                    legacy = raw[:280] + raw[288:304] + raw[328:344]
+                    old = record_codec.decode("brickphyr.control-actuation/1", legacy)
+                    assert old["previous"]["request"] == frames[-1].values["previous"]["request"]
+                    assert old["previous"]["ports"][0]["generation"] == frames[-1].values["previous"]["ports"][0]["generation"]
                     for name in ("motor.A", "motor.B"):
                         motor = (await snapshot(client, name)).values
                         assert motor["owner"] == motor["mode"] == motor["cleanup"] == 0

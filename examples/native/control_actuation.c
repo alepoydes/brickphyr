@@ -20,12 +20,16 @@ static struct {
 	uint32_t previous_request, previous_mask, previous_applied_mask;
 	int32_t previous_error, previous_cleanup_error;
 	uint32_t previous_flags;
+	uint32_t previous_cleanup_mask, previous_timestamp_resolution_us;
 	struct {
 		uint32_t generation, request;
 		int32_t error, cleanup_error;
+		int64_t applied_us, cleanup_us;
+		int32_t duty_permille;
+		uint8_t mode, reserved[3];
 	} previous_ports[2];
 } record;
-_Static_assert(sizeof(record) == 312, "Control actuation record layout");
+_Static_assert(sizeof(record) == 368, "Control actuation record layout");
 
 static int save(const struct bp_control_motor_result *result)
 {
@@ -42,11 +46,17 @@ static int save(const struct bp_control_motor_result *result)
 	record.previous_error = previous->error;
 	record.previous_cleanup_error = previous->cleanup_error;
 	record.previous_flags = previous->pending | ((uint32_t)previous->active << 1);
+	record.previous_cleanup_mask = previous->cleanup_mask;
+	record.previous_timestamp_resolution_us = previous->timestamp_resolution_us;
 	for (uint32_t port = 0; port < 2; port++) {
 		record.previous_ports[port].generation = previous->ports[port].generation;
 		record.previous_ports[port].request = previous->ports[port].request;
 		record.previous_ports[port].error = previous->ports[port].error;
 		record.previous_ports[port].cleanup_error = previous->ports[port].cleanup_error;
+		record.previous_ports[port].applied_us = previous->ports[port].applied_us;
+		record.previous_ports[port].cleanup_us = previous->ports[port].cleanup_us;
+		record.previous_ports[port].duty_permille = previous->ports[port].duty_permille;
+		record.previous_ports[port].mode = previous->ports[port].mode;
 	}
 	int err = bp_record_write(&record, sizeof(record));
 	if (err == -ENOSPC) {
@@ -60,7 +70,7 @@ int app_main(void)
 {
 	const struct { uint32_t period_us, steps; } config = {20000, 16};
 	const struct bp_record_spec spec = {
-		.size = sizeof(record), .capacity = 32, .schema = "brickphyr.control-actuation/1",
+		.size = sizeof(record), .capacity = 32, .schema = "brickphyr.control-actuation/2",
 	};
 	int err = bp_control_record_begin(&spec, &config, sizeof(config));
 	if (err) return err;

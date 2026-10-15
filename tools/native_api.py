@@ -25,13 +25,13 @@ def generate(header: Path, output: Path):
             re.fullmatch(r"[\w *]+\b(\w+)", arg.strip())[1] for arg in args.split(",")
         ]
         table.append(f"\t{result} (*{name})({args});")
-        expression = f"bp_api_v1.{name}({', '.join(names)})"
+        expression = f"BP_API_SYMBOL.{name}({', '.join(names)})"
         wrappers.append(f"static inline {result} {name}({args})\n{{\n\t"
                         f"{'' if result == 'void' else 'return '}{expression};\n}}")
         initializer.append(f"\t.{name} = {name},")
-    table += ["};", "extern const struct bp_api bp_api_v1;", "",
+    table += ["};", "extern const struct bp_api BP_API_SYMBOL;", "",
               "static inline uint32_t bp_capabilities(void)", "{",
-              "\treturn bp_api_v1.capabilities;", "}", "",
+              "\treturn BP_API_SYMBOL.capabilities;", "}", "",
               "#if defined(LL_EXTENSION_BUILD) || !defined(__ZEPHYR__)",
               *wrappers, "#endif", ""]
     for name, lines in (("brickphyr_api.h", table), ("brickphyr_api.inc", initializer)):

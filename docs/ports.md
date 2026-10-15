@@ -533,12 +533,24 @@ does not extend the absolute deadline. Check both flags before treating the
 group as ended. `applied_mask` records successful original
 writes, even after they have been coasted. Per-member request/generation values
 correlate with the [control input frame](applications.md#control-input-frame).
+Each member retains its original `mode` and `duty_permille`. Its `applied_us`
+is captured immediately after the successful original driver call, independently
+of later port snapshots. `cleanup_mask` qualifies `cleanup_us`, the first
+successful subsequent coast during group cancellation, error handling or shutdown.
+An original coast command uses `applied_mask`/`applied_us` instead. A failed
+cleanup leaves its bit clear; a successful retry while the group is pending sets
+it without erasing the first cleanup error. Independent repairs after the group
+has settled do not rewrite this retained result. Compare masks before reading
+timestamps: zero alone does not mean failure. These times use `bp_time_us()`'s
+clock, with `timestamp_resolution_us` quantization; they measure observed driver
+completion, not electrical switching. Capture can include preemption after the
+driver returns. A group is not a history of unrelated later motor commands.
 The first operation error and first cleanup error remain separate, both for the
 group and its members. `completed_ms` records the latest completed initial-write
 or cleanup phase. Results persist until another group is accepted. Cleanup
 failure retains affected port ownership for an explicit retry.
 
-Native ABI 1.7 adds `bp_control_motor_group_set(&command, &result)` for the native
+`bp_control_motor_group_set(&command, &result)` serves the native
 context after a successful periodic or IMU-triggered control wait. It applies the
 same admission rules while copying the previous group's state atomically with the attempt.
 `result.request` identifies a newly accepted command; it is zero on rejection.
@@ -551,7 +563,7 @@ operation and cleanup errors. This is one previous snapshot, not a history queue
 an early argument or unavailable-output rejection returns a zero snapshot.
 Group request IDs do not wrap through zero: exhaustion returns `EOVERFLOW`.
 
-The original set/get calls were appended in native ABI 1.2. All three use fixed
+All three calls use fixed
 group metadata, existing per-port pending commands and the existing worker: no new
 thread, queue, driver or per-command allocation. The
 [SDK example](../examples/native/control_group.c) takes a source snapshot and
@@ -572,9 +584,12 @@ GC and telemetry on F4 over USB/BLE, with no skipped releases or cleanup errors.
 Maximum observed dispatch delays are 245/162 µs and driver completion delays are
 at most 1 ms in these short runs. They do not establish the timing of energized
 output or an equal-traffic USB/BLE comparison.
+The ABI 2.0 periodic coast example retains separate original A/B completion times
+on F4 through USB/BLE beside Python GC, with 16 attributed outcomes and no skips.
 Grouped drive, measured PWM timing and combined-load expiry latency remain
-unverified. Group metadata occupies 152 bytes in the F4 builds, without adding
-per-port state or changing the Python arena or thread stacks.
+unverified. Native ABI 2.0 includes the retained per-member timing in group results;
+rebuild ELF applications with its SDK. Fixed group metadata occupies 304 bytes
+on F4, without a new allocation, worker, or change to the Python arena and stacks.
 
 ## Direct motor drive
 

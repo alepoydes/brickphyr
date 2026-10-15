@@ -69,17 +69,27 @@ struct bp_motor_group_command {
 /* Last accepted group, retained until replacement. pending includes output
  * writes and fault cleanup; active means the group still commands a drive.
  * applied_mask records successful original writes, even if later coasted.
+ * Per-port mode/duty describe that original command. applied_us timestamps its
+ * successful driver return; cleanup_mask qualifies cleanup_us, the first
+ * successful subsequent coast during this group's cleanup. Neither measures
+ * electrical switching. Times share bp_time_us(), with timestamp_resolution_us
+ * quantization. An original COAST uses applied_mask/applied_us, not cleanup_mask.
+ * A failed cleanup leaves its bit clear; a later independent repair after the
+ * group settles does not change this retained outcome.
  * error and cleanup_error preserve the first cause and failed cleanup separately.
  * Per-port requests identify the original writes in bp_control_frame_get().
  */
 struct bp_motor_group_state {
 	int64_t requested_ms, completed_ms, deadline_ms;
-	uint32_t request, port_mask, applied_mask;
+	uint32_t request, port_mask, applied_mask, cleanup_mask, timestamp_resolution_us;
 	int32_t error, cleanup_error;
 	uint8_t pending, active;
 	struct {
 		uint32_t generation, request;
 		int32_t error, cleanup_error;
+		int64_t applied_us, cleanup_us;
+		int32_t duty_permille;
+		uint8_t mode;
 	} ports[BP_PORT_COUNT];
 };
 

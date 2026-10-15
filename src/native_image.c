@@ -219,10 +219,10 @@ int native_image_check(native_image_read_fn read, void *context, size_t length,
 					}
 					/* The only import is the resident, versioned API table.
 					 * GCC emits an undefined data reference as STT_NOTYPE. */
-					if (strcmp(name, "bp_api_v1") || ELF_ST_BIND(sym.st_info) != STB_GLOBAL ||
+					if (strcmp(name, BP_ABI_STRINGIFY(BP_API_SYMBOL)) || ELF_ST_BIND(sym.st_info) != STB_GLOBAL ||
 					    (ELF_ST_TYPE(sym.st_info) != STT_NOTYPE && ELF_ST_TYPE(sym.st_info) != STT_OBJECT) ||
 					    sym.st_value || sym.st_size || sym.st_other ||
-					    llext_find_sym(NULL, name) != &bp_api_v1) {
+					    llext_find_sym(NULL, name) != &BP_API_SYMBOL) {
 						return -ENOTSUP;
 					}
 					continue;

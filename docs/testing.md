@@ -661,7 +661,7 @@ uv run --locked west build -p auto -b mps2/an386 -s tests/native_smp -d build/py
 uv run --locked west build -b mps2/an385 -s ../zephyr/tests/drivers/uart/cmsdk_apb -d build/uart-cmsdk-tests
 uv run --locked west build -b mps2/an385 -s tests/native_smp -d build/native-smp-tests -t brickphyr-sdk
 mkdir -p build/native-smp-sdk
-tar -xf build/native-smp-tests/zephyr/brickphyr-sdk.tar.xz -C build/native-smp-sdk
+tar -mxf build/native-smp-tests/zephyr/brickphyr-sdk.tar.xz -C build/native-smp-sdk
 uv run --locked cmake -S examples/native -B build/native-smp-examples -G Ninja \
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-smp-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-smp-examples
@@ -689,7 +689,12 @@ built with `build/native-smp-tests`; pytest does not rebuild it.
 against synthetic A/B UART motors on ARM. It checks
 retention of the original input across command observations, admission/completion
 identity, signed driver output, expiry/coast and recorded input rejection. The
-periodic cases check 16 command attempts and the final coast observation, with
+retained per-port command and application times must survive expiry; cleanup
+times and masks identify successful coast separately. Both `/2` record schemas
+and the shared decoder's `/1` compatibility are exercised through actual records.
+The motor service fixture additionally covers cancellation during driver I/O,
+partial failure, failed cleanup followed by retry, and shutdown timing retention.
+The periodic cases check 16 command attempts and the final coast observation, with
 the previous outcome's request and originating step matched across records. Build
 these targets in `build/native-smp-examples` first; the test does not compile.
 It collects through the same SMP decoder used by `app record`. The model checks

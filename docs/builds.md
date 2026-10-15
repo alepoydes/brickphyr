@@ -578,11 +578,15 @@ uv run --locked west build -b spike_prime_f4 -d build/native-apps -t firmware_pa
   -DCONFIG_BRICKPHYR_NATIVE_FIXTURES=y
 uv run --locked west build -d build/native-apps -t brickphyr-sdk
 mkdir -p build/native-sdk
-tar -xf build/native-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-sdk
+tar -mxf build/native-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-sdk
 uv run --locked cmake -S examples/native -B build/native-examples -G Ninja \
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-examples
 ```
+
+SDK archives use normalized timestamps for reproducibility. Keep `tar -m` when
+replacing an extracted SDK: it gives the headers current modification times so
+incremental application builds recompile against the new ABI.
 
 Set `ZEPHYR_SDK_INSTALL_DIR` to the SDK installed during workspace setup. The
 separate example build uses the exported SDK and toolchain, without compiling
@@ -664,7 +668,7 @@ uv run --locked west build -b spike_prime_f4 -d build/native-dsp-apps -t firmwar
   -DDTC_OVERLAY_FILE=boards/spike_prime_f4_bluetooth.overlay
 uv run --locked west build -d build/native-dsp-apps -t brickphyr-sdk
 mkdir -p build/native-dsp-sdk
-tar -xf build/native-dsp-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-dsp-sdk
+tar -mxf build/native-dsp-apps/zephyr/brickphyr-sdk.tar.xz -C build/native-dsp-sdk
 uv run --locked cmake -S examples/native -B build/native-dsp-examples -G Ninja \
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-dsp-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-dsp-examples --target imu_filter imu_record
@@ -720,7 +724,7 @@ Export the SDK from this same configured build to compile native `.mpy` modules:
 ```sh
 uv run --locked west build -d build/python-apps -t brickphyr-sdk
 mkdir -p build/python-sdk
-tar -xf build/python-apps/zephyr/brickphyr-sdk.tar.xz -C build/python-sdk
+tar -mxf build/python-apps/zephyr/brickphyr-sdk.tar.xz -C build/python-sdk
 uv run brickphyrdev compile script.py --sdk "$PWD/build/python-sdk/brickphyr-sdk"
 uv run brickphyrdev app run script.mpy
 ```

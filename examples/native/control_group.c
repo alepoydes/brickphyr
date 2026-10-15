@@ -5,7 +5,7 @@
 
 BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_PORTS | BP_CAP_PORT_UART | BP_CAP_MOTORS, 2048);
 
-/* brickphyr.control-group/1, little endian. Each observation retains the exact
+/* brickphyr.control-group/2, little endian. Each observation retains the exact
  * input used for this one command; later driver output is stored separately.
  * Request IDs distinguish accepted, applied and expired commands. */
 struct group_record {
@@ -19,15 +19,19 @@ struct group_record {
 	uint32_t group_request, group_mask, applied_mask;
 	int32_t group_error, cleanup_error;
 	uint32_t group_flags;
+	uint32_t group_cleanup_mask, group_timestamp_resolution_us;
 	struct {
 		uint32_t group_generation, group_request;
 		int32_t group_error, cleanup_error;
 		int64_t applied_ms;
 		uint32_t generation, request, completed, flags;
 		int32_t duty_permille, error;
+		int64_t group_applied_us, group_cleanup_us;
+		int32_t group_duty_permille;
+		uint8_t group_mode, reserved[3];
 	} ports[2];
 };
-_Static_assert(sizeof(struct group_record) == 384, "Group record layout");
+_Static_assert(sizeof(struct group_record) == 440, "Group record layout");
 
 enum phase { COMMAND, APPLIED, ENDED, WAIT_FAILED };
 static struct bp_control_frame frame;
@@ -52,6 +56,8 @@ static int save_observation(enum phase phase, int64_t observed_ms,
 	record.group_error = state->error;
 	record.cleanup_error = state->cleanup_error;
 	record.group_flags = state->pending | ((uint32_t)state->active << 1);
+	record.group_cleanup_mask = state->cleanup_mask;
+	record.group_timestamp_resolution_us = state->timestamp_resolution_us;
 	for (unsigned int port = 0; port < 2; port++) {
 		const struct bp_control_port *p = &frame.ports[port];
 		record.ports[port].group_generation = state->ports[port].generation;
@@ -66,6 +72,10 @@ static int save_observation(enum phase phase, int64_t observed_ms,
 			((uint32_t)p->pending << 9) | ((uint32_t)p->owner << 16);
 		record.ports[port].duty_permille = p->duty_permille;
 		record.ports[port].error = p->output_error;
+		record.ports[port].group_applied_us = state->ports[port].applied_us;
+		record.ports[port].group_cleanup_us = state->ports[port].cleanup_us;
+		record.ports[port].group_duty_permille = state->ports[port].duty_permille;
+		record.ports[port].group_mode = state->ports[port].mode;
 	}
 	return bp_record_write(&record, sizeof(record));
 }
@@ -76,7 +86,7 @@ int app_main(void)
 	 * control_group_coast builds this same path with passive outputs only. */
 	const uint32_t mask = (1U << 0) | (1U << 1);
 	const struct bp_record_spec spec = {
-		.size = sizeof(record), .capacity = 4, .schema = "brickphyr.control-group/1",
+		.size = sizeof(record), .capacity = 4, .schema = "brickphyr.control-group/2",
 	};
 	int err = bp_record_begin(&spec);
 	if (err) return err;

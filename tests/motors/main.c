@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "hub_ports.h"
+#include "hub_clock.h"
 #include "wiring.h"
 #include <string.h>
 #include <zephyr/drivers/pwm/pwm_fake.h>
@@ -142,6 +143,11 @@ static void group_lifetime(void)
 	zassert_ok(state.error);
 	zassert_equal(state.port_mask, BIT(0) | BIT(1));
 	zassert_equal(state.applied_mask, state.port_mask);
+	zassert_equal(state.cleanup_mask, 0);
+	zassert_true(state.timestamp_resolution_us > 0);
+	zassert_true(state.ports[0].applied_us >= state.requested_ms * 1000);
+	zassert_true(state.ports[1].applied_us >= state.ports[0].applied_us);
+	zassert_true(state.ports[1].applied_us <= hub_time_us());
 	zassert_equal(state.deadline_ms, command.deadline_ms);
 	zassert_equal(state.ports[0].request, motor(0).request);
 	zassert_equal(state.ports[1].request, motor(1).request);
@@ -165,6 +171,8 @@ static void group_lifetime(void)
 	for (uint32_t i = 0; i < 2; i++) {
 		zassert_equal(before.ports[i].request, state.ports[i].request);
 		zassert_equal(before.ports[i].generation, state.ports[i].generation);
+		zassert_equal(before.ports[i].applied_us, state.ports[i].applied_us);
+		zassert_equal(before.ports[i].duty_permille, i ? -400 : 250);
 	}
 	zassert_ok(hub_motor_group_get(&state));
 	zassert_equal(state.request, request);
@@ -174,10 +182,18 @@ static void group_lifetime(void)
 	zassert_equal(motor(0).duty, 0);
 	zassert_equal(pup_test_sensor_supply(0), 3);
 	zassert_equal(motor(1).duty, 350);
+	before = state;
 	int64_t until = command.deadline_ms + 5 - k_uptime_get();
 	if (until > 0) k_msleep(until);
 	state = group_settled(request, false);
 	zassert_equal(state.error, -ETIMEDOUT);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	for (uint32_t i = 0; i < 2; i++) {
+		zassert_equal(state.ports[i].applied_us, before.ports[i].applied_us);
+		zassert_equal(state.ports[i].mode, BP_MOTOR_DUTY);
+		zassert_equal(state.ports[i].duty_permille, i ? 350 : 0);
+		zassert_true(state.ports[i].cleanup_us >= command.deadline_ms * 1000);
+	}
 	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
 	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
 	command = group_command(0, 0, 0);
@@ -186,6 +202,9 @@ static void group_lifetime(void)
 	state = group_settled(request, false);
 	zassert_ok(state.error);
 	zassert_equal(state.deadline_ms, 0);
+	zassert_equal(state.applied_mask, state.port_mask);
+	zassert_equal(state.cleanup_mask, 0);
+	zassert_equal(state.ports[0].mode, BP_MOTOR_COAST);
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
 	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
 	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
@@ -227,6 +246,12 @@ static void group_lifetime(void)
 	zassert_equal(state.cleanup_error, -EACCES);
 	zassert_equal(state.ports[0].cleanup_error, -EACCES);
 	zassert_equal(state.applied_mask, BIT(0));
+	zassert_equal(state.cleanup_mask, BIT(1));
+	zassert_true(state.ports[0].applied_us > 0);
+	zassert_equal(state.ports[0].cleanup_us, 0);
+	zassert_equal(state.ports[1].applied_us, 0);
+	zassert_true(state.ports[1].cleanup_us >= state.ports[0].applied_us);
+	zassert_equal(state.ports[0].duty_permille, 200);
 	zassert_false(motor(0).valid);
 	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
 	zassert_equal(pup_test_sensor_supply(1), 0);
@@ -248,6 +273,7 @@ static void group_lifetime(void)
 	zassert_equal(before.cleanup_error, -EACCES);
 	zassert_equal(before.ports[0].cleanup_error, -EACCES);
 	zassert_equal(before.applied_mask, BIT(0));
+	zassert_equal(before.cleanup_mask, BIT(1), "Independent repair must not rewrite settled history");
 	state = group_settled(request, false);
 	zassert_ok(state.error);
 	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
@@ -288,6 +314,7 @@ static void group_lifetime(void)
 	zassert_equal(motor(0).owner, BP_PORT_APPLICATION);
 	zassert_equal(motor(1).owner, BP_PORT_APPLICATION);
 	zassert_equal(k_sem_take(&release_finished, K_NO_WAIT), -EBUSY);
+	int64_t released_us = hub_time_us();
 	k_sem_give(&output_continue);
 	zassert_ok(k_sem_take(&release_finished, K_MSEC(50)));
 	zassert_ok(release_result);
@@ -296,6 +323,10 @@ static void group_lifetime(void)
 	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
 	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
 	zassert_equal(state.applied_mask, BIT(0));
+	zassert_true(state.ports[0].applied_us >= released_us);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	zassert_true(state.ports[0].cleanup_us >= state.ports[0].applied_us);
+	zassert_equal(state.ports[1].applied_us, 0);
 
 	/* Cancellation during A's failed write must retain its first coast error,
 	 * even though the group's follow-up coast succeeds. */
@@ -314,6 +345,8 @@ static void group_lifetime(void)
 	zassert_equal(state.cleanup_error, -EACCES);
 	zassert_equal(state.ports[0].cleanup_error, -EACCES);
 	zassert_equal(state.applied_mask, 0);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	zassert_true(state.ports[0].cleanup_us > 0);
 	zassert_equal(pup_test_circuits[0].coast_error, 0);
 	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
 	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
@@ -450,9 +483,18 @@ ZTEST(motors, test_lifetime)
 	wait_type(0, 1);
 	zassert_equal(motor(0).mode, BP_MOTOR_COAST, "Reconnect restarted the old command");
 
-	drive(BP_PORT_APPLICATION, 0, 1000, 0);
-	drive(BP_PORT_TERMINAL, 1, -1000, 0);
+	command = group_command(1000, -1000, k_uptime_get() + 150);
+	zassert_ok(hub_motor_group_set(BP_PORT_APPLICATION, &command, &request));
+	struct bp_motor_group_state before_shutdown = group_settled(request, true);
 	zassert_ok(hub_ports_shutdown());
+	struct bp_motor_group_state stopped;
+	zassert_ok(hub_motor_group_get(&stopped));
+	zassert_equal(stopped.error, -ESHUTDOWN);
+	zassert_equal(stopped.cleanup_mask, stopped.port_mask);
+	for (uint32_t i = 0; i < 2; i++) {
+		zassert_equal(stopped.ports[i].applied_us, before_shutdown.ports[i].applied_us);
+		zassert_true(stopped.ports[i].cleanup_us >= stopped.ports[i].applied_us);
+	}
 	zassert_equal(hub_motor_drive(BP_PORT_APPLICATION, 0, 500, 0), -ESHUTDOWN);
 	for (uint32_t i = 0; i < BP_PORT_COUNT; i++) zassert_true(pup_test_released(i));
 	zassert_equal(hub_motor_activity() & 1, 0);

@@ -4,7 +4,7 @@ CONFIG_HW_STACK_PROTECTION=y
 CONFIG_USERSPACE=y
 # The main thread owns hub supervision and never enters an application domain.
 CONFIG_MAIN_THREAD_USERSPACE=n
-# Hardware access belongs to privileged services; applications use bp_api_v1.
+# Hardware access belongs to privileged services; applications use the versioned API table.
 CONFIG_UART_USERSPACE=n
 CONFIG_GPIO_USERSPACE=n
 CONFIG_SPI_USERSPACE=n

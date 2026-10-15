@@ -124,7 +124,10 @@ Examples include input observations and a correlated group command. Offline
 inspection and a streaming reader validate gaps and applied parameters; an IMU
 example replays recorded FIR steps with the same CMSIS-DSP C routine on the host.
 Periodic actuation records also link a prior group outcome to the step that issued
-it. Integrated robot replay remains planned work.
+it. Native ABI 2.0 retains original per-port output and cleanup times in group
+results; ELF applications need rebuilding with its SDK. The `/2` example records
+have ARM and F4 coast-only USB/BLE checks; energized timing and integrated robot
+replay remain planned work.
 
 The [build-only native Technic port](../docs/hardware.md#experimental-technic-base)
 remains a secondary goal. UART negotiation, regulated motors and storage are

@@ -4,11 +4,14 @@
 #include <stdint.h>
 
 #define BP_ABI_MAGIC 0x31415042U /* BPA1 */
-#define BP_ABI_MAJOR 1
-#define BP_ABI_MINOR 10
+#define BP_ABI_MAJOR 2
+#define BP_ABI_MINOR 0
 #define BP_ABI_STRINGIFY_(value) #value
 #define BP_ABI_STRINGIFY(value) BP_ABI_STRINGIFY_(value)
 #define BP_ABI_VERSION "bp" BP_ABI_STRINGIFY(BP_ABI_MAJOR) "." BP_ABI_STRINGIFY(BP_ABI_MINOR)
+#define BP_ABI_SYMBOL_(major) bp_api_v##major
+#define BP_ABI_SYMBOL(major) BP_ABI_SYMBOL_(major)
+#define BP_API_SYMBOL BP_ABI_SYMBOL(BP_ABI_MAJOR)
 
 /* ELF EABI5, little endian, Thumb, 32-bit pointers and AAPCS. */
 #if defined(__ARM_ARCH_7EM__) && defined(__ARM_PCS_VFP) && (__ARM_FP == 4)

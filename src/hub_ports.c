@@ -13,6 +13,7 @@
 #include "ports/output.h"
 #include "ports/sensor.h"
 #include "hub_battery.h"
+#include "hub_clock.h"
 #include "hub_watchdog.h"
 #include "motor/voltage.h"
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -165,6 +166,20 @@ static bool group_member(const struct port *p)
 {
 	return (motor_group.value.active || motor_group.value.pending) &&
 		(motor_group.value.port_mask & BIT(p - ports));
+}
+
+/* Caller holds lock. Keep the original write and first successful cleanup as
+ * separate edges, including a successful retry after the first cleanup failed. */
+static void group_cleanup_result(uint32_t port, int error, int64_t completed_us)
+{
+	struct bp_motor_group_state *g = &motor_group.value;
+	if (!group_member(&ports[port])) return;
+	if (!error && !(g->cleanup_mask & BIT(port))) {
+		g->ports[port].cleanup_us = completed_us;
+		g->cleanup_mask |= BIT(port);
+	}
+	if (!g->ports[port].cleanup_error) g->ports[port].cleanup_error = error;
+	if (!g->cleanup_error) g->cleanup_error = error;
 }
 #else
 static bool group_member(const struct port *p) { ARG_UNUSED(p); return false; }
@@ -465,10 +480,16 @@ static int set_pin(uint32_t port, enum pin pin, gpio_flags_t flags)
 static int coast(uint32_t port)
 {
 	int result = port_output_coast(port);
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	int64_t completed_us = hub_time_us();
+#endif
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	ports[port].control_due = 0;
 #endif
 	k_spinlock_key_t key = k_spin_lock(&lock);
+#ifdef CONFIG_BRICKPHYR_MOTORS
+	group_cleanup_result(port, result, completed_us);
+#endif
 	struct bp_motor_state *m = &ports[port].motor;
 	m->valid = !result;
 	m->cleanup_error = result;
@@ -1366,6 +1387,7 @@ static __unused int64_t apply_motor(uint32_t port)
 	if (frame) p->observer_reset = p->observer_rebase = false;
 #endif
 	bool output = command_pending || controlled;
+	bool grouped = group_member(p);
 	if (!err && output && (controlled || (mode == BP_MOTOR_DUTY && duty))) motor_activity(port, true);
 	if (output) m->valid = false;
 	k_spin_unlock(&lock, key);
@@ -1402,6 +1424,8 @@ static __unused int64_t apply_motor(uint32_t port)
 	 * newly energized output. Expiry is also checked for the whole group. */
 	if (!err && output && !passive && expires && k_uptime_get() >= expires) err = -ETIMEDOUT;
 	if (!err && output) err = output_error = passive ? port_output_coast(port) : port_output_drive(port, duty);
+	bool applied = !err && output;
+	int64_t applied_us = grouped && applied ? hub_time_us() : 0;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 	if (!err && frame) {
 		/* Prediction must use the output which actually reached the driver.
@@ -1440,20 +1464,28 @@ static __unused int64_t apply_motor(uint32_t port)
 	if (!err && observing && !paired && (frame || command_pending)) controller_trajectory_get(&p->controller->control, &trajectory);
 #endif
 	int cleanup = !err ? 0 : coast_attempted ? output_error : port_output_coast(port);
+	int64_t cleanup_us = grouped && err && !cleanup ? coast_attempted ? applied_us : hub_time_us() : 0;
 	key = k_spin_lock(&lock);
 #ifdef CONFIG_BRICKPHYR_MOTORS
 	if (group_member(p)) {
 		/* Cancellation can arrive during the driver call. Record its result
 		 * before the replacement coast can overwrite the port's completion. */
 		struct bp_motor_group_state *g = &motor_group.value;
-		if (request == g->ports[port].request && generation == g->ports[port].generation) {
-			if (!err && output) g->applied_mask |= BIT(port);
+		bool original = request == g->ports[port].request && generation == g->ports[port].generation;
+		if (original) {
+			if (applied) {
+				g->ports[port].applied_us = applied_us;
+				g->applied_mask |= BIT(port);
+			}
 			if (!g->ports[port].error) g->ports[port].error = err;
 			if (!g->error) g->error = err;
 		}
-		if (!g->ports[port].cleanup_error) g->ports[port].cleanup_error = cleanup;
-		if (!g->cleanup_error) g->cleanup_error = cleanup;
+		if (err || (!original && applied && passive)) {
+			group_cleanup_result(port, cleanup, err ? cleanup_us : applied_us);
+		}
 	}
+#else
+	ARG_UNUSED(cleanup_us);
 #endif
 	m->completed = request;
 	m->pending = request != m->request;
@@ -2442,7 +2474,8 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 		err = k_work_reschedule_for_queue(PORT_QUEUE, &work, K_NO_WAIT);
 		if (err >= 0) {
 			*g = (struct bp_motor_group_state){.requested_ms = now, .deadline_ms = active ? command->deadline_ms : 0,
-				.request = g->request + 1, .port_mask = command->port_mask, .pending = true, .active = active};
+				.request = g->request + 1, .port_mask = command->port_mask, .pending = true, .active = active,
+				.timestamp_resolution_us = HUB_TIME_RESOLUTION_US};
 			motor_group.owner = owner;
 			motor_group.cancelling = false;
 			for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
@@ -2455,6 +2488,8 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 				p->motor.error = p->motor.cleanup_error = 0;
 				g->ports[i].generation = command->ports[i].generation;
 				g->ports[i].request = p->motor.request;
+				g->ports[i].duty_permille = command->ports[i].duty_permille;
+				g->ports[i].mode = p->motor.requested_mode;
 			}
 			*request = g->request;
 			err = 0;
