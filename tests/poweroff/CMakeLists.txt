@@ -5,6 +5,9 @@ set(KCONFIG_ROOT ${BRICKPHYR_ROOT}/Kconfig)
 list(APPEND DTS_ROOT ${BRICKPHYR_ROOT} ${BRICKPHYR_ROOT}/tests/watchdog)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hub_poweroff)
+if(USB_WAKE)
+  target_compile_definitions(app PRIVATE TEST_USB_WAKE)
+endif()
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/hub.c
   ../watchdog/device.c ${BRICKPHYR_ROOT}/src/hub_watchdog.c ${BRICKPHYR_ROOT}/src/hub_reset.c
   ${BRICKPHYR_ROOT}/src/hub_menu.c ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c

@@ -2,6 +2,7 @@
 #define __ZEPHYR_SUPERVISOR__
 #include "host_transport.h"
 #include "hub_charger.h"
+#include "hub_power.h"
 
 #include <errno.h>
 #include <zephyr/drivers/uart.h>
@@ -11,6 +12,7 @@
 /* Experimental EP0 selector: GET -> [version, mode, occupied, ready, error32le].
  * SET wValue: 0 = Pybricks (boot default), 1 = Shell. wIndex is zero. */
 #define SELECT_REQUEST 0x42
+#define POWER_REQUEST 0x43
 static const struct device *const uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
 
 static bool port_open(void)
@@ -62,6 +64,25 @@ static int selector_set(const struct usbd_context *const ctx,
 }
 USBD_VREQUEST_DEFINE(selector, SELECT_REQUEST, selector_get, selector_set);
 
+/* EP0 stays available while the USB-powered hub is off for charging. Only an
+ * explicit wake requests reboot; enumeration and DTR keep their usual meaning. */
+static int power_get(const struct usbd_context *const ctx,
+			const struct usb_setup_packet *const setup, struct net_buf *const buf)
+{
+	if (setup->wIndex || setup->wValue || setup->wLength != 2) return -ENOTSUP;
+	const uint8_t state[] = {1, hub_power_phase_get()};
+	net_buf_add_mem(buf, state, sizeof(state));
+	return 0;
+}
+
+static int power_set(const struct usbd_context *const ctx,
+			const struct usb_setup_packet *const setup, const struct net_buf *const buf)
+{
+	if (setup->wIndex || setup->wValue || setup->wLength) return -ENOTSUP;
+	return hub_power_request_wake();
+}
+USBD_VREQUEST_DEFINE(power, POWER_REQUEST, power_get, power_set);
+
 static int host_init(void)
 {
 	/* Factory identity location from Pybricks prime_hub_f4/pbdrvconfig.h. */
@@ -71,6 +92,7 @@ static int host_init(void)
 	}
 	STRUCT_SECTION_FOREACH(usbd_context, ctx) {
 		err = usbd_device_register_vreq(ctx, &selector);
+		if (!err) err = usbd_device_register_vreq(ctx, &power);
 		if (!err) {
 			err = usbd_msg_register_cb(ctx, usb_message);
 		}

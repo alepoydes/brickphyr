@@ -24,7 +24,7 @@ static int source = -ENODEV;
 static enum hub_connection connected;
 static enum hub_connection link;
 static bool application;
-static bool shutting_down;
+static enum hub_power_phase phase;
 static int64_t idle_since;
 static int64_t sampled_ms;
 static int64_t critical_since = -1;
@@ -35,7 +35,7 @@ void hub_power_get(struct hub_power_state *state)
 	*state = (struct hub_power_state){
 		.sampled_ms = sampled_ms, .idle_since_ms = idle_since, .source = source,
 		.battery_idle_s = timeout_s[0], .usb_idle_s = timeout_s[1],
-		.connected = connected, .application = application, .shutting_down = shutting_down,
+		.connected = connected, .application = application, .shutting_down = phase != HUB_POWER_RUNNING,
 		.transport = link,
 	};
 	k_spin_unlock(&lock, key);
@@ -90,7 +90,7 @@ bool hub_power_connection(enum hub_connection open)
 {
 	if (open < HUB_DISCONNECTED || open > HUB_BLE) return false;
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool allowed = !open || !shutting_down;
+	bool allowed = !open || phase == HUB_POWER_RUNNING;
 	if (allowed && connected != open) {
 		connected = open;
 		idle_since = k_uptime_get();
@@ -110,14 +110,39 @@ void hub_power_link_closed(enum hub_connection transport)
 void hub_power_request_shutdown(void)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	shutting_down = true;
+	if (phase == HUB_POWER_RUNNING) phase = HUB_POWER_STOPPING;
 	k_spin_unlock(&lock, key);
+}
+
+void hub_power_mark_off(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	__ASSERT_NO_MSG(phase == HUB_POWER_STOPPING);
+	phase = HUB_POWER_OFF;
+	k_spin_unlock(&lock, key);
+}
+
+enum hub_power_phase hub_power_phase_get(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	enum hub_power_phase value = phase;
+	k_spin_unlock(&lock, key);
+	return value;
+}
+
+int hub_power_request_wake(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = phase == HUB_POWER_STOPPING ? -EBUSY : 0;
+	if (phase == HUB_POWER_OFF) phase = HUB_POWER_WAKING;
+	k_spin_unlock(&lock, key);
+	return err;
 }
 
 bool hub_power_application(bool running)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	bool allowed = !running || !shutting_down;
+	bool allowed = !running || phase == HUB_POWER_RUNNING;
 	if (allowed && application != running) {
 		application = running;
 		idle_since = k_uptime_get();
@@ -138,15 +163,15 @@ bool hub_power_update(int vbus, bool activity, int64_t now)
 	}
 	if (!connected && !application && source >= 0 && source <= 1 && timeout_s[source] &&
 	    now - idle_since >= (int64_t)timeout_s[source] * 1000) {
-		shutting_down = true;
+		if (phase == HUB_POWER_RUNNING) phase = HUB_POWER_STOPPING;
 	}
 	/* Reference Pybricks battery protection: three seconds continuously below
 	 * the hysteretic critical threshold. An app or host cannot inhibit it.
 	 * Read failures retain a previously established critical condition. */
 	if (!critical) critical_since = -1;
 	else if (critical_since < 0) critical_since = now;
-	else if (now - critical_since >= 3000) shutting_down = true;
-	bool expired = shutting_down;
+	else if (now - critical_since >= 3000 && phase == HUB_POWER_RUNNING) phase = HUB_POWER_STOPPING;
+	bool expired = phase != HUB_POWER_RUNNING;
 	k_spin_unlock(&lock, key);
 	return expired;
 }

@@ -159,6 +159,7 @@ static void shutdown(void)
 	host_ble_shutdown();
 #endif
 	hub_power_release();
+	hub_power_mark_off();
 	/* USB or a held button may keep the MCU powered. Keep the input driver alive,
 	 * require a valid release, then reboot on a fresh debounced press. */
 	bool released = false;
@@ -166,6 +167,7 @@ static void shutdown(void)
 	for (;;) {
 		hub_watchdog_feed();
 		hub_charger_update(usb_power(), k_uptime_get());
+		if (hub_power_phase_get() == HUB_POWER_WAKING) sys_reboot(SYS_REBOOT_COLD);
 		int pressed = center_pressed();
 		if (pressed == 0) {
 			released = true;

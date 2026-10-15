@@ -72,8 +72,10 @@ Blocks 2–4 form the first integrated control experiment, not three unrelated
 frameworks. Full SPIKE support remains a completion requirement; its remaining
 acceptance is not discarded when the experiment first runs. Preserve the existing
 Python acceptance inventory, but do not require every external Pybricks accessory
-before testing the Babybot execution path. USB-initiated wake, battery watchdog,
-charging-source behavior and power-cycle persistence remain explicit tasks.
+before testing the Babybot execution path. Explicit USB restart while the charging
+profile keeps the MCU powered has Inventor F4 checks; physical power-on without
+that retained supply is unverified. Battery watchdog, charging-source behavior
+and power-cycle persistence remain explicit tasks.
 Define storage-reset semantics before implementing that operation.
 
 Use Babybot's existing calibrated IMU, encoder angle/speed, battery and direct

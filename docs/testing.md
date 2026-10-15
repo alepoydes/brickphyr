@@ -141,7 +141,9 @@ The watchdog checks use production supervision and Zephyr Task Watchdog, with a
 synthetic watchdog device and process exit at the board-reset boundary. They
 check healthy progress followed by a stalled hub loop or system queue. The power
 suite runs the production off loop and ADC input with watchdog enabled, including
-held-button, invalid-sample and fresh-press cases.
+held-button, invalid-sample and fresh-press cases. The USB-wake variant checks
+rejection during cleanup, explicit restart from off and unchanged admission
+until reboot, including a held center button.
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/watchdog -d build/watchdog-tests
@@ -150,6 +152,8 @@ ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64
 build/watchdog-work-tests/zephyr/zephyr.exe
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/poweroff-tests
 build/poweroff-tests/zephyr/zephyr.exe
+ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/poweroff -d build/usb-wake-tests -- -DUSB_WAKE=ON
+build/usb-wake-tests/zephyr/zephyr.exe
 ```
 
 On explicitly authorized hardware, a separate diagnostic build may enable

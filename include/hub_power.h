@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 enum hub_connection { HUB_DISCONNECTED, HUB_USB, HUB_BLE };
+enum hub_power_phase { HUB_POWER_RUNNING, HUB_POWER_STOPPING, HUB_POWER_OFF, HUB_POWER_WAKING };
 
 struct hub_power_state {
 	int64_t sampled_ms;
@@ -29,6 +30,11 @@ void hub_power_link_closed(enum hub_connection transport);
 bool hub_power_application(bool running);
 /* Explicit shutdown also closes admission, even with an active owner. */
 void hub_power_request_shutdown(void);
+/* The hub loop publishes OFF only after quiescing devices and releasing power.
+ * Wake is idempotent while running/waking, and rejected during shutdown. */
+void hub_power_mark_off(void);
+enum hub_power_phase hub_power_phase_get(void);
+int hub_power_request_wake(void);
 /* VBUS: 0 absent, 1 present, negative errno unknown. True claims shutdown. */
 bool hub_power_update(int vbus, bool activity, int64_t now);
 /* Load known keys through the same runtime validation used by host commands. */

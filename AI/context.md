@@ -75,6 +75,9 @@ acceptance remains open;
 see [host coverage](../docs/host.md#implemented-pybricks-subset).
 The F4 watchdog has USB-powered fault-recovery checks; battery-only recovery
 remains pending.
+Explicit `brickphyrdev usb wake` restarts the USB-powered off loop after charging
+shutdown, with Inventor F4 USB/BLE recovery checks; it leaves a running application
+alone. It cannot power a physically unpowered MCU. See [power policy](../docs/settings.md#inactivity-shutdown).
 
 ## Next platform milestone
 

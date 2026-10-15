@@ -308,12 +308,27 @@ after both command shutdown and a long center hold is checked on the Inventor F4
 Holding the button through shutdown does not restart it. Battery-only long-press
 shutdown and subsequent button startup are also checked, followed by a working
 BLE terminal and unchanged saved settings. These checks do not measure off-state
-current or establish wake initiated by the USB host.
+current.
+
+The charging profile also accepts explicit USB wake through
+`uv run brickphyrdev usb wake`. Shutdown first quiesces applications and devices,
+saves user data and releases the power rail; a wake request during that transition
+is rejected. In the USB-powered off loop, an accepted request performs the same
+full reboot as the button. Repeating wake on a running hub has no effect; it does
+not stop an autonomous application. Restart uses saved settings and the normal
+boot interface. Ordinary enumeration and opening a USB terminal do not request wake.
+On the Inventor F4, command shutdown followed by CLI wake restores USB/BLE
+management, IMU acquisition and charging, with stored application hashes unchanged.
+A wake request while a Python program runs leaves that program running; opening
+CDC while off leaves the hub off. These checks cover the USB-powered restart path,
+not physical power-on from an unpowered MCU. Battery protection still applies
+after startup.
 
 The first hardware objective is controlled inactivity shutdown and reliable power
 retention for automated tests. CPU idle power saving is a separate mechanism.
-USB wake or power-on after shutdown is a later hardware experiment: neither a
-charging cable nor Zephyr power-management support establishes that capability.
+USB wake depends on the processor and USB device remaining powered after shutdown;
+it does not establish power-on from a physically unpowered state or battery-only
+wake. A charging cable alone cannot send the request.
 
 ## References
 

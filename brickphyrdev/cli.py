@@ -60,6 +60,7 @@ def main():
     switching = usb_commands.add_parser("handover", help="Switch through the current protocol")
     switching.add_argument("mode", choices=usb.MODES)
     usb_commands.add_parser("identify", help="Read identity through the Pybricks client")
+    usb_commands.add_parser("wake", help="Restart the hub from USB off state")
 
     app_parser = commands.add_parser("app", help="Manage applications through SMP")
     target = app_parser.add_mutually_exclusive_group()

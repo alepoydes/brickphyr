@@ -2,6 +2,7 @@
 """Use the upstream Python USB client against the production C protocol handler."""
 
 import asyncio
+import errno
 import io
 import os
 import pty
@@ -223,6 +224,133 @@ def test_shell_handover_with_immediate_prompt(monkeypatch):
     brickphyr_usb.handover(object(), "pybricks")
     assert commands == [b"host_mode pybricks\r"]
     assert state[0] == "pybricks"
+
+
+def test_usb_wake_survives_reset_ack_race(monkeypatch, capsys):
+    import usb.core
+    import usb.util
+
+    from brickphyrdev import usb as brickphyr_usb
+    from brickphyrdev.cli import main
+
+    calls = []
+    released = []
+
+    class Hub:
+        manufacturer = "Brickphyr"
+        serial_number = "hub-1"
+
+        def __init__(self, phase):
+            self.phase = phase
+
+        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
+            calls.append((self.phase, request_type, request, value, index, data))
+            if request_type == 0xC0:
+                return bytes((1, self.phase))
+            raise usb.core.USBError("reset during SET acknowledgment", errno=errno.ENODEV)
+
+    off = Hub(2)
+    running = Hub(0)
+    discoveries = iter(([off], [], [running]))
+    clock = [0.0]
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: next(discoveries))
+    monkeypatch.setattr(usb.util, "dispose_resources", released.append)
+    monkeypatch.setattr(brickphyr_usb.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(brickphyr_usb.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(sys, "argv", ["brickphyrdev", "usb", "wake"])
+
+    main()
+
+    assert capsys.readouterr().out == "USB running\n"
+    assert [(request_type, request, value, index, data) for _, request_type, request, value, index, data in calls] == [
+        (0xC0, 0x43, 0, 0, 2),
+        (0x40, 0x43, 0, 0, b""),
+        (0xC0, 0x43, 0, 0, 2),
+    ]
+    assert released == [running, off]
+
+
+def test_usb_discovery_closes_unselected_and_error_handles(monkeypatch):
+    import usb.core
+    import usb.util
+
+    from brickphyrdev import usb as brickphyr_usb
+
+    class Hub:
+        def __init__(self, manufacturer, serial_number):
+            self.manufacturer = manufacturer
+            self.serial_number = serial_number
+
+    class Denied:
+        @property
+        def manufacturer(self):
+            raise usb.core.USBError("permission denied", errno=errno.EACCES)
+
+    foreign, wrong, selected = Hub("Other", "hub-1"), Hub("Brickphyr", "hub-2"), Hub("Brickphyr", "hub-1")
+    released = []
+    monkeypatch.setattr(usb.util, "dispose_resources", released.append)
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [foreign, wrong, selected])
+    assert brickphyr_usb.device("hub-1") is selected
+    assert released == [foreign, wrong]
+
+    duplicate = Hub("Brickphyr", "hub-1")
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [selected, duplicate])
+    with pytest.raises(RuntimeError, match="found 2"):
+        brickphyr_usb.device("hub-1", missing_ok=True)
+    assert released[-2:] == [selected, duplicate]
+
+    denied = Denied()
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [denied])
+    with pytest.raises(usb.core.USBError):
+        brickphyr_usb.device("hub-1", missing_ok=True)
+    assert released[-1] is denied
+
+
+def test_usb_wake_running_is_no_op():
+    from brickphyrdev import usb as brickphyr_usb
+
+    class Hub:
+        serial_number = "hub-1"
+
+        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
+            assert (request_type, request, value, index, data) == (0xC0, 0x43, 0, 0, 2)
+            return b"\x01\x00"
+
+    brickphyr_usb.wake(Hub())
+
+
+def test_usb_wake_times_out_without_repeating_set(monkeypatch):
+    import usb.core
+    import usb.util
+
+    from brickphyrdev import usb as brickphyr_usb
+
+    sets = []
+    released = []
+    clock = [0.0]
+    failure = usb.core.USBError("reset during SET acknowledgment", errno=errno.ENODEV)
+
+    class Hub:
+        manufacturer = "Brickphyr"
+        serial_number = "hub-1"
+
+        def ctrl_transfer(self, request_type, request, value, index, data, timeout):
+            if request_type == 0xC0:
+                return b"\x01\x02"
+            sets.append(self)
+            raise failure
+
+    first = Hub()
+    monkeypatch.setattr(usb.core, "find", lambda **kwargs: [Hub()])
+    monkeypatch.setattr(usb.util, "dispose_resources", released.append)
+    monkeypatch.setattr(brickphyr_usb.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(brickphyr_usb.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    with pytest.raises(TimeoutError, match="within 10 seconds") as caught:
+        brickphyr_usb.wake(first)
+    assert caught.value.__cause__ is failure
+    assert sets == [first]
+    assert released and all(hub is not first for hub in released)
 
 
 def test_command_errors_and_subscription(protocol):

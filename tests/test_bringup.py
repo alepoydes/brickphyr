@@ -128,6 +128,7 @@ def test_technic_image():
     [
         "hub-tests",
         "poweroff-tests",
+        "usb-wake-tests",
         "technic-tests",
         "cc2640-npi-tests",
         "cc2640-controller-tests",

@@ -337,6 +337,22 @@ for telemetry within that connection, or run `uv run brickphyrdev monitor` for a
 standalone USB monitor. [Monitoring and JSONL recording](telemetry.md#text-monitor-and-recording)
 describes source selection, rates, logging and the view-switch shortcut.
 
+### Wake over USB
+
+When shutdown leaves USB attached for charging, restart the hub explicitly:
+
+```sh
+uv run brickphyrdev usb wake
+uv run brickphyrdev terminal --usb
+```
+
+Add `--serial SERIAL` after `usb` when several hubs are attached. Wake waits up
+to ten seconds for the same hub to report that it is running. It does not restart
+an already running hub or interrupt its application. Discovery, mode selection
+and opening a terminal do not wake the hub implicitly. The command requires
+firmware supporting the power request below; it cannot power a disconnected or
+fully unpowered USB device. See [shutdown and charging](settings.md#inactivity-shutdown).
+
 ### Native Bluetooth terminal
 
 The shared Shell passes native stream/session tests and Linux BLE checks on the
@@ -750,13 +766,22 @@ the implemented formats above; the base image without Python advertises none.
 
 ### Experimental control requests
 
-Both requests use device recipient, vendor request `0x42`, and `wIndex = 0`.
+The interface selector uses device recipient, vendor request `0x42`, and `wIndex = 0`.
 GET (`bmRequestType = 0xc0`, `wValue = 0`, length 8) returns format version 1,
 mode (0 Pybricks, 1 Shell), occupied flag, selectable flag, then a signed
 little-endian 32-bit transport error. SET (`0x40`, length 0) takes the mode in
 `wValue`. Unsupported values and occupied transitions stall the request; GET
 reports the current state without taking ownership. Errors retain the first
 transport failure and require a reboot before retrying.
+
+Power request `0x43` uses the same device recipient with `wValue = wIndex = 0`.
+GET (`0xc0`, length 2) returns version 1 and phase: 0 running, 1 stopping,
+2 off, 3 waking. SET (`0x40`, length 0) requests wake from off; running and waking
+are idempotent successes, while stopping or invalid fields stall. Admission stays
+closed until reboot. Reset can interrupt the SET status acknowledgment: clients
+must query the same USB serial until it reports running, rather than retry the
+mutation or treat a disappearing device as proof of success. Neither request
+acquires a terminal session or detaches its CDC driver.
 
 The mechanism remains experimental beyond the verified Linux/Inventor F4 setup.
 It requires the dependency changes

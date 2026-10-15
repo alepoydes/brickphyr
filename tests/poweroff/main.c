@@ -21,6 +21,8 @@ static unsigned int releases, lights_off;
 void hub_power_release(void)
 {
 	zassert_equal(lights_off, 1);
+	zassert_equal(hub_power_phase_get(), HUB_POWER_STOPPING);
+	zassert_equal(hub_power_request_wake(), -EBUSY, "Wake bypassed shutdown cleanup");
 	releases++;
 	k_sem_give(&power_released);
 }
@@ -62,12 +64,14 @@ static int bouncing_adc(const struct device *dev, unsigned int channel, void *da
 	return 0;
 }
 
-ZTEST(poweroff, test_shutdown_requires_real_release_and_new_press)
+ZTEST(poweroff, test_shutdown_then_restart)
 {
 	const struct device *adc = DEVICE_DT_GET(DT_NODELABEL(adc1));
 	const struct device *center = DEVICE_DT_GET(DT_NODELABEL(center_keys));
 	const struct device *gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 	const struct shell *shell = shell_backend_dummy_get_ptr();
+	zassert_ok(hub_power_request_wake());
+	zassert_equal(hub_power_phase_get(), HUB_POWER_RUNNING, "Wake restarted an active hub");
 
 	zassert_ok(gpio_pin_configure(gpio, 0, GPIO_INPUT));
 	zassert_ok(gpio_emul_input_set(gpio, 0, 1));
@@ -83,6 +87,14 @@ ZTEST(poweroff, test_shutdown_requires_real_release_and_new_press)
 	zassert_ok(shell_execute_cmd(shell, "shutdown"));
 	zassert_ok(k_sem_take(&power_released, K_MSEC(100)));
 	zassert_false(hub_power_connection(HUB_USB), "Shutdown admitted another owner");
+#ifdef TEST_USB_WAKE
+	zassert_true(WAIT_FOR(hub_power_phase_get() == HUB_POWER_OFF, 100000, k_msleep(1)));
+	zassert_equal(resistor_ladder_get_key(center, INPUT_KEY_ENTER), 1);
+	zassert_ok(hub_power_request_wake());
+	zassert_ok(hub_power_request_wake());
+	zassert_false(hub_power_application(true), "Wake reopened admission before reboot");
+	zassert_ok(k_sem_take(&restarted, K_MSEC(100)));
+#else
 	zassert_equal(k_sem_take(&restarted, K_SECONDS(3)), -EAGAIN,
 		"The shutdown hold restarted the hub");
 
@@ -106,9 +118,10 @@ ZTEST(poweroff, test_shutdown_requires_real_release_and_new_press)
 	zassert_equal(k_sem_take(&restarted, K_MSEC(50)), -EAGAIN);
 	zassert_ok(adc_emul_const_raw_value_set(adc, 14, 3144));
 	zassert_ok(k_sem_take(&restarted, K_MSEC(100)));
+	zassert_true(watchdog_feeds > 30, "Off state stopped feeding the watchdog");
+#endif
 	zassert_ok(k_thread_join(&hub_thread, K_MSEC(100)));
 	zassert_equal(releases, 1);
-	zassert_true(watchdog_feeds > 30, "Off state stopped feeding the watchdog");
 }
 
 ZTEST_SUITE(poweroff, NULL, NULL, NULL, NULL, NULL);

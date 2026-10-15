@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import errno
 import sys
 import time
 
@@ -10,21 +11,34 @@ import serial
 import serial.tools.list_ports
 
 REQUEST = 0x42
+WAKE_REQUEST = 0x43
 MODES = ("pybricks", "shell")
+WAKE_PHASES = ("running", "stopping", "off", "waking")
 
 
-def device(serial_number=None):
+def device(serial_number=None, *, missing_ok=False):
     import usb.core
+    import usb.util
 
-    hubs = [
-        hub
-        for hub in usb.core.find(find_all=True, idVendor=0x2FE3, idProduct=0x0004)
-        if hub.manufacturer == "Brickphyr"
-        and (serial_number is None or hub.serial_number == serial_number)
-    ]
-    if len(hubs) != 1:
-        raise RuntimeError(f"Expected one Brickphyr USB device, found {len(hubs)}; use --serial")
-    return hubs[0]
+    hubs = list(usb.core.find(find_all=True, idVendor=0x2FE3, idProduct=0x0004))
+    selected = None
+    try:
+        matches = [
+            hub for hub in hubs
+            if hub.manufacturer == "Brickphyr"
+            and (serial_number is None or hub.serial_number == serial_number)
+        ]
+        if len(matches) == 1:
+            selected = matches[0]
+            return selected
+        if missing_ok and not matches:
+            return None
+        raise RuntimeError(f"Expected one Brickphyr USB device, found {len(matches)}; use --serial")
+    finally:
+        for hub in hubs:
+            if hub is not selected:
+                with contextlib.suppress(Exception):
+                    usb.util.dispose_resources(hub)
 
 
 def status(hub):
@@ -35,6 +49,63 @@ def status(hub):
     if error:
         raise RuntimeError(f"Hub transport failed: {error}; reboot before retrying")
     return MODES[value[1]], bool(value[2]), bool(value[3])
+
+
+def _wake_phase(hub, timeout_ms):
+    value = bytes(hub.ctrl_transfer(0xC0, WAKE_REQUEST, 0, 0, 2, timeout=timeout_ms))
+    if len(value) != 2 or value[0] != 1 or value[1] >= len(WAKE_PHASES):
+        raise RuntimeError(f"Unknown Brickphyr wake response: {value.hex()}")
+    return WAKE_PHASES[value[1]]
+
+
+def _reset_error(error):
+    return getattr(error, "errno", None) in {
+        errno.EIO, errno.ENODEV, errno.ECONNRESET, errno.ESHUTDOWN, errno.ETIMEDOUT
+    } or getattr(error, "backend_error_code", None) in {-1, -4, -7}
+
+
+def wake(hub):
+    import usb.core
+    import usb.util
+
+    serial_number = hub.serial_number
+    deadline = time.monotonic() + 10
+    current = hub
+    sent = False
+    first_error = None
+    while True:
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            raise TimeoutError("Hub did not return to USB running state within 10 seconds") from first_error
+        transfer_timeout = min(1000, remaining_ms)
+        try:
+            if current is None:
+                current = device(serial_number, missing_ok=True)
+            if current is not None:
+                try:
+                    phase = _wake_phase(current, transfer_timeout)
+                    if phase == "running":
+                        return
+                    if phase == "off" and not sent:
+                        # A reset may discard the status-stage ACK. Never send
+                        # another SET; a later GET must prove the hub is running.
+                        set_timeout = min(1000, int((deadline - time.monotonic()) * 1000))
+                        if set_timeout <= 0:
+                            raise TimeoutError("Hub did not return to USB running state within 10 seconds") from first_error
+                        sent = True
+                        current.ctrl_transfer(0x40, WAKE_REQUEST, 0, 0, b"", timeout=set_timeout)
+                finally:
+                    if current is not hub:
+                        with contextlib.suppress(Exception):
+                            usb.util.dispose_resources(current)
+        except usb.core.USBError as error:
+            if not _reset_error(error):
+                raise
+            if first_error is None:
+                first_error = error
+        finally:
+            current = None
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
 
 def serial_port(hub):
@@ -182,13 +253,17 @@ def run(args):
         elif args.command == "identify":
             identify(hub)
             return
+        elif args.command == "wake":
+            wake(hub)
+            print("USB running")
+            return
         mode, occupied, ready = status(hub)
         print(
             f"{mode}: {'occupied' if occupied else 'idle'}, {'selectable' if ready else 'selection blocked'}"
         )
     finally:
         if hub is not None:
-            if sys.exception() is not None:
+            if sys.exception() is not None or args.command == "wake":
                 with contextlib.suppress(Exception):
                     usb.util.dispose_resources(hub)
             else:

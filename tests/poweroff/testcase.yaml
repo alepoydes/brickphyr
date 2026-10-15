@@ -1,5 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 tests:
+  brickphyr.poweroff.usb_wake:
+    platform_allow: native_sim/native/64
+    integration_platforms: [native_sim/native/64]
+    extra_args: USB_WAKE=ON
+    tags: [power, usb]
+    timeout: 5
   brickphyr.poweroff:
     platform_allow: [native_sim/native/64]
     integration_platforms: [native_sim/native/64]
