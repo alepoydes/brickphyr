@@ -620,10 +620,9 @@ See [recorded periodic actuation](applications.md#recorded-periodic-actuation).
 `motor.elf` moves an unloaded motor on port A at 200 degrees/second for 250 ms,
 then coasts; application exit releases the port. Clear the mechanism before
 explicitly starting this example.
-`spin.elf` and `fault.elf` are
-deliberate failure fixtures. Rebuild old experimental images using the portable SDK;
-they contained configuration-specific syscall IDs. Compatible v1 builds can
-reuse the new ELF without recompilation.
+`spin.elf` and `fault.elf` are deliberate failure fixtures. Rebuild applications
+with the matching SDK when the ABI major version changes. Compatible ABI 2
+firmware builds can run the same ELF without recompilation.
 
 After [authorized installation](recovery.md), use either terminal transport:
 
@@ -647,11 +646,11 @@ and the relevant module's log level in an extra configuration file.
 built host file. Use [the host CLI](host.md#native-applications) to upload those
 files without rebuilding firmware. Fixture embedding can be disabled for ordinary
 use. Read firmware flash and static RAM usage from the build's memory report;
-these include the configured system heap and, for Python builds, a dedicated 64 KiB
-Python arena. Application stacks and individual native loader allocations come
-from the heap on demand and are released after the supervised application is
-quiescent. `app status` reports the image size, admission budget and loaded bytes;
-the budget is not a reserved buffer or measured peak. During RAM loading, the
+these include the configured system heap. The Python arena, application stacks
+and individual native loader allocations come from that heap on demand and are
+released after the supervised application is quiescent. `app status` reports the
+image size, admission budget and loaded bytes; the budget is not a reserved buffer
+or measured peak. During RAM loading, the
 receive buffer and loaded regions coexist; the receive buffer is then released.
 File loading reserves no ELF receive buffer and reports the same admission budget
 and loaded bytes for the same image.
