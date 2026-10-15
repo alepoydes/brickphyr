@@ -407,6 +407,14 @@ and clears rejected header prefixes. The default UART transport remains availabl
 its input-expiration timer is specific to that backend and disabled for custom
 receivers. Portable receiver checks cover both configurations.
 
+Local Zephyr commit `847ed6ed` on `topic/mcumgr-serial-batch` encodes a frame's
+complete Base64 triples in one call, preserving the serial wire format and
+callback-error propagation. It replaces per-triple callbacks with a bounded
+temporary frame buffer; no persistent allocation is added. The serial fixture
+checks multi-frame output and interrupted transmission. Brickphyr's Shell/SMP
+fixture and a bounded Inventor F4 USB workload check integration. Publication
+and manifest integration remain pending.
+
 Reusing the Shell worker between USB/BLE sessions additionally requires the local
 Zephyr `shell_reset()` API (`058846f8` on `topic/shell-session-reset`), not yet
 included in the manifest pin. It schedules

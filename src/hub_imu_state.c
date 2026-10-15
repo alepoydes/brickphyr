@@ -25,7 +25,6 @@ static struct k_spinlock snapshot_lock;
 /* One protected native controller can wait; readers do not consume this signal.
  * Publication owns no pointer or resource from the waiting application. */
 static K_SEM_DEFINE(sample_changed, 0, 1);
-static struct bp_imu_state published = {.error = -EINPROGRESS, .raw.error = -EINPROGRESS};
 static struct bp_imu_state current = {.error = -EINPROGRESS, .raw.error = -EINPROGRESS};
 static imu_processing_frame_t application_frame = {.base = {.m11 = 1, .m22 = 1, .m33 = 1}};
 static struct bp_imu_application_state frame_published = {
@@ -86,7 +85,6 @@ static void publish(void)
 	float heading_1d = imu_processing_frame_heading(&application_frame, PBIO_IMU_HEADING_TYPE_1D);
 	float heading_3d = imu_processing_frame_heading(&application_frame, PBIO_IMU_HEADING_TYPE_3D);
 	k_spinlock_key_t key = k_spin_lock(&snapshot_lock);
-	published = current;
 	frame_published.physical = current;
 	memcpy(frame_published.base, application_frame.base.values, sizeof(frame_published.base));
 	memcpy(frame_published.rotation_uncalibrated, rotation.values, sizeof(rotation.values));
@@ -205,7 +203,7 @@ int hub_imu_get_state(struct bp_imu_state *state)
 		return -EINVAL;
 	}
 	k_spinlock_key_t key = k_spin_lock(&snapshot_lock);
-	*state = published;
+	*state = frame_published.physical;
 	k_spin_unlock(&snapshot_lock, key);
 	check_age(state);
 	return 0;
@@ -218,7 +216,7 @@ int hub_imu_wait_state(uint32_t sequence, bool previous, uint32_t timeout_ms,
 	int64_t deadline = k_uptime_ticks() + k_ms_to_ticks_ceil64(timeout_ms);
 	for (;;) {
 		k_spinlock_key_t key = k_spin_lock(&snapshot_lock);
-		*state = published;
+		*state = frame_published.physical;
 		k_spin_unlock(&snapshot_lock, key);
 		/* Startup has no observation yet. Other processing/acquisition errors
 		 * are returned as published, before an age check can obscure them. */
