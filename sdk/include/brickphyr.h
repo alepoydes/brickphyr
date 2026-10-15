@@ -488,6 +488,19 @@ __syscall int bp_user_data_save_status(uint32_t request);
 __syscall int bp_control_start_file(const char *name, size_t name_length,
 	const void *parameters, size_t length);
 
+/* Primary context only. Queue an explicit save of all Brickphyr settings
+ * (including IMU calibration), separately from application user data. Returns
+ * a positive request, EBUSY while one is pending, or the storage error.
+ * No allocation, wait or flash I/O in the caller. The worker reads selected
+ * values when it executes: finish pending configuration first and avoid
+ * changes until completion. Keys are not an atomic transaction as a group.
+ * Accepted saves survive application exit/disconnect; shutdown joins them.
+ * ENOTSUP without persistent settings support. */
+__syscall int bp_settings_save_start(void);
+/* EINPROGRESS, zero on success, or the save error (RAM remains unchanged).
+ * A newer accepted request makes older IDs ESTALE; IDs last one boot. */
+__syscall int bp_settings_save_status(uint32_t request);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 
@@ -501,6 +514,17 @@ static inline int bp_user_data_save(void)
 	if (request < 0) return request;
 	int result;
 	while ((result = bp_user_data_save_status(request)) == -EINPROGRESS) bp_sleep(1);
+	return result;
+}
+
+/* Same queued settings save, waiting cooperatively for its result. Stopping
+ * the caller does not cancel an accepted request. */
+static inline int bp_settings_save(void)
+{
+	int request = bp_settings_save_start();
+	if (request < 0) return request;
+	int result;
+	while ((result = bp_settings_save_status(request)) == -EINPROGRESS) bp_sleep(1);
 	return result;
 }
 

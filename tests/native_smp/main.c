@@ -5,6 +5,9 @@
 #include "hub_charger.h"
 #include "hub_power.h"
 #include "../ports/wiring.h"
+#ifdef CONFIG_SETTINGS_FILE
+#include "storage_work.h"
+#endif
 
 #include <errno.h>
 #include <string.h>
@@ -79,7 +82,43 @@ static int button_input(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(button_input, NULL, "Synthetic button mask, 0..15.", button_input, 2, 0);
+#ifndef CONFIG_SETTINGS_FILE
 int storage_status(void) { return -ENOTSUP; }
+#else
+static K_SEM_DEFINE(settings_gate_entered, 0, 1);
+static K_SEM_DEFINE(settings_gate_release, 0, 1);
+static bool settings_gate_armed;
+static void settings_gate_worker(struct k_work *work)
+{
+	k_sem_give(&settings_gate_entered);
+	k_sem_take(&settings_gate_release, K_FOREVER);
+}
+static K_WORK_DEFINE(settings_gate_work, settings_gate_worker);
+
+static int settings_gate(const struct shell *shell, size_t argc, char **argv)
+{
+	if (!strcmp(argv[1], "0")) {
+		if (!settings_gate_armed) return -EINVAL;
+		settings_gate_armed = false;
+		k_sem_give(&settings_gate_release);
+		return 0;
+	}
+	if (strcmp(argv[1], "1") || settings_gate_armed) return -EINVAL;
+	k_sem_reset(&settings_gate_entered);
+	k_sem_reset(&settings_gate_release);
+	settings_gate_armed = true;
+	int err = storage_work_submit(&settings_gate_work);
+	if (err < 0) {
+		settings_gate_armed = false;
+		return err;
+	}
+	err = k_sem_take(&settings_gate_entered, K_MSEC(1000));
+	if (!err) shell_print(shell, "Settings gate entered");
+	return err;
+}
+SHELL_CMD_ARG_REGISTER(settings_gate, NULL, "Block/release the fixture storage worker: 1|0.",
+		settings_gate, 2, 0);
+#endif
 
 /* QEMU UART has no DTR. Exercise the production notification explicitly. */
 static int close_session(const struct shell *shell, size_t argc, char **argv)

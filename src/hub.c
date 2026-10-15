@@ -10,6 +10,7 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 #include "application.h"
+#include "configuration.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_data.h"
 #endif
@@ -110,6 +111,10 @@ static void shutdown(void)
 		if (!state.connected) break;
 		k_msleep(1);
 	}
+#endif
+#if defined(CONFIG_BRICKPHYR_NATIVE) && defined(CONFIG_SETTINGS_FILE)
+	int settings_err = config_save_finish();
+	if (settings_err) LOG_ERR("Pending settings save failed: %d", settings_err);
 #endif
 	int err = hub_imu_shutdown();
 	hub_battery_shutdown();

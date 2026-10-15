@@ -3,7 +3,7 @@
 The F4 build implements runtime power settings through Zephyr Settings, USB VBUS
 detection, and inactivity shutdown. Experimental persistence uses Zephyr's file
 backend on LittleFS in external SPI flash. Changes apply in RAM; `config save`
-persists them explicitly. Save, reboot restoration, and file compaction are
+or the native SDK's `bp_settings_save()` persists them explicitly. Save, reboot restoration, and file compaction are
 verified on the Inventor F4 over Linux USB through Shell and SMP. Inactivity
 shutdown and subsequent startup are checked on USB and battery power, including
 operator-observed lights off. USB/battery transitions preserve an active BLE
@@ -55,6 +55,43 @@ keys is not atomic as a group. Reads report the actual stored value, so a partia
 save cannot mark unrelated RAM changes as persisted. Loading passes known values
 through the same runtime validation; incompatible lengths and truncated files
 are errors. This requires the [dependency corrections](upstream.md#settings-storage-prerequisites).
+
+### Saving from an application
+
+Native ABI 2.3 provides `bp_settings_save()` and the nonblocking pair
+`bp_settings_save_start()` / `bp_settings_save_status(request)`. These save
+Brickphyr settings, including IMU calibration, power timeouts and custom UART
+permission. `bp_user_data_save()` saves only the separate application data area.
+Require `BP_CAP_SETTINGS` in an ELF's capabilities when persistence is essential.
+Without that compiled service, the settings calls return `-ENOTSUP`; an unavailable
+or corrupt store reports its initialization error.
+
+The start call queues work on the existing filesystem worker and returns a positive
+request ID. It performs no allocation, waiting or flash access in the application.
+The worker reads the selected settings as it executes, through the same handlers
+as `config save`. Finish pending configuration before requesting a save and avoid
+changing settings until it completes. For `bp_imu_configure()`, first wait until
+`bp_imu_get_application()` reports `pending == false`, then check `command_error`.
+
+Status returns `-EINPROGRESS`, zero after successful persistence, or the operation's
+error. `bp_settings_save()` waits for the same result, yielding between checks.
+One request may be pending; another start returns `-EBUSY`. A newer accepted
+request invalidates earlier IDs with `-ESTALE`; IDs last only for the current boot.
+Failure leaves RAM unchanged, but some keys may already have been saved: this
+retains the Settings backend's nontransactional contract above.
+
+Only the application's primary context can request or query saves. An accepted
+request owns no application memory and survives application exit or a host
+disconnect. Shutdown joins outstanding work before releasing power; it does not
+save unrequested settings. Wait for success before explicitly rebooting or
+removing power. These are occasional configuration writes, not a control-loop
+logging channel.
+
+Protected ARM/QEMU checks use LittleFS on synthetic flash and verify that a
+queued save completes after its application exits. On one Robot Inventor F4,
+an independently built SDK application completes both save forms over USB;
+reboot restores the saved values. These checks do not establish interrupted-write
+recovery or flash endurance.
 
 ## Current runtime settings
 
@@ -147,7 +184,8 @@ thresholds, bias, scale, acceleration correction and heading correction, in that
 order. Angles use degrees and acceleration uses mm/s²; acceleration correction
 interleaves `+X, -X, +Y, -Y, +Z, -Z`. Selected values are rounded to the integer
 resolution in the table above. An invalid field rejects the entire update.
-Changes persist across application exit in RAM; only `config save` writes them
+Changes persist across application exit in RAM; `config save` or the native
+settings-save API writes them
 to flash. Axis selection and heading reset are application state, not settings.
 
 These paths are checked with synthetic acquisition and real simulated

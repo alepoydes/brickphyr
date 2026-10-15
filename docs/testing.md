@@ -226,7 +226,7 @@ uv run --locked pytest -q tests/test_python.py tests/test_native_mpy.py tests/te
 ```
 
 The interactive image is `build/python-smp-tests/zephyr/zephyr.elf`:
-Cortex-M4, FPv4-SP-D16 hard-float, native ABI 2.2, with MPU protection.
+Cortex-M4, FPv4-SP-D16 hard-float, native ABI 2.3, with MPU protection.
 It accepts ELF applications from the matching F4 SDK without recompilation,
 subject to available services and memory. Peripherals are synthetic; this is
 not a simulation of SPIKE electrical behavior. To open its UART Shell:
@@ -341,13 +341,16 @@ missing edges and a build without IMU support check integration boundaries.
 Six poses, multiple complete turns and invalid numerical inputs are checked
 directly in `tests/imu_processing`; stationary learning and I/O recovery are
 checked in `tests/imu`, without repeating their workload through Python.
-This does not establish physical calibration accuracy or acquisition deadlines.
+The same fixture checks the protected native Settings save API against a real
+LittleFS backend on synthetic flash, including synchronous completion and
+saving after application return. This does not establish physical calibration
+accuracy or acquisition deadlines.
 This fixture uses paced instruction-count time so laptop scheduling pauses do
 not become synthetic sensor gaps. Its finest clock resolution is for functional
 execution, not a model of STM32 instruction timing.
 
 ```sh
-uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf;settings.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 uv run --locked pytest -q tests/test_python_imu.py
 ```
 
@@ -933,7 +936,7 @@ Build fixtures separately; the focused checks below do not rebuild them:
 
 ```sh
 ZEPHYR_TOOLCHAIN_VARIANT=host uv run --locked west build -b native_sim/native/64 -s tests/drivebase -d build/drivebase-tests
-uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
+uv run --locked west build -b mps2/an386 -s tests/native_smp -d build/python-imu-tests -- '-DEXTRA_CONF_FILE=python.conf;imu.conf;settings.conf' -DEXTRA_DTC_OVERLAY_FILE=imu.overlay
 build/drivebase-tests/zephyr/zephyr.exe
 uv run --locked pytest -q tests/test_python_drivebase.py
 uv run --locked pytest -q tests/test_python_car.py

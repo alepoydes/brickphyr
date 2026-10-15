@@ -434,8 +434,9 @@ and sustained combined load remain unverified.
 `.brickphyr.abi` carries a 20-byte, little-endian record: the `BPA1` magic,
 16-bit major/minor versions, then 32-bit architecture, required-capability mask
 and stack requirement. The ABI uses fixed-width public structures, 32-bit
-pointers and ARM EABI5/AAPCS. F4 and Technic use ARMv7E-M Thumb with FPv4-SP-D16 hard float;
-the ARMv7-M software-float fixture is a distinct architecture, not interchangeable.
+pointers and ARM EABI5/AAPCS. F4, Technic and the Cortex-M4 simulator use
+ARMv7E-M Thumb with FPv4-SP-D16 hard float. Software-float ELF applications
+are not supported.
 
 `BRICKPHYR_APPLICATION()` declares the current ABI, no mandatory optional
 services, and a 2048-byte stack. Use
@@ -456,8 +457,10 @@ fixed; append calls at the end and increase the minor version. Incompatible
 changes require a new major and table symbol. The table is generated from the
 public syscall declarations; bindings keep using the same implementation.
 
-The current version is 2.2. It adds controller loading from a named installed
-ELF; 2.1 added explicit application user-data saving. ABI 2.0 and 2.1 ELF
+The current version is 2.3. It adds explicit
+[Brickphyr settings saving](settings.md#saving-from-an-application).
+Version 2.2 added controller loading from a named installed ELF; 2.1 added
+explicit application user-data saving. ABI 2.0 through 2.2 ELF
 applications retain their existing table slots and remain supported.
 Version 2 retains each grouped motor command's per-port application and cleanup
 times instead of relying on mutable output snapshots.

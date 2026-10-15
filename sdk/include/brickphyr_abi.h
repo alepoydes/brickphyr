@@ -5,7 +5,7 @@
 
 #define BP_ABI_MAGIC 0x31415042U /* BPA1 */
 #define BP_ABI_MAJOR 2
-#define BP_ABI_MINOR 2
+#define BP_ABI_MINOR 3
 #define BP_ABI_STRINGIFY_(value) #value
 #define BP_ABI_STRINGIFY(value) BP_ABI_STRINGIFY_(value)
 #define BP_ABI_VERSION "bp" BP_ABI_STRINGIFY(BP_ABI_MAJOR) "." BP_ABI_STRINGIFY(BP_ABI_MINOR)
@@ -37,6 +37,7 @@ enum bp_capability {
 	BP_CAP_BLE_PEER = 1U << 11,
 	BP_CAP_HUB_NETWORK = 1U << 12,
 	BP_CAP_APP_STORAGE = 1U << 13,
+	BP_CAP_SETTINGS = 1U << 14,
 };
 
 struct bp_application_abi {

@@ -130,12 +130,7 @@ static int cmd_config(const struct shell *shell, size_t argc, char **argv)
 {
 	int err;
 	if (argc == 2 && !strcmp(argv[1], "save")) {
-		err = IS_ENABLED(CONFIG_SETTINGS_FILE) ? storage_status() : -ENOTSUP;
-		if (err) {
-			shell_error(shell, "Persistent settings storage is not available: %d", err);
-			return err;
-		}
-		err = settings_save();
+		err = config_save();
 		if (!err) {
 			shell_print(shell, "Settings saved.");
 		}
@@ -182,3 +177,9 @@ out:
 
 SHELL_CMD_ARG_REGISTER(config, NULL, "Read/change runtime settings; save explicitly.",
 		      cmd_config, 2, 7);
+
+int config_save(void)
+{
+	int err = IS_ENABLED(CONFIG_SETTINGS_FILE) ? storage_status() : -ENOTSUP;
+	return err ? err : settings_save();
+}

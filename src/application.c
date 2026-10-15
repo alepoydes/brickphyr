@@ -29,6 +29,7 @@
 #include "uart_settings.h"
 #include "hub_power.h"
 #include "hub_reset.h"
+#include "configuration.h"
 
 #include <brickphyr.h>
 #include <errno.h>
@@ -2513,6 +2514,34 @@ static inline int z_vrfy_bp_user_data_save_status(uint32_t request)
 	return primary_caller() ? z_impl_bp_user_data_save_status(request) : -EPERM;
 }
 #include <zephyr/syscalls/bp_user_data_save_status_mrsh.c>
+
+int z_impl_bp_settings_save_start(void)
+{
+#ifdef CONFIG_SETTINGS_FILE
+	return config_save_start();
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_settings_save_start(void)
+{
+	return primary_caller() ? z_impl_bp_settings_save_start() : -EPERM;
+}
+#include <zephyr/syscalls/bp_settings_save_start_mrsh.c>
+
+int z_impl_bp_settings_save_status(uint32_t request)
+{
+#ifdef CONFIG_SETTINGS_FILE
+	return config_save_status(request);
+#else
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_settings_save_status(uint32_t request)
+{
+	return primary_caller() ? z_impl_bp_settings_save_status(request) : -EPERM;
+}
+#include <zephyr/syscalls/bp_settings_save_status_mrsh.c>
 
 /* The first context to complete owns the result, even if cleanup preempts the
  * other context just as it returns. All memory stays mapped until both join. */

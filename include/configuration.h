@@ -22,3 +22,9 @@ int config_index(const struct config_entry *entries, size_t count, const char *n
 int config_load(const struct config_entry *entries, size_t count);
 int config_export(const struct config_entry *entries, size_t count,
 	int (*save)(const char *, const void *, size_t));
+/* Trusted synchronous save. Application callers use the queued operation. */
+int config_save(void);
+int config_save_start(void);
+int config_save_status(uint32_t request);
+/* Shutdown waits only for an explicitly requested save; it does not start one. */
+int config_save_finish(void);

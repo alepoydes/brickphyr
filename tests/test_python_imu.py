@@ -152,3 +152,42 @@ for operation in (lambda: PrimeHub(top_side=Axis.X, front_side=Axis.Y),
         assert False
 print('passed')
 """) == b"passed\n"
+
+
+def test_native_settings_save_survives_application_exit():
+    async def exercise(device):
+        captured = bytearray()
+        async with console.connection(captured.extend, port=device, management=True) as (port, client):
+            try:
+                image = (BUILD / "settings_save_probe.elf").read_bytes()
+                async def run_probe(result):
+                    await upload(client, port, image, Format.NATIVE)
+                    await checked(client, Start())
+                    state = await completed(client)
+                    assert state.result == result and state.fault == state.cleanup == 0, state
+
+                async def wait_saved(value):
+                    async with asyncio.timeout(3):
+                        while True:
+                            reply = await shell(port, captured, b"config get imu/heading_correction_mdeg")
+                            if b"Saved: " + value + b" mdeg per turn" in reply:
+                                return reply
+                            await asyncio.sleep(0.01)
+
+                await run_probe(0)
+                await wait_saved(b"361000")
+                try:
+                    reply = await shell(port, captured, b"settings_gate 1")
+                    assert b"Settings gate entered" in reply, reply
+                    await run_probe(73)
+                    reply = await shell(port, captured, b"config get imu/heading_correction_mdeg")
+                    assert b"= 362000 mdeg per turn" in reply, reply
+                    assert b"Saved: 361000 mdeg per turn (RAM differs)" in reply, reply
+                finally:
+                    await shell(port, captured, b"settings_gate 0")
+                await wait_saved(b"362000")
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD, virtual_clock=True) as device:
+        asyncio.run(exercise(device))
