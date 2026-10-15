@@ -135,6 +135,54 @@ def test_recording_generation_change_ends_without_mixing_partial(monkeypatch):
     assert events[-1]["records"] == 0
 
 
+def test_recording_waits_for_initialization_without_reloading_ready_info(monkeypatch):
+    pending = _info(size=0, capacity=0, next=0, record_schema="")
+    ready = _info()
+    finished = _info(active=False)
+    _fixture(
+        monkeypatch, iter((_fragment(active=False, data=b"ABCD"),)), pending,
+        infos=(pending, pending, ready, finished),
+    )
+    output = io.StringIO()
+    asyncio.run(recording.collect(
+        object(), output, "fixture", {"records": 0, "gaps": 0}, wait=True
+    ))
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert events[0]["recording"]["size"] == ready.size
+    assert [(event["index"], event["data"]) for event in events
+            if event["type"] == "record"] == [(0, "41424344")]
+    assert events[-1]["type"] == "application-end"
+
+
+def test_recording_wait_ends_if_application_exits_before_initialization(monkeypatch):
+    pending = _info(size=0, capacity=0, next=0, record_schema="")
+    _fixture(
+        monkeypatch, iter(()), pending,
+        infos=(pending, _info(size=0, capacity=0, next=0,
+                              record_schema="", active=False)),
+    )
+    output = io.StringIO()
+    with pytest.raises(RuntimeError, match="Recording not initialized"):
+        asyncio.run(recording.collect(
+            object(), output, "fixture", {"records": 0, "gaps": 0}, wait=True
+        ))
+    assert output.getvalue() == ""
+
+
+def test_recording_session_marks_cancellation():
+    output = io.StringIO()
+    with pytest.raises(asyncio.CancelledError):
+        with recording.session(output) as (session_id, counts):
+            counts["records"] = 2
+            raise asyncio.CancelledError()
+    event = json.loads(output.getvalue())
+    assert event.pop("ended_utc")
+    assert event == {
+        "type": "end", "session": session_id, "reason": "cancelled",
+        "records": 2, "gaps": 0,
+    }
+
+
 def test_recording_decodes_control_input_and_preserves_raw_bytes(monkeypatch):
     raw = struct.pack(
         "<8q10i6I2q4i4I",

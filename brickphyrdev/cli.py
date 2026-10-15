@@ -84,14 +84,26 @@ def main():
             choices=[format.name.lower() for format in application.Format],
             help="Default: Python for .py, MPY for .mpy, files for a directory/.cbor, ELF otherwise",
         )
+        if command == "run":
+            run_parser = transfer
     installation = app_commands.add_parser(
         "install", help="Store a validated application without starting"
     )
     installation.add_argument("image")
     installation.add_argument("--name", help="Installed name; default is the image filename stem")
-    app_commands.add_parser(
+    start_parser = app_commands.add_parser(
         "start", help="Start an installed name or the current RAM upload"
-    ).add_argument("name", nargs="?")
+    )
+    start_parser.add_argument("name", nargs="?")
+    for launch in (run_parser, start_parser):
+        launch.add_argument(
+            "--follow", action="store_true",
+            help="Show application output until exit; Ctrl+C detaches without stopping",
+        )
+        launch.add_argument(
+            "--record", metavar="FILE",
+            help="Follow output and collect cycle records into a new JSONL file",
+        )
     app_commands.add_parser("remove", help="Remove an installed image").add_argument("name")
     for command in ("list", "status", "stop", "output", "discard", "interrupt"):
         app_commands.add_parser(command)

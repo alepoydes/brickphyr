@@ -98,6 +98,33 @@ uv run brickphyrdev app --ble Brickphyr output
 uv run brickphyrdev app stop
 ```
 
+`app run` normally starts the application and closes the connection. To accompany
+its execution, use `--follow`; `--record FILE` also collects application cycle
+records and implies `--follow`:
+
+```sh
+uv run brickphyrdev app run examples/python/hello.py --follow
+uv run brickphyrdev app run build/native-examples/control_record.elf --record run.jsonl
+uv run brickphyrdev app --ble Brickphyr run build/native-examples/control_record.elf --record ble-run.jsonl
+uv run brickphyrdev app start my-program --follow
+```
+
+Upload/start, output and recording share one native console/SMP connection over
+USB or BLE. The same application launcher and record collector serve the other
+CLI commands. Program output goes unchanged to stdout; lifecycle and dropped-output
+notices go to stderr. On normal application exit, the client drains available
+output and records before closing. A nonzero result, fault or cleanup error fails
+the command. `--record` creates a new host file and refuses to overwrite an existing
+one before connecting. The application must initialize its recorder; the client
+waits for it while showing output. Record gaps and incomplete collection remain
+explicit in the existing [recording format](applications.md#application-recording).
+
+**Ctrl+C only detaches; it does not stop the application.** Connection failure
+also leaves autonomous execution alone. A cancelled active recording receives a
+cancelled footer when the file remains writable. To stop after detaching, use
+`brickphyrdev app stop` over the chosen transport. Finite hub buffers cannot
+guarantee lossless output or records if the reader or connection is too slow.
+
 Closing the command's connection leaves an autonomous application running. Status
 and stop may use either transport, regardless of the upload transport. Output
 drains one bounded batch; unread overflow is counted in status. No command above

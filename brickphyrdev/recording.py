@@ -144,8 +144,11 @@ def _advance(old, new):
         raise RuntimeError("Recording trigger state changed")
 
 
-async def collect(client, log, session, counts, *, after=None):
+async def collect(client, log, session, counts, *, after=None, wait=False):
     info = await checked(client, Info())
+    while wait and info.size == 0 and info.active:
+        await asyncio.sleep(0.05)
+        info = await checked(client, Info())
     if info.size == 0:
         raise RuntimeError("Recording not initialized")
     if not 0 < info.generation < 1 << 32:
@@ -368,23 +371,20 @@ async def collect(client, log, session, counts, *, after=None):
             partial_step = None
 
 
-async def _record(args, log):
-    session = str(uuid.uuid4())
+@contextlib.contextmanager
+def session(log):
+    session_id = str(uuid.uuid4())
     failure = None
     counts = {"records": 0, "gaps": 0}
     try:
-        async with connection(ble=args.ble, port=args.port, serial_number=args.serial) as (
-            client,
-            _,
-        ):
-            await collect(client, log, session, counts, after=getattr(args, "after", None))
+        yield session_id, counts
     except BaseException as error:
         failure = error
         raise
     finally:
         end = {
             "type": "end",
-            "session": session,
+            "session": session_id,
             "ended_utc": monitor.utc_now(),
             "reason": "cancelled"
             if isinstance(failure, (asyncio.CancelledError, KeyboardInterrupt))
@@ -400,6 +400,15 @@ async def _record(args, log):
                 monitor.write_log(log, end)
         else:
             monitor.write_log(log, end)
+
+
+async def _record(args, log):
+    with session(log) as (session_id, counts):
+        async with connection(ble=args.ble, port=args.port, serial_number=args.serial) as (
+            client,
+            _,
+        ):
+            await collect(client, log, session_id, counts, after=getattr(args, "after", None))
 
 
 def run(args):

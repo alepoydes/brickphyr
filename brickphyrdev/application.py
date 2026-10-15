@@ -307,6 +307,18 @@ async def upload(client, transport, image, format=Format.NATIVE):
         offset = reply.off
 
 
+async def launch(client, transport, args):
+    if args.command in ("run", "upload"):
+        image, format = read_image(
+            args.image, Format[args.format.upper()] if args.format else None
+        )
+        await upload(client, transport, image, format)
+    if args.command == "start" and args.name:
+        await checked(client, RunStored(name=installed_name(args.name, allow_slot=True)))
+    elif args.command in ("run", "start"):
+        await checked(client, Start())
+
+
 async def execute(args):
     async with connection(ble=args.ble, port=args.port, serial_number=args.serial) as (
         client,
@@ -326,15 +338,8 @@ async def execute(args):
             await install(client, image, args.name or Path(args.image).stem, format)
         elif args.command == "remove":
             await checked(client, Remove(name=installed_name(args.name, allow_slot=True)))
-        if args.command in ("run", "upload"):
-            image, format = read_image(
-                args.image, Format[args.format.upper()] if args.format else None
-            )
-            await upload(client, transport, image, format)
-        if args.command == "start" and args.name:
-            await checked(client, RunStored(name=installed_name(args.name, allow_slot=True)))
-        elif args.command in ("run", "start"):
-            await checked(client, Start())
+        if args.command in ("run", "upload", "start"):
+            await launch(client, transport, args)
         elif args.command == "stop":
             await checked(client, Stop())
         elif args.command == "interrupt":
@@ -364,6 +369,11 @@ async def execute(args):
 
 
 def run(args):
+    if getattr(args, "follow", False) or getattr(args, "record", None):
+        from . import follow
+
+        follow.run(args)
+        return
     if args.command == "record":
         from . import recording
 
