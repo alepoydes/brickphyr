@@ -161,13 +161,13 @@ input()
 
 
 def test_python_reads_complete_control_records_and_detects_gaps():
-    source = """import brickphyr, struct
+    source = """import brickphyr, errno, struct
 from pybricks.tools import wait
 try:
     brickphyr.record_info()
     raise AssertionError('recording existed before begin')
-except OSError:
-    pass
+except OSError as error:
+    assert error.args[0] == errno.ENODATA
 def params(value):
     return struct.pack('<4I', 0, value, (~value) & 0xffffffff, 0)
 brickphyr.control_start(open('controller.elf', 'rb').read(), params(7))
@@ -180,20 +180,21 @@ storage = bytearray(64)
 storage[:] = b'x' * len(storage)
 data, parameters = memoryview(storage)[:48], memoryview(storage)[48:]
 generation = info['generation']
-def rejected(generation, index, data, parameters):
+def rejected(generation, index, data, parameters, expected):
     before = bytes(data), bytes(parameters)
     try:
         brickphyr.record_readinto(generation, index, data, parameters)
         raise AssertionError('invalid record accepted')
-    except OSError:
+    except OSError as error:
+        assert error.args[0] == expected
         assert (bytes(data), bytes(parameters)) == before
 index = info['next'] - 1
-rejected(generation, index, bytearray(47), parameters)
-rejected(generation, index, data, bytearray(15))
-rejected(generation, index, data, data)
-rejected(generation + 1, index, data, parameters)
-rejected(generation, 0, data, parameters)
-rejected(generation, 1 << 63, data, parameters)
+rejected(generation, index, bytearray(47), parameters, errno.EMSGSIZE)
+rejected(generation, index, data, bytearray(15), errno.EMSGSIZE)
+rejected(generation, index, data, data, errno.EINVAL)
+rejected(generation + 1, index, data, parameters, errno.ESTALE)
+rejected(generation, 0, data, parameters, errno.EOVERFLOW)
+rejected(generation, 1 << 63, data, parameters, errno.EINVAL)
 for invalid_generation, invalid_index in ((generation + (1 << 32), index), (generation, 1 << 64), (generation, -1)):
     try:
         brickphyr.record_readinto(invalid_generation, invalid_index, data, parameters)

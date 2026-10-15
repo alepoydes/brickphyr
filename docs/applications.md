@@ -193,7 +193,8 @@ Python and USB/BLE readers have independent cursors; reading does not consume da
 Generation and index are unsigned 32-bit and 64-bit integers; values outside
 those ranges raise `OverflowError`. A changed generation returns `ESTALE`, an
 overwritten index `EOVERFLOW`, an index beyond `next` `EINVAL`, and a short buffer
-`EMSGSIZE`. These errors leave both payload buffers unchanged. The application
+`EMSGSIZE`. These codes, including `ENODATA`, are available in Python's `errno`
+module. These errors leave both payload buffers unchanged. The application
 must handle missing observations explicitly; the reader never silently skips
 ahead. `record_info()` is a snapshot: the ring can advance before the next read.
 
