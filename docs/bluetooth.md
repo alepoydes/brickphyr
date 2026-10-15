@@ -201,7 +201,7 @@ a long center press disconnects USB with operator-confirmed lights off. See
 [power behavior](settings.md#inactivity-shutdown) for button restart with USB attached.
 USB DFU entry and normal-image restoration with the Pybricks installer succeed
 after this startup fault; USB and BLE terminals work in the restored image.
-Controller loss during an active BLE session, radio recovery, Bluetooth throughput, pairing,
+Controller loss during an active BLE session, radio recovery, sustained Bluetooth throughput, pairing,
 controller input, and behavior under combined application traffic remain unverified.
 
 The management adapter accepts incoming LE peripheral-role links only. Outgoing

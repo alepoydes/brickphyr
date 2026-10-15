@@ -9,6 +9,7 @@
 #include <pbio/protocol.h>
 #include <zephyr/bluetooth/att.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/mgmt/mcumgr/transport/serial.h>
 
 LOG_MODULE_REGISTER(host_ble_session);
 
@@ -243,7 +244,9 @@ ssize_t host_ble_session_shell_input(struct host_ble_link *conn, const void *buf
 
 static void shell_output(struct k_work *work)
 {
-	uint8_t data[HOST_PROTOCOL_PAYLOAD_MAX];
+	/* Native output can carry a complete serial SMP frame; the Pybricks
+	 * event limit does not constrain this byte stream. */
+	uint8_t data[MCUMGR_SERIAL_MAX_FRAME];
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	struct host_ble_link *conn = shell_session && owner ? host_ble_link_ref(owner) : NULL;
 	uint32_t session = shell_session;

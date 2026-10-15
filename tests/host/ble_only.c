@@ -24,6 +24,10 @@ static struct host_ble_link *peer = &links[0];
 static struct k_spinlock output_lock;
 RING_BUF_DECLARE(output_bytes, 256);
 static unsigned int calls;
+static uint16_t mtu = 23;
+static size_t largest_notification;
+static bool reject_notification;
+static char burst[193];
 static K_SEM_DEFINE(command_done, 0, 1);
 
 #ifdef CC2640_GATT
@@ -161,6 +165,10 @@ static int gatt_shell_write(const uint8_t *data, size_t length)
 
 static int cmd_probe(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 2) {
+		shell_fprintf(shell, SHELL_NORMAL, "%s", burst);
+		return 0;
+	}
 	calls++;
 	shell_print(shell, "BLE-only probe");
 	k_sem_give(&command_done);
@@ -179,17 +187,24 @@ void host_ble_link_unref(struct host_ble_link *link)
 	zassert_true(atomic_dec(&link->references) > 0);
 }
 
-uint16_t host_ble_link_mtu(struct host_ble_link *link) { return 23; }
+uint16_t host_ble_link_mtu(struct host_ble_link *link) { return mtu; }
 
 int host_ble_link_notify(struct host_ble_link *link, enum host_ble_value value,
 			const uint8_t *data, size_t size)
 {
 	zassert_equal(value, HOST_BLE_VALUE_SHELL);
-	zassert_true(size <= 20);
+	zassert_true(size <= mtu - 3);
+	if (reject_notification && size > 64) {
+		reject_notification = false;
+		return -EAGAIN;
+	}
 	k_spinlock_key_t key = k_spin_lock(&output_lock);
 	int err = link != peer ? -ENOTCONN :
 		ring_buf_space_get(&output_bytes) < size ? -EAGAIN : 0;
-	if (!err) ring_buf_put(&output_bytes, data, size);
+	if (!err) {
+		ring_buf_put(&output_bytes, data, size);
+		largest_notification = MAX(largest_notification, size);
+	}
 	k_spin_unlock(&output_lock, key);
 	return err;
 }
@@ -233,9 +248,10 @@ static void connect_shell(void)
 	zassert_equal(host_ble_session_profile(), HOST_BLE_NATIVE);
 }
 
-static void receive_until(const char *ending)
+static const char *receive_until(const char *ending)
 {
-	char output[512] = {0};
+	static char output[512];
+	memset(output, 0, sizeof(output));
 	size_t length = 0;
 	int64_t deadline = k_uptime_get() + 1000;
 	while (k_uptime_get() < deadline && length < sizeof(output) - 1) {
@@ -244,10 +260,11 @@ static void receive_until(const char *ending)
 					  sizeof(output) - 1 - length);
 		k_spin_unlock(&output_lock, key);
 		length += part;
-		if (strstr(output, ending)) return;
+		if (strstr(output, ending)) return output;
 		k_sleep(K_MSEC(1));
 	}
 	zassert_unreachable("Missing %s in %s", ending, output);
+	return NULL;
 }
 
 static int smp_probe(struct smp_streamer *stream)
@@ -296,6 +313,24 @@ ZTEST(ble_only, test_cold_shell_smp_and_reconnect)
 	zassert_ok(k_sem_take(&command_done, K_SECONDS(1)));
 	receive_until("BLE-only probe");
 	zassert_equal(calls, 1);
+
+#ifndef CC2640_GATT
+	/* An exchanged MTU batches native output; a rejected notification must
+	 * neither consume nor duplicate any part of the byte stream. */
+	mtu = 130;
+	memcpy(burst, "[burst:", 7);
+	for (size_t i = 7; i < sizeof(burst) - 6; i++) burst[i] = 'a' + i % 26;
+	memcpy(burst + sizeof(burst) - 6, ":end]", 6);
+	reject_notification = true;
+	zassert_equal(host_ble_session_shell_input(peer, "probe burst\r", 12, 0, false), 12);
+	const char *output = receive_until(":end]");
+	const char *start = strstr(output, "[burst:");
+	zassert_not_null(start);
+	zassert_mem_equal(start, burst, sizeof(burst) - 1);
+	zassert_false(reject_notification);
+	zassert_true(largest_notification > 64);
+	mtu = 23;
+#endif
 
 	/* SMP's real serial codec and dispatcher run on that same Shell stream. */
 	static const struct mgmt_handler handlers[] = {{.mh_write = smp_probe}};
