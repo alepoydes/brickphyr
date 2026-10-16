@@ -307,7 +307,10 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 		if (run->request) {
 			err = hub_motor_group_get(&state);
 			if (!err) err = group_result(run, &state);
-			if (!err && state.error && !(state.error == -ETIMEDOUT && now >= action_end(run))) err = state.error;
+			/* Expiry is normal only after the whole command reached the outputs.
+			 * A request that expired in the queue is a missed action. */
+			if (!err && state.error && !(state.error == -ETIMEDOUT &&
+			    state.applied_mask == plan.port_mask && now >= action_end(run))) err = state.error;
 			if (!err) err = state.cleanup_error;
 			if (err) break;
 		}

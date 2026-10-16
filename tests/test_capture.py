@@ -220,3 +220,51 @@ def test_schedule_records_outputs_and_disconnect_cleanup():
 
     with native_console(build) as port:
         asyncio.run(asyncio.wait_for(exercise(port), timeout=5))
+
+
+def test_schedule_fails_if_accepted_drive_never_applies():
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port_name):
+        output = bytearray()
+        async with console.connection(output.extend, port=port_name, management=True) as (port, client):
+            for command in (b"pup_peer motor", b"pup_peer B motor"):
+                await shell(port, output, command)
+            async with asyncio.timeout(2):
+                for name in ("port.A", "port.B"):
+                    while True:
+                        state = await telemetry.snapshot(client, name)
+                        if not state.error and state.values["type_id"] == 2:
+                            break
+                        await asyncio.sleep(0)
+
+            for command in (b"capture prepare 20 200 battery", b"capture at 100 20 A=200 B=-200",
+                            b"capture check", b"pup_peer pwm_timeout_once", b"capture start"):
+                response = await shell(port, output, command)
+                assert b"Capture failed" not in response, response
+
+            log = io.BytesIO()
+            with recording.session(log) as (session, counts):
+                await recording.collect(client, log, session, counts)
+            log.seek(0)
+            data = Recording(log)
+            values = [frame.values for frame in data.frames()]
+            assert data.complete and not data.gaps
+            assert data.outcome["reason"] == "error", data.outcome
+            groups = [value for value in values if value["kind"] == "group"]
+            assert len(groups) == 1, groups
+            assert (groups[0]["action"], groups[0]["admission_error"],
+                    groups[0]["applied_mask"], groups[0]["error"],
+                    groups[0]["cleanup_mask"], groups[0]["cleanup_error"]) == (
+                        1, 0, 0, -116, 3, 0), groups[0]
+            assert groups[0]["request"] > 0
+            assert (values[-1]["kind"], values[-1]["error"],
+                    values[-1]["cleanup_error"], values[-1]["attempted_actions"]) == (
+                        "end", -116, 0, 1)
+            for name in ("motor.A", "motor.B"):
+                state = (await telemetry.snapshot(client, name)).values
+                assert (state["owner"], state["duty_permille"], state["pending"]) == (0, 0, 0)
+            await shell(port, output, b"capture clear")
+
+    with native_console(build) as port:
+        asyncio.run(asyncio.wait_for(exercise(port), timeout=5))

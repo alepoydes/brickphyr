@@ -211,7 +211,7 @@ and finishes collection in 6.12 seconds; a concurrent Shell command completes in
 recording across eight seconds without a BLE connection, then resumes collection
 byte-for-byte identically to a complete reread. Cleanup returns heap usage to its
 initial value. These are bounded passive checks on the same Inventor F4;
-sustained combined load and energized motor timing remain separate checks.
+sustained combined load and instrumented electrical timing remain separate checks.
 
 ## Finite motor schedules
 
@@ -248,9 +248,10 @@ existing exclusive recorder/application admission rules still apply.
 Recording and actions share one monotonic origin aligned to the next millisecond
 boundary, matching the motor service's absolute deadlines. Queue delay consumes
 the command's validity rather than extending it. Missed actions are not replayed
-in a burst: if the next action is already due, or the preceding output is still
-pending, the experiment fails and coasts. Requested and observed driver times
-remain distinct; see [F4 output timing](ports.md#f4-output-timing) for the limits
+in a burst: if the next action is already due, the preceding output is still
+pending, or a command expires before all its outputs apply, the experiment fails
+and coasts. Requested and observed driver times remain distinct; see
+[F4 output timing](ports.md#f4-output-timing) for the limits
 of electrical synchronization claims.
 
 `capture stop`, a detected management-link loss or an execution error coasts the
@@ -300,6 +301,23 @@ fixture also checks DTR loss and collection after reconnection. Native simulatio
 checks cancellation between grouped driver writes and preservation of output
 ownership. These checks do not establish physical motion, BLE timing or electrical
 synchronization.
+
+On one battery-powered Robot Inventor F4 (PCB revision unknown), BLE schedules
+drive two suspended ID-75 motors on B/F through duty changes, reversal, brake
+and coast. A 1.8-second experiment retains all 36 observations at 50 ms intervals,
+including encoder motion and both members' applied results. Explicit stop and
+actual BLE disconnect cancel active drive, release both ports and retain complete
+binary records for collection after reconnection. These checks have no missed
+samples or cleanup errors. Separate 350 ms pulses with USB supplying power
+verify both directions and automatic deadline expiry.
+
+In the disconnect check, a 20% command with a four-second limit coasts after
+about 2.49 seconds, before that limit. Closing the host BLE connection itself
+takes 2.17–2.69 seconds across the bounded disconnect checks.
+Link-loss handling is therefore not an instantaneous stop command. Keep finite
+output deadlines; use `capture stop` when the connection is available. These
+bounded checks establish functional actuation and cleanup, not electrical edge
+alignment, sensor accuracy or timing under sustained combined load.
 
 ### Command files
 

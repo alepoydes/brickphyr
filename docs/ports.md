@@ -624,8 +624,9 @@ at most 1 ms in these short runs. They do not establish the timing of energized
 output or an equal-traffic USB/BLE comparison.
 The ABI 2.0 periodic coast example retains separate original A/B completion times
 on F4 through USB/BLE beside Python GC, with 16 attributed outcomes and no skips.
-Grouped drive, measured PWM timing and combined-load expiry latency remain
-unverified. Native ABI 2.0 includes the retained per-member timing in group results;
+Grouped drive has the later [F4 adapter checks](#f4-output-timing). Instrumented
+PWM timing and combined-load expiry latency remain unverified. Native ABI 2.0
+includes the retained per-member timing in group results;
 rebuild ELF applications with its SDK. Fixed group metadata occupies 304 bytes
 on F4, without a new allocation, worker, or change to the Python arena and stacks.
 
@@ -1379,8 +1380,14 @@ path with two connected ID-75 devices: grouped updates, reversal, brake, expiry
 and disconnect cleanup complete without errors other than their expected timeout
 or cancellation, with common driver completion times for both members. All pins
 remain GPIO low. Neither check energizes motors or measures electrical edges.
-Earlier physical drive checks in this document used the portable adapter;
-energized operation and instrumented timing of the F4 adapter remain pending.
+The F4 adapter also drives two suspended ID-75 motors on B/F through the shared
+Shell schedule over BLE. Battery-powered checks cover duty changes, reversal,
+brake/coast, explicit stop and active-link-loss cleanup; USB-powered checks cover
+short opposite-direction pulses and deadline expiry. Encoder observations confirm
+motion and stopping, and records retain successful application/cleanup for both
+ports without missed samples. See [schedule evidence](telemetry.md#finite-motor-schedules).
+These are functional checks; instrumented electrical synchronization and timing
+under sustained combined load remain unverified.
 
 There are at most 500 service rounds/s before scheduler and GPIO execution cost,
 with at most six finite state transitions in a round. Each UART has a static

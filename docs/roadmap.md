@@ -50,9 +50,10 @@ synthetic devices for the final BLE and electrical measurements.
 The built-in recorder, finite schedules, binary collection and shared Shell
 command files are implemented. Passive recording, reconnect/resume, full-buffer
 collection and successive command-file experiments have battery-powered Inventor
-F4 BLE checks. Grouped outputs have synthetic checks and F4 checks with motor
-pins held inactive; energized operation and electrical synchronization remain
-unverified. See [measurement usage and evidence](telemetry.md).
+F4 BLE checks. Energized B/F schedules on the same hub also cover duty changes,
+reversal, brake/coast, explicit stop and disconnect cleanup on battery power;
+short USB-powered pulses verify deadline expiry. Instrumented electrical
+synchronization remains unverified. See [measurement usage and evidence](telemetry.md).
 
 ## Starting point
 

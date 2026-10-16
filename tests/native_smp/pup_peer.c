@@ -80,6 +80,24 @@ static struct peer peers[] = {
 	{.uart = DEVICE_DT_GET(DT_NODELABEL(pup_uart_b)), .port = 1, .selected = -1},
 };
 static K_MUTEX_DEFINE(peer_lock);
+static atomic_t pwm_timeout_armed;
+
+static int timeout_first_drive(const struct device *dev, uint32_t channel,
+	uint32_t period, uint32_t pulse, pwm_flags_t flags)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(channel);
+	ARG_UNUSED(period);
+	ARG_UNUSED(flags);
+	if (pulse && atomic_cas(&pwm_timeout_armed, 1, 0)) {
+		/* The accepted group reaches its driver, but misses the deadline
+		 * before any output applies. Disarm before cleanup can use PWM. */
+		fake_pwm_set_cycles_fake.custom_fake = NULL;
+		k_msleep(40);
+		return -ETIMEDOUT;
+	}
+	return 0;
+}
 
 static uint8_t mode_count(const struct peer *peer)
 {
@@ -436,6 +454,11 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 			fake_pwm_set_cycles_fake.arg3_val);
 		return 0;
 	}
+	if (!strcmp(argv[1], "pwm_timeout_once")) {
+		atomic_set(&pwm_timeout_armed, 1);
+		fake_pwm_set_cycles_fake.custom_fake = timeout_first_drive;
+		return 0;
+	}
 	if (!strcmp(argv[1], "pf")) {
 		struct pf_record records[PF_HISTORY_CAPACITY];
 		k_mutex_lock(&peer_lock, K_FOREVER);
@@ -474,7 +497,7 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	    strcmp(argv[1], "encoded_motor") &&
 	    strcmp(argv[1], "unplug") &&
 	    strcmp(argv[1], "touch") && strcmp(argv[1], "press")) {
-		shell_error(shell, "Expected a peer kind, encoded_motor, motor_angle, motor_step, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm or pf");
+		shell_error(shell, "Expected a peer kind, encoded_motor, motor_angle, motor_step, serial, serial_rx, serial_close_error, unplug, touch, press, hold, resume, hold_reset, resume_reset, output, pwm, pwm_timeout_once or pf");
 		return -EINVAL;
 	}
 	k_mutex_lock(&peer_lock, K_FOREVER);
@@ -522,5 +545,5 @@ static int pup_peer(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(pup_peer, NULL,
-	"Synthetic port A (default) or B: [B] connect|generic|serial|serial_rx <hex>|serial_close_error|serial_power_error|power|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pf.",
+	"Synthetic port A (default) or B: [B] connect|generic|serial|serial_rx <hex>|serial_close_error|serial_power_error|power|force|tilt|infrared|color|ultrasonic|color_distance|matrix|light|motor|encoded_motor|motor_angle <0..3599>|motor_step <-100..100>|unplug|touch|press|hold|resume|hold_reset|resume_reset|output|pwm|pwm_timeout_once|pf.",
 	pup_peer, 2, 2);
