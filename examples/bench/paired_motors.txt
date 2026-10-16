@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Drives B and F in both directions. Use freely suspended wheels.
+# 15 ms observations for 1.5 s; times are ms and duty is signed permille.
+capture prepare 15 1500 imu:gx,gy,gz imu.calibrated:ax,ay,az battery:voltage encoder.B encoder.F motor.B:duty motor.F:duty
+capture at 200 350 B=300 F=300
+capture at 650 350 B=-300 F=-300
+capture at 1050 150 B=brake F=brake
+capture at 1250 0 B=coast F=coast
+capture check
+capture start

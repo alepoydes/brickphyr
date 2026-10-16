@@ -213,6 +213,52 @@ byte-for-byte identically to a complete reread. Cleanup returns heap usage to it
 initial value. These are bounded passive checks on the same Inventor F4;
 sustained combined load and instrumented electrical timing remain separate checks.
 
+### Robot measurement profile
+
+The [paired-motor command file](../examples/bench/paired_motors.txt) records
+three raw gyro axes, three calibrated acceleration axes, battery voltage,
+two encoder angles and both applied motor duties. Scheduled command events
+retain requested outputs and their application/cleanup reports separately.
+It drives B/F at 30% duty in both directions, then brakes and coasts; use freely
+suspended wheels and adapt the port names to the actual robot.
+
+Start with an idle application and no retained capture. Run the example over
+the default BLE connection with a new output filename:
+
+```sh
+uv run brickphyrdev terminal --commands examples/bench/paired_motors.txt --record paired.cbor
+```
+
+The Shell remains usable during collection. After `Ctrl+T` reports completion,
+`capture clear` releases the retained data. Exit with `Ctrl+]` and inspect it:
+
+```sh
+uv run brickphyrdev record-info paired.cbor
+```
+
+The profile takes 100 observations at 15 ms intervals over 1.5 seconds. Each
+scheduled observation is 288 bytes; four actions bring the reserved recorder
+memory to 30,437 bytes, before allocator and worker costs. The required sample
+payload rate is 19,334 bytes/s including transfer length prefixes, before action
+events and SMP/BLE overhead. This exceeds the measured BLE capacity: collection
+may start immediately, but most bytes arrive after sampling ends. The finite RAM
+buffer retains every sample independently of that backlog. Use `capture check`
+to size a changed duration or selection; increasing duration beyond RAM capacity
+is rejected rather than lowering the requested sampling rate.
+
+A bounded Robot Inventor F4 check (PCB revision unknown, USB supplying power,
+BLE carrying commands and data) runs that profile with suspended ID-75 motors
+on B/F and a simultaneous interactive Shell command. All 100 observations and
+four actions complete, with no skipped releases, transfer gaps, acquisition
+errors or cleanup errors. The maximum observed release lateness is 848 us;
+IMU age at snapshot completion is at most 2,145 us and encoder age at most
+5,724 us. Neither IMU nor encoder sequences repeat between observations.
+The largest driver-reported application delay is 543 us; this is not an
+electrical-edge measurement. An interactive setting read completes in 129 ms.
+Collection transfers 29,800 packed bytes in 8.25 seconds. These are observations
+from a finite workload, not worst-case timing guarantees or battery-powered
+acceptance of this exact profile.
+
 ## Finite motor schedules
 
 A prepared capture can include a finite sequence of grouped motor commands.

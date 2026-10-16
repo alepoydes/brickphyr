@@ -30,6 +30,14 @@ static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 /* Connection and GATT callbacks execute on the Bluetooth RX workqueue. */
 static struct bt_conn *disconnect_pending[CONFIG_BT_MAX_CONN];
 static struct k_spinlock session_lock;
+/* Diagnostic history is limited to incoming management-side LE links. */
+struct link_diagnostics {
+	uint32_t up, down, active, admitted, connect_failed, admission_failed, shell_failed;
+	uint32_t local_disconnects, last_up_ms, last_down_ms, last_failure_ms;
+	int last_failure;
+	uint8_t last_failure_stage, last_reason;
+};
+static struct link_diagnostics link_stats;
 static void request_disconnect(struct bt_conn *conn);
 static K_MUTEX_DEFINE(radio_lock);
 enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
@@ -313,7 +321,20 @@ static void subscribed(const struct bt_gatt_attr *attr, uint16_t value)
 static ssize_t shell_subscription(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				 uint16_t value)
 {
-	return host_ble_session_shell_subscribe((struct host_ble_link *)conn, value);
+	ssize_t result = host_ble_session_shell_subscribe((struct host_ble_link *)conn, value);
+	if (value && result < 0) {
+		struct bt_conn_info info;
+		if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE &&
+		    info.role == BT_CONN_ROLE_PERIPHERAL) {
+			k_spinlock_key_t key = k_spin_lock(&session_lock);
+			link_stats.shell_failed++;
+			link_stats.last_failure_stage = 's';
+			link_stats.last_failure = result;
+			link_stats.last_failure_ms = k_uptime_get_32();
+			k_spin_unlock(&session_lock, key);
+		}
+	}
+	return result;
 }
 
 static ssize_t shell_input(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -380,17 +401,51 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	struct bt_conn_info info;
 	if (bt_conn_get_info(conn, &info) || info.type != BT_CONN_TYPE_LE ||
 	    info.role != BT_CONN_ROLE_PERIPHERAL) return;
-	if (!err && (atomic_get(&radio_state) == RADIO_FAILED ||
-	    host_ble_session_open((struct host_ble_link *)conn))) request_disconnect(conn);
+	int admission = 0;
+	if (!err) {
+		admission = atomic_get(&radio_state) == RADIO_FAILED ?
+			(radio_error < 0 ? radio_error : -EIO) :
+			host_ble_session_open((struct host_ble_link *)conn);
+	}
 	/* Keep the reservation until the common session publishes its owner.
 	 * Serialize its release with advertise's owner check and reservation. */
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	uint32_t now = k_uptime_get_32();
+	if (err) {
+		link_stats.connect_failed++;
+		link_stats.last_failure_stage = 'c';
+		link_stats.last_failure = err;
+		link_stats.last_failure_ms = now;
+	} else {
+		link_stats.up++;
+		link_stats.active++;
+		link_stats.last_up_ms = now;
+		if (admission) {
+			link_stats.admission_failed++;
+			link_stats.last_failure_stage = 'a';
+			link_stats.last_failure = admission;
+			link_stats.last_failure_ms = now;
+		} else {
+			link_stats.admitted++;
+		}
+	}
 	atomic_clear(&advertising);
 	k_spin_unlock(&session_lock, key);
+	if (admission) request_disconnect(conn);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	struct bt_conn_info info;
+	if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE &&
+	    info.role == BT_CONN_ROLE_PERIPHERAL) {
+		k_spinlock_key_t key = k_spin_lock(&session_lock);
+		link_stats.down++;
+		if (link_stats.active) link_stats.active--;
+		link_stats.last_reason = reason;
+		link_stats.last_down_ms = k_uptime_get_32();
+		k_spin_unlock(&session_lock, key);
+	}
 	host_ble_session_close((struct host_ble_link *)conn);
 }
 
@@ -498,6 +553,9 @@ static void request_disconnect(struct bt_conn *conn)
 	/* Retain each distinct connection until its HCI command finishes. HCI
 	 * waits must not block the system/button queue or Bluetooth RX callbacks.
 	 * Only the real disconnection callback releases management ownership. */
+	struct bt_conn_info info;
+	bool management = !bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE &&
+		info.role == BT_CONN_ROLE_PERIPHERAL;
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	size_t free = ARRAY_SIZE(disconnect_pending);
 	for (size_t i = 0; i < ARRAY_SIZE(disconnect_pending); i++) {
@@ -511,6 +569,7 @@ static void request_disconnect(struct bt_conn *conn)
 	 * so a new connection always has room in this equally sized array. */
 	__ASSERT_NO_MSG(free < ARRAY_SIZE(disconnect_pending));
 	disconnect_pending[free] = bt_conn_ref(conn);
+	if (management) link_stats.local_disconnects++;
 	k_work_submit_to_queue(&radio_queue, &disconnect_work);
 	k_spin_unlock(&session_lock, key);
 }
@@ -634,6 +693,22 @@ static void print_connection(struct bt_conn *conn, void *data)
 
 static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "link")) {
+		k_spinlock_key_t key = k_spin_lock(&session_lock);
+		struct link_diagnostics stats = link_stats;
+		k_spin_unlock(&session_lock, key);
+		const char *stage = stats.last_failure_stage == 'c' ? "connect" :
+			stats.last_failure_stage == 'a' ? "admit" :
+			stats.last_failure_stage == 's' ? "shell" : "none";
+		shell_print(shell, "BLE link up=%u down=%u live=%u ok=%u cf=%u af=%u sf=%u local=%u",
+			stats.up, stats.down, stats.active, stats.admitted,
+			stats.connect_failed, stats.admission_failed, stats.shell_failed,
+			stats.local_disconnects);
+		shell_print(shell, "last fail=%s:%d at %u ms; reason=0x%02x up=%u down=%u ms",
+			stage, stats.last_failure, stats.last_failure_ms, stats.last_reason,
+			stats.last_up_ms, stats.last_down_ms);
+		return 0;
+	}
 	if (argc == 1) {
 		const char *const names[] = {"off", "starting", "on", "stopping", "failed"};
 		int state = atomic_get(&radio_state);
@@ -671,7 +746,7 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 	}
 	return err;
 }
-SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth status, or on | off.", cmd_bluetooth, 1, 1);
+SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth status, link, or on | off.", cmd_bluetooth, 1, 1);
 
 static int setup(void)
 {

@@ -58,6 +58,77 @@ def test_console_raw_smp_rejects_fragmented_oversize():
     asyncio.run(exercise())
 
 
+def test_console_ble_connect_callback_lifetime(monkeypatch):
+    # Synthetic Bleak callback delivery; no firmware, adapter, or radio is involved.
+    state = {"recovers": True}
+    radios = []
+
+    class FakeRadio:
+        def __init__(self, device, disconnected_callback, **kwargs):
+            self.disconnected_callback = disconnected_callback
+            self.is_connected = False
+            self.rx = SimpleNamespace(max_write_without_response_size=20)
+            self.smp = SimpleNamespace(max_write_without_response_size=20)
+            self.services = SimpleNamespace(
+                get_service=lambda uuid: uuid if uuid == console.SERVICE else None,
+                get_characteristic=lambda uuid: {
+                    console.RX: self.rx,
+                    console.SMP_CHARACTERISTIC_UUID: self.smp,
+                }.get(uuid),
+            )
+            self.writes = []
+            self.notifications = []
+            radios.append(self)
+
+        async def connect(self):
+            # A failed internal attempt can call back before Bleak retries.
+            self.disconnected_callback(self)
+            self.is_connected = state["recovers"]
+
+        async def start_notify(self, characteristic, callback):
+            self.notifications.append(characteristic)
+
+        async def write_gatt_char(self, characteristic, data, response):
+            self.writes.append((characteristic, data, response))
+
+        async def disconnect(self):
+            self.is_connected = False
+            self.disconnected_callback(self)
+
+    async def discover(**kwargs):
+        return [SimpleNamespace(name="fixture", address="synthetic")]
+
+    monkeypatch.setattr(console, "BleakClient", FakeRadio)
+    monkeypatch.setattr(console.BleakScanner, "discover", discover)
+
+    async def exercise():
+        transport = console.ConsoleTransport(lambda _: None, ble="fixture", management=True)
+        await transport.connect()
+        radio = radios[-1]
+        assert radio.is_connected and not transport.closed.is_set()
+        await transport.write(b"shell input")
+        assert radio.writes == [(radio.rx, b"shell input", True)]
+
+        await transport.send(b"pending SMP")
+        radio.is_connected = False
+        radio.disconnected_callback(radio)
+        assert transport.closed.is_set() and transport.pending.done()
+        with pytest.raises(SMPTransportDisconnected, match="BLE console disconnected"):
+            await transport.receive()
+        await transport.disconnect()
+
+        # A callback followed by no live connection is a genuine setup failure.
+        state["recovers"] = False
+        failed = console.ConsoleTransport(lambda _: None, ble="fixture", management=True)
+        with pytest.raises(SMPTransportDisconnected, match="BLE console disconnected"):
+            await failed.connect()
+        assert failed.closed.is_set()
+        assert radios[-1].notifications == []
+        await failed.disconnect()
+
+    asyncio.run(exercise())
+
+
 def test_monitor_waits_for_output_boundary():
     for sequence in (
         b"\x1b[32m",
@@ -111,6 +182,10 @@ def test_one_console_with_management(tmp_path, monkeypatch, ble):
                 self.serial = None
                 self.pause_writes = False
                 instances.append(self)
+
+            @property
+            def is_connected(self):
+                return self.serial is not None and self.serial.is_open
 
             async def connect(self):
                 self.serial = serial.Serial(port, timeout=0, exclusive=True)

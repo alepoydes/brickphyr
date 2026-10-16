@@ -179,14 +179,24 @@ class ConsoleTransport:
             ]
             if len(matches) != 1:
                 raise RuntimeError(f"Expected one {self.ble!r} hub, found {len(matches)}")
+            established = False
+
+            def disconnected(_):
+                # Bleak can report a failed attempt and retry inside connect().
+                # Only a loss after that operation succeeds ends our session.
+                if established:
+                    self._fail(SMPTransportDisconnected("BLE console disconnected"))
+
             self.radio = BleakClient(
                 matches[0],
                 timeout=timeout_s,
-                disconnected_callback=lambda _: self._fail(
-                    SMPTransportDisconnected("BLE console disconnected")
-                ),
+                disconnected_callback=disconnected,
             )
             await self.radio.connect()
+            established = True
+            if not self.radio.is_connected:
+                disconnected(self.radio)
+                raise self.error
             if self.radio.services.get_service(SERVICE) is None:
                 raise RuntimeError("This hub does not provide the native Brickphyr terminal")
             await self.radio.start_notify(TX, lambda _, data: self._feed(data))
@@ -199,6 +209,8 @@ class ConsoleTransport:
                 await self.radio.start_notify(
                     self.smp_characteristic, lambda _, data: self._feed_smp(data)
                 )
+            if self.closed.is_set():
+                raise self.error or SMPTransportDisconnected("Console closed")
         else:
             port = self.port
             if port is None:

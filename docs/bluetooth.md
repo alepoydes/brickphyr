@@ -82,6 +82,27 @@ before opening the other transport. The 31-byte legacy advertising limit puts on
 service UUID in advertising and the other beside the name in scan response. PnP
 identity remains available through the Device Information GATT service.
 
+On F4, `bluetooth link` reports incoming management-link history, without
+opening a connection or changing the radio. `up`/`down` count physical links,
+`live` counts current links and `ok` counts admitted sessions. `cf`, `af` and
+`sf` count connection, management-admission and Shell-subscription failures;
+`local` counts disconnect requests made by the hub. The last failure retains its
+stage, code and time across subsequent successes. A connection failure uses an
+HCI status; admission and Shell failures use the corresponding negative service
+or ATT error. `reason` is the last HCI disconnection reason. Times are uptime
+milliseconds modulo 2^32; the history resets on reboot and uses bounded storage.
+It can be read over USB after a failed BLE connection has released ownership.
+
+Closing a Linux client need not terminate the radio link immediately. For example,
+[BlueZ 5.87's disconnect path](https://github.com/bluez/bluez/blob/8750129efca8/src/device.c)
+waits on a two-second timer before requesting disconnection; bounded F4 checks
+with that host observed 2.17–2.70 seconds. Explicitly stopping notifications does
+not remove this delay. Diagnostic motor commands retain independent finite
+deadlines; use `capture stop` for an immediate stop request over a working link.
+The native client also allows Bleak to finish its own connection establishment:
+a failed internal attempt does not invalidate a later successful connection.
+A loss after establishment still closes the session and wakes pending requests.
+
 Host management, including MCUmgr, does not require pairing. Enabling pairing
 for application peripherals does not change access to the management services.
 
