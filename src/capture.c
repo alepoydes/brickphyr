@@ -14,18 +14,16 @@
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
+#include <brickphyr_capture.h>
 
-/* brickphyr.capture/1: explicit little-endian fields, no C padding or field
- * names per sample. Configuration is mask, period_ms, duration_ms, clock_us.
+/* brickphyr.capture/2: explicit little-endian fields, no C padding or field
+ * names per sample. Configuration includes source and per-source field masks.
  * Each sample begins with scheduled/start/end us and missed releases (28 B).
  * Blocks follow mask order; source times remain acquisition/service times. */
-enum { RAW_IMU, CALIBRATED_IMU, BATTERY, PORT_SOURCE, SOURCE_COUNT = 15 };
-static const char *const sources[] = {"imu", "imu.calibrated", "battery",
-	"encoder.A", "motor.A", "encoder.B", "motor.B", "encoder.C", "motor.C",
-	"encoder.D", "motor.D", "encoder.E", "motor.E", "encoder.F", "motor.F"};
-static const uint8_t sizes[] = {56, 68, 44, 28, 52, 28, 52, 28, 52, 28, 52, 28, 52, 28, 52};
-enum { HEADER_SIZE = 28, CONFIG_SIZE = 16, STACK_SIZE = 2048,
-	BENCH_CONFIG_SIZE = 48, STEP_SIZE = 24, MAX_STEPS = (1024 - BENCH_CONFIG_SIZE) / STEP_SIZE };
+enum { RAW_IMU, CALIBRATED_IMU, BATTERY, PORT_SOURCE };
+enum { HEADER_SIZE = 28, STACK_SIZE = 2048,
+	BENCH_CONFIG_SIZE = CONFIG_SIZE + 32, STEP_SIZE = 24,
+	MAX_STEPS = (1024 - BENCH_CONFIG_SIZE) / STEP_SIZE };
 struct capture_step {
 	uint32_t offset_ms, duration_ms, coast_mask;
 	int16_t duty[BP_PORT_COUNT];
@@ -33,6 +31,7 @@ struct capture_step {
 
 struct capture_plan {
 	uint32_t mask, period_ms, duration_ms;
+	uint8_t fields[SOURCE_COUNT];
 	struct bp_record_spec record;
 	size_t record_memory, payload_bytes;
 	uint32_t samples, snapshot_size, step_count, port_mask, generations[BP_PORT_COUNT];
@@ -66,6 +65,66 @@ static bool available(unsigned int source)
 	return enabled && !hub_control_port_get((source - PORT_SOURCE) / 2, &value);
 }
 
+static uint32_t source_size(unsigned int source, uint8_t selected)
+{
+	const struct capture_fields *fields = &field_kinds[source_kinds[source]];
+	uint32_t size = fields->base;
+	for (unsigned int i = 0; i < fields->count; i++) {
+		if (selected & BIT(i)) size += fields->items[i].size;
+	}
+	return size;
+}
+
+static void show_source(const struct shell *shell, unsigned int source, uint8_t selected)
+{
+	const struct capture_fields *fields = &field_kinds[source_kinds[source]];
+	shell_fprintf(shell, SHELL_NORMAL, "  %s:", sources[source]);
+	bool first = true;
+	for (unsigned int i = 0; i < fields->count; i++) {
+		if (!(selected & BIT(i))) continue;
+		shell_fprintf(shell, SHELL_NORMAL, "%s%s", first ? "" : ",", fields->items[i].name);
+		first = false;
+	}
+	shell_print(shell, " (%u bytes, including %u required)", source_size(source, selected), fields->base);
+}
+
+static int select_source(struct capture_plan *candidate, const char *argument)
+{
+	size_t length = strcspn(argument, ":");
+	unsigned int source;
+	for (source = 0; source < SOURCE_COUNT; source++) {
+		if (strlen(sources[source]) == length && !strncmp(argument, sources[source], length)) break;
+	}
+	if (source == SOURCE_COUNT) return -ENOENT;
+	if (!available(source)) return -ENOTSUP;
+	if (candidate->mask & BIT(source)) return -EINVAL;
+	const struct capture_fields *fields = &field_kinds[source_kinds[source]];
+	uint8_t selected = BIT(fields->count) - 1;
+	if (argument[length]) {
+		selected = 0;
+		const char *next = argument + length + 1;
+		for (;;) {
+			length = strcspn(next, ",");
+			if (!length) return -EINVAL;
+			unsigned int field;
+			for (field = 0; field < fields->count; field++) {
+				if (strlen(fields->items[field].name) == length &&
+				    !strncmp(next, fields->items[field].name, length)) break;
+			}
+			if (field == fields->count) return -ENOENT;
+			if (selected & BIT(field)) return -EINVAL;
+			selected |= BIT(field);
+			next += length;
+			if (!*next) break;
+			next++;
+		}
+	}
+	candidate->mask |= BIT(source);
+	candidate->fields[source] = selected;
+	candidate->record.size += source_size(source, selected);
+	return 0;
+}
+
 static void put32(uint8_t **out, uint32_t value)
 {
 	sys_put_le32(value, *out);
@@ -78,26 +137,6 @@ static void put64(uint8_t **out, int64_t value)
 	*out += 8;
 }
 
-static void imu_bytes(uint8_t **out, const struct bp_imu_sample *raw,
-	const struct bp_imu_state *calibrated)
-{
-	put64(out, raw->sample_us);
-	put64(out, raw->read_us);
-	put32(out, raw->sequence);
-	put32(out, raw->missed);
-	put32(out, raw->failures);
-	put32(out, raw->error);
-	const int32_t *acceleration = calibrated ? calibrated->acceleration : raw->acceleration;
-	const int32_t *angular_velocity = calibrated ? calibrated->angular_velocity : raw->angular_velocity;
-	for (size_t i = 0; i < 3; i++) put32(out, acceleration[i]);
-	for (size_t i = 0; i < 3; i++) put32(out, angular_velocity[i]);
-	if (calibrated) {
-		put32(out, calibrated->epoch);
-		put32(out, calibrated->error);
-		put32(out, (calibrated->ready ? BIT(0) : 0) | (calibrated->stationary ? BIT(1) : 0));
-	}
-}
-
 static void observe(uint8_t *out)
 {
 	/* Selected raw/calibrated IMU and each encoder/output pair share one service
@@ -106,22 +145,16 @@ static void observe(uint8_t *out)
 		struct bp_imu_state value = {0};
 		int err = plan.mask & BIT(CALIBRATED_IMU) ? hub_imu_get_state(&value) : hub_imu_get(&value.raw);
 		if (err) value.error = value.raw.error = err;
-		if (plan.mask & BIT(RAW_IMU)) imu_bytes(&out, &value.raw, NULL);
-		if (plan.mask & BIT(CALIBRATED_IMU)) imu_bytes(&out, &value.raw, &value);
+		if (plan.mask & BIT(RAW_IMU)) out = capture_pack_imu(out, plan.fields[RAW_IMU], &value.raw);
+		if (plan.mask & BIT(CALIBRATED_IMU)) {
+			out = capture_pack_imu_calibrated(out, plan.fields[CALIBRATED_IMU], &value);
+		}
 	}
 	if (plan.mask & BIT(BATTERY)) {
 		struct bp_battery_sample value = {0};
 		int err = hub_battery_get(&value);
 		if (err) value.error = err;
-		put64(&out, value.sample_ms);
-		put64(&out, value.read_ms);
-		put32(&out, value.voltage_mv);
-		put32(&out, value.current_ma);
-		put32(&out, value.sequence);
-		put32(&out, value.failures);
-		put32(&out, value.error);
-		put32(&out, value.average_mv);
-		put32(&out, (value.low ? BIT(0) : 0) | (value.critical ? BIT(1) : 0));
+		out = capture_pack_battery(out, plan.fields[BATTERY], &value);
 	}
 	for (unsigned int port = 0; port < BP_PORT_COUNT; port++) {
 		unsigned int encoder = PORT_SOURCE + port * 2;
@@ -130,27 +163,10 @@ static void observe(uint8_t *out)
 		int err = hub_control_port_get(port, &value);
 		if (err) value.error = value.output_error = err;
 		if (plan.mask & BIT(encoder)) {
-			put64(&out, value.sample_ms);
-			put64(&out, value.angle_mdeg);
-			put32(&out, value.generation);
-			put32(&out, value.sequence);
-			put32(&out, value.error);
+			out = capture_pack_encoder(out, plan.fields[encoder], &value);
 		}
 		if (plan.mask & BIT(encoder + 1)) {
-			put64(&out, value.requested_ms);
-			put64(&out, value.applied_ms);
-			put32(&out, value.generation);
-			put32(&out, value.request);
-			put32(&out, value.completed);
-			put32(&out, value.request_generation);
-			put32(&out, value.output_generation);
-			put32(&out, value.output_error);
-			put32(&out, value.cleanup_error);
-			put32(&out, value.duty_permille);
-			*out++ = value.mode;
-			*out++ = value.valid;
-			*out++ = value.pending;
-			*out++ = value.owner;
+			out = capture_pack_motor(out, plan.fields[encoder + 1], &value);
 		}
 	}
 }
@@ -462,7 +478,7 @@ static void show(const struct shell *shell)
 		shell_print(shell, "Shared heap free: %zu bytes; start still requires allocation", memory.heap_free);
 	}
 	for (unsigned int i = 0; i < SOURCE_COUNT; i++) {
-		if (plan.mask & BIT(i)) shell_print(shell, "  %s", sources[i]);
+		if (plan.mask & BIT(i)) show_source(shell, i, plan.fields[i]);
 	}
 	if (plan.step_count) {
 		shell_print(shell, "Schedule: %u actions; %u sample slots; %u event slots; %zu plan bytes",
@@ -493,7 +509,7 @@ static int budget(const struct shell *shell, struct capture_plan *candidate)
 	size_t sample_bytes = candidate->snapshot_size + (count ? 4 : 0);
 	size_t group_bytes = 56 + 40 * POPCOUNT(candidate->port_mask);
 	candidate->record.size = count ? MAX(sample_bytes, group_bytes) : sample_bytes;
-	strcpy(candidate->record.schema, count ? "brickphyr.bench/2" : "brickphyr.capture/1");
+	strcpy(candidate->record.schema, count ? "brickphyr.bench/3" : "brickphyr.capture/2");
 	uint32_t events = count ? 2 * count + 2 : 0;
 	size_t event_bytes = count ? 2 * count * group_bytes + 12 + 36 : 0;
 	uint32_t capacity = (32768 - config_size) / sample_bytes;
@@ -599,24 +615,19 @@ static int configure(const struct shell *shell, size_t argc, char **argv)
 	if (err || argv[1][0] == '-' || argv[2][0] == '-' || !period || period > UINT32_MAX || duration > UINT32_MAX ||
 	    (!duration && strcmp(argv[2], "full"))) return -EINVAL;
 	struct capture_plan candidate = {.period_ms = period, .duration_ms = duration,
-		.record = {.size = HEADER_SIZE, .schema = "brickphyr.capture/1"}};
+		.record = {.size = HEADER_SIZE}};
 	for (size_t arg = 3; arg < argc; arg++) {
 		if (!strcmp(argv[arg], "all")) {
 			if (argc != 4) return -EINVAL;
 			for (unsigned int i = 0; i < SOURCE_COUNT; i++) {
 				if (!available(i)) continue;
-				candidate.mask |= BIT(i);
-				candidate.record.size += sizes[i];
+				err = select_source(&candidate, sources[i]);
+				if (err) return err;
 			}
 			break;
 		}
-		unsigned int i;
-		for (i = 0; i < SOURCE_COUNT; i++) if (!strcmp(argv[arg], sources[i])) break;
-		if (i == SOURCE_COUNT) return -ENOENT;
-		if (!available(i)) return -ENOTSUP;
-		if (candidate.mask & BIT(i)) return -EINVAL;
-		candidate.mask |= BIT(i);
-		candidate.record.size += sizes[i];
+		err = select_source(&candidate, argv[arg]);
+		if (err) return err;
 	}
 	if (!candidate.mask) return -ENOTSUP;
 	candidate.snapshot_size = candidate.record.size;
@@ -651,6 +662,8 @@ static int start(void)
 	put32(&out, plan.period_ms);
 	put32(&out, plan.duration_ms);
 	put32(&out, HUB_TIME_RESOLUTION_US);
+	memcpy(out, plan.fields, sizeof(plan.fields));
+	out += sizeof(plan.fields);
 	if (plan.step_count) {
 		put32(&out, plan.port_mask);
 		put32(&out, plan.step_count);
@@ -710,7 +723,7 @@ static int command(const struct shell *shell, size_t argc, char **argv)
 	int err;
 	if (!strcmp(argv[0], "sources")) {
 		for (unsigned int i = 0; i < SOURCE_COUNT; i++) {
-			if (available(i)) shell_print(shell, "%s: %u bytes", sources[i], sizes[i]);
+			if (available(i)) show_source(shell, i, BIT(field_kinds[source_kinds[i]].count) - 1);
 		}
 		err = 0;
 	} else if (!strcmp(argv[0], "prepare")) err = configure(shell, argc, argv);
@@ -741,8 +754,8 @@ static int command(const struct shell *shell, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(commands,
-	SHELL_CMD_ARG(sources, NULL, "List available passive sources and their record sizes.", command, 1, 0),
-	SHELL_CMD_ARG(prepare, NULL, "period_ms duration_ms|full all|source ...", command, 4, SOURCE_COUNT - 1),
+	SHELL_CMD_ARG(sources, NULL, "List available sources, fields and record sizes.", command, 1, 0),
+	SHELL_CMD_ARG(prepare, NULL, "period_ms duration_ms|full all|source[:field,...] ...", command, 4, SOURCE_COUNT - 1),
 	SHELL_CMD_ARG(at, NULL, "offset_ms duration_ms A=duty|brake|coast ...", command, 4, BP_PORT_COUNT - 1),
 	SHELL_CMD_ARG(check, NULL, "Validate prepared ports and show the plan without actuation.", command, 1, 0),
 	SHELL_CMD_ARG(start, NULL, "Allocate and start the prepared capture/schedule.", command, 1, 0),

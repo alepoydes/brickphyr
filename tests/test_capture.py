@@ -22,12 +22,21 @@ def test_capture_lifetime_and_collection():
         async with console.connection(output.extend, port=port_name, management=True) as (port, client):
             await application.upload(client, port, (build / "hello.elf").read_bytes(),
                                      application.Format.NATIVE)
-            response = await shell(port, output, b"capture prepare 10 300 battery encoder.A motor.A")
+            response = await shell(port, output,
+                                   b"capture prepare 10 300 battery:voltage encoder.A:angle motor.A:duty")
             assert b"Capture: prepared" in response, response
+            for selection in (b"battery:", b"battery:voltage,", b"battery:voltage,,current",
+                              b"battery:voltage,voltage", b"battery:nope",
+                              b"battery:voltage battery:current"):
+                response = await shell(port, output, b"capture prepare 10 300 " + selection)
+                assert b"Capture failed" in response, response
+            # Rejected selections leave the original plan and its allocation
+            # budget intact. Packed length checks also protect the shared layout.
             # No diagnostic reads or warm-up commands establish prerequisites.
             response = await shell(port, output, b"capture start")
             assert b"failed" not in response, response
             initial = await checked(client, recording.Info())
+            assert (initial.record_schema, initial.size) == ("brickphyr.capture/2", 124)
             with pytest.raises(RuntimeError, match="16"):
                 await checked(client, application.Start())
             with pytest.raises(RuntimeError, match="16"):
@@ -53,6 +62,11 @@ def test_capture_lifetime_and_collection():
                 assert previous < value["scheduled_us"] <= value["started_us"] <= value["completed_us"]
                 previous = value["scheduled_us"]
                 assert value["sources"]["motor.A"]["duty_permille"] == 0
+                assert "requested_ms" not in value["sources"]["motor.A"]
+                battery = value["sources"]["battery"]
+                assert battery["voltage_mv"] == 7767 and battery["error"] == 0
+                assert battery["sequence"] > 0 and battery["sample_ms"] <= battery["read_ms"]
+                assert "current_ma" not in battery and "average_mv" not in battery
             response = await shell(port, output, b"capture start")
             assert b"Capture failed: -16" in response  # Retained data needs explicit clear.
             assert (await checked(client, recording.Info())).generation == initial.generation
@@ -122,7 +136,7 @@ def test_schedule_records_outputs_and_disconnect_cleanup():
                         if not state.error and state.values["type_id"] == 2:
                             break
                         await asyncio.sleep(0)
-            await command(b"capture prepare 10 600 battery motor.A motor.B")
+            await command(b"capture prepare 10 600 battery:current motor.A:duty motor.B:duty")
             await command(b"capture at 100 150 A=250 B=-250")
             await command(b"capture at 350 100 A=-300 B=300")
             await command(b"capture check")
@@ -132,6 +146,12 @@ def test_schedule_records_outputs_and_disconnect_cleanup():
             await command(b"capture start")
             data, values = await collect()
             assert data.outcome["reason"] == "duration", data.outcome
+            assert data.session["recording"]["schema"] == "brickphyr.bench/3"
+            samples = [value["sources"] for value in values if value["kind"] == "sample"]
+            assert samples and all(value["battery"]["current_ma"] == 1825 for value in samples)
+            assert all("voltage_mv" not in value["battery"] for value in samples)
+            assert any(value["motor.A"]["duty_permille"] == 250 and
+                       value["motor.B"]["duty_permille"] == -250 for value in samples)
             assert values[0]["kind"] == "begin" and values[-1]["kind"] == "end"
             end = values[-1]
             assert (end["error"], end["cleanup_error"], end["attempted_actions"]) == (0, 0, 2), end

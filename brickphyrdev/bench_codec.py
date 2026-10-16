@@ -7,8 +7,9 @@ from . import capture_codec
 
 SCHEMA = "brickphyr.bench/1"
 SCHEMA_V2 = "brickphyr.bench/2"
+SCHEMA_V3 = "brickphyr.bench/3"
 
-_CONFIG = struct.Struct("<12I")
+_SCHEDULE = struct.Struct("<8I")
 _STEP = struct.Struct("<3I6h")
 _KIND = struct.Struct("<I")
 _BEGIN = struct.Struct("<Iq")
@@ -19,23 +20,27 @@ _PORTS = "ABCDEF"
 
 
 def _layout(config, schema=SCHEMA):
-    if not isinstance(config, bytes | bytearray) or not _CONFIG.size <= len(config) <= 1024:
+    capture_size = capture_codec.CONFIG_SIZE if schema == SCHEMA_V3 else 16
+    base_size = capture_size + _SCHEDULE.size
+    if not isinstance(config, bytes | bytearray) or not base_size <= len(config) <= 1024:
         raise RuntimeError(f"Invalid {schema} configuration length")
-    if (len(config) - _CONFIG.size) % _STEP.size:
+    if (len(config) - base_size) % _STEP.size:
         raise RuntimeError(f"Invalid {schema} configuration length")
-    (source_mask, period_ms, duration_ms, resolution_us, port_mask, step_count,
-     *generations) = _CONFIG.unpack_from(config)
-    if not step_count or len(config) != _CONFIG.size + step_count * _STEP.size:
+    capture_config = config[:capture_size]
+    source_mask, period_ms, duration_ms, resolution_us = capture_codec._CONFIG.unpack_from(config)
+    port_mask, step_count, *generations = _SCHEDULE.unpack_from(config, capture_size)
+    if not step_count or len(config) != base_size + step_count * _STEP.size:
         raise RuntimeError(f"Invalid {schema} configuration length")
     if not port_mask or port_mask >> len(_PORTS):
         raise RuntimeError(f"Invalid {schema} port mask")
-    # The first four fields are exactly the capture/1 configuration.
-    snapshot_size = capture_codec._layout(config[:16])[4]
+    capture_schema = capture_codec.SCHEMA_V2 if schema == SCHEMA_V3 else capture_codec.SCHEMA
+    snapshot_size = (capture_codec._layout_v2(capture_config) if schema == SCHEMA_V3
+                     else capture_codec._layout(capture_config))[4]
     steps = []
     previous_offset = -1
     for index in range(step_count):
         offset_ms, duration, coast_mask, *duties = _STEP.unpack_from(
-            config, _CONFIG.size + index * _STEP.size
+            config, base_size + index * _STEP.size
         )
         if offset_ms <= previous_offset or coast_mask & ~port_mask:
             raise RuntimeError(f"Invalid {schema} step")
@@ -51,7 +56,8 @@ def _layout(config, schema=SCHEMA):
                _END.size)
     return dict(source_mask=source_mask, period_ms=period_ms, duration_ms=duration_ms,
                 resolution_us=resolution_us, port_mask=port_mask, generations=generations,
-                steps=steps, snapshot_size=snapshot_size, size=size)
+                steps=steps, snapshot_size=snapshot_size, size=size,
+                capture_config=capture_config, capture_schema=capture_schema)
 
 
 def check_size(size, config, *, schema=SCHEMA):
@@ -60,7 +66,7 @@ def check_size(size, config, *, schema=SCHEMA):
 
 
 def _padding(data, used, schema):
-    if schema == SCHEMA_V2:
+    if schema in (SCHEMA_V2, SCHEMA_V3):
         if len(data) != used:
             raise RuntimeError(f"Invalid {schema} record length")
     elif any(data[used:]):
@@ -79,12 +85,13 @@ def decode(data, config, *, schema=SCHEMA):
         _GROUP.size + _GROUP_PORT.size * layout["port_mask"].bit_count(),
         _BEGIN.size,
         _END.size,
-    )[kind] if schema == SCHEMA_V2 else layout["size"]
+    )[kind] if schema in (SCHEMA_V2, SCHEMA_V3) else layout["size"]
     if len(data) != expected:
         raise RuntimeError(f"Invalid {schema} record length")
     if kind == 0:
         used = _KIND.size + layout["snapshot_size"]
-        values = capture_codec.decode(data[_KIND.size:used], config[:16])
+        values = capture_codec.decode(data[_KIND.size:used], layout["capture_config"],
+                                      schema=layout["capture_schema"])
         _padding(data, used, schema)
         return {"kind": "sample", **values}
     if kind == 1:

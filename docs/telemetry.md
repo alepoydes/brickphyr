@@ -58,6 +58,28 @@ without an encoder produce explicit errors. Selection neither changes sensor
 modes nor claims or energizes motors. Other sensor quantities are not yet exposed
 by this capture format; they remain readable with `observe sensor.A` and peers.
 
+Select individual values by appending a colon and comma-separated field names:
+
+```text
+capture prepare 20 1000 imu.calibrated:ay,az,gx battery:voltage encoder.A:angle motor.A:duty
+```
+
+| Source | Selectable fields |
+| --- | --- |
+| `imu`, `imu.calibrated` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
+| `battery` | `voltage`, `current`, `average` |
+| `encoder.A` through `encoder.F` | `angle` |
+| `motor.A` through `motor.F` | `duty`, `requested`, `request`, `completed`, `request_generation` |
+
+A source without a suffix includes all its fields. `capture sources` lists the
+available selections and their sizes; `status` shows the prepared selections.
+Source times, sequences, connection/calibration identity, errors and validity are
+always retained. Selection preserves integer precision and changes neither device
+acquisition nor its rate. Unknown fields, duplicate sources/fields and empty lists
+are rejected without replacing the prepared plan. Reducing fields extends the
+available recording window and reduces the required payload rate; it does not
+guarantee that BLE can sustain that rate.
+
 The worker copies existing service snapshots at absolute deadlines; it does not
 perform device transactions or allocate per sample. Missed releases are skipped,
 not executed in a catch-up burst. Record times distinguish the scheduled release,
@@ -111,7 +133,11 @@ uv run brickphyrdev record-info capture.cbor
 Use `--resume` only for an interrupted download. Collection can follow a running
 capture and finishes when it freezes. The binary file contains the original
 packed bytes, without duplicating decoded values; the offline `Recording` reader
-provides named values in `Frame.values`. The schema is `brickphyr.capture/1`.
+provides named values in `Frame.values`. The schema is `brickphyr.capture/2`;
+older `/1` files remain readable. IMU values use individual names such as
+`ay_um_s2` and `gx_mdps`; unselected values are absent. The mandatory calibrated
+IMU `flags` contains ready/stationary in bits 0/1; battery `flags` contains
+low/critical in bits 0/1. Both include their source errors independently.
 
 The final `recording-end` event distinguishes `full`, `duration`, `cancelled` and
 `error` from an application's result. A duration outcome includes the total
@@ -139,6 +165,13 @@ the Shell and terminal-state restoration. A bounded Inventor F4 check also runs
 that CLI over one BLE connection while capturing IMU, battery and two ports,
 then validates the binary file and explicitly clears the hub buffer. USB supplies
 power during that check; motor outputs are not energized.
+
+Selected-field packing has ARM/SMP checks for actual battery values, synthetic
+motor duties, rejected-plan preservation and complete binary decoding. A bounded
+Inventor F4 BLE check also retains selected raw/calibrated IMU, battery, encoder
+and inactive-output fields, with matching IMU sequence identity, complete
+collection and responsive Shell input. The host reader accepts older schemas;
+these checks do not establish sustained throughput or battery-only operation.
 
 ## Finite motor schedules
 
@@ -190,8 +223,9 @@ policy does not change autonomous applications or passive capture on disconnect.
 `capture clear` retries release before discarding the records. Successful clear
 retains the prepared plan for another run.
 
-Scheduled captures use `brickphyr.bench/2`. The immutable configuration includes
-the source selection, period, device generations and complete action list. Records
+Scheduled captures use `brickphyr.bench/3`; older `/1` and `/2` files remain readable.
+The immutable configuration includes the source/field selection, period, device
+generations and complete action list. Records
 contain a begin/origin event, ordinary observation snapshots, action results and a
 final summary. An action can produce separate application and cleanup results,
 including its request identity, times, masks and first operation/cleanup errors.

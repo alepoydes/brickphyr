@@ -7,7 +7,7 @@ import struct
 import cbor2
 import pytest
 
-from brickphyrdev import bench_codec
+from brickphyrdev import bench_codec, record_codec
 from brickphyrdev.records import Recording
 
 
@@ -103,3 +103,51 @@ def test_compact_bench_records_keep_exact_kind_lengths():
     events[1]["data"] = b""
     with pytest.raises(ValueError, match="record length"):
         list(Recording(io.BytesIO(b"".join(cbor2.dumps(event) for event in events))).frames())
+
+
+def test_selected_bench_sample_and_variable_schedule_records():
+    capture_config = struct.pack("<4I", 1 << 2, 10, 100, 1) + bytes((0, 0, 2)) + bytes(12)
+    config = b"".join((
+        capture_config,
+        struct.pack("<8I", 1, 1, 7, 0, 0, 0, 0, 0),
+        struct.pack("<3I6h", 0, 60, 0, 250, 0, 0, 0, 0, 0),
+    ))
+    sample = b"".join((
+        struct.pack("<I3qI", 0, 100_000, 100_010, 100_020, 0),
+        struct.pack("<2q2Ii2I", 10, 11, 12, 13, -14, 3, 420),
+    ))
+    group = b"".join((
+        struct.pack("<IIqqIiii4I", 1, 1, 100_000, 100_030, 42, 0, 0, 0, 2, 1, 0, 1),
+        struct.pack("<IIiIqqii", 7, 11, 250, 2, 100_040, 0, 0, 0),
+    ))
+    data = (struct.pack("<Iq", 2, 100_000), sample, group,
+            struct.pack("<Iqii4I", 3, 200_000, 0, 0, 0, 10, 1, 1))
+    size = 96
+    assert len(config) == 87 and tuple(map(len, data)) == (12, 68, 96, 36)
+    record_codec.check_size(bench_codec.SCHEMA_V3, size, config, variable=True)
+    with pytest.raises(RuntimeError, match="requires variable-size"):
+        record_codec.check_size(bench_codec.SCHEMA_V3, size, config)
+    session = {
+        "type": "session", "schema": "brickphyr.records/1", "session": "selected bench",
+        "recording": {
+            "generation": 1, "size": size, "capacity": 4, "first": 0, "next": 4,
+            "active": False, "reason": 3, "schema": bench_codec.SCHEMA_V3,
+            "config_size": len(config), "config": config, "control": False,
+            "variable": True,
+        },
+    }
+    events = [session, *(dict(type="record", index=i, data=value)
+                         for i, value in enumerate(data)),
+              dict(type="recording-end", reason="full", next=4),
+              dict(type="end", session="selected bench", reason="completed", records=4, gaps=0)]
+    frames = list(Recording(io.BytesIO(b"".join(cbor2.dumps(event) for event in events))).frames())
+    assert [frame.values["kind"] for frame in frames] == ["begin", "sample", "group", "end"]
+    assert frames[1].values["sources"]["battery"] == dict(
+        sample_ms=10, read_ms=11, sequence=12, failures=13, error=-14,
+        flags=3, current_ma=420)
+    assert frames[2].values["ports"]["A"]["duty_permille"] == 250
+
+    with pytest.raises(RuntimeError, match="record length"):
+        bench_codec.decode(sample + b"\0", config, schema=bench_codec.SCHEMA_V3)
+    with pytest.raises(RuntimeError, match="configuration length"):
+        bench_codec.check_size(size, config[:-1], schema=bench_codec.SCHEMA_V3)

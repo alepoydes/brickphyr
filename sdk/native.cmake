@@ -19,7 +19,18 @@ add_dependencies(app brickphyr_api)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application.c ${BRICKPHYR_ROOT}/src/native_image.c ${BRICKPHYR_ROOT}/src/native_api.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c ${BRICKPHYR_ROOT}/src/control_frame.c
   ${BRICKPHYR_ROOT}/src/application_record.c)
-target_sources_ifdef(CONFIG_BRICKPHYR_CAPTURE app PRIVATE ${BRICKPHYR_ROOT}/src/capture.c)
+if(CONFIG_BRICKPHYR_CAPTURE)
+  set(capture_layout ${ZEPHYR_BINARY_DIR}/include/generated/brickphyr_capture.h)
+  add_custom_command(OUTPUT ${capture_layout}
+    COMMAND ${PYTHON_EXECUTABLE} ${BRICKPHYR_ROOT}/tools/capture_layout.py
+      ${BRICKPHYR_ROOT}/brickphyrdev/capture_layout.py ${capture_layout}
+    DEPENDS ${BRICKPHYR_ROOT}/tools/capture_layout.py
+      ${BRICKPHYR_ROOT}/brickphyrdev/capture_layout.py
+    VERBATIM)
+  add_custom_target(brickphyr_capture DEPENDS ${capture_layout})
+  add_dependencies(app brickphyr_capture)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/capture.c)
+endif()
 # The resident table is an application entry point, so retain only SVC wrappers.
 set_source_files_properties(${BRICKPHYR_ROOT}/src/native_api.c PROPERTIES
   COMPILE_DEFINITIONS __ZEPHYR_USER__)
