@@ -100,4 +100,7 @@ if(CONFIG_BRICKPHYR_HUB)
     USES_TERMINAL
     VERBATIM
   )
+  if(TARGET brickphyr-build-record)
+    add_dependencies(firmware_package brickphyr-build-record)
+  endif()
 endif()
