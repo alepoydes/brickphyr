@@ -407,7 +407,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 if reason == 4 and not variable:
                     event["missed"] = info.capacity - next
             await _write(log, event)
-            return
+            return generation
 
         request = Block if block else Record
         reply = await checked(client, request(generation=generation, index=index, off=len(partial)))

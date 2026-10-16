@@ -15,8 +15,8 @@ Python on Technic and WASM are outside this milestone.
 
 ## Measurement bench
 
-The next delivery adds repeatable experiments without compiling a robot-specific
-recorder. Battery-powered F4 with BLE is the primary acceptance path; USB remains
+The measurement bench provides repeatable experiments without compiling a
+robot-specific recorder. Battery-powered F4 with BLE is the primary acceptance path; USB remains
 available for development. Extend the shared recorder, hardware services and
 Zephyr Shell, rather than adding a second command interpreter or device owner.
 
@@ -46,6 +46,13 @@ Zephyr Shell, rather than adding a second command interpreter or device owner.
 Deliver each block with focused checks and a usable outcome. Physical motor
 operation remains a separately authorized check. Do not substitute USB timing or
 synthetic devices for the final BLE and electrical measurements.
+
+The built-in recorder, finite schedules, binary collection and shared Shell
+command files are implemented. Passive recording, reconnect/resume, full-buffer
+collection and successive command-file experiments have battery-powered Inventor
+F4 BLE checks. Grouped outputs have synthetic checks and F4 checks with motor
+pins held inactive; energized operation and electrical synchronization remain
+unverified. See [measurement usage and evidence](telemetry.md).
 
 ## Starting point
 

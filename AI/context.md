@@ -219,7 +219,7 @@ these physical items.
 ## Dependencies and local state
 
 Pybricks, pybricksdev and Zephyr are separate west repositories. The manifest
-pins published integration commits, including the zcbor override; Pybricks pins
+pins exact integration commits, including the zcbor override; Pybricks pins
 the required MicroPython fork through its submodule. See the
 [upstream workflow](../docs/upstream.md) for dependency corrections and ownership.
 Inspect intentional dependency edits before updating or resetting a workspace.

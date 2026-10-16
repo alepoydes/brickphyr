@@ -34,6 +34,14 @@ config PICOLIBC_TOOLCHAIN_SPEED_OPTIMIZATIONS
 config MCUMGR_TRANSPORT_NETBUF_SIZE
 	default 512 if BRICKPHYR_MOTOR_CONTROL && BRICKPHYR_TELEMETRY
 
+# Command files use the standard SMP Shell handler on its existing worker.
+# Leave room for the response map/header even with a 384-byte SMP buffer.
+config SHELL_BACKEND_DUMMY_EXECUTE_ONLY
+	default y if MCUMGR_GRP_SHELL
+
+config SHELL_BACKEND_DUMMY_BUF_SIZE
+	default 256 if MCUMGR_GRP_SHELL
+
 config MCUMGR_TRANSPORT_NETBUF_USER_DATA_SIZE
 	default 16 if BRICKPHYR_CC2640_SMP && 64BIT
 	default 8 if BRICKPHYR_CC2640_SMP

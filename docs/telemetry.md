@@ -119,8 +119,20 @@ tools detect it automatically. Existing files are never overwritten. Closing
 with `Ctrl+]` detaches collection and retains an incomplete file for resumption;
 it does not stop this passive capture or clear the hub buffer. Before any
 recording appears, the created file stays empty. After a completed download,
-`capture clear` releases the hub buffer; start another terminal invocation with
-a new output filename to collect another experiment.
+`capture clear` releases the hub buffer. To collect successive experiments in one
+terminal, use a directory instead of `--record`:
+
+```sh
+uv run brickphyrdev terminal --record-dir measurements
+```
+
+Each recording gets a separate `capture-<unique-id>.cbor` file. `Ctrl+T` shows its
+path, progress and the number of completed downloads. After download completes,
+use `capture clear` and `capture start` to repeat the prepared experiment. The
+collector waits for a new recording generation and never clears data or starts
+another experiment itself. Files are not overwritten. An interrupted file can
+be resumed by its displayed path with the command below; reconnecting with
+`--record-dir` starts a fresh collection file instead of resuming one implicitly.
 
 For separate collection or resumption, close the terminal and use:
 
@@ -156,8 +168,8 @@ ARM/QEMU checks with synthetic devices. A bounded BLE check on one Robot Invento
 F4 (PCB revision unknown), powered through USB, also captures every supported
 source group, retains data across reconnection, decodes the binary file and
 releases the recording hold. The observed motor duties remain zero. This does
-not establish sustained sampling latency, battery-only BLE performance or
-electrical output timing.
+not establish sustained sampling latency or electrical output timing. Battery-only
+checks are described under the BLE transfer budget below.
 
 The combined `terminal --record` path has real CLI/PTY checks on ARM/QEMU,
 including command input during capture, collection completion without closing
@@ -171,7 +183,7 @@ motor duties, rejected-plan preservation and complete binary decoding. A bounded
 Inventor F4 BLE check also retains selected raw/calibrated IMU, battery, encoder
 and inactive-output fields, with matching IMU sequence identity, complete
 collection and responsive Shell input. The host reader accepts older schemas;
-these checks do not establish sustained throughput or battery-only operation.
+these checks do not establish sustained throughput.
 
 ### BLE transfer budget
 
@@ -190,9 +202,16 @@ A passive BLE check also collects sixty 276-byte observations over six seconds
 while retaining Shell input (one command completed in 125 ms), resumes an
 interrupted download with bytes identical to a complete reread, and retrieves
 all 118 observations after the RAM buffer fills. The SMP worker retains 2032
-unused bytes of its 4096-byte stack in that workload. USB supplied power;
-battery-only operation, sustained combined load and energized motor timing remain
-separate acceptance checks.
+unused bytes of its 4096-byte stack in that workload. USB supplied power.
+
+The same live, interrupted/resumed and full-buffer paths also pass on battery
+power with USB disconnected. A six-second live capture retains sixty observations
+and finishes collection in 6.12 seconds; a concurrent Shell command completes in
+141 ms. With a temporary three-second battery idle timeout, the hub retains the
+recording across eight seconds without a BLE connection, then resumes collection
+byte-for-byte identically to a complete reread. Cleanup returns heap usage to its
+initial value. These are bounded passive checks on the same Inventor F4;
+sustained combined load and energized motor timing remain separate checks.
 
 ## Finite motor schedules
 
@@ -273,15 +292,63 @@ reservations and skipped releases can leave fewer records than the capacity when
 that window ends; the final event reports the actual sample and action counts.
 Collection uses the same `terminal --record` and resumable binary download as
 passive capture. The offline reader also accepts earlier padded `/1` files.
-Command-file replay remains planned work.
 
 Protected ARM/QEMU checks exercise the shared Shell, recorder and synthetic motor
 services through preparation, opposite duties, expiry, result collection and
 explicit stop and cancellation before the first action. The shared host-dispatcher
 fixture also checks DTR loss and collection after reconnection. Native simulation
-checks cancellation
-between grouped driver writes and preservation of output ownership. These checks
-do not establish physical motion, BLE timing or electrical synchronization.
+checks cancellation between grouped driver writes and preservation of output
+ownership. These checks do not establish physical motion, BLE timing or electrical
+synchronization.
+
+### Command files
+
+Save ordinary Shell commands in a UTF-8 text file and execute it before keyboard
+input begins:
+
+```sh
+uv run brickphyrdev terminal --commands experiment.txt --record run.cbor
+```
+
+For example, this passive experiment does not energize outputs:
+
+```text
+# Period and duration are in milliseconds.
+capture prepare 20 1000 imu encoder.A encoder.B
+capture check
+capture start
+```
+
+The file may contain the same `capture at` commands as an interactive schedule.
+Timing belongs in the hub's schedule, not in host sleeps between file lines.
+Blank lines and whole-line `#` comments are ignored; LF and CRLF are accepted.
+Each remaining line goes unchanged to Zephyr's standard SMP Shell handler, using
+the same parser, command handlers and length limit as interactive Shell. The
+client checks the real command return code before sending another line. An error
+reports the file and line and closes the session; an ambiguous transport failure
+does not retry the command. Closing the connection cancels diagnostic drive under
+the existing schedule policy, while ordinary autonomous applications keep running.
+
+The file is validated as text before connecting. Commands themselves are
+validated by the hub when executed; the file is not a transaction and successful
+earlier commands are not undone. `--repl` cannot be combined with command files.
+`Ctrl+]` remains available to detach during execution; queued keyboard input is
+sent after the file finishes. `--record-dir` can replace `--record` for subsequent
+interactive experiments on the same connection.
+
+The standard SMP response has bounded text output. `[output truncated]` means
+the command's output was incomplete, not that it failed; the actual return code
+still controls continuation. Inspect long listings interactively. The execution
+context uses the existing management caller's stack, with no additional Shell
+thread, stack or history. It does not overwrite a partially edited interactive
+command. ARM/QEMU checks cover file errors, output truncation, preserved input,
+capture collection and successive experiments through the real CLI and Shell;
+a bounded Inventor F4 check also executes a passive command file and collects two
+experiments in separate files through one BLE terminal session, preserving command
+input and explicit buffer cleanup. This workflow passes with USB power and with
+USB disconnected on battery power; the latter check also restores terminal state
+on exit and validates both complete binary files. Standard SMP Shell commands
+also work over native USB there. Energized schedule timing remains unverified.
 
 ## Text monitor and recording
 

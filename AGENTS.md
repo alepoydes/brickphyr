@@ -62,6 +62,10 @@ to resume work without access to a previous conversation or a personal rules fil
   Git repositories in a west workspace. Keep changes in a dependency fork only
   when they independently improve that dependency; maintain Brickphyr-specific
   ports here, with one active implementation in the firmware.
+- Verify the complete intended increment, including dependency integration,
+  before any publication. Local commits and exact local manifest pins may be
+  prepared and tested first. After acceptance and authorization, publish
+  dependency commits before the root manifest that references them.
 - Inspect existing work before changing it. Never overwrite unrelated edits or
   rewrite published dependency commits used by a manifest or release.
 - Use uv for local Python tooling and commit its resolved `uv.lock` when Python

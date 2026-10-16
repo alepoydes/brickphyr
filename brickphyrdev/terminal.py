@@ -6,8 +6,10 @@ import codecs
 import os
 import signal
 import sys
+import uuid
+from pathlib import Path
 
-from . import application, console, monitor, recording, repl
+from . import application, command_file, console, monitor, recording, repl
 
 
 class _OutputBoundary:
@@ -64,7 +66,18 @@ async def terminal(args):
     if not args.monitor and (args.log or args.source or args.rate != 2):
         raise ValueError("Use --monitor with --log, --source or --rate")
     record_path = getattr(args, "record", None)
-    has_view = args.monitor or bool(record_path)
+    record_dir = getattr(args, "record_dir", None)
+    if record_dir:
+        record_dir = Path(record_dir)
+        record_dir.mkdir(parents=True, exist_ok=True)
+    record_enabled = bool(record_path or record_dir)
+    current_record = record_path
+    commands_path = getattr(args, "commands", None)
+    use_repl = getattr(args, "repl", False)
+    if commands_path and use_repl:
+        raise ValueError("Command files require Shell; omit --repl")
+    commands = command_file.load_commands(commands_path) if commands_path else ()
+    has_view = args.monitor or record_enabled
     target = (
         {"port": args.port, "serial_number": args.serial}
         if usb
@@ -81,17 +94,19 @@ async def terminal(args):
     last_screen = ""
     record_state = "Waiting for a recording"
     record_counts = {"records": 0, "gaps": 0}
+    completed_recordings = 0
     input_error = None
     input_fd = None
     python = None
-    use_repl = getattr(args, "repl", False)
 
     def refresh_screen():
         nonlocal last_screen
         body = list(last_body)
-        if record_path:
-            body += [f"Recording: {record_path}", f"{record_state}; "
+        if record_enabled:
+            body += [f"Recording: {current_record or record_dir}", f"{record_state}; "
                      f"{record_counts['records']} records, {record_counts['gaps']} gaps"]
+            if record_dir:
+                body += [f"Completed downloads: {completed_recordings}"]
         last_screen = monitor.screen(body,
             "Ctrl+T: terminal  |  Ctrl+]: close  |  collection continues in either view")
         if view:
@@ -149,8 +164,12 @@ async def terminal(args):
             loop.remove_reader(input_fd)
             exit_requested.set()
 
-    async def input_loop(transport):
+    async def input_loop(transport, client):
         nonlocal pending_view
+        if commands_path:
+            await command_file.execute(client, commands, display)
+            display(b"\r\nCommand file complete; keyboard input enabled.\r\n")
+            await transport.write(b"\x03")
         while data := await incoming.get():
             if not input_closed and incoming.qsize() == incoming.maxsize - 1:
                 loop.add_reader(input_fd, read_input)
@@ -180,7 +199,8 @@ async def terminal(args):
             "Ctrl+] closes the terminal."
             + (" Ctrl+X stops REPL and returns to Shell; Ctrl+D resets Python." if use_repl else "")
             + (" Ctrl+T switches the status view." if has_view else "")
-            + (f" Recording to {record_path}." if record_path else ""),
+            + (f" Recording to {record_path}." if record_path else "")
+            + (f" Recording successive captures in {record_dir}." if record_dir else ""),
             flush=True,
         )
         previous = termios.tcgetattr(sys.stdin.fileno())
@@ -210,7 +230,7 @@ async def terminal(args):
                 mode[6][termios.VQUIT] = b"\x18"
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, mode)
             async with console.connection(
-                display, management=has_view or use_repl, **target
+                display, management=has_view or use_repl or bool(commands_path), **target
             ) as (
                 transport,
                 client,
@@ -234,17 +254,32 @@ async def terminal(args):
                         loop.add_reader(input_fd, read_input)
 
                 async def record_loop():
-                    nonlocal record_state, record_counts
+                    nonlocal record_state, record_counts, current_record, completed_recordings
                     # A terminal may open before the user prepares capture.
                     # App follow's wait semantics still end when its app exits.
-                    while not (await recording.checked(client, recording.Info())).size:
-                        await asyncio.sleep(0.2)
-                    record_state = "Receiving"
-                    with recording.session(record_log) as (session, counts):
-                        record_counts = counts
-                        await recording.collect(client, record_log, session, counts)
-                    record_state = "Download complete; hub data retained"
-                    refresh_screen()
+                    previous_generation = None
+                    while True:
+                        info = await recording.checked(client, recording.Info())
+                        if not info.size or info.generation == previous_generation:
+                            await asyncio.sleep(0.2)
+                            continue
+                        current_record = (
+                            record_dir / f"capture-{uuid.uuid4().hex}.cbor"
+                            if record_dir else record_path
+                        )
+                        record_state = "Receiving"
+                        with recording.open_log(current_record if record_dir else None, "cbor") as next_log:
+                            with recording.session(next_log or record_log) as (session, counts):
+                                record_counts = counts
+                                refresh_screen()
+                                previous_generation = await recording.collect(
+                                    client, next_log or record_log, session, counts
+                                )
+                        record_state = "Download complete; hub data retained"
+                        completed_recordings += 1
+                        refresh_screen()
+                        if not record_dir:
+                            return
 
                 async def record_view():
                     while True:
@@ -252,7 +287,7 @@ async def terminal(args):
                         await asyncio.sleep(1 / args.rate)
 
                 tasks = [
-                    asyncio.create_task(input_loop(transport)),
+                    asyncio.create_task(input_loop(transport, client)),
                     asyncio.create_task(transport.closed.wait()),
                     asyncio.create_task(exit_requested.wait()),
                 ]
@@ -261,7 +296,7 @@ async def terminal(args):
                     tasks.append(python_task)
                 record_task = None
                 try:
-                    if record_path:
+                    if record_enabled:
                         record_task = asyncio.create_task(record_loop())
                         tasks.append(record_task)
                         if not args.monitor:

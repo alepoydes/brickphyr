@@ -82,23 +82,28 @@ git -C pybricks-micropython diff upstream/master...HEAD
 git -C pybricks-micropython log --oneline upstream/master..HEAD
 ```
 
-Run the affected upstream checks and build, then the Brickphyr integration checks
-for that commit. A change intended for both consumers must not be validated only
-against Brickphyr. See [testing](testing.md) for evidence scopes.
+Run the affected upstream checks and build, then test the exact local dependency
+commit with Brickphyr's local manifest pin and integration checks. A change
+intended for both consumers must not be validated only against Brickphyr. Verify
+the complete intended increment before any publication; see [testing](testing.md)
+for evidence scopes.
 
-Publish the topic branch to the fork and submit it according to upstream's rules
-when publication is authorized. For several dependent patches, keep a published
-integration branch assembled from the topic branches. Do not make an unreviewable
-rewrite of the upstream tree.
+After acceptance and authorization, publish the topic branch to the fork and
+submit it according to upstream's rules. For several dependent patches, keep a
+published integration branch assembled from the topic branches. Do not make an
+unreviewable rewrite of the upstream tree.
 
 ## Pinning and accepting changes
 
-1. Make the chosen dependency commit reachable in a repository available to
-   every developer using the manifest. Keep private experiments out of shared pins.
-2. Update Brickphyr's manifest to the exact commit in a separate integration
-   change. Record why the upstream revision is insufficient and link the topic/PR.
-3. Resolve the workspace afresh and check the affected upstream and Brickphyr
-   paths. Record resource, compatibility, and hardware implications as applicable.
+1. Commit the dependency change locally and pin its exact commit in a local
+   Brickphyr integration change. Record why the upstream revision is insufficient.
+2. Resolve the local workspace and verify the complete intended increment,
+   including the affected upstream and Brickphyr paths. Record resource,
+   compatibility, and hardware implications as applicable. Local integration and
+   acceptance do not require remote publication.
+3. Once publication is authorized after acceptance, publish dependency commits
+   first, then publish the root manifest that references them. Link the topic/PR
+   and keep private experiments out of shared pins.
 4. When upstream accepts the change, find the commit/release containing equivalent
    behavior. Review squash/rebase/conflict resolutions; matching titles are not
    proof that the code is identical.
@@ -126,7 +131,7 @@ agree.
 
 ## Current downstream delta
 
-The [manifest](../west.yml) pins published Zephyr, Pybricks and pybricksdev
+The [manifest](../west.yml) pins exact Zephyr, Pybricks and pybricksdev
 integration commits, imports Zephyr's module revisions and overrides zcbor with
 the published Brickphyr revision. The nested Pybricks checkout pins the published
 MicroPython correction. These forks are integration branches, not upstream-accepted
@@ -152,11 +157,11 @@ installer and its DFU implementation remain unmodified. No upstream PR has been
 submitted yet; remove the downstream delta when equivalent upstream functionality
 is adopted.
 
-The pinned [Zephyr integration commit](https://github.com/alepoydes/zephyr/commit/847ed6edadc191a18725fefc8d4fa5929ad7c04a)
-is based on v4.4.2. The pinned
+The pinned Zephyr integration is based on v4.4.2. The pinned
 [pybricksdev integration commit](https://github.com/alepoydes/pybricksdev/commit/973fe51b8960c3cac53ce56bed6129f0574c3919)
 supplies the CDC client and shared Python COBS codec. The corrections below are
-included in these public pins; no manual dependency patches are required.
+included in these pins; no manual dependency patches are required. Publication
+follows the acceptance and dependency ordering above.
 
 The Pybricks gitlink selects [MicroPython `88510477`](https://github.com/alepoydes/micropython/commit/88510477cf8d96304db35605774b17eafdd16c58).
 The root manifest overrides Zephyr's imported zcbor with
@@ -421,6 +426,22 @@ callback-error propagation. It replaces per-triple callbacks with a bounded
 temporary frame buffer; no persistent allocation is added. The serial fixture
 checks multi-frame output and interrupted transmission. Brickphyr's Shell/SMP
 fixture and a bounded Inventor F4 USB workload check integration.
+
+Zephyr commit `2619dc9f` on `topic/shell-execute-only` adds
+`SHELL_DEFINE_EXEC` and an opt-in execution-only dummy backend. Standard SMP Shell
+commands use their caller's stack and the existing parser/handlers without a
+second worker, stack or history. The handler preserves the command return code
+and reports truncated output explicitly. Focused execution-only and existing
+Shell tests cover the shared implementation; Brickphyr's command-file checks
+exercise the standard management handler.
+
+Zephyr commit `641e3fa7e` on `topic/smp-bt-lifetime` preserves a blocked sender's
+disconnect wakeup when the connection slot is reused. Notification completions
+carry the connection identity, so stale callbacks cannot complete a newer
+connection's send. The transport still submits one notification at a time.
+The standalone `transport_bt_lifetime` fixture exercises the real SMP response
+path with disconnect/reuse before notification submission returns and a delayed
+completion from the old connection.
 
 Reusing the Shell worker between USB/BLE sessions additionally requires the
 Zephyr `shell_reset()` API (`058846f8` on `topic/shell-session-reset`). It schedules

@@ -20,7 +20,7 @@ manifest:
       # Initialize only micropython with Git; west recursively fetches unused ports.
     - name: zephyr
       url: https://github.com/alepoydes/zephyr
-      revision: 847ed6edadc191a18725fefc8d4fa5929ad7c04a # Brickphyr integration on v4.4.2
+      revision: 641e3fa7e5751b416deccb28ab53fc8eba59a9ea # Brickphyr integration on v4.4.2
       import:
         name-allowlist:
           - cmsis_6

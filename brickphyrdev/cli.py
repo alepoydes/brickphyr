@@ -36,8 +36,15 @@ def main():
     terminal_parser.add_argument(
         "--monitor", action="store_true", help="Share telemetry and logging; Ctrl+T switches views"
     )
-    terminal_parser.add_argument(
+    terminal_record = terminal_parser.add_mutually_exclusive_group()
+    terminal_record.add_argument(
         "--record", metavar="FILE", help="Collect the current or next recording into a new CBOR file"
+    )
+    terminal_record.add_argument(
+        "--record-dir", metavar="DIR", help="Collect successive recordings into separate CBOR files"
+    )
+    terminal_parser.add_argument(
+        "--commands", metavar="FILE", help="Execute Shell commands from a UTF-8 file before keyboard input"
     )
     monitor.options(terminal_parser)
     terminal_parser.set_defaults(handler=terminal.run)

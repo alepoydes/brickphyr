@@ -61,7 +61,7 @@ computer management clients.
 
 Both interfaces use the same firmware services and application supervisor.
 Choosing an interface does not replace the operating system or select an execution
-engine. One Zephyr Shell instance serves USB and the native BLE stream. Command parsing,
+engine. One interactive Zephyr Shell instance serves USB and the native BLE stream. Command parsing,
 line editing, completion, history, buffers, and command execution are shared; only
 byte transport changes. A terminal remains useful independently of Python, native,
 or WASM execution. Its application commands use the same lifecycle operations as other
@@ -572,7 +572,11 @@ The base profile provides OS echo/reset and Settings read/write/commit/whole-sto
 save. Read and write operate on RAM; save is explicit. Settings values and storage
 limitations are described in [settings](settings.md). Load, delete and named saves
 are currently rejected before mutation. Application profiles add the file and
-program operations described above. Shell RPC and SMP firmware updates are not enabled.
+program operations described above. F4 also enables the standard SMP Shell group
+for [command files](telemetry.md#command-files), reusing the Shell parser and
+handlers in an execution context without another worker or history. Its bounded
+response reports the command return code and output truncation. SMP firmware
+updates are not enabled.
 
 Serial SMP executes on the Shell thread, so a response cannot interleave with a Shell
 command's output. Closing the session waits for an accepted operation to finish;

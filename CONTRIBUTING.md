@@ -23,7 +23,10 @@ image and simulator can be built using [the workspace procedure](docs/builds.md)
    what was checked locally, on hardware, or not yet checked.
 
 For changes crossing repositories, follow [the upstream workflow](docs/upstream.md).
-Do not publish an unpushed local dependency commit in a shared manifest.
+Prepare and test local dependency commits and exact local manifest pins as needed.
+Verify the complete intended increment, including dependency integration, before
+any publication. Once publication is authorized after acceptance, publish the
+dependency commits before the root manifest that references them.
 
 ## Implementation conventions
 
