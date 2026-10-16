@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "application.h"
+#include "capture.h"
 #include "host_transport.h"
 #include "hub_light.h"
 #include "hub_charger.h"
@@ -123,11 +124,18 @@ SHELL_CMD_ARG_REGISTER(settings_gate, NULL, "Block/release the fixture storage w
 /* QEMU UART has no DTR. Exercise the production notification explicitly. */
 static int close_session(const struct shell *shell, size_t argc, char **argv)
 {
+	capture_session_closed();
 	application_session_closed();
 	shell_print(shell, "Synthetic session boundary");
 	return 0;
 }
 SHELL_CMD_ARG_REGISTER(session_close, NULL, "Synthetic disconnect notification.", close_session, 1, 0);
+
+#ifdef CONFIG_SHELL_BACKEND_SERIAL
+/* This fixture's serial Shell has no physical DTR; session_close supplies
+ * explicit boundaries. The shared-transport fixture owns real admission. */
+bool host_session_open(void) { return true; }
+#endif
 
 static int stack_usage(const struct shell *shell, size_t argc, char **argv)
 {

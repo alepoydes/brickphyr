@@ -350,6 +350,8 @@ config BRICKPHYR_CAPTURE
 	help
 	  Record selected passive observations through the shared recorder and SMP.
 	  Buffer and sampling stack are allocated only for an explicit capture.
+	  With motor support, attach finite grouped actions using the same Shell.
+	  Scheduled drive stops on cancellation, failure or management disconnect.
 
 config BRICKPHYR_NATIVE_FIXTURES
 	bool "Embed native lifecycle test images"

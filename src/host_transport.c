@@ -8,6 +8,7 @@
 #include "hub_ports.h"
 #include "storage.h"
 #include "application.h"
+#include "capture.h"
 
 #include <errno.h>
 #include <string.h>
@@ -762,6 +763,7 @@ void host_connection_changed(bool open)
 	if (!open) hub_power_link_closed(HUB_USB);
 	if (!ble_occupied && open != occupied &&
 	    (!open || (!first_error && hub_power_connection(HUB_USB)))) {
+		if (!open) capture_session_closed();
 		stream_changed(open);
 	}
 	notify_ble_available();
@@ -780,6 +782,14 @@ void host_interface_status(uint8_t state[8])
 	k_spin_unlock(&lock, key);
 	/* Refresh completion in the UART callback, the API's required context. */
 	serial_tx_resume();
+}
+
+bool host_session_open(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool open = ble_occupied ? !ble_closing : occupied && usb_open;
+	k_spin_unlock(&lock, key);
+	return open;
 }
 
 int host_interface_select(uint16_t requested)
@@ -855,6 +865,7 @@ void host_ble_release(bool exit_compatibility)
 	if (ble_occupied && !ble_closing) {
 		hub_power_link_closed(HUB_BLE);
 		ble_closing = true;
+		capture_session_closed();
 		ble_exit = exit_compatibility;
 		if (ble_shell && occupied) {
 			stream_changed(false);

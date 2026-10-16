@@ -70,7 +70,8 @@ static bool port_present(uint32_t port)
 
 static bool owner_valid(enum bp_port_owner owner)
 {
-	return owner == BP_PORT_APPLICATION || owner == BP_PORT_TERMINAL || owner == BP_PORT_CONTROLLER;
+	return owner == BP_PORT_APPLICATION || owner == BP_PORT_TERMINAL ||
+		owner == BP_PORT_CONTROLLER || owner == BP_PORT_CAPTURE;
 }
 
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
@@ -159,6 +160,10 @@ static struct {
 	struct bp_motor_group_state value;
 	enum bp_port_owner owner;
 	bool cancelling;
+	const atomic_t *epoch;
+	atomic_val_t expected;
+	enum bp_port_owner reservation;
+	uint32_t reserved_mask;
 } motor_group;
 
 /* Caller holds lock. Completed/cancelled history does not reserve ports. */
@@ -844,7 +849,8 @@ static void check_motor_group(void)
 {
 	struct bp_motor_group_state *g = &motor_group.value;
 	if ((!g->active && !g->pending) || motor_group.cancelling) return;
-	int error = atomic_get(&stopping) ? -ESHUTDOWN : 0;
+	int error = atomic_get(&stopping) ? -ESHUTDOWN :
+		motor_group.epoch && atomic_get(motor_group.epoch) != motor_group.expected ? -ECANCELED : 0;
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 		if (!(g->port_mask & BIT(i))) continue;
 		const struct port *p = &ports[i];
@@ -2522,14 +2528,16 @@ static int motor_connection_error(const struct port *p, enum bp_port_owner owner
 		(p->owner && p->owner != owner) ? -EBUSY : 0;
 }
 
-int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
-	uint32_t *request, struct bp_motor_group_state *previous)
+/* A NULL request checks/reserves the same admission without publishing output. */
+static int motor_group_command(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, struct bp_motor_group_state *previous, bool reserve,
+	const atomic_t *epoch, atomic_val_t expected)
 {
 	if (previous) *previous = (struct bp_motor_group_state){0};
 #ifndef CONFIG_BRICKPHYR_MOTORS
 	return -ENOTSUP;
 #else
-	if (!command || !request || !command->port_mask || command->port_mask >> BP_PORT_COUNT ||
+	if (!command || !command->port_mask || command->port_mask >> BP_PORT_COUNT ||
 	    command->coast_mask & ~command->port_mask || command->deadline_ms < 0 ||
 	    !owner_valid(owner)) return -EINVAL;
 	bool active = command->coast_mask != command->port_mask;
@@ -2547,10 +2555,14 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 	if (previous) *previous = *g;
 	int64_t now = k_uptime_get();
 	int err = atomic_get(&stopping) ? -ESHUTDOWN :
+		epoch && atomic_get(epoch) != expected ? -ECANCELED :
+		motor_group.reservation && (motor_group.reservation != owner ||
+		motor_group.reserved_mask != command->port_mask) ? -EBUSY :
 		active && command->deadline_ms <= now ? -ETIMEDOUT :
 		g->active && g->deadline_ms <= now ? -ETIMEDOUT :
 		g->request == UINT32_MAX ? -EOVERFLOW :
-		g->pending || (g->active && (motor_group.owner != owner || g->port_mask != command->port_mask)) ? -EBUSY : 0;
+		g->pending || (g->active && (!request || motor_group.owner != owner ||
+		g->port_mask != command->port_mask)) ? -EBUSY : 0;
 	for (uint32_t i = 0; i < ARRAY_SIZE(ports) && !err; i++) {
 		if (!(command->port_mask & BIT(i))) continue;
 		struct port *p = &ports[i];
@@ -2558,10 +2570,22 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 		/* Observation shares the applied-output path and does not write PWM.
 		 * Regulated modes still own output, including a completed hold. */
 		if (!err) err = p->motor.pending || p->motor.mode >= BP_MOTOR_SPEED ? -EBUSY : output_device_error(p, false);
+		if (!err && !request && (p->motor.mode != BP_MOTOR_COAST || !p->motor.valid)) err = -EBUSY;
 #ifdef CONFIG_BRICKPHYR_MOTOR_CONTROL
 		if (!err && p->drivebase) err = -EBUSY;
 #endif
 		if (!err && p->motor.cleanup_error) err = p->motor.cleanup_error;
+	}
+	if (!request) {
+		if (!err && reserve) {
+			motor_group.reservation = owner;
+			motor_group.reserved_mask = command->port_mask;
+			for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
+				if (command->port_mask & BIT(i)) ports[i].owner = owner;
+			}
+		}
+		k_spin_unlock(&lock, key);
+		return err;
 	}
 	/* Scheduling precedes publication; any rejection above has no side effects. */
 	if (!err) {
@@ -2572,6 +2596,8 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 				.timestamp_resolution_us = HUB_TIME_RESOLUTION_US};
 			motor_group.owner = owner;
 			motor_group.cancelling = false;
+			motor_group.epoch = epoch;
+			motor_group.expected = expected;
 			for (uint32_t i = 0; i < ARRAY_SIZE(ports); i++) {
 				if (!(g->port_mask & BIT(i))) continue;
 				struct port *p = &ports[i];
@@ -2592,6 +2618,42 @@ int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_gro
 	k_spin_unlock(&lock, key);
 	return err;
 #endif
+}
+
+int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, struct bp_motor_group_state *previous)
+{
+	if (!request) return -EINVAL;
+	return motor_group_command(owner, command, request, previous, false, NULL, 0);
+}
+
+int hub_motor_group_prepare(enum bp_port_owner owner, const struct bp_motor_group_command *command, bool reserve)
+{
+	return motor_group_command(owner, command, NULL, NULL, reserve, NULL, 0);
+}
+
+int hub_motor_group_release(enum bp_port_owner owner, struct bp_motor_group_state *state)
+{
+#ifndef CONFIG_BRICKPHYR_MOTORS
+	return -ENOTSUP;
+#else
+	int err = hub_ports_release(owner);
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (state) *state = motor_group.value;
+	if (!err && motor_group.reservation == owner) {
+		motor_group.reservation = BP_PORT_UNOWNED;
+		motor_group.reserved_mask = 0;
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+#endif
+}
+
+int hub_motor_group_guarded(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, const atomic_t *epoch, atomic_val_t expected)
+{
+	if (!request || !epoch) return -EINVAL;
+	return motor_group_command(owner, command, request, NULL, false, epoch, expected);
 }
 
 int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_command *command, uint32_t *request)

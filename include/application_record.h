@@ -30,6 +30,8 @@ void application_record_finish(uint32_t reason);
 /* Called by the control context after a successful control wait. */
 void application_record_step(const struct bp_control_step *step, const void *parameters);
 int application_record_write(const void *data, size_t length);
+/* Publish the last finite-capture event and its actual reason atomically. */
+int application_record_write_final(const void *data, size_t length, uint32_t reason);
 /* Zero generation selects the caller's current run; host requests bind a run. */
 int application_record_trigger(uint32_t generation, uint32_t after);
 void application_record_info(struct bp_record_info *info);

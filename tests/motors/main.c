@@ -409,6 +409,43 @@ static void shell_group_lifetime(void)
 	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
 }
 
+static void guarded_group_lifetime(void)
+{
+	static atomic_t epoch;
+	struct bp_motor_group_command command = group_command(0, 0, 0);
+	command.coast_mask = command.port_mask;
+	unsigned calls = fake_pwm_set_cycles_fake.call_count;
+	zassert_ok(hub_motor_group_prepare(BP_PORT_CAPTURE, &command, false));
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_ok(hub_motor_group_prepare(BP_PORT_CAPTURE, &command, true));
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Preparation wrote outputs");
+	zassert_equal(motor(0).owner, BP_PORT_CAPTURE);
+	uint32_t request;
+	zassert_equal(hub_motor_group_set(BP_PORT_TERMINAL, &command, &request), -EBUSY);
+	command = group_command(200, -300, k_uptime_get() + 150);
+	atomic_set(&epoch, 1);
+	zassert_equal(hub_motor_group_guarded(BP_PORT_CAPTURE, &command, &request, &epoch, 0), -ECANCELED);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Cancelled admission wrote outputs");
+
+	/* A disconnect after admission must still reach the driver guard. The
+	 * portable adapter must not start B after A's driver has been interrupted. */
+	block_output = count_b_drive = true;
+	b_drive_count = 0;
+	zassert_ok(hub_motor_group_guarded(BP_PORT_CAPTURE, &command, &request, &epoch, 1));
+	zassert_ok(k_sem_take(&output_entered, K_MSEC(50)));
+	atomic_inc(&epoch);
+	k_sem_give(&output_continue);
+	struct bp_motor_group_state state = group_settled(request, false);
+	count_b_drive = false;
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(b_drive_count, 0);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	zassert_ok(hub_motor_group_release(BP_PORT_CAPTURE, &state));
+	zassert_equal(state.request, request);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+}
+
 ZTEST(motors, test_lifetime)
 {
 	fake_pwm_set_cycles_fake.custom_fake = capture_pwm;
@@ -429,6 +466,7 @@ ZTEST(motors, test_lifetime)
 	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Rejected commands touched PWM");
 	group_lifetime();
 	shell_group_lifetime();
+	guarded_group_lifetime();
 
 	/* A live controller group excludes even a disjoint group from another owner;
 	 * application cleanup cannot coast or release the controller's claim. */

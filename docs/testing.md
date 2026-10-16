@@ -27,7 +27,7 @@ platform allowlists.
 | Host ownership or protocol | `tests/host`, `test_host_protocol.py`, or the affected SMP/Pybricks adapter case |
 | Terminal input or TTY cleanup | `test_terminal.py`; add monitor/REPL cases only for those paths |
 | Application record collection or offline reading | `test_recording.py` and `test_records.py`; neither needs firmware |
-| Built-in RAM capture | `test_capture.py` with an already built `native-smp-tests` ARM fixture; `test_capture_codec.py` needs no firmware |
+| Built-in RAM capture and schedules | `test_capture.py` with an already built `native-smp-tests` ARM fixture; `test_capture_host.py` uses `native-host-stacks` for the shared dispatcher; `test_capture_codec.py` and `test_bench_codec.py` need no firmware |
 | Terminal with binary recording | `test_capture_terminal.py` with `native-smp-tests`; `test_recording.py` covers slow-file cancellation and block collection |
 | Application launch with output/record following | `test_follow.py`; existing `native-smp-tests` ARM fixture, no rebuild |
 | Recorder allocation and retention | `tests/record_memory` and `test_record_memory.py`; real fragmented heap, overwrite and cleanup |

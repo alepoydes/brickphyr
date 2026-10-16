@@ -559,6 +559,11 @@ Cleanup attempts every member once, including after cancellation during an
 output write. A failed cleanup leaves that output invalid and claimed until
 explicit release or normal device recovery retries it.
 
+A [finite Shell schedule](telemetry.md#finite-motor-schedules) uses the same
+service with owner `BP_PORT_CAPTURE` (4). It reserves its selected motors and
+the single group-result slot until cleanup has been copied. This prevents another
+command from replacing results before the schedule records them.
+
 `bp_motor_group_get(&state)` reads the last accepted request without I/O. Before
 the first request it returns `ENODATA` with zero state. `pending` includes initial
 writes and fault cleanup; `active` marks the drive phase. A cached active flag

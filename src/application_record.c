@@ -225,7 +225,7 @@ void application_record_step(const struct bp_control_step *step, const void *dat
 	current_step = *step;
 }
 
-int application_record_write(const void *data, size_t length)
+static int write_record(const void *data, size_t length, uint32_t reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = !records ? -ENODATA : !state.active ?
@@ -233,6 +233,7 @@ int application_record_write(const void *data, size_t length)
 			(full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) ?
 			-ENOSPC : -ENODATA) :
 		length != state.spec.size ? -EMSGSIZE :
+		reason != BP_RECORD_OPEN && full_reason == BP_RECORD_OPEN ? -EINVAL :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
 		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
@@ -269,9 +270,9 @@ int application_record_write(const void *data, size_t length)
 		}
 		memcpy(record_data(index), data, length);
 		state.next++;
-		if (full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) {
+		if (reason != BP_RECORD_OPEN || (full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity)) {
 			state.active = false;
-			state.reason = full_reason;
+			state.reason = reason != BP_RECORD_OPEN ? reason : full_reason;
 		} else if (state.next - state.first > state.spec.capacity) {
 			state.first++;
 		}
@@ -282,6 +283,18 @@ int application_record_write(const void *data, size_t length)
 	}
 	k_spin_unlock(&lock, key);
 	return err;
+}
+
+int application_record_write(const void *data, size_t length)
+{
+	return write_record(data, length, BP_RECORD_OPEN);
+}
+
+int application_record_write_final(const void *data, size_t length, uint32_t reason)
+{
+	if (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION &&
+	    reason != BP_RECORD_CANCELLED && reason != BP_RECORD_ERROR) return -EINVAL;
+	return write_record(data, length, reason);
 }
 
 int application_record_trigger(uint32_t generation, uint32_t after)

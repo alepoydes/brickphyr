@@ -220,8 +220,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         not 32 <= ord(char) <= 126 for char in info.record_schema
     ):
         raise RuntimeError("Invalid recording schema")
-    if info.record_schema != "brickphyr.capture/1":
-        record_codec.check_size(info.record_schema, info.size)
+    record_codec.check_size(info.record_schema, info.size)
     block = getattr(info, "block", 0)
     if not 0 <= block <= 1024:
         raise RuntimeError("Invalid recording block capacity")

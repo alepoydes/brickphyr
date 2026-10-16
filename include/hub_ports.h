@@ -7,6 +7,7 @@
 #include <brickphyr_motor.h>
 #include <brickphyr_drivebase.h>
 #include <brickphyr_control.h>
+#include <zephyr/sys/atomic.h>
 
 #ifdef CONFIG_BRICKPHYR_PORTS
 int hub_control_port_get(uint32_t port, struct bp_control_port *value);
@@ -14,6 +15,15 @@ int hub_motor_group_set(enum bp_port_owner owner, const struct bp_motor_group_co
 int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
 	uint32_t *request, struct bp_motor_group_state *previous);
 int hub_motor_group_get(struct bp_motor_group_state *state);
+/* Diagnostic admission uses the same validation as a group submission.
+ * reserve claims all members without changing outputs. The guarded submit
+ * rejects a cancelled epoch both at admission and before the driver edge. */
+int hub_motor_group_prepare(enum bp_port_owner owner,
+	const struct bp_motor_group_command *command, bool reserve);
+/* Coast/join, copy the final group result, then release its reservation. */
+int hub_motor_group_release(enum bp_port_owner owner, struct bp_motor_group_state *state);
+int hub_motor_group_guarded(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, const atomic_t *epoch, atomic_val_t expected);
 int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle);
 int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state);
 int hub_drivebase_command(enum bp_port_owner owner, uint32_t handle,
@@ -97,6 +107,12 @@ static inline int hub_motor_group_set(enum bp_port_owner owner, const struct bp_
 static inline int hub_motor_group_exchange(enum bp_port_owner owner, const struct bp_motor_group_command *command,
 	uint32_t *request, struct bp_motor_group_state *previous) { return -ENOTSUP; }
 static inline int hub_motor_group_get(struct bp_motor_group_state *state) { return -ENOTSUP; }
+static inline int hub_motor_group_prepare(enum bp_port_owner owner,
+	const struct bp_motor_group_command *command, bool reserve) { return -ENOTSUP; }
+static inline int hub_motor_group_release(enum bp_port_owner owner,
+	struct bp_motor_group_state *state) { return -ENOTSUP; }
+static inline int hub_motor_group_guarded(enum bp_port_owner owner, const struct bp_motor_group_command *command,
+	uint32_t *request, const atomic_t *epoch, atomic_val_t expected) { return -ENOTSUP; }
 static inline bool hub_drivebase_uses_gyro(void) { return false; }
 static inline int hub_drivebase_open(enum bp_port_owner owner, const struct bp_drivebase_setup *setup, uint32_t *handle) { return -ENOTSUP; }
 static inline int hub_drivebase_get(enum bp_port_owner owner, uint32_t handle, struct bp_drivebase_state *state) { return -ENOTSUP; }

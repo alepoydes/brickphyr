@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum bp_port_owner { BP_PORT_UNOWNED, BP_PORT_APPLICATION, BP_PORT_TERMINAL, BP_PORT_CONTROLLER };
+enum bp_port_owner { BP_PORT_UNOWNED, BP_PORT_APPLICATION, BP_PORT_TERMINAL, BP_PORT_CONTROLLER, BP_PORT_CAPTURE };
 
 /* UART is the electrical signature; NEGOTIATING and READY describe LUMP. */
 enum bp_port_phase {

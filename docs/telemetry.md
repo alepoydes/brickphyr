@@ -24,8 +24,9 @@ The built-in capture below records selected observations at hub-local deadlines.
 The text monitor provides client-requested snapshots. Application control-step
 records remain available through the same [binary recorder](applications.md#application-recording).
 [Grouped motor commands](ports.md#grouped-raw-motor-commands) share this Shell;
-the F4 timer adapter's physical drive/timing acceptance and finite actuation
-schedules remain [planned work](roadmap.md#measurement-bench).
+[finite schedules](#finite-motor-schedules) add hub-local timing and command records.
+The F4 timer adapter's physical drive/timing acceptance remains
+[planned work](roadmap.md#measurement-bench).
 
 ## Finite RAM capture
 
@@ -138,6 +139,81 @@ the Shell and terminal-state restoration. A bounded Inventor F4 check also runs
 that CLI over one BLE connection while capturing IMU, battery and two ports,
 then validates the binary file and explicitly clears the hub buffer. USB supplies
 power during that check; motor outputs are not energized.
+
+## Finite motor schedules
+
+A prepared capture can include a finite sequence of grouped motor commands.
+Enter these commands in the hub Shell; `at` appends an action without moving a
+motor, and only `start` begins the experiment:
+
+```text
+capture prepare 20 1500 imu encoder.A encoder.B
+capture at 200 300 A=200 B=200
+capture at 700 300 A=-200 B=-200
+capture check
+capture start
+```
+
+`at` takes an offset from capture start, a command duration (both milliseconds),
+then the same `A=duty|brake|coast` members as
+[`motor group`](ports.md#grouped-raw-motor-commands). Duty is signed permille,
+from -1000 to 1000. Actions must have increasing offsets, the same port set,
+and fit wholly within the capture window. Drive and brake require a positive
+duration; all-coast permits zero. A later action can replace the earlier one
+before its deadline. Preparing a new capture discards its previous prepared
+schedule; rejected edits preserve it. `status` shows the complete plan.
+`check` revalidates device identities and availability without claiming ports
+or changing outputs. Reconnecting a scheduled device requires preparing again.
+
+`start` allocates the recording and worker, then reserves all selected idle
+motors and the shared group-command history. Competing writes to those motors
+and competing groups return `EBUSY`; ordinary read-only observations remain
+available. The reservation spans gaps between actions and ends after output
+cleanup. A live management connection is required for scheduled drive. The
+existing exclusive recorder/application admission rules still apply.
+
+Recording and actions share one monotonic origin aligned to the next millisecond
+boundary, matching the motor service's absolute deadlines. Queue delay consumes
+the command's validity rather than extending it. Missed actions are not replayed
+in a burst: if the next action is already due, or the preceding output is still
+pending, the experiment fails and coasts. Requested and observed driver times
+remain distinct; see [F4 output timing](ports.md#f4-output-timing) for the limits
+of electrical synchronization claims.
+
+`capture stop`, a detected management-link loss or an execution error coasts the
+scheduled group and retains observations. Each active command also has its own
+finite deadline, independent of the capture thread and connection-loss detection.
+The transport signals cancellation immediately on its disconnect notification;
+the shared motor worker checks it again before applying output. This diagnostic
+policy does not change autonomous applications or passive capture on disconnect.
+`stop` joins cleanup before returning. Cleanup errors retain affected claims;
+`capture clear` retries release before discarding the records. Successful clear
+retains the prepared plan for another run.
+
+Scheduled captures use `brickphyr.bench/1`. The immutable configuration includes
+the source selection, period, device generations and complete action list. Records
+contain a begin/origin event, ordinary observation snapshots, action results and a
+final summary. An action can produce separate application and cleanup results,
+including its request identity, times, masks and first operation/cleanup errors.
+The final event records attempted actions, planned/written samples and missed
+releases. Missing sensor data remains a source error, distinct from schedule
+failure. The offline `Recording` reader exposes these as `kind` values `begin`,
+`sample`, `group` and `end`.
+
+The current fixed-slot format reserves up to two results per action plus begin
+and end events before admitting samples. `check` shows the resulting capacity
+and RAM budget; appending actions can reduce a `full` capture's duration or reject
+an explicit duration that no longer fits. Collection uses the same
+`terminal --record` and resumable binary download as passive capture. Command-file
+replay and compact variable-size records remain planned work.
+
+Protected ARM/QEMU checks exercise the shared Shell, recorder and synthetic motor
+services through preparation, opposite duties, expiry, result collection and
+explicit stop and cancellation before the first action. The shared host-dispatcher
+fixture also checks DTR loss and collection after reconnection. Native simulation
+checks cancellation
+between grouped driver writes and preservation of output ownership. These checks
+do not establish physical motion, BLE timing or electrical synchronization.
 
 ## Text monitor and recording
 

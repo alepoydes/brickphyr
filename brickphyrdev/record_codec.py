@@ -3,7 +3,7 @@
 
 import struct
 
-from . import capture_codec
+from . import bench_codec, capture_codec
 
 END_REASONS = {2: "trigger", 3: "full", 4: "duration", 5: "cancelled", 6: "error"}
 
@@ -235,9 +235,14 @@ _DECODERS = {
 }
 
 
-def check_size(schema, size, config=b""):
+def check_size(schema, size, config=None):
+    if schema == bench_codec.SCHEMA:
+        if config is not None:
+            bench_codec.check_size(size, config)
+        return
     if schema == capture_codec.SCHEMA:
-        capture_codec.check_size(size, config)
+        if config is not None:
+            capture_codec.check_size(size, config)
         return
     decoder = _DECODERS.get(schema)
     if decoder and size != decoder[0]:
@@ -246,6 +251,8 @@ def check_size(schema, size, config=b""):
 
 def decode(schema, data, config=b"") -> dict | None:
     check_size(schema, len(data), config)
+    if schema == bench_codec.SCHEMA:
+        return bench_codec.decode(data, config)
     if schema == capture_codec.SCHEMA:
         return capture_codec.decode(data, config)
     decoder = _DECODERS.get(schema)

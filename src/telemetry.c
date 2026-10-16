@@ -7,6 +7,7 @@
 #include "hub_battery.h"
 #include "hub_charger.h"
 #include "hub_ports.h"
+#include "motor_command.h"
 #include "input_resistor_ladder.h"
 #include "application.h"
 
@@ -723,31 +724,40 @@ SHELL_CMD_ARG_REGISTER(sensor, NULL,
 	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|angle|release.",
 	cmd_sensor, 3, 0);
 
-static int cmd_motor_group(size_t argc, char **argv)
+int motor_command_parse(size_t argc, char **argv,
+	struct bp_motor_group_command *command, uint32_t *duration_ms)
 {
-	if (argc < 4 || argc > 3 + BP_PORT_COUNT) return -EINVAL;
+	if (argc < 2 || argc > 1 + BP_PORT_COUNT) return -EINVAL;
 	int err = 0;
-	unsigned long duration = shell_strtoul(argv[2], 10, &err);
-	if (err || duration > INT32_MAX || argv[2][0] == '-') return -EINVAL;
-	struct bp_motor_group_command command = {0};
-	for (size_t i = 3; i < argc; i++) {
+	unsigned long duration = shell_strtoul(argv[0], 10, &err);
+	if (err || duration > INT32_MAX || argv[0][0] == '-') return -EINVAL;
+	*command = (struct bp_motor_group_command){0};
+	for (size_t i = 1; i < argc; i++) {
 		const char *member = argv[i];
 		if (member[0] < 'A' || member[0] > 'F' || member[1] != '=' || !member[2]) return -EINVAL;
 		uint32_t port = member[0] - 'A';
-		if (port >= BP_PORT_COUNT || command.port_mask & BIT(port)) return -EINVAL;
-		command.port_mask |= BIT(port);
+		if (port >= BP_PORT_COUNT || command->port_mask & BIT(port)) return -EINVAL;
+		command->port_mask |= BIT(port);
 		if (!strcmp(member + 2, "coast")) {
-			command.coast_mask |= BIT(port);
+			command->coast_mask |= BIT(port);
 		} else if (strcmp(member + 2, "brake")) {
 			long duty = shell_strtol(member + 2, 10, &err);
 			if (err || duty < -1000 || duty > 1000) return -EINVAL;
-			command.ports[port].duty_permille = duty;
+			command->ports[port].duty_permille = duty;
 		}
 	}
-	if (command.coast_mask != command.port_mask) {
-		if (!duration) return -EINVAL;
-		command.deadline_ms = k_uptime_get() + duration;
-	}
+	if (command->coast_mask != command->port_mask && !duration) return -EINVAL;
+	*duration_ms = duration;
+	return 0;
+}
+
+static int cmd_motor_group(size_t argc, char **argv)
+{
+	struct bp_motor_group_command command;
+	uint32_t duration;
+	int err = motor_command_parse(argc - 2, argv + 2, &command, &duration);
+	if (err) return err;
+	if (command.coast_mask != command.port_mask) command.deadline_ms = k_uptime_get() + duration;
 	for (uint32_t port = 0; port < BP_PORT_COUNT; port++) {
 		if (!(command.port_mask & BIT(port))) continue;
 		struct bp_port_state state;
