@@ -23,7 +23,9 @@ application running.
 The built-in capture below records selected observations at hub-local deadlines.
 The text monitor provides client-requested snapshots. Application control-step
 records remain available through the same [binary recorder](applications.md#application-recording).
-Synchronized outputs and finite actuation schedules are [planned work](roadmap.md#measurement-bench).
+[Grouped motor commands](ports.md#grouped-raw-motor-commands) share this Shell;
+the F4 timer adapter's physical drive/timing acceptance and finite actuation
+schedules remain [planned work](roadmap.md#measurement-bench).
 
 ## Finite RAM capture
 

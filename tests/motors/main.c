@@ -355,6 +355,60 @@ static void group_lifetime(void)
 	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
 }
 
+static void shell_group_lifetime(void)
+{
+	const struct shell *shell = shell_backend_dummy_get_ptr();
+	struct bp_motor_group_state before, state;
+	zassert_ok(hub_motor_group_get(&before));
+	unsigned calls = fake_pwm_set_cycles_fake.call_count;
+	/* A later malformed or unsuitable member must not claim or drive A. */
+	zassert_equal(shell_execute_cmd(shell, "motor group 80 A=200 B=1001"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "motor group 80 A=200 A=100"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "motor group 0 A=200 B=coast"), -EINVAL);
+	zassert_equal(shell_execute_cmd(shell, "motor group 80 A=200 C=100"), -ENOTSUP);
+	zassert_ok(hub_motor_group_get(&state));
+	zassert_equal(state.request, before.request);
+	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+
+	zassert_ok(shell_execute_cmd(shell, "motor group 80 A=250 B=-400"));
+	zassert_ok(hub_motor_group_get(&state));
+	uint32_t request = state.request;
+	state = group_settled(request, true);
+	zassert_equal(state.port_mask, BIT(0) | BIT(1));
+	zassert_equal(state.applied_mask, state.port_mask);
+	zassert_equal(state.ports[0].duty_permille, 250);
+	zassert_equal(state.ports[1].duty_permille, -400);
+	zassert_true(state.deadline_ms > state.requested_ms);
+	zassert_equal(motor(0).owner, BP_PORT_TERMINAL);
+	k_msleep(85);
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ETIMEDOUT);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	zassert_equal(motor(0).mode, BP_MOTOR_COAST);
+	zassert_equal(motor(1).mode, BP_MOTOR_COAST);
+
+	zassert_ok(shell_execute_cmd(shell, "motor group 0 A=coast B=coast"));
+	zassert_ok(hub_motor_group_get(&state));
+	state = group_settled(state.request, false);
+	zassert_ok(state.error);
+	zassert_equal(state.deadline_ms, 0);
+	zassert_equal(state.applied_mask, state.port_mask);
+
+	zassert_ok(shell_execute_cmd(shell, "motor group 150 A=brake B=200"));
+	zassert_ok(hub_motor_group_get(&state));
+	request = state.request;
+	state = group_settled(request, true);
+	zassert_equal(state.ports[0].duty_permille, 0);
+	zassert_equal(state.ports[1].duty_permille, 200);
+	hub_ports_session_closed(BP_PORT_TERMINAL);
+	state = group_settled(request, false);
+	zassert_equal(state.error, -ECANCELED);
+	zassert_equal(state.cleanup_mask, state.port_mask);
+	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
+	zassert_equal(motor(1).owner, BP_PORT_UNOWNED);
+}
+
 ZTEST(motors, test_lifetime)
 {
 	fake_pwm_set_cycles_fake.custom_fake = capture_pwm;
@@ -374,6 +428,7 @@ ZTEST(motors, test_lifetime)
 	zassert_equal(motor(0).owner, BP_PORT_UNOWNED);
 	zassert_equal(fake_pwm_set_cycles_fake.call_count, calls, "Rejected commands touched PWM");
 	group_lifetime();
+	shell_group_lifetime();
 
 	/* A live controller group excludes even a disjoint group from another owner;
 	 * application cleanup cannot coast or release the controller's claim. */

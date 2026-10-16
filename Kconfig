@@ -217,6 +217,15 @@ config BRICKPHYR_MOTOR_CONTROL
 	  system work. Missing encoder/battery input or a missed frame coasts the
 	  motor and reports an error. Physical timing and tuning are experimental.
 
+config BRICKPHYR_MOTOR_OUTPUT_STM32
+	bool
+	default y if BOARD_SPIKE_PRIME_F4
+	depends on BRICKPHYR_MOTORS && SOC_SERIES_STM32F4X
+	select PINCTRL
+	help
+	  Exclusive F4 H-bridge timer backend with shared TIM2 reset/update edges.
+	  The generic STM32 PWM driver must not own these timers simultaneously.
+
 config HEAP_MEM_POOL_ADD_SIZE_BRICKPHYR_MOTOR_CONTROL
 	int
 	default $(mul,512,$(dt_node_enabled_child_count,$(dt_nodelabel_path,hub_ports))) if BRICKPHYR_MOTOR_CONTROL

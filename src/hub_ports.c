@@ -838,7 +838,8 @@ static void cancel_motor_group(int error)
 	}
 }
 
-/* Called before each member's driver operation and after the final one. */
+/* Called before output application and after the batch. A synchronous adapter
+ * checks again just before arming its common update edge. */
 static void check_motor_group(void)
 {
 	struct bp_motor_group_state *g = &motor_group.value;

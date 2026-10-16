@@ -723,8 +723,45 @@ SHELL_CMD_ARG_REGISTER(sensor, NULL,
 	"Select measurement: A..F default|surface|ambient|distance|presence|force|tilt|count|angle|release.",
 	cmd_sensor, 3, 0);
 
+static int cmd_motor_group(size_t argc, char **argv)
+{
+	if (argc < 4 || argc > 3 + BP_PORT_COUNT) return -EINVAL;
+	int err = 0;
+	unsigned long duration = shell_strtoul(argv[2], 10, &err);
+	if (err || duration > INT32_MAX || argv[2][0] == '-') return -EINVAL;
+	struct bp_motor_group_command command = {0};
+	for (size_t i = 3; i < argc; i++) {
+		const char *member = argv[i];
+		if (member[0] < 'A' || member[0] > 'F' || member[1] != '=' || !member[2]) return -EINVAL;
+		uint32_t port = member[0] - 'A';
+		if (port >= BP_PORT_COUNT || command.port_mask & BIT(port)) return -EINVAL;
+		command.port_mask |= BIT(port);
+		if (!strcmp(member + 2, "coast")) {
+			command.coast_mask |= BIT(port);
+		} else if (strcmp(member + 2, "brake")) {
+			long duty = shell_strtol(member + 2, 10, &err);
+			if (err || duty < -1000 || duty > 1000) return -EINVAL;
+			command.ports[port].duty_permille = duty;
+		}
+	}
+	if (command.coast_mask != command.port_mask) {
+		if (!duration) return -EINVAL;
+		command.deadline_ms = k_uptime_get() + duration;
+	}
+	for (uint32_t port = 0; port < BP_PORT_COUNT; port++) {
+		if (!(command.port_mask & BIT(port))) continue;
+		struct bp_port_state state;
+		err = hub_port_get(port, &state);
+		if (err) return err;
+		command.ports[port].generation = state.generation;
+	}
+	uint32_t request;
+	return hub_motor_group_set(BP_PORT_TERMINAL, &command, &request);
+}
+
 static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 {
+	if (!strcmp(argv[1], "group")) return cmd_motor_group(argc, argv);
 	if (strlen(argv[1]) != 1 || argv[1][0] < 'A' || argv[1][0] > 'F') return -EINVAL;
 	uint32_t port = argv[1][0] - 'A';
 	if (argc == 3 && !strcmp(argv[2], "release")) return hub_port_release(BP_PORT_TERMINAL, port);
@@ -771,9 +808,9 @@ static int cmd_motor(const struct shell *shell, size_t argc, char **argv)
 	if (err || duration > INT32_MAX || (argc > duration_index && argv[duration_index][0] == '-')) return -EINVAL;
 	return hub_motor_drive(BP_PORT_TERMINAL, port, duty, duration);
 }
-SHELL_CMD_ARG_REGISTER(motor, NULL, "A..F duty PERMILLE [MS] | brake [MS] | coast | release | observe | "
+SHELL_CMD_ARG_REGISTER(motor, NULL, "group MS A=DUTY B=brake C=coast ... | A..F duty PERMILLE [MS] | brake [MS] | coast | release | observe | "
 	"run MDEG/S MS FINISH | target MDEG MDEG/S FINISH (coast/brake/hold/continue).",
-	cmd_motor, 3, 3);
+	cmd_motor, 3, 6);
 
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = info_read}, [1] = {.mh_read = snapshot_read},

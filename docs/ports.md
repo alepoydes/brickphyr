@@ -500,6 +500,29 @@ outputs within that mask. Other members use signed physical duty in permille
 (`-1000..1000`); zero duty brakes. Direction, gearing and battery-voltage scaling
 are not applied. Each member must carry its current connection generation.
 
+The shared USB/BLE Shell submits the same group with one command. This example
+actuates A and B with a 200 ms validity deadline, followed by coast:
+
+```text
+motor group 200 A=250 B=-250
+observe motor.A
+observe motor.B
+```
+
+`motor group MS PORT=VALUE ...` accepts one to six different ports; each value
+is signed duty in permille, `brake` or `coast`. Duration must be positive when
+any member drives or brakes. An all-coast command permits zero duration, for
+example `motor group 0 A=coast B=coast`. The Shell validates the entire command,
+reads connection generations and submits once; a rejected member cannot leave
+an earlier member driving. Duration is converted to an absolute deadline before
+submission, so queueing consumes the available interval. Per-port observations
+show execution; successful command entry alone does not mean outputs have changed.
+
+These commands own the ports as terminal diagnostics. Disconnect releases their
+claims and coasts the group. `motor A coast` cancels a group containing A;
+`motor A release` additionally relinquishes A's claim. After an ordinary timed
+command ends, release the other members explicitly when finished with them.
+
 All members are checked before any claim or command changes. Admission rejects
 stale/disconnected devices, conflicting owners, pending writes and ports with an
 active regulated motor mode or DriveBase. An already running passive observer
@@ -524,9 +547,10 @@ This mechanism does not promise zero scheduling/driver delay at expiry;
 its physical latency under combined load remains to be measured.
 
 The worker submits a whole group to the shared output adapter, then advances
-motor observers using the applied outputs. The current portable adapter still
-applies members in port order: successful admission is atomic; physical PWM
-switching is not. If a member fails or its
+motor observers using the applied outputs. The F4 adapter stages all members for
+a common timer update; see [F4 output timing](#f4-output-timing) for reversal,
+failure and verification limits. The portable adapter applies members in port
+order and does not synchronize electrical switching. If a member fails or its
 identity changes, the worker coasts every member, including earlier successes,
 in the same pass. It does not restore previous drive values. A driver already in
 progress must finish before cleanup can complete. Application stop/fault/return
@@ -1294,22 +1318,16 @@ power flags reject this operation. Encoder selection ignores supply flags and
 does not drive, brake or hold a motor. Motor commands require a separate explicit
 request through the same owner. No raw H-bridge interface is exported.
 
-The private output adapter in `src/ports/output.c` also implements Pybricks'
-H-bridge PWM behavior through Zephyr GPIO/PWM/pinctrl. Its selected source is
+The private adapters in `src/ports/output.c` and `src/ports/output_stm32.c`
+implement Pybricks' H-bridge behavior. Their selected source is
 [`motor_driver_hbridge_pwm.c`](https://github.com/alepoydes/pybricks-micropython/blob/a7b1b04ae4f8449dd46b3dfb97c420334439fd35/lib/pbio/drv/motor_driver/motor_driver_hbridge_pwm.c),
 with the retained MIT notice. It preserves forward/reverse polarity, zero-duty
 braking, coast and the F4's 12 kHz PWM with 1000 duty steps. It checks parameters
 and driver results; the owning service must attempt coast after an I/O failure
-and preserve any cleanup failure separately.
-
-TIM1 serves A/B, TIM4 C/D and TIM3 E/F. Timer initialization has an empty pinctrl
-state, so the boot GPIO coast remains in force. A drive transition prepares the
-PWM before applying that port's single-channel pinmux; steady updates change
-only the compare value. Coast disconnects the timer using GPIO and disables
-available PWM channels. Re-enabling a channel latches its prepared compare on
-STM32 before pinmux handoff. That timer update can also restart the shared counter;
-different ports do not have an atomic or synchronized command contract. Actual
-waveforms and electrical transitions still need instrumented tests.
+and preserve any cleanup failure separately. Each build uses one adapter for
+individual drive, grouped drive, coast and sensor supply. The portable adapter
+uses Zephyr GPIO/PWM/pinctrl; the F4 adapter uses Zephyr clock/reset/pinctrl and
+the STM32 timer registers to synchronize outputs.
 
 `supply` reports sensor/custom-UART DC supply: 0 none, 1 pin 1 positive, 2 pin 2 positive.
 Motor output has its separate state above. Neither is voltage feedback; after a GPIO/cleanup error, the actual
@@ -1320,6 +1338,44 @@ reported separately and retried before electrical detection resumes.
 Shutdown, reboot and DFU entry join pending service work, disable UART interrupts
 and the shared supply, and release all test pins. Failure to release one pin does not skip the
 other releases. Applications receive snapshots, not GPIO handles.
+
+### F4 output timing
+
+TIM1 serves A/B, TIM4 C/D and TIM3 E/F. TIM2 supplies their common 12 kHz reset
+trigger. The F4 adapter owns all four timers exclusively; their generic PWM or
+counter drivers cannot be enabled concurrently. Both H-bridge channels remain
+connected to preloaded compare outputs after initialization establishes coast.
+All-coast startup is prepared before connecting the pins to timers.
+
+A command stages its compare values with shadow updates disabled, then arms
+all three output timers for the same upcoming trigger. Duty changes, brake and
+ordinary coast use this path. On reversal, only the reversing members first
+coast for at least one PWM period; the complete new group then latches together.
+Thus reversal includes an intentional intermediate state, not a single atomic
+transition from every old output to every new output. Unselected ports retain
+their compare values. Validation and absolute expiry are checked again before
+arming each update; rejected preloads are restored before another update.
+
+No interrupt runs on every PWM cycle. The serialized port worker waits for the
+new edge with interrupts enabled after a short arming section. A timer wait is
+bounded to 1 ms of observed CPU time; preemption can extend wall time. Failure
+disconnects every timer-owned output into GPIO coast and refuses further drive
+until reboot. Cleanup still attempts each GPIO independently and reports its
+result; this emergency path does not promise a common electrical edge. The
+timers continue during ordinary WFI idle. Deep sleep and device power management
+are excluded until explicit timer quiesce/resume support exists.
+
+The F4 adapter has a full-profile build and a bounded register check on one
+Robot Inventor F4 (PCB revision unknown), with all twelve H-bridge pins held as
+GPIO outputs low throughout. That check covers idle timer progress, grouped
+compare updates, reversal, brake/coast, cancellation, expiry and bounded failure
+after stopping TIM2. A second masked-output check exercises the full Shell/service
+path with two connected ID-75 devices: grouped updates, reversal, brake, expiry
+and disconnect cleanup complete without errors other than their expected timeout
+or cancellation, with common driver completion times for both members. All pins
+remain GPIO low. Neither check energizes motors or measures electrical edges.
+Earlier physical drive checks in this document used the portable adapter;
+energized operation and instrumented timing of the F4 adapter remain pending.
 
 There are at most 500 service rounds/s before scheduler and GPIO execution cost,
 with at most six finite state transitions in a round. Each UART has a static

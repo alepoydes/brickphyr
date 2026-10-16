@@ -4,6 +4,9 @@ compatible: "lego,powered-up-ports"
 include: base.yaml
 
 properties:
+  sync-timer:
+    type: phandle
+    description: F4 shared H-bridge PWM reset/update timer, owned by the port output driver
   vcc-gpios:
     type: phandle-array
     required: true
