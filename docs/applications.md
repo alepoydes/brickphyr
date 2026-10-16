@@ -589,6 +589,9 @@ remains available without a host, including during LLEXT's deferred-log flush.
 (64 KiB on F4); an idle Python engine reserves none of it. Both F4 profiles permit
 64 KiB of ELF and a 214144-byte native loader budget. Their shared system heaps
 are 225280 bytes for native-only and 221184 bytes with full BLE Python.
+Core Python also reserves 221184 bytes; enabling the Classic Python profile
+leaves 196608 bytes for the shared heap. These reservations leave room for the
+linked capture and SMP services; Python's arena remains allocated on demand.
 The Technic native profile permits 4 KiB images and a 16 KiB loader budget in a
 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
