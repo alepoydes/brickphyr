@@ -588,7 +588,7 @@ remains available without a host, including during LLEXT's deferred-log flush.
 `CONFIG_BRICKPHYR_PYTHON_HEAP_SIZE` independently sets the on-demand Python arena
 (64 KiB on F4); an idle Python engine reserves none of it. Both F4 profiles permit
 64 KiB of ELF and a 214144-byte native loader budget. Their shared system heaps
-are 228992 bytes for native-only and 223232 bytes with full BLE Python.
+are 225280 bytes for native-only and 221184 bytes with full BLE Python.
 The Technic native profile permits 4 KiB images and a 16 KiB loader budget in a
 25 KiB shared heap.
 An image limit does not reserve upload space or guarantee that the loaded image
@@ -1277,9 +1277,9 @@ F4 UART state and port-mode descriptions borrow from the shared system heap whil
 devices are connected. Empty and passive ports need no UART allocation; each
 active UART link occupies 944 bytes plus allocator overhead, including its
 independent 512-byte RX buffer. Compact error diagnostics remain after disconnect.
-The native-only profile provides a 228992-byte heap, including on-demand loader
-allocations and stacks. The BLE full and core Python profiles provide 223232 and
-224256 bytes, respectively, including the on-demand 64 KiB Python arena.
+The native-only profile provides a 225280-byte heap, including on-demand loader
+allocations and stacks. The BLE full and core Python profiles provide 221184 and
+222208 bytes, respectively, including the on-demand 64 KiB Python arena.
 Idle and native-only execution leave that capacity available to other allocations.
 Active stacks and native loader
 allocations, including a concurrent controller, also come from that heap.
@@ -1371,6 +1371,9 @@ The observer runs every 15 ms, receives copied 60-byte model revisions and keeps
 outside GC for RAM execution, or read directly from LittleFS for stored execution.
 The controller ELF is read through that source without an extra whole-image copy;
 its MPU-rounded executable/data regions are separate allocations.
+
+These measurements used the earlier 512-byte SMP buffers and a 223232-byte heap;
+the current 1024-byte buffers trade 2048 bytes of shared heap for larger transfers.
 
 | Live allocation | RAM start | Stored start |
 | --- | ---: | ---: |

@@ -810,8 +810,9 @@ binding is absent; the rest of the full Python and Pybricks surface remains
 enabled. Physical network acceptance and combined memory measurements remain
 pending.
 
-Matching F4 builds with Zephyr 4.4.2 and the Zephyr SDK 1.0.1 ARM compiler
-have the following linked budgets. Both retain the full Python surface except
+An earlier F4 comparison with Zephyr 4.4.2 and the Zephyr SDK 1.0.1 ARM compiler
+has the following linked budgets. These builds precede built-in capture and use
+512-byte SMP buffers. Both retain the full Python surface except
 for the Classic-only HubNetwork binding, with 64 KiB application image and
 64 KiB Python arena limits:
 

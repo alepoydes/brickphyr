@@ -173,6 +173,27 @@ and inactive-output fields, with matching IMU sequence identity, complete
 collection and responsive Shell input. The host reader accepts older schemas;
 these checks do not establish sustained throughput or battery-only operation.
 
+### BLE transfer budget
+
+F4 native and Python profiles use four 1024-byte SMP buffers, allowing up to
+912 packed recording bytes per response. This retains the request/response pool
+capacity and costs 2048 bytes more static RAM than 512-byte buffers; the shared
+heap budgets account for that cost. The client uses the advertised block size.
+
+On one USB-powered Inventor F4, a retained 13,800-byte payload took 4.05 seconds
+to collect over BLE at ATT MTU 130 and a 7.5 ms connection interval, versus
+4.58 seconds with 400-byte payload blocks. These are bounded measurements after
+connection setup, not a guaranteed rate. Initial connection-parameter negotiation
+can make the first download slower; the computer controls the accepted interval.
+
+A passive BLE check also collects sixty 276-byte observations over six seconds
+while retaining Shell input (one command completed in 125 ms), resumes an
+interrupted download with bytes identical to a complete reread, and retrieves
+all 118 observations after the RAM buffer fills. The SMP worker retains 2032
+unused bytes of its 4096-byte stack in that workload. USB supplied power;
+battery-only operation, sustained combined load and energized motor timing remain
+separate acceptance checks.
+
 ## Finite motor schedules
 
 A prepared capture can include a finite sequence of grouped motor commands.
