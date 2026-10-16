@@ -106,7 +106,7 @@ struct bp_record_spec;
 /* Reserve the idle recorder for a built-in capture. Existing records are never
  * discarded implicitly. The capture owner joins its worker before release. */
 int application_capture_begin(const struct bp_record_spec *spec, const void *config, size_t size,
-	uint32_t full_reason);
+	uint32_t full_reason, size_t payload_bytes);
 int application_capture_release(void);
 #endif
 /* Close application admission and quiesce resources without requesting power-off.

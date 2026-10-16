@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 
 static struct k_spinlock lock;
 static struct bp_record_info state;
@@ -13,6 +14,9 @@ static size_t parameter_stride, step_size;
 static unsigned int block_shift, block_mask;
 static uint16_t free_parameters;
 static size_t retained_bytes;
+static size_t block_count, packed_capacity;
+static uint16_t *offsets;
+enum { PACKED_BLOCK_SIZE = 1024 };
 static uint32_t full_reason;
 struct recorded_step {
 	struct bp_control_step value;
@@ -43,6 +47,32 @@ static uint8_t *record_data(size_t index)
 		(index & block_mask) * state.spec.size;
 }
 
+static size_t record_length(size_t index)
+{
+	return offsets ? offsets[index + 1] - offsets[index] : state.spec.size;
+}
+
+/* Packed records may cross allocation boundaries. No allocation or scan is
+ * needed while sampling; the offset index also permits direct resume reads. */
+static void packed_copy(size_t position, void *data, size_t length, bool write)
+{
+	while (length) {
+		size_t part = MIN(length, PACKED_BLOCK_SIZE - position % PACKED_BLOCK_SIZE);
+		uint8_t *stored = records[position / PACKED_BLOCK_SIZE] + position % PACKED_BLOCK_SIZE;
+		if (write) memcpy(stored, data, part);
+		else memcpy(data, stored, part);
+		position += part;
+		data = (uint8_t *)data + part;
+		length -= part;
+	}
+}
+
+static void copy_payload(size_t index, size_t offset, void *data, size_t length)
+{
+	if (offsets) packed_copy(offsets[index] + offset, data, length, false);
+	else memcpy(data, record_data(index) + offset, length);
+}
+
 static void free_records(uint8_t **blocks, size_t count)
 {
 	for (size_t i = 0; i < count; i++) k_free(blocks[i]);
@@ -53,9 +83,11 @@ static void reset(bool active)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	uint8_t **old = records;
-	size_t count = old ? DIV_ROUND_UP(state.spec.capacity, block_mask + 1) : 0;
+	size_t count = block_count;
 	records = NULL;
 	retained_bytes = 0;
+	block_count = packed_capacity = 0;
+	offsets = NULL;
 	configuration = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
 	full_reason = BP_RECORD_OPEN;
@@ -113,6 +145,19 @@ static int record_layout(size_t size, size_t capacity, size_t length, bool contr
 	return 0;
 }
 
+static int compact_layout(size_t size, size_t capacity, size_t length,
+	size_t payload_bytes, struct record_layout *layout)
+{
+	if (!size || size > 1024 || !capacity || capacity > 32768 || length > 1024 ||
+	    payload_bytes < capacity || payload_bytes > 32768 || payload_bytes > size * capacity) return -EINVAL;
+	size_t count = DIV_ROUND_UP(payload_bytes, PACKED_BLOCK_SIZE);
+	size_t bytes = count * sizeof(*records) + (capacity + 1) * sizeof(*offsets) +
+		length + payload_bytes;
+	if (bytes > 32768) return -EINVAL;
+	*layout = (struct record_layout){.count = count, .bytes = bytes};
+	return 0;
+}
+
 int application_record_budget(size_t size, size_t capacity, size_t length,
 	bool control, size_t parameter_size, size_t *bytes)
 {
@@ -122,11 +167,21 @@ int application_record_budget(size_t size, size_t capacity, size_t length,
 	return err;
 }
 
-static int begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, size_t parameter_size, uint32_t completion_reason)
+int application_record_compact_budget(size_t size, size_t capacity, size_t length,
+	size_t payload_bytes, size_t *bytes)
 {
 	struct record_layout layout;
-	int err = record_layout(spec->size, spec->capacity, length, control, parameter_size, &layout);
+	int err = compact_layout(size, capacity, length, payload_bytes, &layout);
+	if (!err) *bytes = layout.bytes;
+	return err;
+}
+
+static int begin(const struct bp_record_spec *spec, const void *config, size_t length,
+	bool control, size_t parameter_size, uint32_t completion_reason, size_t payload_bytes)
+{
+	struct record_layout layout;
+	int err = payload_bytes ? compact_layout(spec->size, spec->capacity, length, payload_bytes, &layout) :
+		record_layout(spec->size, spec->capacity, length, control, parameter_size, &layout);
 	if (err) return err;
 	if (!spec->schema[0] || !memchr(spec->schema, 0, sizeof(spec->schema))) return -EINVAL;
 	for (size_t i = 0; spec->schema[i]; i++) {
@@ -137,17 +192,21 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 	if (records) return -EALREADY;
 	size_t step_bytes = layout.step, stride = layout.stride, slot_bytes = layout.slot;
 	size_t slots = 1U << layout.shift, count = layout.count;
-	uint8_t **memory = k_malloc(count * sizeof(*memory) + parameter_size + length);
+	size_t index_size = payload_bytes ? (spec->capacity + 1) * sizeof(*offsets) : 0;
+	uint8_t **memory = k_malloc(count * sizeof(*memory) + index_size + parameter_size + length);
 	if (!memory) return -ENOMEM;
-	uint8_t *applied = (void *)(memory + count);
+	uint16_t *index = payload_bytes ? (void *)(memory + count) : NULL;
+	if (index) index[0] = 0;
+	uint8_t *applied = (uint8_t *)(memory + count) + index_size;
 	uint8_t *config_data = applied + parameter_size;
 	if (length) memcpy(config_data, config, length);
 	/* Pool slots hold only revisions referenced by retained records. The free
 	 * list makes insertion/eviction constant-time without an allocator or scan. */
 	for (size_t block = 0; block < count; block++) {
 		size_t first = block * slots;
-		size_t used = MIN(slots, spec->capacity - first);
-		memory[block] = k_malloc(used * slot_bytes);
+		size_t used = payload_bytes ? 0 : MIN(slots, spec->capacity - first);
+		memory[block] = k_malloc(payload_bytes ?
+			MIN(PACKED_BLOCK_SIZE, payload_bytes - block * PACKED_BLOCK_SIZE) : used * slot_bytes);
 		if (!memory[block]) {
 			free_records(memory, block);
 			return -ENOMEM;
@@ -174,6 +233,9 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 	configuration = config_data;
 	free_parameters = 0;
 	records = memory;
+	block_count = count;
+	packed_capacity = payload_bytes;
+	offsets = index;
 	retained_bytes = layout.bytes;
 	k_spin_unlock(&lock, key);
 	return 0;
@@ -182,14 +244,21 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size)
 {
-	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN);
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0);
 }
 
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
 	size_t length, uint32_t reason)
 {
 	if (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION) return -EINVAL;
-	return begin(spec, config, length, false, 0, reason);
+	return begin(spec, config, length, false, 0, reason, 0);
+}
+
+int application_record_begin_compact(const struct bp_record_spec *spec, const void *config,
+	size_t length, size_t payload_bytes, uint32_t reason)
+{
+	if (!payload_bytes || (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION)) return -EINVAL;
+	return begin(spec, config, length, false, 0, reason, payload_bytes);
 }
 
 void application_record_finish(uint32_t reason)
@@ -232,11 +301,12 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 		(state.reason == BP_RECORD_TRIGGER_END ||
 			(full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) ?
 			-ENOSPC : -ENODATA) :
-		length != state.spec.size ? -EMSGSIZE :
+		(!length || length > state.spec.size || (!offsets && length != state.spec.size)) ? -EMSGSIZE :
 		reason != BP_RECORD_OPEN && full_reason == BP_RECORD_OPEN ? -EINVAL :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
 		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
+		offsets && length > packed_capacity - offsets[state.next] ? -ENOSPC :
 		state.next == UINT64_MAX ? -EOVERFLOW : 0;
 	if (!err) {
 		size_t index = state.next % state.spec.capacity;
@@ -268,7 +338,10 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 			}
 			*recorded_step(index) = (struct recorded_step){.value = current_step, .parameters = selected};
 		}
-		memcpy(record_data(index), data, length);
+		if (offsets) {
+			packed_copy(offsets[index], (void *)data, length, true);
+			offsets[index + 1] = offsets[index] + length;
+		} else memcpy(record_data(index), data, length);
 		state.next++;
 		if (reason != BP_RECORD_OPEN || (full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity)) {
 			state.active = false;
@@ -321,14 +394,16 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 
 void application_record_info(struct bp_record_info *info)
 {
-	application_record_snapshot(info, NULL);
+	application_record_snapshot(info, NULL, NULL);
 }
 
-void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE])
+void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
+	bool *variable)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
 	if (tag) memcpy(tag, capture_tag, sizeof(capture_tag));
+	if (variable) *variable = offsets != NULL;
 	k_spin_unlock(&lock, key);
 }
 
@@ -354,11 +429,12 @@ int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	*info = state;
 	int length = 0;
 	if (records && generation == state.generation && index >= state.first && index < state.next) {
-		if (offset >= state.spec.size) {
+		size_t slot = index % state.spec.capacity;
+		if (offset >= record_length(slot)) {
 			length = -EINVAL;
 		} else {
-			length = MIN(capacity, state.spec.size - offset);
-			memcpy(data, record_data(index % state.spec.capacity) + offset, length);
+			length = MIN(capacity, record_length(slot) - offset);
+			copy_payload(slot, offset, data, length);
 			if (state.control) *step = recorded_step(index % state.spec.capacity)->value;
 		}
 	}
@@ -371,24 +447,26 @@ int application_record_read_block(uint32_t generation, uint64_t index, size_t of
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
-	size_t step = state.control ? sizeof(struct bp_control_step) : 0;
-	size_t stride = step + state.spec.size;
+	size_t step = offsets ? 2 : state.control ? sizeof(struct bp_control_step) : 0;
 	int length = 0;
 	if (records && generation == state.generation && index >= state.first && index < state.next) {
-		if (offset >= stride) {
+		if (offset >= step + record_length(index % state.spec.capacity)) {
 			length = -EINVAL;
 		} else while (index < state.next && length < capacity) {
 			size_t slot = index % state.spec.capacity;
+			size_t stride = step + record_length(slot);
 			if (offset < step) {
 				size_t part = MIN(capacity - length, step - offset);
-				memcpy((uint8_t *)data + length,
-					(const uint8_t *)&recorded_step(slot)->value + offset, part);
+				uint8_t prefix[2];
+				if (offsets) sys_put_le16(record_length(slot), prefix);
+				const uint8_t *header = offsets ? prefix : (const uint8_t *)&recorded_step(slot)->value;
+				memcpy((uint8_t *)data + length, header + offset, part);
 				length += part;
 				offset += part;
 			}
 			if (offset >= step && length < capacity) {
 				size_t part = MIN(capacity - length, stride - offset);
-				memcpy((uint8_t *)data + length, record_data(slot) + offset - step, part);
+				copy_payload(slot, offset - step, (uint8_t *)data + length, part);
 				length += part;
 				offset += part;
 			}
@@ -434,7 +512,7 @@ int application_record_copy(uint32_t generation, uint64_t index,
 		capacity < state.spec.size || params_capacity < state.parameter_size ? -EMSGSIZE : 0;
 	if (!result && index < state.next) {
 		size_t slot = index % state.spec.capacity;
-		memcpy(data, record_data(slot), state.spec.size);
+		copy_payload(slot, 0, data, record_length(slot));
 		if (state.control) {
 			const struct recorded_step *stored = recorded_step(slot);
 			*step = stored->value;
@@ -442,7 +520,7 @@ int application_record_copy(uint32_t generation, uint64_t index,
 				memcpy(params, parameter_slot(stored->parameters)->data, state.parameter_size);
 			}
 		}
-		result = state.spec.size;
+		result = record_length(slot);
 	}
 	k_spin_unlock(&lock, key);
 	return result;

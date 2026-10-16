@@ -235,25 +235,38 @@ _DECODERS = {
 }
 
 
-def check_size(schema, size, config=None):
+def check_size(schema, size, config=None, *, variable=False):
     if schema == bench_codec.SCHEMA:
+        if variable:
+            raise RuntimeError("brickphyr.bench/1 requires fixed-size records")
         if config is not None:
             bench_codec.check_size(size, config)
         return
+    if schema == bench_codec.SCHEMA_V2:
+        if not variable:
+            raise RuntimeError("brickphyr.bench/2 requires variable-size records")
+        if config is not None:
+            bench_codec.check_size(size, config, schema=schema)
+        return
     if schema == capture_codec.SCHEMA:
         if config is not None:
-            capture_codec.check_size(size, config)
+            expected = capture_codec._layout(config)[4]
+            invalid = size < expected if variable else size != expected
+            if invalid:
+                raise RuntimeError(f"Invalid {schema} record length")
         return
     decoder = _DECODERS.get(schema)
-    if decoder and size != decoder[0]:
+    if decoder and (size < decoder[0] if variable else size != decoder[0]):
         raise RuntimeError(f"Invalid {schema} record length")
 
 
 def decode(schema, data, config=b"") -> dict | None:
-    check_size(schema, len(data), config)
     if schema == bench_codec.SCHEMA:
         return bench_codec.decode(data, config)
+    if schema == bench_codec.SCHEMA_V2:
+        return bench_codec.decode(data, config, schema=schema)
     if schema == capture_codec.SCHEMA:
         return capture_codec.decode(data, config)
+    check_size(schema, len(data), config)
     decoder = _DECODERS.get(schema)
     return decoder[1](data) if decoder else None

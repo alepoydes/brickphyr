@@ -78,3 +78,28 @@ def test_bench_mixed_slots_and_truncated_cbor_event():
         bench_codec.decode(struct.pack("<I", 4) + data[0][4:], config)
     with pytest.raises(RuntimeError, match="slot padding"):
         bench_codec.decode(data[1][:-1] + b"\x01", config)
+
+
+def test_compact_bench_records_keep_exact_kind_lengths():
+    config, padded, events = _fixture()
+    events[0]["recording"].update(schema=bench_codec.SCHEMA_V2, variable=True)
+    sizes = (12, 76, 136, 36)
+    for event, data, size in zip(events[1:5], padded, sizes, strict=True):
+        event["data"] = data[:size]
+
+    stream = io.BytesIO(b"".join(cbor2.dumps(event) for event in events))
+    saved = Recording(stream)
+    frames = list(saved.frames())
+    assert saved.complete and saved.variable
+    assert [frame.values["kind"] for frame in frames] == ["begin", "sample", "group", "end"]
+    assert [len(frame.data) for frame in frames] == list(sizes)
+    assert frames[1].values["sources"]["battery"]["error"] == -5
+    assert frames[2].values["ports"]["B"]["duty_permille"] == -300
+
+    events[1]["data"] += b"\0"  # Padding is forbidden even below the maximum record size.
+    with pytest.raises(ValueError, match="brickphyr.bench/2 record length"):
+        list(Recording(io.BytesIO(b"".join(cbor2.dumps(event) for event in events))).frames())
+
+    events[1]["data"] = b""
+    with pytest.raises(ValueError, match="record length"):
+        list(Recording(io.BytesIO(b"".join(cbor2.dumps(event) for event in events))).frames())

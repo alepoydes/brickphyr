@@ -34,7 +34,7 @@ struct capture_step {
 struct capture_plan {
 	uint32_t mask, period_ms, duration_ms;
 	struct bp_record_spec record;
-	size_t record_memory;
+	size_t record_memory, payload_bytes;
 	uint32_t samples, snapshot_size, step_count, port_mask, generations[BP_PORT_COUNT];
 	struct capture_step *steps;
 };
@@ -219,7 +219,6 @@ void capture_session_closed(void)
 
 static uint8_t *event(struct capture_task *run, uint32_t kind)
 {
-	memset(run->data, 0, plan.record.size);
 	sys_put_le32(kind, run->data);
 	return run->data + 4;
 }
@@ -249,7 +248,7 @@ static int group_event(struct capture_task *run, const struct bp_motor_group_sta
 		put32(&out, state->ports[i].error);
 		put32(&out, state->ports[i].cleanup_error);
 	}
-	return application_record_write(run->data, plan.record.size);
+	return application_record_write(run->data, out - run->data);
 }
 
 /* At most two results per action: initial application, then eventual cleanup.
@@ -348,7 +347,7 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 			put32(&out, skipped);
 			observe(out);
 			sys_put_le64(hub_time_us(), run->data + 20);
-			err = application_record_write(run->data, plan.record.size);
+			err = application_record_write(run->data, 4 + plan.snapshot_size);
 			if (err) break;
 			run->written++;
 			atomic_add(&missed, skipped);
@@ -396,7 +395,7 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 	put32(&out, plan.samples);
 	put32(&out, run->written);
 	put32(&out, attempts);
-	result = application_record_write_final(run->data, plan.record.size, reason);
+	result = application_record_write_final(run->data, out - run->data, reason);
 	if (result) {
 		if (!err) atomic_set(&failure, result);
 		application_record_finish(BP_RECORD_ERROR);
@@ -448,6 +447,14 @@ static void show(const struct shell *shell)
 	shell_print(shell, "Period: %u ms; duration: %u ms (0: until full)", plan.period_ms, plan.duration_ms);
 	shell_print(shell, "Record: %u bytes; capacity: %u; buffer: %zu bytes",
 		plan.record.size, plan.record.capacity, plan.record_memory);
+	if (plan.step_count) {
+		shell_print(shell, "Variable records: %zu payload bytes; %u bytes maximum per record",
+			plan.payload_bytes, plan.record.size);
+	}
+	shell_print(shell, "Samples: %u bytes; payload rate: %" PRIu64 " bytes/s; window: %" PRIu64 " ms",
+		plan.snapshot_size + (plan.step_count ? 4 : 0),
+		DIV_ROUND_UP((uint64_t)(plan.snapshot_size + (plan.step_count ? 6 : 0)) * 1000, plan.period_ms),
+		plan.duration_ms ? (uint64_t)plan.duration_ms : (uint64_t)plan.samples * plan.period_ms);
 	shell_print(shell, "Worker: %zu bytes + %zu stack bytes; allocator overhead separate",
 		sizeof(struct capture_task) + MAX(plan.record.size, plan.step_count ? BENCH_CONFIG_SIZE + STEP_SIZE * plan.step_count : CONFIG_SIZE), (size_t)K_THREAD_STACK_LEN(STACK_SIZE));
 	struct application_memory memory;
@@ -483,17 +490,34 @@ static int budget(const struct shell *shell, struct capture_plan *candidate)
 {
 	uint32_t count = candidate->step_count;
 	size_t config_size = count ? BENCH_CONFIG_SIZE + count * STEP_SIZE : CONFIG_SIZE;
-	candidate->record.size = count ? MAX(candidate->snapshot_size + 4,
-		56 + 40 * POPCOUNT(candidate->port_mask)) : candidate->snapshot_size;
-	strcpy(candidate->record.schema, count ? "brickphyr.bench/1" : "brickphyr.capture/1");
-	uint32_t capacity = (32768 - config_size) / candidate->record.size;
+	size_t sample_bytes = candidate->snapshot_size + (count ? 4 : 0);
+	size_t group_bytes = 56 + 40 * POPCOUNT(candidate->port_mask);
+	candidate->record.size = count ? MAX(sample_bytes, group_bytes) : sample_bytes;
+	strcpy(candidate->record.schema, count ? "brickphyr.bench/2" : "brickphyr.capture/1");
 	uint32_t events = count ? 2 * count + 2 : 0;
+	size_t event_bytes = count ? 2 * count * group_bytes + 12 + 36 : 0;
+	uint32_t capacity = (32768 - config_size) / sample_bytes;
+	if (count) {
+		/* Include event payloads, offset index and block pointers in the
+		 * actual RAM limit. Find the largest admitted count using the same
+		 * layout validation as allocation, without allocating a probe. */
+		uint32_t low = 0, high = capacity;
+		while (low < high) {
+			uint32_t middle = low + (high - low + 1) / 2;
+			size_t bytes;
+			int err = application_record_compact_budget(candidate->record.size, middle + events,
+				config_size, middle * sample_bytes + event_bytes, &bytes);
+			if (err) high = middle - 1;
+			else low = middle;
+		}
+		capacity = low;
+	}
 	uint64_t samples = candidate->duration_ms ?
 		DIV_ROUND_UP((uint64_t)candidate->duration_ms, candidate->period_ms) :
-		capacity > events ? capacity - events : 0;
-	if (!samples || samples + events > capacity) {
-		shell_error(shell, "Capture needs %" PRIu64 " samples + %u event slots; capacity is %u",
-			samples, events, capacity);
+		capacity;
+	if (!samples || samples > capacity) {
+		shell_error(shell, "Capture needs %" PRIu64 " samples; capacity is %u after %u event reservations",
+			samples, capacity, events);
 		return -ENOSPC;
 	}
 	uint64_t duration = candidate->duration_ms ? candidate->duration_ms : samples * candidate->period_ms;
@@ -506,6 +530,9 @@ static int budget(const struct shell *shell, struct capture_plan *candidate)
 	}
 	candidate->samples = samples;
 	candidate->record.capacity = samples + events;
+	candidate->payload_bytes = count ? samples * sample_bytes + event_bytes : 0;
+	if (count) return application_record_compact_budget(candidate->record.size, candidate->record.capacity,
+		config_size, candidate->payload_bytes, &candidate->record_memory);
 	return application_record_budget(candidate->record.size, candidate->record.capacity,
 		config_size, false, 0, &candidate->record_memory);
 }
@@ -637,7 +664,7 @@ static int start(void)
 		}
 	}
 	err = application_capture_begin(&plan.record, run->data, config_size,
-		plan.duration_ms ? BP_RECORD_DURATION : BP_RECORD_FULL);
+		plan.duration_ms ? BP_RECORD_DURATION : BP_RECORD_FULL, plan.payload_bytes);
 	if (!err) {
 		err = reserve(&plan, true);
 		if (err) {
@@ -665,7 +692,7 @@ static int start(void)
 		atomic_set(&scheduled_active, 1);
 		out = event(run, 2);
 		put64(&out, origin_us);
-		(void)application_record_write(run->data, plan.record.size);
+		(void)application_record_write(run->data, out - run->data);
 	}
 	/* Below hardware/management, above the primary app, like native control.
 	 * Sampling copies snapshots; only the shared port worker applies outputs. */

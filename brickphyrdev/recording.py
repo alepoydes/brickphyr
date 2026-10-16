@@ -30,6 +30,7 @@ class InfoResponse(message.ReadResponse):
     after: int = 0
     reason: int | None = None
     control: bool = False
+    variable: bool = False
     parameter_size: int = 0
     block: int = 0
     tag: bytes | None = None
@@ -136,10 +137,10 @@ def _range(first, next):
 
 def _identity(info):
     return (info.size, info.capacity, info.record_schema, info.config_size,
-            info.control, info.parameter_size)
+            info.control, getattr(info, "variable", False), info.parameter_size)
 
 
-def _metadata(reply, capacity, *, config_size=0):
+def _metadata(reply, capacity, *, config_size=0, variable=False):
     _range(reply.first, reply.next)
     trigger, after, reason = reply.trigger, reply.after, reply.reason
     if reason is None:
@@ -149,7 +150,7 @@ def _metadata(reply, capacity, *, config_size=0):
     if reason not in (0, 1, *record_codec.END_REASONS) or reply.active != (reason == 0):
         raise RuntimeError("Invalid recording end reason")
     if reason >= 3 and (trigger is not None or reply.first or reply.next > capacity or
-                        reason == 3 and reply.next != capacity):
+                        reason == 3 and not variable and reply.next != capacity):
         raise RuntimeError("Invalid finite recording boundary")
     if trigger is None:
         if after != 0 or reason == 2:
@@ -206,26 +207,32 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         raise RuntimeError("Recording not initialized")
     if not 0 < info.generation < 1 << 32:
         raise RuntimeError("Invalid recording metadata")
+    variable = getattr(info, "variable", False)
+    if type(variable) is not bool or variable and info.control:
+        raise RuntimeError("Invalid variable recording mode")
     if not 0 < info.size <= 1024 or not 0 < info.capacity < 1 << 32 or (
         not 0 <= info.config_size <= 1024 or
-        info.size * info.capacity + info.config_size > 32768
+        (info.config_size + info.capacity + 2 * (info.capacity + 1) + 4
+         if variable else info.size * info.capacity + info.config_size) > 32768
     ):
         raise RuntimeError("Invalid recording size or capacity")
     if not 0 <= info.parameter_size <= 256 or not info.control and info.parameter_size:
         raise RuntimeError("Invalid recording control parameter size")
     trigger, trigger_after, reason = _metadata(
-        info, info.capacity, config_size=info.config_size
+        info, info.capacity, config_size=info.config_size, variable=variable
     )
     if not info.record_schema or len(info.record_schema) > 47 or any(
         not 32 <= ord(char) <= 126 for char in info.record_schema
     ):
         raise RuntimeError("Invalid recording schema")
-    record_codec.check_size(info.record_schema, info.size)
+    record_codec.check_size(info.record_schema, info.size, variable=variable)
     block = getattr(info, "block", 0)
     if not 0 <= block <= 1024:
         raise RuntimeError("Invalid recording block capacity")
+    if variable and not block:
+        raise RuntimeError("Variable recording requires block transport")
     step_size = 32 if block and info.control else 0
-    stride = step_size + info.size
+    max_stride = info.size + (2 if variable else step_size)
 
     generation = info.generation
     if after is not None:
@@ -242,7 +249,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if _identity(triggered_info) != _identity(info):
             raise RuntimeError("Recording metadata changed within generation")
         state = _metadata(
-            triggered_info, info.capacity, config_size=triggered_info.config_size
+            triggered_info, info.capacity, config_size=triggered_info.config_size,
+            variable=variable
         )
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (triggered_info.first, triggered_info.next, *state))
@@ -271,13 +279,14 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             )
         if _identity(current) != _identity(info):
             raise RuntimeError("Recording metadata changed within generation")
-        state = _metadata(current, info.capacity, config_size=current.config_size)
+        state = _metadata(current, info.capacity, config_size=current.config_size,
+                          variable=variable)
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (current.first, current.next, *state))
         info = current
         trigger, trigger_after, reason = state
 
-    record_codec.check_size(info.record_schema, info.size, bytes(config))
+    record_codec.check_size(info.record_schema, info.size, bytes(config), variable=variable)
 
     tag = getattr(info, "tag", None)
     if tag is not None and len(tag) != 16:
@@ -288,7 +297,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording identity changed; cannot resume this download")
         if _identity(info) != (
             saved["size"], saved["capacity"], saved["schema"], saved.get("config_size", 0),
-            saved.get("control", False), saved.get("parameter_size", 0),
+            saved.get("control", False), saved.get("variable", False),
+            saved.get("parameter_size", 0),
         ) or bytes(config) != resume.config:
             raise RuntimeError("Recording metadata changed; cannot resume this download")
         _advance((saved["first"], saved["next"], saved.get("trigger"),
@@ -335,6 +345,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     "after": trigger_after,
                     "reason": reason,
                     "control": info.control,
+                    **({"variable": True} if variable else {}),
                     "parameter_size": info.parameter_size,
                     "tag": tag,
                 },
@@ -365,7 +376,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             if _identity(terminal_info) != _identity(info):
                 raise RuntimeError("Recording metadata changed within generation")
             state = _metadata(
-                terminal_info, info.capacity, config_size=terminal_info.config_size
+                terminal_info, info.capacity, config_size=terminal_info.config_size,
+                variable=variable
             )
             _advance((first, next, trigger, trigger_after, reason),
                      (terminal_info.first, terminal_info.next, *state))
@@ -392,7 +404,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 # its old result/fault cannot describe this recording.
                 event = {"type": "recording-end", "reason": record_codec.END_REASONS[reason],
                          "next": next}
-                if reason == 4:
+                if reason == 4 and not variable:
                     event["missed"] = info.capacity - next
             await _write(log, event)
             return
@@ -403,7 +415,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
             )
-        state = _metadata(reply, info.capacity)
+        state = _metadata(reply, info.capacity, variable=variable)
         _advance((first, next, trigger, trigger_after, reason),
                  (reply.first, reply.next, *state))
         first, next, active = reply.first, reply.next, reply.active
@@ -425,12 +437,27 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         elif reply.step:
             raise RuntimeError("Unexpected control step on ordinary recording")
         limit = block or (224 if info.control else 256)
-        available = (next - index) * stride if block else info.size
+        available = (next - index) * max_stride if block else info.size
         if not reply.data or len(reply.data) > limit or len(reply.data) > available - len(partial):
             raise RuntimeError("Invalid recording fragment")
         partial.extend(reply.data)
         events = []
-        while len(partial) >= stride:
+        while True:
+            if index >= next:
+                if partial:
+                    raise RuntimeError("Recording data outside retained range")
+                break
+            if variable:
+                if len(partial) < 2:
+                    break
+                length = int.from_bytes(partial[:2], "little")
+                if not 1 <= length <= info.size:
+                    raise RuntimeError("Invalid variable record length")
+                stride = 2 + length
+            else:
+                stride = max_stride
+            if len(partial) < stride:
+                break
             if info.control:
                 if block:
                     step = record_codec.control_step(partial[:step_size], info.parameter_size)
@@ -458,7 +485,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                         "type": "parameters", "revision": revision, "data": params.data,
                     })
                     cached_revision = revision
-            data = partial[step_size:stride]
+            data = partial[2:stride] if variable else partial[step_size:stride]
             record = {"type": "record", "index": index, "data": bytes(data)}
             if info.control:
                 record["control"] = step
@@ -472,6 +499,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             index += 1
             del partial[:stride]
             partial_step = None
+        if index >= next and partial:
+            raise RuntimeError("Recording data outside retained range")
         if events:
             await _write(log, *events, counts=counts)
 

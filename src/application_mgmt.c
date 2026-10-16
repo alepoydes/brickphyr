@@ -259,13 +259,15 @@ static int record_info_read(struct smp_streamer *stream)
 {
 	struct bp_record_info info;
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE];
-	application_record_snapshot(&info, tag);
+	bool variable;
+	application_record_snapshot(&info, tag, &variable);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "tag") &&
 		zcbor_bstr_encode_ptr(zs, tag, sizeof(tag)) && number(zs, "block", RECORD_BLOCK_BYTES) &&
 		number(zs, "size", info.spec.size) &&
 		number(zs, "config_size", info.config_size) &&
 		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
+		zcbor_tstr_put_lit(zs, "variable") && zcbor_bool_put(zs, variable) &&
 		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
 		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));

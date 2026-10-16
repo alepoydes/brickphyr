@@ -16,14 +16,16 @@ def _integer(value, name, minimum=0, maximum=(1 << 64) - 1):
     return value
 
 
-def _blob(value, size, name):
+def _blob(value, size, name, *, minimum=None):
     if isinstance(value, (bytes, bytearray)):
         data = bytes(value)
     elif isinstance(value, str):
         data = bytes.fromhex(value)
     else:
         raise ValueError(f"Invalid {name} data")
-    if len(data) != size:
+    if minimum is not None and not minimum <= len(data) <= size:
+        raise ValueError(f"Invalid {name} length: expected {minimum}..{size}, got {len(data)}")
+    if minimum is None and len(data) != size:
         raise ValueError(f"Invalid {name} length: expected {size}, got {len(data)}")
     return data
 
@@ -106,13 +108,19 @@ class Recording:
             capacity = _integer(meta["capacity"], "capacity", 1, 32768)
             config_size = _integer(meta.get("config_size", 0), "config size", 0, 1024)
             self.config = _blob(meta.get("config", ""), config_size, "configuration")
-            if self.size * capacity + config_size > 32768:
-                raise ValueError("Recording exceeds buffer limit")
             self.control = meta.get("control", False)
+            self.variable = meta.get("variable", False)
             self.parameter_size = _integer(meta.get("parameter_size", 0),
                                            "parameter size", 0, 256)
             if type(self.control) is not bool or not self.control and self.parameter_size:
                 raise ValueError("Invalid recording control mode")
+            if type(self.variable) is not bool or self.variable and self.control:
+                raise ValueError("Invalid variable recording mode")
+            # Compact records need at least one payload byte, one 16-bit index
+            # per slot plus the sentinel, and one 32-bit block pointer.
+            minimum = config_size + capacity + 2 * (capacity + 1) + 4
+            if (minimum if self.variable else self.size * capacity + config_size) > 32768:
+                raise ValueError("Recording exceeds buffer limit")
             self._first = _integer(meta["first"], "first index")
             self._next = _integer(meta["next"], "next index", self._first)
             if self._next - self._first > capacity:
@@ -135,7 +143,7 @@ class Recording:
             self._capture(self._trigger, self._after, self._next, self._reason == 2)
             if self._reason >= 3:
                 self._finite_boundary(self._reason, self._next)
-            record_codec.check_size(self.schema, self.size, self.config)
+            record_codec.check_size(self.schema, self.size, self.config, variable=self.variable)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             raise self._error(error) from error
 
@@ -181,7 +189,7 @@ class Recording:
 
     def _finite_boundary(self, reason, next_index):
         if (self._trigger is not None or self._first or next_index > self._capacity or
-            reason == 3 and next_index != self._capacity):
+            reason == 3 and not self.variable and next_index != self._capacity):
             raise ValueError("Invalid finite recording boundary")
 
     def _outcome(self, event, next_index):
@@ -196,8 +204,12 @@ class Recording:
             if (_integer(event["next"], "capture next index") != next_index or
                 next_index < self._next or not self._active and next_index != self._next):
                 raise ValueError("Final index differs from recording metadata")
-            if reason == "duration" and _integer(event["missed"], "missed releases") != self._capacity - next_index:
-                raise ValueError("Missed releases differ from recording metadata")
+            if reason == "duration":
+                if self.variable:
+                    if "missed" in event:
+                        raise ValueError("Variable recording has no inferred missed releases")
+                elif _integer(event["missed"], "missed releases") != self._capacity - next_index:
+                    raise ValueError("Missed releases differ from recording metadata")
             return
         for field in ("state", "result", "fault", "cleanup"):
             _integer(event[field], field, -(1 << 31), (1 << 32) - 1)
@@ -275,7 +287,8 @@ class Recording:
                         raise ValueError("Unexpected record index; gap or duplicate")
                     if not self._active and index >= self._next:
                         raise ValueError("Record exceeds frozen recording range")
-                    data = _blob(event["data"], self.size, "record")
+                    data = _blob(event["data"], self.size, "record",
+                                 minimum=1 if self.variable else None)
                     control = event.get("control")
                     if self.control:
                         if not isinstance(control, dict):

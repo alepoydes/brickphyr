@@ -89,7 +89,7 @@ def test_capture_lifetime_and_collection():
             assert (state.result, state.fault, state.cleanup) == (0, 0, 0)
 
     with native_console(build) as port:
-        asyncio.run(exercise(port))
+        asyncio.run(asyncio.wait_for(exercise(port), timeout=5))
 
 
 def test_schedule_records_outputs_and_disconnect_cleanup():
@@ -185,5 +185,18 @@ def test_schedule_records_outputs_and_disconnect_cleanup():
             await command(b"capture clear")
             assert (await telemetry.snapshot(client, "power")).values["recording"] == 0
 
+            # Mixed event sizes no longer reserve the largest slot for every
+            # observation. Exercise a full capture beyond that old limit.
+            await command(b"capture prepare 1 full battery")
+            await command(b"capture at 0 0 A=coast B=coast")
+            await command(b"capture start")
+            data, values = await collect()
+            meta = data.session["recording"]
+            assert meta["variable"] and meta["size"] * meta["capacity"] > 32768
+            assert data.outcome["reason"] == "full"
+            assert values[-1]["error"] == values[-1]["cleanup_error"] == 0
+            assert values[-1]["written_samples"] + values[-1]["missed"] == values[-1]["planned_samples"]
+            await command(b"capture clear")
+
     with native_console(build) as port:
-        asyncio.run(exercise(port))
+        asyncio.run(asyncio.wait_for(exercise(port), timeout=5))

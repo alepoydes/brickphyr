@@ -190,7 +190,7 @@ policy does not change autonomous applications or passive capture on disconnect.
 `capture clear` retries release before discarding the records. Successful clear
 retains the prepared plan for another run.
 
-Scheduled captures use `brickphyr.bench/1`. The immutable configuration includes
+Scheduled captures use `brickphyr.bench/2`. The immutable configuration includes
 the source selection, period, device generations and complete action list. Records
 contain a begin/origin event, ordinary observation snapshots, action results and a
 final summary. An action can produce separate application and cleanup results,
@@ -200,12 +200,25 @@ releases. Missing sensor data remains a source error, distinct from schedule
 failure. The offline `Recording` reader exposes these as `kind` values `begin`,
 `sample`, `group` and `end`.
 
-The current fixed-slot format reserves up to two results per action plus begin
-and end events before admitting samples. `check` shows the resulting capacity
-and RAM budget; appending actions can reduce a `full` capture's duration or reject
-an explicit duration that no longer fits. Collection uses the same
-`terminal --record` and resumable binary download as passive capture. Command-file
-replay and compact variable-size records remain planned work.
+Records have their exact payload length: a 12-byte begin event, a 36-byte end
+event, a four-byte kind plus the selected observation fields, or a 56-byte group
+header plus 40 bytes per selected port. There is no padding to the largest
+record. RAM holds packed payloads in small preallocated blocks and a two-byte
+offset index; no allocation occurs per observation. The 32 KiB scheduled-capture
+budget includes configuration, the index and block pointers, excluding allocator
+overhead. Existing application recordings keep their fixed-size format.
+
+Admission reserves up to two results per action plus begin and end events before
+admitting samples. `check` shows the maximum record size, retained RAM budget,
+sample payload rate and available window. The rate includes the two-byte length
+prefix used for block transfer, but excludes action events and SMP/BLE overhead;
+it is a required data rate, not a measured transport capability. Appending actions
+can reduce a `full` capture's window or reject an explicit duration. Unused event
+reservations and skipped releases can leave fewer records than the capacity when
+that window ends; the final event reports the actual sample and action counts.
+Collection uses the same `terminal --record` and resumable binary download as
+passive capture. The offline reader also accepts earlier padded `/1` files.
+Command-file replay remains planned work.
 
 Protected ARM/QEMU checks exercise the shared Shell, recorder and synthetic motor
 services through preparation, opposite duties, expiry, result collection and

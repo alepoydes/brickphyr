@@ -13,6 +13,9 @@ size_t application_record_memory(void);
 /* Same layout/limits as begin, without allocating or changing a recording. */
 int application_record_budget(size_t size, size_t capacity, size_t config_size,
 	bool control, size_t parameter_size, size_t *bytes);
+/* Variable payloads in a finite capture; includes the offset index and blocks. */
+int application_record_compact_budget(size_t size, size_t capacity, size_t config_size,
+	size_t payload_bytes, size_t *bytes);
 
 /* Supervisor serializes reset/begin/clear with application termination. Reads
  * and fixed-size writes use only the bounded recorder lock, never lifecycle. */
@@ -25,6 +28,8 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
  * completes with FULL or DURATION, as selected at admission. */
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
 	size_t length, uint32_t full_reason);
+int application_record_begin_compact(const struct bp_record_spec *spec, const void *config,
+	size_t length, size_t payload_bytes, uint32_t full_reason);
 /* Finish a finite capture; an earlier FULL/finish reason remains authoritative. */
 void application_record_finish(uint32_t reason);
 /* Called by the control context after a successful control wait. */
@@ -38,13 +43,15 @@ void application_record_info(struct bp_record_info *info);
 /* Host-supplied capture identity, retained until reset/clear. All-zero means
  * unbound. Binding an existing capture returns its original tag unchanged. */
 #define APPLICATION_RECORD_TAG_SIZE 16
-void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
+void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
+	bool *variable);
 int application_record_bind(uint32_t generation, const uint8_t candidate[APPLICATION_RECORD_TAG_SIZE],
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step);
 /* Consecutive slots, each containing the optional 32-byte control step followed
- * by its payload. offset is within the first slot; a block may end mid-slot. */
+ * by its payload. Compact captures instead prefix each payload with its uint16
+ * little-endian length. offset includes the prefix; a block may end anywhere. */
 int application_record_read_block(uint32_t generation, uint64_t index, size_t offset,
 	void *data, size_t capacity, struct bp_record_info *info);
 int application_record_parameters_read(uint32_t generation, uint64_t index,

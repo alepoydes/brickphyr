@@ -2812,7 +2812,7 @@ int application_clear_recording(void)
 
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 int application_capture_begin(const struct bp_record_spec *spec, const void *config, size_t size,
-	uint32_t full_reason)
+	uint32_t full_reason, size_t payload_bytes)
 {
 	k_mutex_lock(&lifecycle, K_FOREVER);
 	int err = shutting_down ? -ESHUTDOWN : capture_owned ? -EBUSY : reap(false, false);
@@ -2823,7 +2823,8 @@ int application_capture_begin(const struct bp_record_spec *spec, const void *con
 	if (!err && !hub_power_recording(true)) err = -ESHUTDOWN;
 	if (!err) {
 		application_record_reset();
-		err = application_record_begin_finite(spec, config, size, full_reason);
+		err = payload_bytes ? application_record_begin_compact(spec, config, size, payload_bytes, full_reason) :
+			application_record_begin_finite(spec, config, size, full_reason);
 		if (err) {
 			application_record_clear();
 			hub_power_recording(false);

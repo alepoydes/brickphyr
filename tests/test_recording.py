@@ -488,3 +488,97 @@ def test_resume_retries_partial_record_and_rejects_replaced_capture(monkeypatch,
     with pytest.raises(ValueError, match="already complete"):
         recording.run(args)
     assert path.read_bytes() == complete
+
+
+def test_variable_blocks_split_prefix_and_resume_at_complete_record(monkeypatch, tmp_path):
+    @contextlib.asynccontextmanager
+    async def connection(**_kwargs):
+        yield object(), None
+
+    monkeypatch.setattr(recording, "connection", connection)
+    info = _info(size=6, capacity=3, next=3, active=False, block=16,
+                 variable=True, tag=bytes(16))
+
+    def interrupted():
+        yield _fragment(next=3, active=False, data=b"\x01")
+        yield _fragment(next=3, active=False, data=b"\x00A\x04\x00BC")
+        raise ConnectionError("link lost")
+
+    reads = _fixture(monkeypatch, interrupted(), info, terminal_info=info)
+    path = tmp_path / "variable.cbor"
+    args = SimpleNamespace(file=path, ble=None, port=None, serial=None, after=None, resume=False)
+    with pytest.raises(ConnectionError, match="link lost"):
+        recording.run(args)
+    assert reads == [(0, 0), (0, 1), (1, 4)]
+    before = path.read_bytes()
+
+    args.resume = True
+    wrong = _info(size=6, capacity=3, next=3, active=False, block=16,
+                  variable=False, tag=info.tag)
+    _fixture(monkeypatch, iter(()), wrong)
+    with pytest.raises(RuntimeError, match="metadata changed"):
+        recording.run(args)
+    assert path.read_bytes() == before
+
+    reads = _fixture(monkeypatch, iter((
+        _fragment(next=3, active=False, data=b"\x04\x00BCDE\x03\x00XYZ"),
+    )), info, terminal_info=info)
+    recording.run(args)
+    assert reads == [(1, 0)]
+    with path.open("rb") as source:
+        saved = Recording(source)
+        assert saved.variable and saved.session["recording"]["variable"] is True
+        assert [frame.data for frame in saved.frames()] == [b"A", b"BCDE", b"XYZ"]
+        assert saved.complete and saved.count == 3 and saved.gaps == 0
+
+
+def test_variable_capacity_and_full_reservation(monkeypatch):
+    info = _info(size=136, capacity=400, next=2, active=False, reason=3,
+                 variable=True, block=16)
+    assert info.size * info.capacity > 32768
+    _fixture(monkeypatch, iter((
+        _fragment(next=2, active=False, reason=3, data=b"\x01\x00A\x02\x00BC"),
+    )), info, terminal_info=info)
+    log = io.BytesIO()
+    with recording.session(log) as (session_id, counts):
+        asyncio.run(recording.collect(object(), log, session_id, counts))
+    log.seek(0)
+    saved = Recording(log)
+    assert saved.variable and saved.session["recording"]["capacity"] == 400
+    assert [frame.data for frame in saved.frames()] == [b"A", b"BC"]
+    assert saved.complete and saved.outcome["reason"] == "full"
+    assert counts == {"records": 2, "gaps": 0}
+
+
+def test_variable_duration_does_not_infer_missed_from_reserved_slots(monkeypatch):
+    info = _info(size=4, capacity=3, next=0, active=False, reason=4,
+                 variable=True, block=16)
+    _fixture(monkeypatch, iter(()), info, terminal_info=info)
+    log = io.BytesIO()
+    with recording.session(log) as (session_id, counts):
+        asyncio.run(recording.collect(object(), log, session_id, counts))
+    log.seek(0)
+    saved = Recording(log)
+    assert list(saved.frames()) == []
+    assert saved.complete and saved.outcome == {
+        "type": "recording-end", "reason": "duration", "next": 0,
+    }
+
+
+def test_variable_recording_requires_block_transport(monkeypatch):
+    _fixture(monkeypatch, iter(()), _info(variable=True, block=0))
+    with pytest.raises(RuntimeError, match="requires block transport"):
+        asyncio.run(recording.collect(
+            object(), io.BytesIO(), "fixture", {"records": 0, "gaps": 0}
+        ))
+
+
+@pytest.mark.parametrize("length", [0, 7])
+def test_variable_block_rejects_invalid_length_prefix(monkeypatch, length):
+    info = _info(size=6, variable=True, block=16, active=False)
+    _fixture(monkeypatch, iter((_fragment(active=False, data=struct.pack("<H", length)),)),
+             info)
+    with pytest.raises(RuntimeError, match="Invalid variable record length"):
+        asyncio.run(recording.collect(
+            object(), io.BytesIO(), "fixture", {"records": 0, "gaps": 0}
+        ))

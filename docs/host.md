@@ -264,6 +264,17 @@ remain command 17 and are fetched once per observed revision. Generation/range
 checks apply equally to single-record and block reads; missing data is never
 silently replaced. Block copying is bounded and performs no allocation or I/O
 while holding the recorder lock.
+
+Finite captures may advertise `variable=true` (absent means false). Their `size`
+is the maximum payload length, and each command-22 record is a uint16
+little-endian length followed by exactly that many payload bytes. Length is
+1–`size`; there is no padding or control step. `index` still selects a logical
+record, while `off` includes its length prefix. Blocks can split that prefix.
+Collectors require block support for this mode and retain the exact payload in
+the host file. Capacity bounds the record count rather than `size * capacity`
+bytes; a finite schedule may finish its full window with unused event slots.
+The mode is immutable within a recording and is part of its resume identity.
+
 Command 14 also returns the capture `tag` (16 zero bytes before binding).
 Tag and metadata are sampled under the same lock. The tag is immutable until
 recorder reset/clear; it does not change the native SDK's recording ABI.

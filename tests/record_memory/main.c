@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 
 enum { MAX_RECORD_SIZE = 904, PARAMETER_SIZE = 60, CONFIG_SIZE = 504 };
@@ -180,7 +181,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	struct bp_record_info info;
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
-	application_record_snapshot(&info, tag);
+	application_record_snapshot(&info, tag, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	uint32_t generation = info.generation;
 	zassert_equal(application_record_bind(generation, empty, tag), -EINVAL);
@@ -192,7 +193,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
 	zassert_equal(application_record_bind(generation, original, tag), -ESTALE);
-	application_record_snapshot(&info, tag);
+	application_record_snapshot(&info, tag, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	zassert_ok(application_record_bind(info.generation, other, tag));
 	zassert_mem_equal(tag, other, sizeof(tag));
@@ -252,6 +253,60 @@ ZTEST(record_memory, test_finite_capture_freezes_without_overwriting)
 	zassert_equal(info.first, 1, "Reset left the finite mode enabled");
 	zassert_equal(info.next, spec.capacity + 1);
 	application_record_clear();
+}
+
+ZTEST(record_memory, test_compact_capture_crosses_blocks_and_resumes_mid_prefix)
+{
+	const struct bp_record_spec spec = {.size = 904, .capacity = 5, .schema = "variable/1"};
+	const size_t lengths[] = {3, 904, 173, 904, 12};
+	uint8_t expected[2006], actual[2006];
+	size_t payload = 0, bytes, end = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(lengths); i++) payload += lengths[i];
+	zassert_ok(application_record_compact_budget(spec.size, spec.capacity, 0, payload, &bytes));
+	application_record_reset();
+	zassert_ok(application_record_begin_compact(&spec, NULL, 0, payload, BP_RECORD_FULL));
+	zassert_equal(application_record_memory(), bytes);
+	struct bp_record_info info;
+	bool variable;
+	application_record_snapshot(&info, NULL, &variable);
+	zassert_true(variable);
+	uint32_t generation = info.generation;
+	for (size_t i = 0; i < ARRAY_SIZE(lengths); i++) {
+		fill_record(i, lengths[i]);
+		sys_put_le16(lengths[i], expected + end);
+		memcpy(expected + end + 2, record, lengths[i]);
+		end += lengths[i] + 2;
+		if (i + 1 == ARRAY_SIZE(lengths)) {
+			/* Exhaustion rejects the whole write without changing the prefix;
+			 * the reserved final event still fits and keeps its actual reason. */
+			zassert_equal(application_record_write(record, 13), -ENOSPC);
+			zassert_ok(application_record_write_final(record, lengths[i], BP_RECORD_CANCELLED));
+		} else zassert_ok(application_record_write(record, lengths[i]));
+	}
+	zassert_equal(end, sizeof(expected));
+	size_t index = 0, offset = 0, position = 0;
+	while (position < end) {
+		int length = application_record_read_block(generation, index, offset, actual + position,
+			MIN(position ? 13 : 1, end - position), &info);
+		zassert_true(length > 0);
+		position += length;
+		offset += length;
+		while (index < ARRAY_SIZE(lengths) && offset >= lengths[index] + 2) {
+			offset -= lengths[index++] + 2;
+		}
+	}
+	zassert_mem_equal(actual, expected, end);
+	zassert_false(info.active);
+	zassert_equal(info.reason, BP_RECORD_CANCELLED);
+	zassert_equal(info.next, spec.capacity);
+	zassert_equal(application_record_read(generation, 2, 172, output, sizeof(output),
+		&info, &(struct bp_control_step){0}), 1);
+	zassert_equal(output[0], (uint8_t)(2 + 3 * 172));
+	zassert_equal(application_record_read_block(generation, 2, 175, output, 1, &info), -EINVAL);
+	application_record_clear();
+	application_record_snapshot(&info, NULL, &variable);
+	zassert_false(variable);
+	zassert_equal(application_record_memory(), 0);
 }
 
 ZTEST_SUITE(record_memory, NULL, NULL, NULL, NULL, NULL);
