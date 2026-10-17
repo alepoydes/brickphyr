@@ -234,6 +234,35 @@ ZTEST(record_memory, test_paused_control_stream_retains_only_unacknowledged_step
 	application_record_clear();
 }
 
+ZTEST(record_memory, test_variable_paused_blocks_wrap_without_padding_on_wire)
+{
+	const struct bp_record_spec spec = {.size = 5, .capacity = 3, .schema = "variable/1"};
+	const uint8_t data[] = {10, 11, 12, 13, 14};
+	uint8_t actual[2 + 4 + 2 + 1 + 2 + 5];
+	const uint8_t expected[] = {4, 0, 10, 11, 12, 13, 1, 0, 10,
+		5, 0, 10, 11, 12, 13, 14};
+	struct bp_record_info info;
+	bool variable;
+	application_record_reset();
+	zassert_ok(application_record_begin_variable_paused(&spec, NULL, 0));
+	application_record_snapshot(&info, NULL, &variable, NULL);
+	zassert_true(variable);
+	uint32_t generation = info.generation;
+	for (size_t length = 2; length <= 4; length++) {
+		zassert_ok(application_record_write(data, length));
+	}
+	zassert_equal(application_record_write(data, 1), -ENOSPC);
+	zassert_ok(application_record_ack(generation, 2, 1));
+	zassert_ok(application_record_write(data, 1));
+	zassert_ok(application_record_write(data, 5));
+	zassert_equal(application_record_read_block(generation, 2, 0, actual,
+		sizeof(actual), &info), sizeof(actual));
+	zassert_mem_equal(actual, expected, sizeof(expected));
+	zassert_equal((info.first), 2);
+	zassert_equal((info.next), 5);
+	application_record_clear();
+}
+
 ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 {
 	const struct bp_record_spec spec = {.size = 1, .capacity = 1, .schema = "tag/1"};

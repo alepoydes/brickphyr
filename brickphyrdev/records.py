@@ -125,12 +125,17 @@ class Recording:
                 raise ValueError("Invalid recording control mode")
             if type(self.variable) is not bool or self.variable and self.control:
                 raise ValueError("Invalid variable recording mode")
-            if type(self.paused) is not bool or self.paused and self.variable:
+            if type(self.paused) is not bool:
                 raise ValueError("Invalid paused recording mode")
             # Compact records need at least one payload byte, one 16-bit index
             # per slot plus the sentinel, and one 32-bit block pointer.
-            minimum = config_size + capacity + 2 * (capacity + 1) + 4
-            if (minimum if self.variable else self.size * capacity + config_size) > 32768:
+            if self.variable and self.paused:
+                minimum = self.size * capacity + config_size + 2 * capacity
+            elif self.variable:
+                minimum = config_size + capacity + 2 * (capacity + 1) + 4
+            else:
+                minimum = self.size * capacity + config_size
+            if minimum > 32768:
                 raise ValueError("Recording exceeds buffer limit")
             self._first = _integer(meta["first"], "first index")
             self._next = _integer(meta["next"], "next index", self._first)

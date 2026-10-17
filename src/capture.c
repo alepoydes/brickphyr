@@ -17,6 +17,7 @@
 #include <zephyr/sys/byteorder.h>
 #define CAPTURE_FIELDS_DESCRIPTORS
 #include <brickphyr_capture.h>
+BUILD_ASSERT(CONFIG_SIZE == BP_CAPTURE_CONFIG_SIZE);
 
 /* Capture rows use the capture/2 field layout. Capture/3 and bench/4 retain
  * these exact values in independently decodable BCB3 blocks. Source times
@@ -47,6 +48,7 @@ struct capture_task {
 	bool reported, settled, pending;
 	uint16_t field_count;
 	struct telemetry_block block;
+	struct bp_control_frame frame;
 	struct telemetry_wire_field wire[CAPTURE_MAX_FIELDS];
 	uint8_t block_data[1024];
 	uint8_t data[];
@@ -142,38 +144,79 @@ static void put64(uint8_t **out, int64_t value)
 	*out += 8;
 }
 
-static void observe(uint8_t *out)
+static uint8_t *pack_sources(uint32_t mask, const uint8_t fields[SOURCE_COUNT],
+	const struct bp_control_frame *frame, uint8_t *out)
+{
+	if (mask & BIT(RAW_IMU)) out = capture_pack_imu(out, fields[RAW_IMU], &frame->imu.raw);
+	if (mask & BIT(CALIBRATED_IMU)) {
+		out = capture_pack_imu_calibrated(out, fields[CALIBRATED_IMU], &frame->imu);
+	}
+	if (mask & BIT(BATTERY)) out = capture_pack_battery(out, fields[BATTERY], &frame->battery);
+	for (unsigned int port = 0; port < BP_PORT_COUNT; port++) {
+		unsigned int encoder = PORT_SOURCE + port * 2;
+		if (mask & BIT(encoder)) out = capture_pack_encoder(out, fields[encoder], &frame->ports[port]);
+		if (mask & BIT(encoder + 1)) {
+			out = capture_pack_motor(out, fields[encoder + 1], &frame->ports[port]);
+		}
+	}
+	return out;
+}
+
+int capture_pack_frame(const uint8_t config[CONFIG_SIZE], const struct bp_control_step *step,
+	const struct bp_control_frame *frame, void *data, size_t capacity)
+{
+	uint32_t mask = sys_get_le32(config);
+	uint32_t resolution = sys_get_le32(config + 12);
+	if (!mask || mask >> SOURCE_COUNT || !sys_get_le32(config + 4) ||
+	    !resolution || resolution != frame->capture_resolution_us ||
+	    !step->sequence || frame->port_mask >> BP_PORT_COUNT ||
+	    frame->capture_start_us > frame->capture_end_us) return -EINVAL;
+	size_t length = HEADER_SIZE;
+	for (unsigned int source = 0; source < SOURCE_COUNT; source++) {
+		uint8_t selected = config[16 + source];
+		if (!(mask & BIT(source))) {
+			if (selected) return -EINVAL;
+			continue;
+		}
+		const struct capture_fields *kind = &field_kinds[source_kinds[source]];
+		if (!selected || selected & ~((1U << kind->count) - 1)) return -EINVAL;
+		if (source >= PORT_SOURCE && !(frame->port_mask & BIT((source - PORT_SOURCE) / 2))) {
+			return -EINVAL;
+		}
+		length += source_size(source, selected);
+	}
+	if (length > capacity) return -EMSGSIZE;
+	uint8_t *out = data;
+	put64(&out, step->scheduled_us);
+	put64(&out, frame->capture_start_us);
+	put64(&out, frame->capture_end_us);
+	put32(&out, step->skipped);
+	out = pack_sources(mask, config + 16, frame, out);
+	return out - (uint8_t *)data;
+}
+
+static void observe(struct capture_task *run, uint8_t *out)
 {
 	/* Selected raw/calibrated IMU and each encoder/output pair share one service
 	 * snapshot. This does not claim that different devices latch simultaneously. */
+	struct bp_control_frame *frame = &run->frame;
+	memset(frame, 0, sizeof(*frame));
 	if (plan.mask & (BIT(RAW_IMU) | BIT(CALIBRATED_IMU))) {
-		struct bp_imu_state value = {0};
-		int err = plan.mask & BIT(CALIBRATED_IMU) ? hub_imu_get_state(&value) : hub_imu_get(&value.raw);
-		if (err) value.error = value.raw.error = err;
-		if (plan.mask & BIT(RAW_IMU)) out = capture_pack_imu(out, plan.fields[RAW_IMU], &value.raw);
-		if (plan.mask & BIT(CALIBRATED_IMU)) {
-			out = capture_pack_imu_calibrated(out, plan.fields[CALIBRATED_IMU], &value);
-		}
+		int err = plan.mask & BIT(CALIBRATED_IMU) ?
+			hub_imu_get_state(&frame->imu) : hub_imu_get(&frame->imu.raw);
+		if (err) frame->imu.error = frame->imu.raw.error = err;
 	}
 	if (plan.mask & BIT(BATTERY)) {
-		struct bp_battery_sample value = {0};
-		int err = hub_battery_get(&value);
-		if (err) value.error = err;
-		out = capture_pack_battery(out, plan.fields[BATTERY], &value);
+		int err = hub_battery_get(&frame->battery);
+		if (err) frame->battery.error = err;
 	}
 	for (unsigned int port = 0; port < BP_PORT_COUNT; port++) {
 		unsigned int encoder = PORT_SOURCE + port * 2;
 		if (!(plan.mask & (3U << encoder))) continue;
-		struct bp_control_port value = {0};
-		int err = hub_control_port_get(port, &value);
-		if (err) value.error = value.output_error = err;
-		if (plan.mask & BIT(encoder)) {
-			out = capture_pack_encoder(out, plan.fields[encoder], &value);
-		}
-		if (plan.mask & BIT(encoder + 1)) {
-			out = capture_pack_motor(out, plan.fields[encoder + 1], &value);
-		}
+		int err = hub_control_port_get(port, &frame->ports[port]);
+		if (err) frame->ports[port].error = frame->ports[port].output_error = err;
 	}
+	(void)pack_sources(plan.mask, plan.fields, frame, out);
 }
 
 static size_t wire_layout(struct telemetry_wire_field *wire)
@@ -282,7 +325,7 @@ static void sample(void *context, void *unused1, void *unused2)
 		put64(&out, now);
 		put64(&out, 0); /* Completion is published only with the whole sample. */
 		put32(&out, skipped);
-		observe(out);
+		observe(run, out);
 		sys_put_le64(hub_time_us(), run->data + 16);
 		int err = block_append(run, run->data);
 		if (err) {
@@ -444,7 +487,7 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 			put64(&out, now);
 			put64(&out, 0);
 			put32(&out, skipped);
-			observe(out);
+			observe(run, out);
 			sys_put_le64(hub_time_us(), run->data + 20);
 			err = block_append(run, run->data + 4);
 			if (err) break;

@@ -28,6 +28,10 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
  * ENOSPC while the producer remains active; host acknowledgement frees slots. */
 int application_record_begin_paused(const struct bp_record_spec *spec, const void *config,
 	size_t length, bool control, size_t parameter_size);
+/* A bounded variable-length ring for independently decodable binary blocks.
+ * Each slot reserves spec.size bytes; actual lengths are published separately. */
+int application_record_begin_variable_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length);
 /* Fixed-capacity capture: no control metadata or overwrite. The final slot
  * completes with FULL or DURATION, as selected at admission. */
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,

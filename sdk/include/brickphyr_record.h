@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#define BP_CAPTURE_CONFIG_SIZE 31
+
 /* Fixed-size application records. schema identifies the application's binary
  * format, including version and byte order; the firmware does not reinterpret it.
  * At most 1024 bytes per record and 32768 bytes total, allocated only on begin.

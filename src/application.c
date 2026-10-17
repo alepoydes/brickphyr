@@ -184,6 +184,7 @@ static struct {
 	size_t length;
 	bool control;
 	bool paused;
+	bool variable;
 } record_request;
 static atomic_t record_pending;
 static int record_result;
@@ -1976,7 +1977,7 @@ static inline int z_vrfy_bp_control_motor_group_set(const struct bp_motor_group_
 #include <zephyr/syscalls/bp_control_motor_group_set_mrsh.c>
 
 static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, bool paused)
+	bool control, bool paused, bool variable)
 {
 	/* Allocation belongs to the supervisor. Aborting this caller must not
 	 * strand a just-allocated buffer or a lock in the application's thread. */
@@ -1985,13 +1986,14 @@ static int record_begin(const struct bp_record_spec *spec, const void *config, s
 	record_request.length = length;
 	record_request.control = control;
 	record_request.paused = paused;
+	record_request.variable = variable;
 	atomic_set(&record_pending, 1);
 	k_sem_take(&record_done, K_FOREVER);
 	return record_result;
 }
 int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, false, false);
+	return record_begin(spec, config, length, false, false, false);
 }
 static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -2006,7 +2008,7 @@ static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spe
 
 int z_impl_bp_control_record_begin(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, true, false);
+	return record_begin(spec, config, length, true, false, false);
 }
 static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -2022,7 +2024,7 @@ static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *sp
 int z_impl_bp_record_begin_paused(const struct bp_record_spec *spec, const void *config,
 	size_t length, bool control)
 {
-	return record_begin(spec, config, length, control, true);
+	return record_begin(spec, config, length, control, true, false);
 }
 static inline int z_vrfy_bp_record_begin_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length, bool control)
@@ -2034,6 +2036,56 @@ static inline int z_vrfy_bp_record_begin_paused(const struct bp_record_spec *spe
 	return z_impl_bp_record_begin_paused(spec, config, length, control);
 }
 #include <zephyr/syscalls/bp_record_begin_paused_mrsh.c>
+
+int z_impl_bp_record_begin_variable_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length)
+{
+	return record_begin(spec, config, length, false, true, true);
+}
+static inline int z_vrfy_bp_record_begin_variable_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length)
+{
+	if (!control_caller()) return -EPERM;
+	if (length > 1024) return -EMSGSIZE;
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	if (length) user_memory_check(config, length, 1, false, __func__);
+	return z_impl_bp_record_begin_variable_paused(spec, config, length);
+}
+#include <zephyr/syscalls/bp_record_begin_variable_paused_mrsh.c>
+
+int z_impl_bp_capture_pack_frame(const uint8_t *config, size_t config_size,
+	const struct bp_control_step *step, const struct bp_control_frame *frame,
+	void *data, size_t capacity)
+{
+	(void)config_size;
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+	return capture_pack_frame(config, step, frame, data, capacity);
+#else
+	(void)config;
+	(void)step;
+	(void)frame;
+	(void)data;
+	(void)capacity;
+	return -ENOTSUP;
+#endif
+}
+static inline int z_vrfy_bp_capture_pack_frame(const uint8_t *config, size_t config_size,
+	const struct bp_control_step *step, const struct bp_control_frame *frame,
+	void *data, size_t capacity)
+{
+	if (!IS_ENABLED(CONFIG_BRICKPHYR_CAPTURE)) return -ENOTSUP;
+	if (!control_caller()) return -EPERM;
+	if (config_size != BP_CAPTURE_CONFIG_SIZE || capacity > 1024) return -EMSGSIZE;
+	user_memory_check(config, config_size, 1, false, __func__);
+	user_memory_check(step, sizeof(*step), __alignof__(*step), false, __func__);
+	user_memory_check(frame, sizeof(*frame), __alignof__(*frame), false, __func__);
+	if (capacity) user_memory_check(data, capacity, 1, true, __func__);
+	if (output_overlaps(data, capacity, config, config_size) ||
+	    output_overlaps(data, capacity, step, sizeof(*step)) ||
+	    output_overlaps(data, capacity, frame, sizeof(*frame))) return -EINVAL;
+	return z_impl_bp_capture_pack_frame(config, config_size, step, frame, data, capacity);
+}
+#include <zephyr/syscalls/bp_capture_pack_frame_mrsh.c>
 
 int z_impl_bp_record_begin(const struct bp_record_spec *spec)
 {
@@ -2977,7 +3029,10 @@ void application_poll(void)
 	if (atomic_get(&record_pending)) {
 		size_t parameter_size = 0;
 		if (record_request.control && controller) parameter_size = controller->parameter_size;
-		record_result = record_request.paused ? application_record_begin_paused(&record_request.spec,
+		record_result = record_request.variable ?
+			application_record_begin_variable_paused(&record_request.spec,
+				record_request.config, record_request.length) :
+			record_request.paused ? application_record_begin_paused(&record_request.spec,
 			record_request.config, record_request.length, record_request.control, parameter_size) :
 			application_record_begin(&record_request.spec, record_request.config,
 				record_request.length, record_request.control, parameter_size);

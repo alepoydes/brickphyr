@@ -511,6 +511,21 @@ __syscall int bp_settings_save_status(uint32_t request);
 __syscall int bp_record_begin_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length, bool control);
 
+/* Variable-length paused records, 1..spec.size bytes each. Every slot reserves
+ * spec.size bytes in RAM, but transfer sends only the published length. Each
+ * record is independently decodable; control metadata is not attached. */
+__syscall int bp_record_begin_variable_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length);
+
+/* Pack one already acquired control frame into the capture/2 row layout using
+ * the same field selection as the built-in diagnostic capture. config is the
+ * 31-byte capture/2 or capture/3 configuration; return the row byte count.
+ * This never reads hardware or writes to a recorder. The caller owns the
+ * frame, output and subsequent choice of fixed or compact block recording. */
+__syscall int bp_capture_pack_frame(const uint8_t *config, size_t config_size,
+	const struct bp_control_step *step, const struct bp_control_frame *frame,
+	void *data, size_t capacity);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

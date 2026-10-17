@@ -245,12 +245,16 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     paused = getattr(info, "paused", False)
     if type(variable) is not bool or variable and info.control:
         raise RuntimeError("Invalid variable recording mode")
-    if type(paused) is not bool or paused and variable:
+    if type(paused) is not bool:
         raise RuntimeError("Invalid paused recording mode")
+    if variable and paused:
+        data_budget = info.size * info.capacity + info.config_size + 2 * info.capacity
+    elif variable:
+        data_budget = info.config_size + info.capacity + 2 * (info.capacity + 1) + 4
+    else:
+        data_budget = info.size * info.capacity + info.config_size
     if not 0 < info.size <= 1024 or not 0 < info.capacity < 1 << 32 or (
-        not 0 <= info.config_size <= 1024 or
-        (info.config_size + info.capacity + 2 * (info.capacity + 1) + 4
-         if variable else info.size * info.capacity + info.config_size) > 32768
+        not 0 <= info.config_size <= 1024 or data_budget > 32768
     ):
         raise RuntimeError("Invalid recording size or capacity")
     if not 0 <= info.parameter_size <= 256 or not info.control and info.parameter_size:

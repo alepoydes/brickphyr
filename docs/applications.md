@@ -849,9 +849,24 @@ A full buffer can leave an unrecorded interval while control continues. The
 application must make that interval visible in its own record sequence, or use
 the attached control-step sequence; a later write is a new observation, not a
 retry of a stale control step. Finite RAM cannot preserve a continuous history
-across an arbitrarily slow or absent collector. Triggered capture and variable
-payloads are unavailable in this mode; the ordinary ring and finite diagnostic
-capture retain their existing behavior.
+across an arbitrarily slow or absent collector. Triggered capture is unavailable
+in this mode; the ordinary ring and finite diagnostic capture retain their
+existing behavior.
+
+Native ABI 2.5 adds `bp_record_begin_variable_paused(&spec, config, length)` for
+independently decodable blocks of 1–`spec.size` bytes. Each slot reserves the
+maximum size in RAM, while the transfer sends its actual length with a two-byte
+prefix. This mode uses the same acknowledgements and gap rules, without automatic
+control-step or parameter metadata; a block format that needs those values must
+encode them. `bp_capture_pack_frame(config, config_size, step, frame, data,
+capacity)` formats one already acquired `bp_control_frame` using the built-in
+capture field packers. It returns a `brickphyr.capture/2` row without another
+sensor read. The 31-byte configuration selects sources and fields as described
+in [finite RAM capture](telemetry.md#finite-ram-capture); the supplied frame must
+include selected ports and matching timestamp resolution. An application can
+write the row to a fixed control recording, preserving its applied parameters.
+Compact application blocks still need a shared SDK writer for step/parameter
+metadata before they can replace that fixed control recording.
 
 Return, fault and forced stop freeze the retained tail for retrieval. Normal
 host disconnect does not stop recording. Starting another application, Python
