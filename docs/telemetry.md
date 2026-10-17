@@ -154,7 +154,9 @@ and counters as exact differences when they fit. Otherwise they carry the full
 value. No values or timestamps are rounded.
 `Recording.observations()` yields individual decoded samples from both old and new
 files, with their enclosing record index and row index. `record-info` reports
-both record and sample counts. IMU values use individual names such as
+both record and sample counts. A program using `recording.collect` can pass
+`on_observation` to receive those same decoded samples immediately after each
+block is saved; a slow callback delays only the download. IMU values use individual names such as
 `ay_um_s2` and `gx_mdps`; unselected values are absent. The mandatory calibrated
 IMU `flags` contains ready/stationary in bits 0/1; battery `flags` contains
 low/critical in bits 0/1. Both include their source errors independently.

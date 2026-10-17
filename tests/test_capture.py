@@ -48,11 +48,18 @@ def test_capture_lifetime_and_collection():
             # Closing and opening management must retain the producer and data.
         async with console.connection(output.extend, port=port_name, management=True) as (port, client):
             log = io.BytesIO()
+            live_samples = []
+
+            async def on_observation(sample):
+                live_samples.append(sample)
+
             with recording.session(log) as (session, counts):
-                await recording.collect(client, log, session, counts)
+                await recording.collect(client, log, session, counts,
+                                        on_observation=on_observation)
             log.seek(0)
             data = Recording(log)
             samples = list(data.observations())
+            assert live_samples == samples
             assert data.outcome["reason"] == "duration"
             assert "fault" not in data.outcome  # Previous application's result is unrelated.
             assert samples and samples[0].record_index == 0

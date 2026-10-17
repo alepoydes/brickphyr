@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import inspect
 import io
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -201,7 +202,14 @@ async def _write(log, *events, counts=None):
                     counts["gaps"] += 1
 
 
-async def collect(client, log, session, counts, *, after=None, wait=False, resume=None):
+async def collect(client, log, session, counts, *, after=None, wait=False, resume=None,
+                  on_observation=None):
+    """Collect one recording; optionally deliver persisted observations as they arrive.
+
+    The callback receives the same Observation values as the offline reader.
+    It may be synchronous or awaitable; slow callbacks delay downloading, never
+    the hub's sampling thread. No additional acquisition or host queue is used.
+    """
     if resume is not None and after is not None:
         raise ValueError("Cannot trigger a recording while resuming its download")
     info = await checked(client, Info())
@@ -365,8 +373,10 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     last_sequence = previous["sequence"] if previous else None
     last_revision = previous["parameter_revision"] if previous else None
     cached_revision = resume.parameter_revision if resume else None
+    pending_gap = 0
     while True:
         if index < first:
+            pending_gap += first - index
             await _write(log, {"type": "gap", "from": index, "to": first}, counts=counts)
             index = first
             partial.clear()
@@ -508,6 +518,22 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording data outside retained range")
         if events:
             await _write(log, *events, counts=counts)
+            if on_observation is not None:
+                for event in events:
+                    if event["type"] != "record":
+                        continue
+                    values = event.get("values")
+                    if values is None:
+                        values = record_codec.decode(info.record_schema, event["data"],
+                                                     bytes(config))
+                    for row_index, sample in enumerate(record_codec.samples(values)):
+                        observation = records.Observation(event["index"], row_index,
+                                                          pending_gap if row_index == 0 else 0,
+                                                          sample)
+                        result = on_observation(observation)
+                        if inspect.isawaitable(result):
+                            await result
+                    pending_gap = 0
 
 
 @contextlib.contextmanager
