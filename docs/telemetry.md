@@ -233,6 +233,21 @@ All 404 rows were consecutive, with no missing or unrecorded control steps.
 These USB-powered measurements do not establish battery-powered throughput or
 motor-loaded timing.
 
+The F4 controller also runs at 3 Mbaud, as in the Pybricks F4 driver. The SMP BLE
+transport queues ordered notification fragments up to the available buffers
+instead of waiting for each fragment's completion before sending the next. On
+one USB-powered Robot Inventor F4, a passive 2,401-row recording at a requested
+15 ms period started after six seconds on the connected BLE link. It transferred
+320,445 compact payload bytes in 36.194 seconds while 57 parameter updates
+completed.
+All rows and control steps were consecutive; the same observations span 36.0
+seconds on the hub. Motors were off. A run started without the additional wait
+lost 156 control steps during one early recording pause, then continued without
+another step gap. The central's chosen interval and Zephyr's initial parameter
+update delay make startup throughput variable. This establishes capacity for
+this passive stream on an established link, not a lossless or fixed-latency BLE
+contract for every workload or connection.
+
 For live application telemetry, the native SDK offers a recent-value ring and a
 [continuous-series policy](applications.md#application-recording). Both use the
 same compact transfer for `brickphyr.capture/2` control records and send no

@@ -50,7 +50,7 @@ one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide ec
 and settings read/write/save through the same runtime and persistence handlers as
 USB. The native interface also provides the [shared interactive Shell](host.md#native-bluetooth-terminal).
 The controller and STM32 use 115200 baud while loading the TI service pack, then
-switch together to 921600 baud before normal HCI traffic. A version command at
+switch together to 3,000,000 baud before normal HCI traffic. A version command at
 the new speed must succeed or Bluetooth startup reports an error; USB recovery
 remains available.
 The native application API includes experimental LEGO peripheral connections;
@@ -226,8 +226,9 @@ a long center press disconnects USB with operator-confirmed lights off. See
 [power behavior](settings.md#inactivity-shutdown) for button restart with USB attached.
 USB DFU entry and normal-image restoration with the Pybricks installer succeed
 after this startup fault; USB and BLE terminals work in the restored image.
-Controller loss during an active BLE session, radio recovery, sustained Bluetooth throughput, pairing,
-controller input, and behavior under combined application traffic remain unverified.
+Controller loss during an active BLE session, radio recovery, pairing, controller
+input, and throughput under combined application and motor traffic remain
+unverified. A bounded passive transfer check appears in [telemetry](telemetry.md#ble-transfer-budget).
 
 The management adapter accepts incoming LE peripheral-role links only. Outgoing
 central-role connection events do not acquire or release management, change its

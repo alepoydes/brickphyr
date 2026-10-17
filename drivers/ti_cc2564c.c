@@ -15,7 +15,7 @@ LOG_MODULE_REGISTER(ti_cc2564c, LOG_LEVEL_INF);
 
 BUILD_ASSERT(CONFIG_BT_BUF_CMD_TX_SIZE >= 255, "TI service pack uses full-size HCI commands");
 
-#define HCI_UART_BAUDRATE 921600U
+#define HCI_UART_BAUDRATE 3000000U
 
 /* The unmodified official TI artifact is included at build time. Its license
  * and provenance are supplied by the pinned service-packs repository. */
