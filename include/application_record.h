@@ -40,6 +40,8 @@ int application_record_write_final(const void *data, size_t length, uint32_t rea
 /* Zero generation selects the caller's current run; host requests bind a run. */
 int application_record_trigger(uint32_t generation, uint32_t after);
 void application_record_info(struct bp_record_info *info);
+/* Free packed payload bytes and record slots in the active finite recorder. */
+size_t application_record_room(uint32_t *slots);
 /* Host-supplied capture identity, retained until reset/clear. All-zero means
  * unbound. Binding an existing capture returns its original tag unchanged. */
 #define APPLICATION_RECORD_TAG_SIZE 16

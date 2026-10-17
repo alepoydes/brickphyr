@@ -78,3 +78,9 @@ SOURCES = ("imu", "imu.calibrated", "battery") + tuple(
 )
 SOURCE_KINDS = (0, 1, 2) + (3, 4) * 6
 CONFIG_SIZE = 16 + len(SOURCES)
+# These mandatory raw values are also the first fields of imu.calibrated.
+IMU_SHARED_FIELDS = 6
+DELTA_COUNTERS = frozenset({
+    "sequence", "missed", "failures", "epoch", "generation",
+    "output_generation", "request", "completed", "request_generation",
+})

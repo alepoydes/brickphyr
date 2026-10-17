@@ -29,7 +29,8 @@ if(CONFIG_BRICKPHYR_CAPTURE)
     VERBATIM)
   add_custom_target(brickphyr_capture DEPENDS ${capture_layout})
   add_dependencies(app brickphyr_capture)
-  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/capture.c)
+  target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/capture.c ${BRICKPHYR_ROOT}/src/telemetry_fields.c
+    ${BRICKPHYR_ROOT}/src/telemetry_block.c)
 endif()
 # The resident table is an application entry point, so retain only SVC wrappers.
 set_source_files_properties(${BRICKPHYR_ROOT}/src/native_api.c PROPERTIES

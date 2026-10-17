@@ -40,6 +40,14 @@ class Frame:
     values: dict | None
 
 
+@dataclass(frozen=True)
+class Observation:
+    record_index: int
+    row_index: int
+    preceding_record_gap: int
+    values: dict
+
+
 class _CountedReader:
     def __init__(self, source):
         self.source = source
@@ -345,6 +353,13 @@ class Recording:
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             raise self._error(error) from error
 
+    def observations(self, *, allow_gaps=False, allow_incomplete=False):
+        """Yield individual decoded samples from raw or compact capture records."""
+        for frame in self.frames(allow_gaps=allow_gaps, allow_incomplete=allow_incomplete):
+            for row_index, values in enumerate(record_codec.samples(frame.values)):
+                yield Observation(frame.index, row_index,
+                                  frame.gap if row_index == 0 else 0, values)
+
 
 def run(args):
     format = getattr(args, "format", None)
@@ -352,14 +367,18 @@ def run(args):
     source = open(args.file, "rb") if binary else open(args.file, encoding="utf-8")
     with source:
         recording = Recording(source)
-        for _frame in recording.frames(allow_gaps=True, allow_incomplete=args.allow_incomplete):
-            pass
+        sample_count = payload_bytes = 0
+        for frame in recording.frames(allow_gaps=True, allow_incomplete=args.allow_incomplete):
+            sample_count += len(record_codec.samples(frame.values))
+            payload_bytes += len(frame.data)
         print(json.dumps({
             "session": recording.session["session"],
             **{field: recording.session.get(field) for field in ("board", "firmware", "build")},
             "schema": recording.schema,
             "config_size": len(recording.config),
             "records": recording.count,
+            "samples": sample_count,
+            "payload_bytes": payload_bytes,
             "gaps": recording.gaps,
             "missing_records": recording.missing,
             "parameter_revisions": recording.revisions,

@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import io
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic import Field
@@ -177,18 +178,22 @@ def _advance(old, new):
 
 
 async def _write(log, *events, counts=None):
-    # One transport batch at a time: slow storage backpressures this collector,
-    # not the terminal or the hub's sampling. Join before footer/close on cancel.
-    task = asyncio.create_task(asyncio.to_thread(write_events, log, events))
+    # A bounded write must finish before cancellation closes the file or
+    # appends its footer. The event loop remains available to the terminal.
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(write_events, log, events)
     try:
-        await asyncio.shield(task)
+        while not future.done():
+            await asyncio.sleep(0.001)
+        future.result()
     except BaseException:
-        while not task.done():
+        while not future.done():
             with contextlib.suppress(BaseException):
-                await asyncio.shield(task)
+                await asyncio.sleep(0.001)
         raise
     finally:
-        if not task.cancelled() and task.exception() is None and counts is not None:
+        executor.shutdown(wait=True)
+        if future.done() and not future.cancelled() and future.exception() is None and counts is not None:
             for event in events:
                 if event["type"] == "record":
                     counts["records"] += 1

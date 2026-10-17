@@ -263,7 +263,7 @@ int application_record_begin_compact(const struct bp_record_spec *spec, const vo
 
 void application_record_finish(uint32_t reason)
 {
-	__ASSERT_NO_MSG(reason == BP_RECORD_DURATION || reason == BP_RECORD_CANCELLED ||
+	__ASSERT_NO_MSG(reason == BP_RECORD_FULL || reason == BP_RECORD_DURATION || reason == BP_RECORD_CANCELLED ||
 		reason == BP_RECORD_ERROR);
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (full_reason != BP_RECORD_OPEN && state.active) {
@@ -395,6 +395,19 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 void application_record_info(struct bp_record_info *info)
 {
 	application_record_snapshot(info, NULL, NULL);
+}
+
+size_t application_record_room(uint32_t *slots)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	size_t bytes = 0;
+	*slots = 0;
+	if (offsets && state.active && state.next < state.spec.capacity) {
+		bytes = packed_capacity - offsets[state.next];
+		*slots = state.spec.capacity - state.next;
+	}
+	k_spin_unlock(&lock, key);
+	return bytes;
 }
 
 void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],

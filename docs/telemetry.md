@@ -43,13 +43,14 @@ capture status
 
 `prepare` takes a period in milliseconds, a duration in milliseconds or `full`,
 then one or more source names, or `all` for every available source. It validates
-the plan and reports the record size,
-capacity, recorder bytes, worker/stack reservations and current free heap without
+the plan and reports the maximum block size,
+record slots, recorder bytes, worker/stack reservations and current free heap without
 allocating or starting capture. `start` allocates those resources before sampling;
 fragmentation or intervening allocations can still cause `ENOMEM`. The current
 record/configuration budget is 32 KiB, shared with the application recorder.
-An oversized duration fails before starting and reports the available window.
-`full` stops when the allocated buffer fills. No old samples are overwritten.
+An oversized duration fails before starting and reports the guaranteed window.
+`full` continues until no complete block fits the allocated buffer. No old
+samples are overwritten.
 
 Sources are raw `imu`, `imu.calibrated`, `battery`, and `encoder.A`/`motor.A`
 through the board's last port. Encoder and motor blocks describe separate input
@@ -110,9 +111,9 @@ losing a partially edited command. The terminal remains open after download
 completion. This status describes collection, not measurement success: inspect
 the recording outcome, source errors and skipped releases separately.
 `--monitor` may share that connection too; its display rate does not set the
-capture period. File encoding/writing runs in bounded batches outside the input
-event loop. Slow storage delays collection without blocking keyboard handling
-or hub sampling. No unbounded host queue accumulates.
+capture period. The collector writes one bounded transfer batch before asking
+for the next. Slow storage can delay the terminal briefly, but cannot delay hub
+sampling or create an unbounded host queue.
 
 The output file is CBOR regardless of its filename; using `.cbor` lets offline
 tools detect it automatically. Existing files are never overwritten. Closing
@@ -145,8 +146,15 @@ uv run brickphyrdev record-info capture.cbor
 Use `--resume` only for an interrupted download. Collection can follow a running
 capture and finishes when it freezes. The binary file contains the original
 packed bytes, without duplicating decoded values; the offline `Recording` reader
-provides named values in `Frame.values`. The schema is `brickphyr.capture/2`;
-older `/1` files remain readable. IMU values use individual names such as
+provides named values in `Frame.values`. The schema is `brickphyr.capture/3`;
+older `/1` and `/2` files remain readable. Each record holds a bounded block of
+samples. Its first row contains all distinct fields; later rows transmit changed
+fields, reuse shared raw/calibrated IMU metadata and encode changing timestamps
+and counters as exact differences when they fit. Otherwise they carry the full
+value. No values or timestamps are rounded.
+`Recording.observations()` yields individual decoded samples from both old and new
+files, with their enclosing record index and row index. `record-info` reports
+both record and sample counts. IMU values use individual names such as
 `ay_um_s2` and `gx_mdps`; unselected values are absent. The mandatory calibrated
 IMU `flags` contains ready/stationary in bits 0/1; battery `flags` contains
 low/critical in bits 0/1. Both include their source errors independently.
@@ -163,8 +171,12 @@ host. Explicit shutdown, reboot and critical-battery protection still take
 precedence; RAM data cannot survive power loss or reset. Downloading is
 non-consuming and does not automatically release that hold.
 
-The Shell/lifecycle, finite buffer and binary collection path have protected
-ARM/QEMU checks with synthetic devices. A bounded BLE check on one Robot Inventor
+The compact `/3` and `/4` blocks have protected ARM/QEMU checks with synthetic
+devices. A passive `/3` check on one Robot Inventor F4 collected 20 selected
+IMU/battery/port observations over USB without skipped releases, then downloaded
+100 observations over BLE without transfer gaps. The scheduled `/4` format has
+not yet been physically checked. The other bounded physical checks below used
+the earlier `/2` and `/3` formats. A BLE check on one Robot Inventor
 F4 (PCB revision unknown), powered through USB, also captures every supported
 source group, retains data across reconnection, decodes the binary file and
 releases the recording hold. The observed motor duties remain zero. This does
@@ -213,6 +225,13 @@ byte-for-byte identically to a complete reread. Cleanup returns heap usage to it
 initial value. These are bounded passive checks on the same Inventor F4;
 sustained combined load and instrumented electrical timing remain separate checks.
 
+With compact `capture/3` on the same F4, 100 passive observations at 15 ms
+occupied 9,142 payload bytes instead of 28,800 uncompressed bytes. Two rereads
+over one established BLE connection each took about 2.92 seconds, or 3.13 kB/s
+of record payload. This remains slower than the 6.09 kB/s generated by that
+finite workload. The first fresh connection took longer; neither figure is a
+sustained-control acceptance result. No motor output was enabled.
+
 ### Robot measurement profile
 
 The [paired-motor command file](../examples/bench/paired_motors.txt) records
@@ -236,18 +255,16 @@ The Shell remains usable during collection. After `Ctrl+T` reports completion,
 uv run brickphyrdev record-info paired.cbor
 ```
 
-The profile takes 100 observations at 15 ms intervals over 1.5 seconds. Each
-scheduled observation is 288 bytes; four actions bring the reserved recorder
-memory to 30,437 bytes, before allocator and worker costs. The required sample
-payload rate is 19,334 bytes/s including transfer length prefixes, before action
-events and SMP/BLE overhead. This exceeds the measured BLE capacity: collection
-may start immediately, but most bytes arrive after sampling ends. The finite RAM
-buffer retains every sample independently of that backlog. Use `capture check`
+The profile takes 100 observations at 15 ms intervals over 1.5 seconds. Its
+uncompressed rows are 284 bytes plus a four-byte record kind. Compact blocks
+omit unchanged metadata, so their actual size depends on the measurements and
+device state; `capture check` reserves enough RAM for every row even if nothing
+compresses. Collection may continue after sampling ends. Use `capture check`
 to size a changed duration or selection; increasing duration beyond RAM capacity
 is rejected rather than lowering the requested sampling rate.
 
-A bounded Robot Inventor F4 check (PCB revision unknown, USB supplying power,
-BLE carrying commands and data) runs that profile with suspended ID-75 motors
+An earlier `brickphyr.bench/3` Robot Inventor F4 check (PCB revision unknown,
+USB supplying power, BLE carrying commands and data) ran that profile with suspended ID-75 motors
 on B/F and a simultaneous interactive Shell command. All 100 observations and
 four actions complete, with no skipped releases, transfer gaps, acquisition
 errors or cleanup errors. The maximum observed release lateness is 848 us;
@@ -255,9 +272,8 @@ IMU age at snapshot completion is at most 2,145 us and encoder age at most
 5,724 us. Neither IMU nor encoder sequences repeat between observations.
 The largest driver-reported application delay is 543 us; this is not an
 electrical-edge measurement. An interactive setting read completes in 129 ms.
-Collection transfers 29,800 packed bytes in 8.25 seconds. These are observations
-from a finite workload, not worst-case timing guarantees or battery-powered
-acceptance of this exact profile.
+Collection transferred 29,800 bytes in 8.25 seconds. These are observations
+of the earlier format, not a throughput or timing claim for the new blocks.
 
 ## Finite motor schedules
 
@@ -310,19 +326,19 @@ policy does not change autonomous applications or passive capture on disconnect.
 `capture clear` retries release before discarding the records. Successful clear
 retains the prepared plan for another run.
 
-Scheduled captures use `brickphyr.bench/3`; older `/1` and `/2` files remain readable.
+Scheduled captures use `brickphyr.bench/4`; older `/1`, `/2` and `/3` files remain readable.
 The immutable configuration includes the source/field selection, period, device
 generations and complete action list. Records
-contain a begin/origin event, ordinary observation snapshots, action results and a
+contain a begin/origin event, blocks of observation snapshots, action results and a
 final summary. An action can produce separate application and cleanup results,
 including its request identity, times, masks and first operation/cleanup errors.
 The final event records attempted actions, planned/written samples and missed
 releases. Missing sensor data remains a source error, distinct from schedule
 failure. The offline `Recording` reader exposes these as `kind` values `begin`,
-`sample`, `group` and `end`.
+`samples`, `group` and `end`.
 
 Records have their exact payload length: a 12-byte begin event, a 36-byte end
-event, a four-byte kind plus the selected observation fields, or a 56-byte group
+event, a four-byte kind plus a self-contained observation block, or a 56-byte group
 header plus 40 bytes per selected port. There is no padding to the largest
 record. RAM holds packed payloads in small preallocated blocks and a two-byte
 offset index; no allocation occurs per observation. The 32 KiB scheduled-capture
@@ -330,10 +346,9 @@ budget includes configuration, the index and block pointers, excluding allocator
 overhead. Existing application recordings keep their fixed-size format.
 
 Admission reserves up to two results per action plus begin and end events before
-admitting samples. `check` shows the maximum record size, retained RAM budget,
-sample payload rate and available window. The rate includes the two-byte length
-prefix used for block transfer, but excludes action events and SMP/BLE overhead;
-it is a required data rate, not a measured transport capability. Appending actions
+admitting samples. `check` shows the maximum block size, retained RAM budget,
+raw sample rate and available window. The actual packed rate depends on how often
+fields change and excludes action events and SMP/BLE overhead. Appending actions
 can reduce a `full` capture's window or reject an explicit duration. Unused event
 reservations and skipped releases can leave fewer records than the capacity when
 that window ends; the final event reports the actual sample and action counts.

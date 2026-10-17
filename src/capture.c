@@ -8,18 +8,19 @@
 #include "hub_ports.h"
 #include "host_transport.h"
 #include "motor_command.h"
+#include "telemetry_block.h"
 
 #include <inttypes.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
+#define CAPTURE_FIELDS_DESCRIPTORS
 #include <brickphyr_capture.h>
 
-/* brickphyr.capture/2: explicit little-endian fields, no C padding or field
- * names per sample. Configuration includes source and per-source field masks.
- * Each sample begins with scheduled/start/end us and missed releases (28 B).
- * Blocks follow mask order; source times remain acquisition/service times. */
+/* Capture rows use the capture/2 field layout. Capture/3 and bench/4 retain
+ * these exact values in independently decodable BCB3 blocks. Source times
+ * remain acquisition/service times, not inferred from the capture clock. */
 enum { RAW_IMU, CALIBRATED_IMU, BATTERY, PORT_SOURCE };
 enum { HEADER_SIZE = 28, STACK_SIZE = 2048,
 	BENCH_CONFIG_SIZE = CONFIG_SIZE + 32, STEP_SIZE = 24,
@@ -44,6 +45,10 @@ struct capture_task {
 	uint32_t attempted, request, written;
 	int64_t submitted_us;
 	bool reported, settled, pending;
+	uint16_t field_count;
+	struct telemetry_block block;
+	struct telemetry_wire_field wire[CAPTURE_MAX_FIELDS];
+	uint8_t block_data[1024];
 	uint8_t data[];
 };
 static K_MUTEX_DEFINE(mutex);
@@ -171,6 +176,77 @@ static void observe(uint8_t *out)
 	}
 }
 
+static size_t wire_layout(struct telemetry_wire_field *wire)
+{
+	static const struct { uint8_t size, delta; } header[] = {{8, 1}, {8, 1}, {8, 1}, {4, 1}};
+	size_t count = 0, offset = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(header); i++) {
+		wire[count++] = (struct telemetry_wire_field){offset, header[i].size, -1, header[i].delta};
+		offset += header[i].size;
+	}
+	int raw_base = -1;
+	for (unsigned int source = 0; source < SOURCE_COUNT; source++) {
+		if (!(plan.mask & BIT(source))) continue;
+		if (source == RAW_IMU) raw_base = count;
+		const struct capture_fields *kind = &field_kinds[source_kinds[source]];
+		for (unsigned int field = 0; field < kind->wire_count; field++) {
+			const struct capture_wire_field *entry = &kind->wire[field];
+			if (entry->selected >= 0 && !(plan.fields[source] & BIT(entry->selected))) continue;
+			int alias = source == CALIBRATED_IMU && raw_base >= 0 && field < CAPTURE_IMU_SHARED_FIELDS ?
+				raw_base + field : -1;
+			wire[count++] = (struct telemetry_wire_field){offset, entry->size, alias, entry->delta};
+			offset += entry->size;
+		}
+	}
+	return offset == plan.snapshot_size ? count : 0;
+}
+
+static int block_start(struct capture_task *run)
+{
+	size_t prefix = plan.step_count ? 4 : 0;
+	uint32_t slots;
+	size_t room = application_record_room(&slots);
+	if (!slots || room < prefix + 8 + plan.snapshot_size) return -ENOSPC;
+	if (prefix) sys_put_le32(4, run->block_data);
+	return telemetry_block_init(&run->block, run->block_data + prefix,
+		MIN(sizeof(run->block_data) - prefix, room - prefix), run->data + 1024,
+		plan.snapshot_size, run->wire, run->field_count);
+}
+
+static int block_flush(struct capture_task *run)
+{
+	if (!run->block.rows) {
+		run->block = (struct telemetry_block){0};
+		return 0;
+	}
+	size_t prefix = plan.step_count ? 4 : 0;
+	int err = application_record_write(run->block_data, prefix + run->block.length);
+	if (!err) run->block = (struct telemetry_block){0};
+	return err;
+}
+
+static int block_append(struct capture_task *run, const uint8_t *row)
+{
+	int err = run->block.data ? 0 : block_start(run);
+	if (err) return err;
+	err = telemetry_block_append(&run->block, row);
+	if (err != -ENOSPC) return err;
+	err = block_flush(run);
+	if (err) return err;
+	err = block_start(run);
+	return err ? err : telemetry_block_append(&run->block, row);
+}
+
+static void finish_passive(struct capture_task *run, uint32_t reason)
+{
+	int err = block_flush(run);
+	if (err) {
+		atomic_set(&failure, err);
+		reason = BP_RECORD_ERROR;
+	}
+	application_record_finish(reason);
+}
+
 static void sample(void *context, void *unused1, void *unused2)
 {
 	struct capture_task *run = context;
@@ -181,7 +257,7 @@ static void sample(void *context, void *unused1, void *unused2)
 		int64_t now = hub_time_us();
 		int64_t scheduled = origin_us + slot * period;
 		if (!k_sem_take(&stop, now < scheduled ? K_USEC(scheduled - now) : K_NO_WAIT)) {
-			application_record_finish(BP_RECORD_CANCELLED);
+			finish_passive(run, BP_RECORD_CANCELLED);
 			return;
 		}
 		now = hub_time_us();
@@ -196,8 +272,8 @@ static void sample(void *context, void *unused1, void *unused2)
 		if (duration && (uint64_t)(now - origin_us) >= duration) {
 			/* Includes releases missed at the end, with no later sample in
 			 * which to carry them. Capacity - final count exposes them in the log. */
-			atomic_add(&missed, plan.record.capacity - slot);
-			application_record_finish(BP_RECORD_DURATION);
+			atomic_add(&missed, plan.samples - slot);
+			finish_passive(run, BP_RECORD_DURATION);
 			return;
 		}
 		slot = current;
@@ -208,15 +284,17 @@ static void sample(void *context, void *unused1, void *unused2)
 		put32(&out, skipped);
 		observe(out);
 		sys_put_le64(hub_time_us(), run->data + 16);
-		int err = application_record_write(run->data, plan.record.size);
+		int err = block_append(run, run->data);
 		if (err) {
-			/* A host trigger may have frozen it while this snapshot was copied. */
-			if (err != -ENOSPC) {
+			if (err != -ENOSPC || plan.duration_ms) {
 				atomic_set(&failure, err);
 				application_record_finish(BP_RECORD_ERROR);
+			} else {
+				application_record_finish(BP_RECORD_FULL);
 			}
 			return;
 		}
+		run->written++;
 		atomic_add(&missed, skipped);
 		struct bp_record_info info;
 		application_record_info(&info);
@@ -241,6 +319,8 @@ static uint8_t *event(struct capture_task *run, uint32_t kind)
 
 static int group_event(struct capture_task *run, const struct bp_motor_group_state *state, int admission)
 {
+	int err = block_flush(run);
+	if (err) return err;
 	uint8_t *out = event(run, 1);
 	put32(&out, run->attempted);
 	put64(&out, origin_us + (uint64_t)plan.steps[run->attempted - 1].offset_ms * 1000);
@@ -366,7 +446,7 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 			put32(&out, skipped);
 			observe(out);
 			sys_put_le64(hub_time_us(), run->data + 20);
-			err = application_record_write(run->data, 4 + plan.snapshot_size);
+			err = block_append(run, run->data + 4);
 			if (err) break;
 			run->written++;
 			atomic_add(&missed, skipped);
@@ -404,6 +484,9 @@ static void run_schedule(void *context, void *unused1, void *unused2)
 		err = 0;
 	}
 	if (err || cleanup) reason = BP_RECORD_ERROR;
+	result = block_flush(run);
+	if (result && !err) err = result;
+	if (err) reason = BP_RECORD_ERROR;
 	atomic_set(&failure, err);
 	atomic_set(&cleanup_failure, cleanup);
 	uint8_t *out = event(run, 3);
@@ -464,18 +547,14 @@ static void show(const struct shell *shell)
 		plan.mask ? "prepared" : "unconfigured");
 	if (!plan.mask) return;
 	shell_print(shell, "Period: %u ms; duration: %u ms (0: until full)", plan.period_ms, plan.duration_ms);
-	shell_print(shell, "Record: %u bytes; capacity: %u; buffer: %zu bytes",
-		plan.record.size, plan.record.capacity, plan.record_memory);
-	if (plan.step_count) {
-		shell_print(shell, "Variable records: %zu payload bytes; %u bytes maximum per record",
-			plan.payload_bytes, plan.record.size);
-	}
-	shell_print(shell, "Samples: %u bytes; payload rate: %" PRIu64 " bytes/s; window: %" PRIu64 " ms",
-		plan.snapshot_size + (plan.step_count ? 4 : 0),
-		DIV_ROUND_UP((uint64_t)(plan.snapshot_size + (plan.step_count ? 6 : 0)) * 1000, plan.period_ms),
+	shell_print(shell, "Blocks: %u bytes maximum; %u slots; %zu payload bytes; %zu RAM bytes",
+		plan.record.size, plan.record.capacity, plan.payload_bytes, plan.record_memory);
+	shell_print(shell, "Samples: %u raw bytes; raw rate: %" PRIu64 " bytes/s; guaranteed window: %" PRIu64 " ms",
+		plan.snapshot_size,
+		DIV_ROUND_UP((uint64_t)plan.snapshot_size * 1000, plan.period_ms),
 		plan.duration_ms ? (uint64_t)plan.duration_ms : (uint64_t)plan.samples * plan.period_ms);
 	shell_print(shell, "Worker: %zu bytes + %zu stack bytes; allocator overhead separate",
-		sizeof(struct capture_task) + MAX(plan.record.size, plan.step_count ? BENCH_CONFIG_SIZE + STEP_SIZE * plan.step_count : CONFIG_SIZE), (size_t)K_THREAD_STACK_LEN(STACK_SIZE));
+		sizeof(struct capture_task) + 1024 + plan.snapshot_size, (size_t)K_THREAD_STACK_LEN(STACK_SIZE));
 	struct application_memory memory;
 	if (!application_memory_get(&memory)) {
 		shell_print(shell, "Shared heap free: %zu bytes; start still requires allocation", memory.heap_free);
@@ -509,28 +588,38 @@ static int budget(const struct shell *shell, struct capture_plan *candidate)
 {
 	uint32_t count = candidate->step_count;
 	size_t config_size = count ? BENCH_CONFIG_SIZE + count * STEP_SIZE : CONFIG_SIZE;
-	size_t sample_bytes = candidate->snapshot_size + (count ? 4 : 0);
+	if (candidate->snapshot_size + 8 + (count ? 4 : 0) > 1024) return -EMSGSIZE;
+	/* A one-row block is the largest possible cost per accepted sample.
+	 * Interleaved motor events may force that boundary on every row. */
+	size_t fields = 4;
+	for (unsigned int source = 0; source < SOURCE_COUNT; source++) {
+		if (!(candidate->mask & BIT(source))) continue;
+		const struct capture_fields *kind = &field_kinds[source_kinds[source]];
+		for (unsigned int field = 0; field < kind->wire_count; field++) {
+			int selected = kind->wire[field].selected;
+			fields += selected < 0 || (candidate->fields[source] & BIT(selected)) != 0;
+		}
+	}
+	size_t sample_bytes = candidate->snapshot_size + MAX(8 + (count ? 4 : 0),
+		DIV_ROUND_UP(fields, 8));
 	size_t group_bytes = 56 + 40 * POPCOUNT(candidate->port_mask);
-	candidate->record.size = count ? MAX(sample_bytes, group_bytes) : sample_bytes;
-	strcpy(candidate->record.schema, count ? "brickphyr.bench/3" : "brickphyr.capture/2");
+	candidate->record.size = 1024;
+	strcpy(candidate->record.schema, count ? "brickphyr.bench/4" : "brickphyr.capture/3");
 	uint32_t events = count ? 2 * count + 2 : 0;
 	size_t event_bytes = count ? 2 * count * group_bytes + 12 + 36 : 0;
 	uint32_t capacity = (32768 - config_size) / sample_bytes;
-	if (count) {
-		/* Include event payloads, offset index and block pointers in the
-		 * actual RAM limit. Find the largest admitted count using the same
-		 * layout validation as allocation, without allocating a probe. */
-		uint32_t low = 0, high = capacity;
-		while (low < high) {
-			uint32_t middle = low + (high - low + 1) / 2;
-			size_t bytes;
-			int err = application_record_compact_budget(candidate->record.size, middle + events,
-				config_size, middle * sample_bytes + event_bytes, &bytes);
-			if (err) high = middle - 1;
-			else low = middle;
-		}
-		capacity = low;
+	/* Include payload, offset index and allocation pointers. A conservative
+	 * bound guarantees even an incompressible sample can be retained. */
+	uint32_t low = 0, high = capacity;
+	while (low < high) {
+		uint32_t middle = low + (high - low + 1) / 2;
+		size_t bytes;
+		int err = application_record_compact_budget(candidate->record.size, middle + events,
+			config_size, middle * sample_bytes + event_bytes, &bytes);
+		if (err) high = middle - 1;
+		else low = middle;
 	}
+	capacity = low;
 	uint64_t samples = candidate->duration_ms ?
 		DIV_ROUND_UP((uint64_t)candidate->duration_ms, candidate->period_ms) :
 		capacity;
@@ -549,11 +638,9 @@ static int budget(const struct shell *shell, struct capture_plan *candidate)
 	}
 	candidate->samples = samples;
 	candidate->record.capacity = samples + events;
-	candidate->payload_bytes = count ? samples * sample_bytes + event_bytes : 0;
-	if (count) return application_record_compact_budget(candidate->record.size, candidate->record.capacity,
+	candidate->payload_bytes = samples * sample_bytes + event_bytes;
+	return application_record_compact_budget(candidate->record.size, candidate->record.capacity,
 		config_size, candidate->payload_bytes, &candidate->record_memory);
-	return application_record_budget(candidate->record.size, candidate->record.capacity,
-		config_size, false, 0, &candidate->record_memory);
 }
 
 static int reserve(const struct capture_plan *candidate, bool claim)
@@ -652,13 +739,19 @@ static int start(void)
 	int err = reserve(&plan, false);
 	if (err) return err;
 	size_t config_size = plan.step_count ? BENCH_CONFIG_SIZE + STEP_SIZE * plan.step_count : CONFIG_SIZE;
-	struct capture_task *run = k_calloc(1, sizeof(*run) + MAX(plan.record.size, config_size));
+	struct capture_task *run = k_calloc(1, sizeof(*run) + 1024 + plan.snapshot_size);
 	if (!run) return -ENOMEM;
 	run->epoch = expected;
 	run->stack = k_thread_stack_alloc(STACK_SIZE, 0);
 	if (!run->stack) {
 		k_free(run);
 		return -ENOMEM;
+	}
+	run->field_count = wire_layout(run->wire);
+	if (!run->field_count) {
+		(void)k_thread_stack_free(run->stack);
+		k_free(run);
+		return -EINVAL;
 	}
 	uint8_t *out = run->data;
 	put32(&out, plan.mask);

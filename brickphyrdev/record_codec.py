@@ -242,11 +242,17 @@ def check_size(schema, size, config=None, *, variable=False):
         if config is not None:
             bench_codec.check_size(size, config)
         return
-    if schema in (bench_codec.SCHEMA_V2, bench_codec.SCHEMA_V3):
+    if schema in (bench_codec.SCHEMA_V2, bench_codec.SCHEMA_V3, bench_codec.SCHEMA_V4):
         if not variable:
             raise RuntimeError(f"{schema} requires variable-size records")
         if config is not None:
             bench_codec.check_size(size, config, schema=schema)
+        return
+    if schema == capture_codec.SCHEMA_V3:
+        if not variable:
+            raise RuntimeError(f"{schema} requires variable-size records")
+        if config is not None:
+            capture_codec.check_size(size, config, schema=schema)
         return
     if schema in (capture_codec.SCHEMA, capture_codec.SCHEMA_V2):
         if config is not None:
@@ -264,10 +270,22 @@ def check_size(schema, size, config=None, *, variable=False):
 def decode(schema, data, config=b"") -> dict | None:
     if schema == bench_codec.SCHEMA:
         return bench_codec.decode(data, config)
-    if schema in (bench_codec.SCHEMA_V2, bench_codec.SCHEMA_V3):
+    if schema in (bench_codec.SCHEMA_V2, bench_codec.SCHEMA_V3, bench_codec.SCHEMA_V4):
         return bench_codec.decode(data, config, schema=schema)
-    if schema in (capture_codec.SCHEMA, capture_codec.SCHEMA_V2):
+    if schema in (capture_codec.SCHEMA, capture_codec.SCHEMA_V2, capture_codec.SCHEMA_V3):
         return capture_codec.decode(data, config, schema=schema)
     check_size(schema, len(data), config)
     decoder = _DECODERS.get(schema)
     return decoder[1](data) if decoder else None
+
+
+def samples(values):
+    """Return decoded observations from one record, excluding schedule events."""
+    if not values:
+        return ()
+    kind = values.get("kind")
+    if kind == "samples":
+        return values["samples"]
+    if kind == "sample" or kind is None and "sources" in values and "scheduled_us" in values:
+        return (values,)
+    return ()

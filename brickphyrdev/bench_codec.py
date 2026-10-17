@@ -8,6 +8,7 @@ from . import capture_codec
 SCHEMA = "brickphyr.bench/1"
 SCHEMA_V2 = "brickphyr.bench/2"
 SCHEMA_V3 = "brickphyr.bench/3"
+SCHEMA_V4 = "brickphyr.bench/4"
 
 _SCHEDULE = struct.Struct("<8I")
 _STEP = struct.Struct("<3I6h")
@@ -20,7 +21,7 @@ _PORTS = "ABCDEF"
 
 
 def _layout(config, schema=SCHEMA):
-    capture_size = capture_codec.CONFIG_SIZE if schema == SCHEMA_V3 else 16
+    capture_size = capture_codec.CONFIG_SIZE if schema in (SCHEMA_V3, SCHEMA_V4) else 16
     base_size = capture_size + _SCHEDULE.size
     if not isinstance(config, bytes | bytearray) or not base_size <= len(config) <= 1024:
         raise RuntimeError(f"Invalid {schema} configuration length")
@@ -33,8 +34,8 @@ def _layout(config, schema=SCHEMA):
         raise RuntimeError(f"Invalid {schema} configuration length")
     if not port_mask or port_mask >> len(_PORTS):
         raise RuntimeError(f"Invalid {schema} port mask")
-    capture_schema = capture_codec.SCHEMA_V2 if schema == SCHEMA_V3 else capture_codec.SCHEMA
-    snapshot_size = (capture_codec._layout_v2(capture_config) if schema == SCHEMA_V3
+    capture_schema = capture_codec.SCHEMA_V2 if schema in (SCHEMA_V3, SCHEMA_V4) else capture_codec.SCHEMA
+    snapshot_size = (capture_codec._layout_v2(capture_config) if schema in (SCHEMA_V3, SCHEMA_V4)
                      else capture_codec._layout(capture_config))[4]
     steps = []
     previous_offset = -1
@@ -61,12 +62,16 @@ def _layout(config, schema=SCHEMA):
 
 
 def check_size(size, config, *, schema=SCHEMA):
+    if schema == SCHEMA_V4:
+        if size != 1024 or _layout(config, schema)["snapshot_size"] + 12 > size:
+            raise RuntimeError(f"Invalid {schema} record length")
+        return
     if size != _layout(config, schema)["size"]:
         raise RuntimeError(f"Invalid {schema} record length")
 
 
 def _padding(data, used, schema):
-    if schema in (SCHEMA_V2, SCHEMA_V3):
+    if schema in (SCHEMA_V2, SCHEMA_V3, SCHEMA_V4):
         if len(data) != used:
             raise RuntimeError(f"Invalid {schema} record length")
     elif any(data[used:]):
@@ -78,14 +83,21 @@ def decode(data, config, *, schema=SCHEMA):
     if len(data) < _KIND.size:
         raise RuntimeError(f"Invalid {schema} record length")
     kind = _KIND.unpack_from(data)[0]
-    if kind > 3:
+    if kind > (4 if schema == SCHEMA_V4 else 3):
         raise RuntimeError(f"Invalid {schema} slot kind")
+    if schema == SCHEMA_V4 and kind == 0:
+        raise RuntimeError(f"Invalid {schema} slot kind")
+    if kind == 4:
+        from .capture_block_codec import decode as decode_block
+        rows = decode_block(data[_KIND.size:], layout["capture_config"])
+        return {"kind": "samples", "samples": [capture_codec.decode(
+            row, layout["capture_config"], schema=capture_codec.SCHEMA_V2) for row in rows]}
     expected = (
         _KIND.size + layout["snapshot_size"],
         _GROUP.size + _GROUP_PORT.size * layout["port_mask"].bit_count(),
         _BEGIN.size,
         _END.size,
-    )[kind] if schema in (SCHEMA_V2, SCHEMA_V3) else layout["size"]
+    )[kind] if schema in (SCHEMA_V2, SCHEMA_V3, SCHEMA_V4) else layout["size"]
     if len(data) != expected:
         raise RuntimeError(f"Invalid {schema} record length")
     if kind == 0:

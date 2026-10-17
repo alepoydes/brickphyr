@@ -7,6 +7,7 @@ from .capture_layout import CONFIG_SIZE, KINDS, SOURCE_KINDS, SOURCES
 
 SCHEMA = "brickphyr.capture/1"
 SCHEMA_V2 = "brickphyr.capture/2"
+SCHEMA_V3 = "brickphyr.capture/3"
 
 _CONFIG = struct.Struct("<4I")
 _HEADER = struct.Struct("<3qI")
@@ -72,6 +73,10 @@ def _layout_v2(config):
 
 
 def check_size(size, config, *, schema=SCHEMA):
+    if schema == SCHEMA_V3:
+        if size != 1024 or _layout_v2(config)[4] + 8 > size:
+            raise RuntimeError(f"Invalid {schema} record length")
+        return
     if size != (_layout_v2(config) if schema == SCHEMA_V2 else _layout(config))[4]:
         raise RuntimeError(f"Invalid {schema} record length")
 
@@ -125,6 +130,10 @@ def _motor(data, offset):
 
 
 def decode(data, config, *, schema=SCHEMA):
+    if schema == SCHEMA_V3:
+        from .capture_block_codec import decode as decode_block
+        return {"kind": "samples", "samples": [_decode_v2(row, config)
+                                            for row in decode_block(data, config)]}
     if schema == SCHEMA_V2:
         return _decode_v2(data, config)
     mask, _period_ms, _duration_ms, resolution_us, size = _layout(config)

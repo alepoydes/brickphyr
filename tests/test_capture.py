@@ -9,7 +9,7 @@ import pytest
 from test_native import native_console
 from test_python_hub import shell
 
-from brickphyrdev import application, console, recording, telemetry
+from brickphyrdev import application, console, record_codec, recording, telemetry
 from brickphyrdev.records import Recording
 from brickphyrdev.smp import checked
 
@@ -23,12 +23,12 @@ def test_capture_lifetime_and_collection():
             await application.upload(client, port, (build / "hello.elf").read_bytes(),
                                      application.Format.NATIVE)
             response = await shell(port, output,
-                                   b"capture prepare 10 300 battery:voltage encoder.A:angle motor.A:duty")
+                                   b"capture prepare 10 60 battery:voltage encoder.A:angle motor.A:duty")
             assert b"Capture: prepared" in response, response
             for selection in (b"battery:", b"battery:voltage,", b"battery:voltage,,current",
                               b"battery:voltage,voltage", b"battery:nope",
                               b"battery:voltage battery:current"):
-                response = await shell(port, output, b"capture prepare 10 300 " + selection)
+                response = await shell(port, output, b"capture prepare 10 60 " + selection)
                 assert b"Capture failed" in response, response
             # Rejected selections leave the original plan and its allocation
             # budget intact. Packed length checks also protect the shared layout.
@@ -36,7 +36,8 @@ def test_capture_lifetime_and_collection():
             response = await shell(port, output, b"capture start")
             assert b"failed" not in response, response
             initial = await checked(client, recording.Info())
-            assert (initial.record_schema, initial.size) == ("brickphyr.capture/2", 124)
+            assert (initial.record_schema, initial.size, initial.variable) == (
+                "brickphyr.capture/3", 1024, True)
             with pytest.raises(RuntimeError, match="16"):
                 await checked(client, application.Start())
             with pytest.raises(RuntimeError, match="16"):
@@ -51,14 +52,14 @@ def test_capture_lifetime_and_collection():
                 await recording.collect(client, log, session, counts)
             log.seek(0)
             data = Recording(log)
-            frames = list(data.frames())
+            samples = list(data.observations())
             assert data.outcome["reason"] == "duration"
             assert "fault" not in data.outcome  # Previous application's result is unrelated.
-            assert frames and frames[0].index == 0
+            assert samples and samples[0].record_index == 0
             assert data.session["recording"]["generation"] == initial.generation
             previous = -1
-            for frame in frames:
-                value = frame.values
+            for sample in samples:
+                value = sample.values
                 assert previous < value["scheduled_us"] <= value["started_us"] <= value["completed_us"]
                 previous = value["scheduled_us"]
                 assert value["sources"]["motor.A"]["duty_permille"] == 0
@@ -78,14 +79,10 @@ def test_capture_lifetime_and_collection():
             # running throughout. Empty/unavailable encoders are data errors.
             await shell(port, output, b"capture prepare 1 full all")
             await shell(port, output, b"capture start")
-            log = io.BytesIO()
-            with recording.session(log) as (session, counts):
-                await recording.collect(client, log, session, counts)
-            log.seek(0)
-            data = Recording(log)
-            full = list(data.frames())
-            assert data.outcome["reason"] == "full"
-            assert full[0].index == 0 and len(full) == data.session["recording"]["capacity"]
+            async with asyncio.timeout(2):
+                while (full := await checked(client, recording.Info())).active:
+                    await asyncio.sleep(0)
+            assert (full.reason, full.first) == (3, 0) and full.next > 0
             await shell(port, output, b"capture clear")
 
             await shell(port, output, b"capture prepare 10 full battery")
@@ -146,8 +143,8 @@ def test_schedule_records_outputs_and_disconnect_cleanup():
             await command(b"capture start")
             data, values = await collect()
             assert data.outcome["reason"] == "duration", data.outcome
-            assert data.session["recording"]["schema"] == "brickphyr.bench/3"
-            samples = [value["sources"] for value in values if value["kind"] == "sample"]
+            assert data.session["recording"]["schema"] == "brickphyr.bench/4"
+            samples = [sample["sources"] for value in values for sample in record_codec.samples(value)]
             assert samples and all(value["battery"]["current_ma"] == 1825 for value in samples)
             assert all("voltage_mv" not in value["battery"] for value in samples)
             assert any(value["motor.A"]["duty_permille"] == 250 and
