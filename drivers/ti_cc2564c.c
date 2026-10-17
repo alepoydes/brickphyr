@@ -7,12 +7,15 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_types.h>
 #include <zephyr/drivers/bluetooth.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 
 LOG_MODULE_REGISTER(ti_cc2564c, LOG_LEVEL_INF);
 
 BUILD_ASSERT(CONFIG_BT_BUF_CMD_TX_SIZE >= 255, "TI service pack uses full-size HCI commands");
+
+#define HCI_UART_BAUDRATE 921600U
 
 /* The unmodified official TI artifact is included at build time. Its license
  * and provenance are supplied by the pinned service-packs repository. */
@@ -169,8 +172,37 @@ int bt_h4_vnd_setup(const struct device *uart, const struct bt_hci_setup_params 
 		return -ENODEV;
 	}
 	err = load_service_pack(true);
-	if (!err) {
-		LOG_INF("CC2564C service pack loaded; eHCILL disabled");
+	if (err) {
+		return err;
 	}
-	return err;
+
+	/* The TI script starts at 115200. Change both ends only after its final
+	 * command completes at that speed, as in the Pybricks CC2564C setup. */
+	struct uart_config config;
+	err = uart_config_get(uart, &config);
+	if (err) {
+		return err;
+	}
+	uint8_t baud[4];
+	sys_put_le32(HCI_UART_BAUDRATE, baud);
+	err = send_command(0xff36, baud, sizeof(baud));
+	if (err) {
+		return err;
+	}
+	config.baudrate = HCI_UART_BAUDRATE;
+	err = uart_configure(uart, &config);
+	if (err) {
+		LOG_ERR("HCI UART baud change failed: %d", err);
+		return err;
+	}
+	/* Fail startup immediately if the controller and STM32 disagree. */
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_LOCAL_VERSION_INFO, NULL, &reply);
+	if (err) {
+		LOG_ERR("HCI UART verification failed at %u baud: %d", HCI_UART_BAUDRATE, err);
+		return err;
+	}
+	net_buf_unref(reply);
+	LOG_INF("CC2564C service pack loaded; UART %u baud; eHCILL disabled",
+		HCI_UART_BAUDRATE);
+	return 0;
 }

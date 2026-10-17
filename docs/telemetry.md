@@ -221,6 +221,18 @@ had three pauses and 249 unrecorded steps. These are short, USB-powered checks
 without motor drive or concurrent parameter updates; they do not establish
 sustained operation for a moving robot.
 
+With the same ATT MTU 130 and five ACL buffers, switching the F4 controller's
+HCI UART from 115200 to 921600 baud reduced four established downloads of a
+frozen 80-row passive control recording from about 1.69 to 0.84 seconds each.
+The compact BLE requests took about 1.26 versus 0.60 seconds; encoded payloads
+varied between runs by roughly 2%. The faster image reported a 7.5 ms connection
+interval and ATT MTU 130, and its BLE Shell remained usable after a reboot. In a
+separate passive 404-row run at a requested 15 ms period, the host collected
+50,396 compact bytes in 6.488 seconds while sending nine parameter updates.
+All 404 rows were consecutive, with no missing or unrecorded control steps.
+These USB-powered measurements do not establish battery-powered throughput or
+motor-loaded timing.
+
 For live application telemetry, the native SDK offers a recent-value ring and a
 [continuous-series policy](applications.md#application-recording). Both use the
 same compact transfer for `brickphyr.capture/2` control records and send no

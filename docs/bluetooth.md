@@ -49,6 +49,10 @@ identification, reconnection, return to Shell and USB/BLE exclusion are checked 
 one Inventor F4 (PCB revision unknown). Standard SMP BLE clients also provide echo
 and settings read/write/save through the same runtime and persistence handlers as
 USB. The native interface also provides the [shared interactive Shell](host.md#native-bluetooth-terminal).
+The controller and STM32 use 115200 baud while loading the TI service pack, then
+switch together to 921600 baud before normal HCI traffic. A version command at
+the new speed must succeed or Bluetooth startup reports an error; USB recovery
+remains available.
 The native application API includes experimental LEGO peripheral connections;
 see [application LEGO devices](#application-lego-devices) for its limits and evidence.
 Program execution through the Pybricks endpoint requires Python.
