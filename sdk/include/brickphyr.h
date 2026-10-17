@@ -512,7 +512,7 @@ __syscall int bp_record_begin_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length, bool control);
 
 /* Record long consecutive segments without an application-level ACK. A full
- * buffer pauses writes; a host's next sequential read releases the prior rows.
+ * buffer pauses writes; encoding a response releases its complete rows.
  * A lost response can therefore lose telemetry, but never blocks control.
  * Include timestamps and a sequence in custom schemas to identify gaps.
  * control=true attaches exact step times and parameter revisions. */

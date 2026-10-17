@@ -9,6 +9,20 @@
 #ifndef RECORD_SEGMENTS
 #define RECORD_SEGMENTS 0
 #endif
+#ifndef RECORD_PARAMETERS
+#define RECORD_PARAMETERS 0
+#endif
+#ifndef RECORD_RAW
+#define RECORD_RAW 0
+#endif
+#ifndef RECORD_BIG_PARAMETERS
+#define RECORD_BIG_PARAMETERS 0
+#endif
+#if RECORD_RAW
+#define RECORD_SCHEMA "fixture.segment/1"
+#else
+#define RECORD_SCHEMA "brickphyr.capture/2"
+#endif
 
 BRICKPHYR_APPLICATION();
 
@@ -23,15 +37,19 @@ int app_main(void)
 	sys_put_le32(frame.capture_resolution_us, config + 12);
 	config[16 + 2] = 1; /* battery voltage */
 	const struct bp_record_spec spec = {.size = 64, .capacity = 3,
-		.schema = "brickphyr.capture/2"};
+		.schema = RECORD_SCHEMA};
 	err = RECORD_SEGMENTS ? bp_record_begin_segments(&spec, config, sizeof(config), true) :
 		RECORD_RING ? bp_control_record_begin(&spec, config, sizeof(config)) :
 		bp_record_begin_paused(&spec, config, sizeof(config), true);
 	if (err) return err;
 	for (unsigned int written = 0; written < (RECORD_RING ? 20 : 10);) {
 		struct bp_control_step step;
-		err = bp_control_wait(10000, &step, NULL, 0);
+		uint8_t parameters[RECORD_BIG_PARAMETERS ? 256 : 8];
+		err = bp_control_wait(10000, &step,
+			RECORD_PARAMETERS ? parameters : NULL,
+			RECORD_PARAMETERS ? sizeof(parameters) : 0);
 		if (err) return err;
+		if (RECORD_PARAMETERS && written == 1 && step.parameter_revision == 1) continue;
 		err = bp_control_frame_get(0, &frame);
 		if (err) return err;
 		uint8_t row[64];

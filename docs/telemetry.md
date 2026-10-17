@@ -224,16 +224,19 @@ sustained operation for a moving robot.
 For live application telemetry, the native SDK offers a recent-value ring and a
 [continuous-series policy](applications.md#application-recording). Both use the
 same compact transfer for `brickphyr.capture/2` control records and send no
-separate telemetry acknowledgement. On one USB-powered Inventor F4, with passive
+application receipt acknowledgement. The collector obtains applied parameter
+bytes before their segmented records are released. If they do not fit in the
+same reply, it reads them first in a separate request. A lost record response
+becomes an explicit index gap. ARM/QEMU checks cover compact and ordinary
+responses, a parameter revision within one series, buffer release and collection
+without acknowledgements. Physical BLE acceptance of this response
+behavior is pending. On one USB-powered Inventor F4, with passive
 IMU, battery, encoder and inactive-output observations every requested 15 ms,
 the ring delivered 1118 of 1200 records over BLE and exposed 82 overwritten
-indices. A separate continuous-series run delivered all 1200 records in long
-series; three boundaries exposed 389 control steps without a recorded observation,
-and the longest consecutive series held 530 records. A Python primary sent
-parameter updates during both runs. Every delivered record retained its exact
-control timestamps and applied parameter revision. BLE scheduling varied between
-the runs, so these are behavior checks rather than a throughput guarantee; neither
-run energized motors.
+indices. A Python primary sent parameter updates during that run. Every
+delivered record retained its exact control timestamps and applied parameter
+revision. This is a bounded behavior check, not a throughput guarantee; the run
+did not energize motors.
 
 On one USB-powered Inventor F4, a retained 13,800-byte payload took 4.05 seconds
 to collect over BLE at ATT MTU 130 and a 7.5 ms connection interval, versus

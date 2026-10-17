@@ -242,9 +242,9 @@ The experimental application management group is SMP group 65, API version 1:
 | 11 | Write Python interrupt | Discard queued input and request `KeyboardInterrupt`; forced termination remains command 3 |
 | 12 | Write REPL entry | Start fresh interactive Python or reattach to the existing REPL; reject another running application with `EBUSY` |
 | 13 | Read output and state | At most 256 bytes in `data`, plus `state`, `result`, `fault`, `cleanup`, `dropped`, `queued`, and `repl`; `queued` is the output remaining after this read |
-| 14 | Read recording metadata | `generation`, record `size`, retained `capacity`, `first`, `next`, `active`, producer-defined `schema`, `config_size`, nullable `trigger`, `after`, end `reason` (0 open, 1 application end, 2 completed trigger, 3 full, 4 duration, 5 cancelled, 6 capture error), `control`, and `parameter_size` |
+| 14 | Read recording metadata | `generation`, record `size`, retained `capacity`, `first`, `next`, `active`, producer-defined `schema`, `config_size`, nullable `trigger`, `after`, end `reason` (0 open, 1 application end, 2 completed trigger, 3 full, 4 duration, 5 cancelled, 6 capture error), `control`, `parameter_size`, `paused`, `segments`, `compact`, `compact_ack`, and `inline_parameters` |
 | 14 | Write clear recording | No arguments; rejects a live application or built-in capture ownership with `EBUSY`; use `capture clear` for the latter |
-| 15 | Read recording fragment | Required `generation`, record `index` and byte `off`; returns at most 256 bytes in `data` (224 with control metadata), plus current `generation`, `first`, `next`, `active`, `trigger`, `after`, `reason`, and binary `step` |
+| 15 | Read recording fragment | Required `generation`, record `index` and byte `off`; returns at most 256 bytes in `data` (at most 224 with control metadata, possibly less with inline parameters), plus current `generation`, `first`, `next`, `active`, `trigger`, `after`, `reason`, binary `step`, and optional applied `parameters` |
 | 16 | Read recording configuration | Required `generation`, byte `off`; returns at most 256 bytes in `data`, current `generation` and configuration `total` |
 | 16 | Write recording trigger | Required `generation`, `after`; freeze after that many further records without stopping the application |
 | 17 | Read applied control parameters | Required `generation`, record `index`; returns current `generation`, `first`, `next`, applied `revision`, and its exact `data` (at most 256 bytes) |
@@ -254,14 +254,19 @@ The experimental application management group is SMP group 65, API version 1:
 | 21 | Read recorder budget | `size`, `capacity`, `config`, `control`, `parameters`; returns `bytes` for the firmware recorder allocation excluding allocator metadata |
 | 22 | Read recording block | Required `generation`, starting `index` and slot byte `off`; returns consecutive slot bytes in `data` and the current position/capture fields, without a separate `step` field |
 | 23 | Write recording identity | Required `generation` and nonzero 16-byte `tag`; bind an untagged capture or retain its existing tag; returns `generation` and the retained `tag` |
+| 24 | Acknowledge paused recording | Required `generation` and exclusive `next`; available only for the optional acknowledged paused mode, not segmented telemetry |
+| 25 | Read compact control block | Required `generation` and starting `index`; returns `rows`, independently decodable binary `data`, current position/capture fields, and optional applied `parameters`; optional `ack` belongs only to acknowledged paused mode |
 
 Recording metadata (command 14) advertises the maximum block payload as `block`.
 Its absence means only command 15 is available. A block slot consists of the
 existing 32-byte little-endian control step when control recording is enabled,
 followed by the application's fixed-size payload. Blocks may cross slot and
-allocation-block boundaries or end inside a step/payload. Applied parameters
-remain command 17 and are fetched once per observed revision. Generation/range
-checks apply equally to single-record and block reads; missing data is never
+allocation-block boundaries or end inside a step/payload. For segmented control
+records with parameters, command 22 is unavailable: read one record at a time
+using command 15. If `inline_parameters` is false, read its parameters with
+command 17 before requesting the record; this query does not release it. Compact
+blocks stop at a parameter-revision boundary and include applied parameters when
+needed. Generation and range checks apply to all record reads; missing data is never
 silently replaced. Block copying is bounded and performs no allocation or I/O
 while holding the recorder lock.
 
@@ -282,10 +287,16 @@ A resuming client must compare its saved tag before requesting records and must
 never bind a new tag to make a mismatched capture look resumable.
 
 [Application recording](applications.md#application-recording) uses non-consuming
-cursors. A mismatched generation or an index outside `[first, next)` returns
-empty data with current bounds; the client reports replacement or loss instead
-of merging fragments. An offset outside an available record returns `EINVAL`.
-Configuration reads use the same generation rule. Triggers reject a stale
+reads for ordinary rings and finite captures. In segmented mode, encoding a
+response retires its complete records, without receipt acknowledgement. Partial
+fragments remain retained until the complete record is encoded. A request
+starting after `first` within the retained range returns `EINVAL`, so it cannot
+discard an unencoded prefix. Empty responses never retire records. Record, block
+and compact reads reject a stale generation with `ESTALE`; an index outside
+`[first, next)` returns empty data with current bounds. The client reports
+replacement or loss instead of merging fragments. An offset outside an available
+record returns `EINVAL`. Configuration reads return their current generation with
+empty data on a mismatch. Triggers reject a stale
 generation; the trigger boundary is the exclusive `next` index at acceptance.
 
 In control mode, each available data fragment carries the same 32-byte `step`:

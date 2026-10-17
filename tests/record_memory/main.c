@@ -285,13 +285,17 @@ ZTEST(record_memory, test_segments_resume_only_after_previous_series_is_drained)
 	}
 	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
 	zassert_equal(application_record_ack(generation, 3, 1), -ENOTSUP);
-	zassert_ok(application_record_advance(generation, 2));
+	zassert_ok(application_record_advance(generation, 0, 0));
+	zassert_equal(application_record_advance(generation, 1, 2), -EINVAL);
+	application_record_info(&info);
+	zassert_equal(info.first, 0);
+	zassert_ok(application_record_advance(generation, 0, 2));
 	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
 	zassert_equal(application_record_copy(generation, 2, value, sizeof(value), applied,
 		sizeof(applied), &info, &step), sizeof(value));
 	zassert_equal(step.sequence, 3);
 	zassert_mem_equal(applied, parameter, sizeof(applied));
-	zassert_ok(application_record_advance(generation, 3));
+	zassert_ok(application_record_advance(generation, 2, 3));
 	step = (struct bp_control_step){.sequence = 9, .parameter_revision = 2,
 		.parameter_size = sizeof(parameter)};
 	application_record_step(&step, parameter);

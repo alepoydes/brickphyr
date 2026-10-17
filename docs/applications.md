@@ -837,16 +837,23 @@ Sequence exhaustion returns `EOVERFLOW`.
 Native ABI 2.6 adds `bp_record_begin_segments(&spec, config, length, control)`
 for long continuous observation series. It shares the same allocation, record
 format and optional control metadata. When the buffer fills, further writes
-return `ENOSPC` until the collector has read the preceding series; the application
-and its control loop keep running. Reading the next index releases earlier
-records, so there is no separate telemetry acknowledgement request. The next
-read index is also the discard cursor: if a client advances it before saving a
-response, the lost records appear as an index gap in the collected file.
-If the host disconnects while the buffer is full, recording waits for its next
-read but control continues. The next series begins only after the retained
+return `ENOSPC` until the preceding series has been transferred; the application
+and its control loop keep running. The hub releases complete records when it
+encodes their SMP response. Neither a separate acknowledgement nor a later read
+request confirms their receipt. If a response is lost, or saving it on the
+computer fails, those records appear as an index gap in the collected file.
+If the host disconnects while the buffer is full, recording waits for another
+collector but control continues. The next series begins only after the retained
 backlog drains; a partially freed buffer cannot produce a short fragment between
 long series. Choose this policy when contiguous trajectories matter more than
 minimizing pauses in observation.
+
+The collector reads applied parameters before releasing a segmented control
+record. When they fit in the SMP reply, the hub includes them with the record;
+otherwise the collector first reads the retained parameter snapshot separately.
+Compact blocks stop at a parameter revision boundary. For other control schemas
+with parameters, the collector reads individual records rather than using the
+multi-record block operation. No parameter request acts as an acknowledgement.
 
 Every telemetry observation needs a time value. `control=true` retains the exact
 `scheduled_us` and `started_us` of its control step, its sequence and applied
@@ -1002,7 +1009,7 @@ capture status. Collection never silently combines configurations from different
 For control recordings, each JSONL `record` also has a `control` object with the
 step fields above. A `parameters` event precedes the first collected record using
 each revision and holds its exact bytes as hex. The collector fetches each observed
-revision once; it discards an incomplete record if its parameter snapshot was
+revision once in the output; it discards an incomplete record if its parameter snapshot was
 overwritten before retrieval and reports the gap. A replay must use these values
 and the application schema, not current hub settings or a later sensor read.
 

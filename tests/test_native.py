@@ -410,6 +410,14 @@ def test_segmented_control_stream_collects_without_acknowledgement():
                 while (info := await checked(client, recording.Info())).next < 3:
                     await asyncio.sleep(0)
             assert info.segments and info.compact and not info.paused and not info.compact_ack
+            future = await checked(client, recording.Compact(generation=info.generation,
+                                                               index=info.next))
+            assert future.rows == 0
+            assert (await checked(client, recording.Info())).first == info.first
+            with pytest.raises(RuntimeError):
+                await checked(client, recording.Compact(generation=info.generation,
+                                                        index=info.first + 1))
+            assert (await checked(client, recording.Info())).first == info.first
 
         async with connection(port=port) as (client, transport):
 
@@ -430,6 +438,7 @@ def test_segmented_control_stream_collects_without_acknowledgement():
             assert all(0 < frame.control["scheduled_us"] <= frame.control["started_us"]
                        for frame in frames)
             assert reader.missing == 0 and counts == {"records": 10, "gaps": 0}
+            assert (await checked(client, recording.Info())).first == 10
             await checked(client, recording.Clear())
 
             await upload(client, transport, (build / "record_paused_segments_probe.elf").read_bytes())
@@ -437,10 +446,31 @@ def test_segmented_control_stream_collects_without_acknowledgement():
             async with asyncio.timeout(2):
                 while (info := await checked(client, recording.Info())).next < 3:
                     await asyncio.sleep(0)
+            empty = await checked(client, recording.Block(generation=info.generation,
+                                                          index=info.next, off=0))
+            assert not empty.data
+            empty = await checked(client, recording.Record(generation=info.generation,
+                                                           index=info.next, off=0))
+            assert not empty.data
+            with pytest.raises(RuntimeError):
+                await checked(client, recording.Block(generation=info.generation,
+                                                      index=info.first + 1, off=0))
+            with pytest.raises(RuntimeError):
+                await checked(client, recording.Record(generation=info.generation,
+                                                       index=info.first + 1, off=0))
+            assert (await checked(client, recording.Info())).first == info.first
             with pytest.raises(RuntimeError):
                 await checked(client, recording.Block(generation=info.generation,
                                                       index=1, off=9999))
             assert (await checked(client, recording.Info())).first == 0
+            reply = await checked(client, recording.Block(generation=info.generation,
+                                                          index=0, off=0))
+            assert reply.data == struct.pack("<III", 0, 1, 2)
+            assert (await checked(client, recording.Info())).first == 3
+            empty = await checked(client, recording.Block(generation=info.generation,
+                                                          index=0, off=16))
+            assert not empty.data
+            assert (await checked(client, recording.Info())).first == 3
             output = io.BytesIO()
             with recording.session(output) as (session, counts):
                 await asyncio.wait_for(
@@ -449,8 +479,8 @@ def test_segmented_control_stream_collects_without_acknowledgement():
             output.seek(0)
             reader = Recording(output)
             frames = list(reader.frames(allow_gaps=True))
-            assert [struct.unpack("<I", frame.data)[0] for frame in frames] == list(range(10))
-            assert reader.missing == 0
+            assert [struct.unpack("<I", frame.data)[0] for frame in frames] == list(range(3, 10))
+            assert reader.missing == 3
             await checked(client, recording.Clear())
 
     with native_console(build) as port:

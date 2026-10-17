@@ -481,22 +481,24 @@ static void retire_first(void)
 	state.first++;
 }
 
-int application_record_advance(uint32_t generation, uint64_t index)
+int application_record_advance(uint32_t generation, uint64_t first, uint64_t next)
 {
 	for (;;) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 		int err = !segments_on_read ? 0 : generation != state.generation ? -ESTALE :
-			!records ? -ENODATA : index > state.next ? -EINVAL : 0;
-		if (err || !segments_on_read || index <= state.first) {
+			!records ? -ENODATA : first != state.first || next < first || next > state.next ?
+			-EINVAL : 0;
+		if (err || !segments_on_read || next == state.first) {
 			k_spin_unlock(&lock, key);
 			return err;
 		}
-		uint64_t count = MIN(index - state.first, 32);
+		uint64_t count = MIN(next - state.first, 32);
 		for (uint64_t i = 0; i < count; i++) retire_first();
 		if (state.first == state.next) segment_stalled = false;
-		bool complete = state.first == index;
+		bool complete = state.first == next;
 		k_spin_unlock(&lock, key);
 		if (complete) return 0;
+		first += count;
 	}
 }
 

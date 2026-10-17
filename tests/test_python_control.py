@@ -10,7 +10,7 @@ import cbor2
 import pytest
 
 from brickphyrdev import console, recording
-from brickphyrdev.application import Format, Start, Status, Stop, checked, connection, upload
+from brickphyrdev.application import Format, Input, Start, Status, Stop, checked, connection, upload
 from test_native import native_console
 from test_python import completed, output
 
@@ -122,6 +122,98 @@ for revision in range(1, 25):
                 # A valid revision may span several steps before Python updates.
                 assert len(observed) == 16 and observed[-1][4] == 24 and observed[0][4] > 1
                 assert all(row[4] == row[6] for row in observed)
+            finally:
+                await checked(client, Stop())
+
+    with native_console(BUILD) as port:
+        asyncio.run(exercise(port))
+
+
+@pytest.mark.parametrize(("compact", "parameter_size"), [(True, 8), (False, 8),
+                                                          (False, 176), (False, 256)])
+def test_segmented_control_record_includes_applied_parameters(compact, parameter_size):
+    import io
+
+    from brickphyrdev.records import Recording
+
+    source = """import brickphyr, struct
+from pybricks.tools import wait
+brickphyr.control_start(open('controller.elf', 'rb').read(), struct.pack('<II', 10, 7) + bytes(PAD_BYTES))
+input()
+assert brickphyr.control_update(struct.pack('<II', 10, 8) + bytes(PAD_BYTES)) == 2
+while brickphyr.control_status()['applied_revision'] < 2:
+    wait(1)
+print('updated')
+while brickphyr.record_info()['next'] < 10:
+    wait(1)
+""".replace("PAD_BYTES", str(parameter_size - 8))
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            try:
+                payload = cbor2.dumps({
+                    "main.py": source.encode(),
+                    "controller.elf": (BUILD / (
+                        "record_frame_segments_params_probe.elf" if compact else
+                        "record_frame_segments_params_big_probe.elf" if parameter_size > 8 else
+                        "record_frame_segments_params_raw_probe.elf"
+                    )).read_bytes(),
+                })
+                await upload(client, transport, payload, Format.FILES)
+                await checked(client, Start())
+                async with asyncio.timeout(3):
+                    while (info := await checked(client, recording.Info())).next < 1:
+                        await asyncio.sleep(0.01)
+                assert info.segments and info.compact == compact
+                assert info.parameter_size == parameter_size
+                assert info.inline_parameters == (parameter_size <= 176)
+                await checked(client, Input(data=b"update\n"))
+                text = bytearray()
+                async with asyncio.timeout(3):
+                    while b"updated" not in text:
+                        text.extend(await output(client))
+                        await asyncio.sleep(0.01)
+
+                class NoAcknowledgement:
+                    def __init__(self):
+                        self.lock = asyncio.Lock()
+                        self.rows = []
+                        self.parameters = 0
+
+                    async def request(self, request):
+                        assert not isinstance(request, (recording.Ack, recording.CompactAck))
+                        self.parameters += isinstance(request, recording.Parameters)
+                        async with self.lock:
+                            reply = await client.request(request)
+                            if isinstance(request, recording.Compact) and reply.rows:
+                                self.rows.append(reply.rows)
+                            return reply
+
+                transfer = NoAcknowledgement()
+                log = io.BytesIO()
+                with recording.session(log) as (session, counts):
+                    await asyncio.wait_for(recording.collect(
+                        transfer, log, session, counts, wait=True
+                    ), 5)
+                log.seek(0)
+                frames = list(Recording(log).frames(allow_gaps=True))
+                if compact:
+                    assert transfer.rows[0] == 1
+                else:
+                    assert not transfer.rows
+                if parameter_size > 176:
+                    assert 0 < transfer.parameters <= 10
+                else:
+                    assert transfer.parameters == 0
+                assert [frame.index for frame in frames] == list(range(10)), (
+                    await checked(client, Status()), await output(client)
+                )
+                assert {frame.control["parameter_revision"] for frame in frames} == {1, 2}
+                assert all(struct.unpack("<II", frame.parameters[:8]) == (
+                    10, 7 if frame.control["parameter_revision"] == 1 else 8
+                ) for frame in frames)
+                assert all(frame.parameters[8:] == bytes(parameter_size - 8)
+                           for frame in frames)
             finally:
                 await checked(client, Stop())
 

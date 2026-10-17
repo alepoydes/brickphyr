@@ -52,6 +52,30 @@ def test_slow_file_write_yields_and_joins_before_cancelled_footer():
     asyncio.run(exercise())
 
 
+def test_segmented_parameters_are_read_before_new_tail_record(monkeypatch):
+    initial = _info(next=0, control=True, parameter_size=256, segments=True,
+                    inline_parameters=False)
+    ready = _info(next=1, control=True, parameter_size=256, segments=True,
+                  inline_parameters=False, active=False)
+    terminal = _info(first=1, next=1, control=True, parameter_size=256, segments=True,
+                     inline_parameters=False, active=False)
+    step = struct.pack("<qq4I", 100, 110, 1, 0, 1, 256)
+    values = bytes(range(256))
+    reads = _fixture(
+        monkeypatch, iter((_fragment(next=1, active=False, data=b"ABCD", step=step),)),
+        initial, infos=(initial, ready, terminal),
+        params=(SimpleNamespace(generation=7, first=0, next=0, revision=0, data=b""),
+                SimpleNamespace(generation=7, first=0, next=1, revision=1, data=values)),
+    )
+    output = io.StringIO()
+    asyncio.run(recording.collect(object(), output, "fixture", {"records": 0, "gaps": 0}))
+    assert reads == [("parameters", 0), ("parameters", 0), (0, 0)]
+    frames = list(Recording(io.StringIO(output.getvalue())).frames(allow_incomplete=True))
+    assert [(frame.index, frame.data, frame.parameters) for frame in frames] == [
+        (0, b"ABCD", values)
+    ]
+
+
 def _info(**changes):
     fields = dict(
         generation=7, size=4, capacity=3, first=0, next=1, active=True,

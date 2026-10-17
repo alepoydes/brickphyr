@@ -36,6 +36,7 @@ class InfoResponse(message.ReadResponse):
     paused: bool = False
     segments: bool = False
     parameter_size: int = 0
+    inline_parameters: bool = False
     block: int = 0
     compact: bool = False
     compact_ack: bool = False
@@ -64,6 +65,7 @@ class RecordResponse(message.ReadResponse):
     after: int = 0
     reason: int | None = None
     step: bytes = b""
+    parameters: bytes | None = None
 
 
 class Record(application._Group, message.ReadRequest):
@@ -362,6 +364,17 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     compact_ack = getattr(info, "compact_ack", False)
     if type(compact_ack) is not bool or compact_ack and not (compact and paused):
         raise RuntimeError("Invalid compact acknowledgement mode")
+    inline_parameters = getattr(info, "inline_parameters", False)
+    if type(inline_parameters) is not bool or inline_parameters and not (
+        segments and info.control and info.parameter_size
+    ) or compact and segments and info.parameter_size and not inline_parameters:
+        raise RuntimeError("Invalid inline parameter mode")
+    if segments and info.control and info.parameter_size and not compact:
+        # The ordinary block response cannot carry a parameter snapshot for
+        # every revision it may contain. Individual record reads can.
+        block = 0
+        step_size = 0
+        max_stride = info.size
 
     tag = getattr(info, "tag", None)
     if tag is not None and len(tag) != 16:
@@ -443,6 +456,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     cached_revision = resume.parameter_revision if resume else None
     pending_gap = 0
     pending_ack = None
+    prefetched = None
     while True:
         if index < first:
             target = max(first, next - max(1, info.capacity // 2)) if compact and active and not (
@@ -453,6 +467,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             index = target
             partial.clear()
             partial_step = None
+            prefetched = None
         if not active and index >= next:
             if pending_ack is not None:
                 first = await _ack(client, generation, first, pending_ack)
@@ -513,6 +528,40 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 reply = await checked(client, Compact(generation=generation, index=index))
         else:
             request = Block if block else Record
+            if segments and info.control and info.parameter_size and not inline_parameters and (
+                prefetched is None or prefetched[0] != index
+            ):
+                params = await checked(client, Parameters(generation=generation, index=index))
+                if params.generation != generation:
+                    raise RuntimeError(
+                        f"Recording generation changed from {generation} to {params.generation}"
+                    )
+                _range(params.first, params.next)
+                if params.first < first or params.next < next:
+                    raise RuntimeError("Recording index range moved backwards")
+                first, next = params.first, params.next
+                if index < first:
+                    continue
+                if index >= next:
+                    current = await checked(client, Info())
+                    if current.generation != generation:
+                        raise RuntimeError(
+                            f"Recording generation changed from {generation} to {current.generation}"
+                        )
+                    if _identity(current) != _identity(info):
+                        raise RuntimeError("Recording metadata changed within generation")
+                    state = _metadata(current, info.capacity, config_size=current.config_size,
+                                      variable=variable, paused=paused or segments)
+                    _advance((first, next, trigger, trigger_after, reason),
+                             (current.first, current.next, *state))
+                    first, next, active = current.first, current.next, current.active
+                    trigger, trigger_after, reason = state
+                    if active and index >= next:
+                        await asyncio.sleep(0.02)
+                    continue
+                if not 0 <= params.revision < 1 << 32 or len(params.data) != info.parameter_size:
+                    raise RuntimeError("Invalid retained control parameters")
+                prefetched = (index, params.revision, params.data)
             reply = await checked(client, request(generation=generation, index=index,
                                                   off=len(partial)))
         if reply.generation != generation:
@@ -525,6 +574,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         first, next, active = reply.first, reply.next, reply.active
         trigger, trigger_after, reason = state
         if index < first:
+            prefetched = None
             continue  # Discard the partial record before the next request.
         if index >= next:
             if reply.data or reply.step or compact and reply.rows:
@@ -532,6 +582,10 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             if active:
                 await asyncio.sleep(0.02)
             continue
+        if segments and info.control and info.parameter_size and inline_parameters and (
+            reply.parameters is None or len(reply.parameters) != info.parameter_size
+        ):
+            raise RuntimeError("Segmented record lacks its applied parameters")
         if info.control and not block:
             step = record_codec.control_step(reply.step, info.parameter_size)
             if partial_step is None:
@@ -558,6 +612,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Invalid recording fragment")
         partial.extend(payload)
         events = []
+        segment_revision = None
         while True:
             if index >= next:
                 if partial:
@@ -581,25 +636,39 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 if (last_sequence is not None and sequence < last_sequence or
                     last_revision is not None and revision < last_revision):
                     raise RuntimeError("Control step sequence or revision moved backwards")
+                if segments and info.parameter_size and compact:
+                    if segment_revision is None:
+                        segment_revision = revision
+                    elif revision != segment_revision:
+                        raise RuntimeError("Compact segment crosses a parameter revision")
                 if revision != cached_revision:
-                    params = await checked(client, Parameters(generation=generation, index=index))
-                    if params.generation != generation:
-                        raise RuntimeError(
-                            f"Recording generation changed from {generation} to {params.generation}"
-                        )
-                    _range(params.first, params.next)
-                    if params.first < first or params.next < next:
-                        raise RuntimeError("Recording index range moved backwards")
-                    first, next = params.first, params.next
-                    if index < first:
-                        break  # Discard the block together with overwritten parameters.
-                    if index >= next or params.revision != revision or (
-                        len(params.data) != info.parameter_size
-                    ):
-                        raise RuntimeError("Invalid retained control parameters")
-                    events.append({
-                        "type": "parameters", "revision": revision, "data": params.data,
-                    })
+                    if not info.parameter_size:
+                        data = b""
+                    elif segments:
+                        if inline_parameters:
+                            data = reply.parameters
+                        elif prefetched is None or prefetched[:2] != (index, revision):
+                            raise RuntimeError("Control parameter revision changed during read")
+                        else:
+                            data = prefetched[2]
+                    else:
+                        params = await checked(client, Parameters(generation=generation, index=index))
+                        if params.generation != generation:
+                            raise RuntimeError(
+                                f"Recording generation changed from {generation} to {params.generation}"
+                            )
+                        _range(params.first, params.next)
+                        if params.first < first or params.next < next:
+                            raise RuntimeError("Recording index range moved backwards")
+                        first, next = params.first, params.next
+                        if index < first:
+                            break  # Discard the block together with overwritten parameters.
+                        if index >= next or params.revision != revision or (
+                            len(params.data) != info.parameter_size
+                        ):
+                            raise RuntimeError("Invalid retained control parameters")
+                        data = params.data
+                    events.append({"type": "parameters", "revision": revision, "data": data})
                     cached_revision = revision
             data = partial[2:stride] if variable else partial[step_size:stride]
             record = {"type": "record", "index": index, "data": bytes(data)}
@@ -615,6 +684,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             index += 1
             del partial[:stride]
             partial_step = None
+            prefetched = None
         if index >= next and partial:
             raise RuntimeError("Recording data outside retained range")
         if events:
