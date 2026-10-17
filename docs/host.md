@@ -526,9 +526,9 @@ write in full or returns an ATT error. Closing or disconnecting discards unfinis
 input and queued commands; an entered handler finishes before ownership is released.
 Terminal history is per session. Reopening after unsubscribe requires a new BLE
 connection, excluding notifications already queued for the old terminal.
-The F4 Bluetooth profile requests ATT MTU 130, enough for one complete 127-byte
-serial SMP frame in a write or notification. Native output batches up to that
-frame size, independently of the Pybricks event limit. Notifications and acknowledged
+The F4 Bluetooth profile requests ATT MTU 247, leaving up to 244 bytes in a
+write or notification. Native output batches up to that capacity, independently
+of the Pybricks event limit. Notifications and acknowledged
 client writes respect the negotiated capacity; peers at MTU 23 still use 20-byte
 chunks. The CLI reads Bleak's public single-packet write limit, retaining write
 responses to detect rejected input. Larger MTUs do not change the stream format.

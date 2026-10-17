@@ -53,6 +53,13 @@ The controller and STM32 use 115200 baud while loading the TI service pack, then
 switch together to 3,000,000 baud before normal HCI traffic. A version command at
 the new speed must succeed or Bluetooth startup reports an error; USB recovery
 remains available.
+The F4 host offers ATT MTU 247. The CC2564C still carries it in 27-byte ACL
+fragments; the larger MTU reduces notification framing, not the radio packet
+limit. On one Inventor F4, 80 retained passive sensor rows downloaded in
+0.840–0.851 s with MTU 247, versus 0.946–0.961 s with MTU 127. A concurrent
+500-row passive recording at 15 ms per row downloaded without gaps in 7.65 s
+while the hub was powered by USB. These bounded checks do not establish
+gap-free delivery under motor load, radio interference, or long operation.
 The F4 profile advertises a preferred 7.5 ms connection interval with peripheral
 latency 0. Active SMP traffic requests the same parameters; the transport restores
 that preference after five seconds without an SMP request. A central chooses the
