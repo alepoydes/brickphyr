@@ -12,6 +12,7 @@ static uint8_t row[240];
 
 int app_main(void)
 {
+	struct { uint32_t samples, token; } parameters = {100, 0};
 	int err = bp_control_frame_get(3, &frame);
 	if (err) return err;
 	uint8_t config[BP_CAPTURE_CONFIG_SIZE] = {0};
@@ -24,10 +25,16 @@ int app_main(void)
 		.schema = "brickphyr.capture/2"};
 	err = bp_record_begin_paused(&spec, config, sizeof(config), true);
 	if (err) return err;
-	for (unsigned int written = 0; written < 100;) {
+	unsigned int limit = 100;
+	for (unsigned int written = 0; written < limit;) {
 		struct bp_control_step step;
-		err = bp_control_wait(15000, &step, NULL, 0);
+		err = bp_control_wait(15000, &step, &parameters, sizeof(parameters));
 		if (err) return err;
+		if (step.parameter_size && step.parameter_size != sizeof(parameters)) return -EMSGSIZE;
+		if (step.sequence == 1 && step.parameter_size) {
+			if (parameters.samples < 1 || parameters.samples > 4000) return -EINVAL;
+			limit = parameters.samples;
+		}
 		err = bp_control_frame_get(3, &frame);
 		if (err) return err;
 		err = bp_capture_pack_frame(config, sizeof(config), &step, &frame, row, sizeof(row));

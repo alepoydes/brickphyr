@@ -221,6 +221,14 @@ had three pauses and 249 unrecorded steps. These are short, USB-powered checks
 without motor drive or concurrent parameter updates; they do not establish
 sustained operation for a moving robot.
 
+In a longer USB-powered BLE check on the same F4, a Python primary published 29
+parameter updates while a passive native controller collected 1200 records at a
+15 ms requested period. The collector restored all 30 applied revisions and lost
+no transferred records. The controller kept running while its buffer paused:
+277 control steps were not recorded, and collection took 23.46 s. This profile
+still exceeds the measured BLE delivery rate; continuous capture without gaps
+is not established.
+
 On one USB-powered Inventor F4, a retained 13,800-byte payload took 4.05 seconds
 to collect over BLE at ATT MTU 130 and a 7.5 ms connection interval, versus
 4.58 seconds with 400-byte payload blocks. These are bounded measurements after

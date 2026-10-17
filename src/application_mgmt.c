@@ -291,6 +291,8 @@ static int record_info_read(struct smp_streamer *stream)
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 		zcbor_tstr_put_lit(zs, "compact") &&
 		zcbor_bool_put(zs, record_compact_supported(&info, variable, paused)) &&
+		zcbor_tstr_put_lit(zs, "compact_ack") &&
+		zcbor_bool_put(zs, record_compact_supported(&info, variable, paused)) &&
 #endif
 		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
@@ -361,18 +363,26 @@ static int record_compact_read(struct smp_streamer *stream)
 {
 	uint32_t generation = 0;
 	uint64_t index = UINT64_MAX;
+	uint64_t ack = 0;
 	size_t decoded;
 	struct zcbor_map_decode_key_val fields[] = {
 		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
 		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
+		ZCBOR_MAP_DECODE_KEY_DECODER("ack", zcbor_uint64_decode, &ack),
 	};
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
-	    !generation || index == UINT64_MAX) return MGMT_ERR_EINVAL;
+	    !generation || index == UINT64_MAX || (ack && ack != index)) return MGMT_ERR_EINVAL;
 	struct bp_record_info info;
 	bool variable, paused;
 	application_record_snapshot(&info, NULL, &variable, &paused);
 	if (info.generation != generation) return result(stream, -ESTALE);
 	if (!record_compact_supported(&info, variable, paused)) return result(stream, -ENOTSUP);
+	/* The host flushed this prefix before asking for the next block. */
+	if (ack) {
+		int err = application_record_ack(generation, ack, application_session_id());
+		if (err) return result(stream, err);
+		application_record_snapshot(&info, NULL, NULL, NULL);
+	}
 	if (index < info.first || index >= info.next) {
 		uint8_t empty = 0;
 		zcbor_state_t *zs = stream->writer->zs;

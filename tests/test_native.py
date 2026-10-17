@@ -320,9 +320,22 @@ def test_native_frame_uses_shared_capture_fields():
                     break
                 await asyncio.sleep(0.01)
             assert info.compact
+            assert info.compact_ack
+            piggybacked = []
+            separate = []
+
+            class CountingClient:
+                async def request(self, request):
+                    if isinstance(request, recording.CompactAck):
+                        piggybacked.append(request.ack)
+                    elif isinstance(request, recording.Ack):
+                        separate.append(request.next)
+                    return await client.request(request)
+
             output = io.StringIO()
             counts = {"records": 0, "gaps": 0}
-            await asyncio.wait_for(recording.collect(client, output, "frame", counts, wait=True), 5)
+            await asyncio.wait_for(recording.collect(CountingClient(), output, "frame", counts,
+                                                     wait=True), 5)
             events = [json.loads(line) for line in output.getvalue().splitlines()]
             samples = [event for event in events if event["type"] == "record"]
             assert len(samples) == 10 and counts == {"records": 10, "gaps": 0}
@@ -331,6 +344,8 @@ def test_native_frame_uses_shared_capture_fields():
             assert all(sample["control"]["sequence"] > 0 for sample in samples)
             assert all(samples[i]["control"]["sequence"] < samples[i + 1]["control"]["sequence"]
                        for i in range(9))
+            assert piggybacked and piggybacked == sorted(piggybacked)
+            assert len(separate) <= 1 and (await checked(client, recording.Info())).first == 10
             await checked(client, recording.Clear())
 
     with native_console(build) as port:

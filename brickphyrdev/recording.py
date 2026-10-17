@@ -37,6 +37,7 @@ class InfoResponse(message.ReadResponse):
     parameter_size: int = 0
     block: int = 0
     compact: bool = False
+    compact_ack: bool = False
     tag: bytes | None = None
 
 
@@ -91,6 +92,10 @@ class Compact(application._Group, message.ReadRequest):
     _Response = CompactResponse
     generation: int
     index: int
+
+
+class CompactAck(Compact):
+    ack: int
 
 
 class BindResponse(message.WriteResponse):
@@ -349,6 +354,9 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         info.record_schema == capture_codec.SCHEMA_V2
     ):
         raise RuntimeError("Invalid compact recording mode")
+    compact_ack = getattr(info, "compact_ack", False)
+    if type(compact_ack) is not bool or compact_ack and not compact:
+        raise RuntimeError("Invalid compact acknowledgement mode")
 
     tag = getattr(info, "tag", None)
     if tag is not None and len(tag) != 16:
@@ -427,6 +435,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     last_revision = previous["parameter_revision"] if previous else None
     cached_revision = resume.parameter_revision if resume else None
     pending_gap = 0
+    pending_ack = None
     while True:
         if index < first:
             pending_gap += first - index
@@ -435,6 +444,9 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             partial.clear()
             partial_step = None
         if not active and index >= next:
+            if pending_ack is not None:
+                first = await _ack(client, generation, first, pending_ack)
+                pending_ack = None
             status = await checked(client, application.Status())
             terminal_info = await checked(client, Info())
             if terminal_info.generation != generation:
@@ -480,7 +492,15 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if compact:
             if partial:
                 raise RuntimeError("Partial compact recording block")
-            reply = await checked(client, Compact(generation=generation, index=index))
+            if pending_ack is not None:
+                reply = await checked(client, CompactAck(generation=generation, index=index,
+                                                         ack=pending_ack))
+                if reply.first < pending_ack:
+                    raise RuntimeError("Compact acknowledgement was not applied")
+                first = pending_ack
+                pending_ack = None
+            else:
+                reply = await checked(client, Compact(generation=generation, index=index))
         else:
             request = Block if block else Record
             reply = await checked(client, request(generation=generation, index=index,
@@ -590,7 +610,12 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if events:
             await _write(log, *events, counts=counts)
             if paused:
-                first = await _ack(client, generation, first, index)
+                if compact_ack:
+                    if index - first > 32:
+                        first = await _ack(client, generation, first, index - 32)
+                    pending_ack = index
+                else:
+                    first = await _ack(client, generation, first, index)
             if on_observation is not None:
                 for event in events:
                     if event["type"] != "record":

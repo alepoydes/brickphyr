@@ -845,6 +845,9 @@ interrupted download can resume after validating the recording identity. The
 current management session alone can retire records; disconnect releases that
 claim without erasing data. The collector acknowledges again after reconnection
 if its saved file contains records that the hub still retains.
+For compact `brickphyr.capture/2` control blocks, newer firmware accepts the
+flushed prefix as part of the next read request; the final prefix is acknowledged
+separately. Older firmware uses separate acknowledgement requests throughout.
 
 A full buffer can leave an unrecorded interval while control continues. The
 application must make that interval visible in its own record sequence, or use
