@@ -76,6 +76,9 @@ To inspect its state, open the [USB terminal](host.md#usage) and run:
 bluetooth
 ```
 
+With an active BLE link, the command also shows its negotiated interval,
+peripheral latency, supervision timeout and ATT MTU.
+
 Close the terminal before connecting over BLE. The hub advertises the Pybricks
 and SMP service UUIDs and name `Brickphyr`, and resumes advertising after a
 connection closes. A live USB owner rejects a BLE contender by disconnecting it;

@@ -686,9 +686,10 @@ static void print_connection(struct bt_conn *conn, void *data)
 {
 	struct bt_conn_info info;
 	if (bt_conn_get_info(conn, &info) || info.state != BT_CONN_STATE_CONNECTED) return;
-	shell_print(data, "BLE %s: interval %u us, latency %u, ATT MTU %u",
+	shell_print(data, "BLE %s: interval %u us, latency %u, timeout %u ms, ATT MTU %u",
 		info.role == BT_CONN_ROLE_PERIPHERAL ? "host" : "peer",
-		info.le.interval_us, info.le.latency, bt_gatt_get_mtu(conn));
+		info.le.interval_us, info.le.latency, info.le.timeout * 10U,
+		bt_gatt_get_mtu(conn));
 }
 
 static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
