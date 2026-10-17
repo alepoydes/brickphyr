@@ -229,8 +229,19 @@ bytes before their segmented records are released. If they do not fit in the
 same reply, it reads them first in a separate request. A lost record response
 becomes an explicit index gap. ARM/QEMU checks cover compact and ordinary
 responses, a parameter revision within one series, buffer release and collection
-without acknowledgements. Physical BLE acceptance of this response
-behavior is pending. On one USB-powered Inventor F4, with passive
+without acknowledgements. On one USB-powered Robot Inventor F4 (PCB revision
+unknown), the full Python+BLE image built from Brickphyr commit `9e9f7d4`
+collected 1,201 passive IMU, battery, A/B encoder and inactive-output records
+requested every 15 ms. The host sent 29 parameter updates while collecting and
+rejected any telemetry ACK request. Offline decoding recovered all 1,201 record
+indices and 28 applied parameter revisions with their control timestamps. The
+collector transferred 120,087 compact payload bytes in 21.834 s (about 5.5 kB/s
+over that run). Two pauses between continuous series accounted for 185 unrecorded
+control steps; the longest uninterrupted series held 476 records. Motors were not
+energized. This bounded check does not establish sustained radio throughput or
+motor-loaded timing.
+
+On one USB-powered Inventor F4, with passive
 IMU, battery, encoder and inactive-output observations every requested 15 ms,
 the ring delivered 1118 of 1200 records over BLE and exposed 82 overwritten
 indices. A Python primary sent parameter updates during that run. Every
