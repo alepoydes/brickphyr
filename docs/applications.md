@@ -827,18 +827,41 @@ returns `EOVERFLOW`; it does not silently wrap to a previous sequence.
 
 Each write copies one complete record and returns without allocation, transport
 work or waiting for a reader. Wrong lengths are rejected before modifying the
-buffer. The ordinary recording replaces its oldest record when full. Monotonic
-64-bit record numbers expose the missing interval; sequence exhaustion returns `EOVERFLOW`.
-The application owns the binary schema and must include the measurements,
-commands, parameter revisions and times needed to interpret its calculation.
-The firmware does not infer those values from a later sensor read.
+buffer. The ordinary recording, including `bp_control_record_begin`, replaces its
+oldest record when full. This is the default telemetry policy when recent values
+matter more than a continuous trajectory. Its 64-bit record indices expose
+overwritten ranges. The collector skips ahead within a live compact ring if it
+falls behind, instead of repeatedly requesting records already overwritten.
+Sequence exhaustion returns `EOVERFLOW`.
 
-Native ABI 2.4 also offers `bp_record_begin_paused(&spec, config, length, control)`
-for a fixed-size stream. `control=true` attaches the same step and applied
-parameters as `bp_control_record_begin`. When its buffer fills, `bp_record_write`
-returns `ENOSPC` immediately, retains all unacknowledged records and leaves the
-application running. After a collector receives and flushes complete records,
-it acknowledges their exclusive end index through the same SMP connection;
+Native ABI 2.6 adds `bp_record_begin_segments(&spec, config, length, control)`
+for long continuous observation series. It shares the same allocation, record
+format and optional control metadata. When the buffer fills, further writes
+return `ENOSPC` until the collector has read the preceding series; the application
+and its control loop keep running. Reading the next index releases earlier
+records, so there is no separate telemetry acknowledgement request. The next
+read index is also the discard cursor: if a client advances it before saving a
+response, the lost records appear as an index gap in the collected file.
+If the host disconnects while the buffer is full, recording waits for its next
+read but control continues. The next series begins only after the retained
+backlog drains; a partially freed buffer cannot produce a short fragment between
+long series. Choose this policy when contiguous trajectories matter more than
+minimizing pauses in observation.
+
+Every telemetry observation needs a time value. `control=true` retains the exact
+`scheduled_us` and `started_us` of its control step, its sequence and applied
+parameter revision. The `brickphyr.capture/2` payload also retains the selected
+sources' acquisition times. A custom schema without control metadata must encode
+its own timestamp and any additional source times needed for replay. Neither
+policy reads hardware again or guesses missing values during download.
+
+Native ABI 2.4 also offers the optional acknowledged fixed-size stream
+`bp_record_begin_paused(&spec, config, length, control)`. With `control=true`,
+it attaches the same step and applied parameters as `bp_control_record_begin`.
+When its buffer fills, `bp_record_write` returns `ENOSPC` immediately,
+retains all unacknowledged records and leaves the application running. After a
+collector receives and flushes complete records, it acknowledges their exclusive
+end index through the same SMP connection;
 those slots become available for later steps. The acknowledgement confirms
 computer receipt, not completion of any analysis or a durable disk sync. An
 interrupted download can resume after validating the recording identity. The
@@ -849,13 +872,13 @@ For compact `brickphyr.capture/2` control blocks, newer firmware accepts the
 flushed prefix as part of the next read request; the final prefix is acknowledged
 separately. Older firmware uses separate acknowledgement requests throughout.
 
-A full buffer can leave an unrecorded interval while control continues. The
-application must make that interval visible in its own record sequence, or use
-the attached control-step sequence; a later write is a new observation, not a
-retry of a stale control step. Finite RAM cannot preserve a continuous history
-across an arbitrarily slow or absent collector. Triggered capture is unavailable
-in this mode; the ordinary ring and finite diagnostic capture retain their
-existing behavior.
+A full segmented or acknowledged buffer can leave an unrecorded interval while
+control continues. The application must make that interval visible in its own
+record sequence, or use the attached control-step sequence. A later write is a
+new observation, not a retry of a stale control step. Finite RAM cannot preserve
+a continuous history across an arbitrarily slow or absent collector. Triggered
+capture is unavailable in both streaming modes; the ordinary ring and finite
+diagnostic capture retain their existing behavior.
 The offline reader exposes the number of intervening unrecorded control steps
 as `Frame.preceding_step_gap` and `Observation.preceding_step_gap` on the first
 row of a record. A block boundary alone has no gap. Strict replay rejects such
@@ -874,7 +897,7 @@ sensor read. The 31-byte configuration selects sources and fields as described
 in [finite RAM capture](telemetry.md#finite-ram-capture); the supplied frame must
 include selected ports and matching timestamp resolution. An application can
 write the row to a fixed control recording, preserving its applied parameters.
-For paused control recordings with this schema, the management service packs
+For control recordings with this schema, the management service packs
 several complete steps and rows into an independently decodable block when
 downloading. It reuses the diagnostic capture field descriptions: unchanged
 metadata is omitted within a block, shared IMU metadata is sent once, and

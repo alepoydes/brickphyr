@@ -352,6 +352,111 @@ def test_native_frame_uses_shared_capture_fields():
         asyncio.run(exercise(port))
 
 
+def test_compact_ring_reports_overwrite_without_acknowledgement():
+    import io
+
+    from brickphyrdev import recording
+    from brickphyrdev.records import Recording
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            await upload(client, transport, (build / "record_frame_ring_probe.elf").read_bytes())
+            await checked(client, Start())
+            for _ in range(100):
+                info = await checked(client, recording.Info())
+                if info.next == 20 and not info.active:
+                    break
+                await asyncio.sleep(0.01)
+            assert (info.first, info.next, info.active) == (17, 20, False)
+            assert info.compact and not info.compact_ack and not info.paused
+
+            class NoAckClient:
+                async def request(self, request):
+                    assert not isinstance(request, recording.Ack)
+                    return await client.request(request)
+
+            output = io.BytesIO()
+            with recording.session(output) as (session, counts):
+                await recording.collect(NoAckClient(), output, session, counts)
+            output.seek(0)
+            reader = Recording(output)
+            frames = list(reader.frames(allow_gaps=True))
+            assert [frame.index for frame in frames] == [17, 18, 19]
+            assert reader.missing == 17 and counts == {"records": 3, "gaps": 1}
+            assert all(frame.values["sources"]["battery"]["voltage_mv"] == 7767
+                       for frame in frames)
+            assert (await checked(client, recording.Info())).first == 17
+            await checked(client, recording.Clear())
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
+def test_segmented_control_stream_collects_without_acknowledgement():
+    import io
+
+    from brickphyrdev import recording
+    from brickphyrdev.records import Recording
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            await upload(client, transport, (build / "record_frame_segments_probe.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (info := await checked(client, recording.Info())).next < 3:
+                    await asyncio.sleep(0)
+            assert info.segments and info.compact and not info.paused and not info.compact_ack
+
+        async with connection(port=port) as (client, transport):
+
+            class NoAckClient:
+                async def request(self, request):
+                    assert not isinstance(request, (recording.Ack, recording.CompactAck))
+                    return await client.request(request)
+
+            output = io.BytesIO()
+            with recording.session(output) as (session, counts):
+                await asyncio.wait_for(
+                    recording.collect(NoAckClient(), output, session, counts, wait=True), 5
+                )
+            output.seek(0)
+            reader = Recording(output)
+            frames = list(reader.frames(allow_gaps=True))
+            assert [frame.index for frame in frames] == list(range(10))
+            assert all(0 < frame.control["scheduled_us"] <= frame.control["started_us"]
+                       for frame in frames)
+            assert reader.missing == 0 and counts == {"records": 10, "gaps": 0}
+            await checked(client, recording.Clear())
+
+            await upload(client, transport, (build / "record_paused_segments_probe.elf").read_bytes())
+            await checked(client, Start())
+            async with asyncio.timeout(2):
+                while (info := await checked(client, recording.Info())).next < 3:
+                    await asyncio.sleep(0)
+            with pytest.raises(RuntimeError):
+                await checked(client, recording.Block(generation=info.generation,
+                                                      index=1, off=9999))
+            assert (await checked(client, recording.Info())).first == 0
+            output = io.BytesIO()
+            with recording.session(output) as (session, counts):
+                await asyncio.wait_for(
+                    recording.collect(NoAckClient(), output, session, counts, wait=True), 5
+                )
+            output.seek(0)
+            reader = Recording(output)
+            frames = list(reader.frames(allow_gaps=True))
+            assert [struct.unpack("<I", frame.data)[0] for frame in frames] == list(range(10))
+            assert reader.missing == 0
+            await checked(client, recording.Clear())
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
 def test_variable_paused_recording_uses_block_transport():
     import io
     import json

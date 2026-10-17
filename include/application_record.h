@@ -28,6 +28,10 @@ int application_record_begin(const struct bp_record_spec *spec, const void *conf
  * ENOSPC while the producer remains active; host acknowledgement frees slots. */
 int application_record_begin_paused(const struct bp_record_spec *spec, const void *config,
 	size_t length, bool control, size_t parameter_size);
+/* A full segment pauses writes until host reads advance past its final row.
+ * Advancing releases rows without a separate acknowledgement request. */
+int application_record_begin_segments(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control, size_t parameter_size);
 /* A bounded variable-length ring for independently decodable binary blocks.
  * Each slot reserves spec.size bytes; actual lengths are published separately. */
 int application_record_begin_variable_paused(const struct bp_record_spec *spec,
@@ -54,7 +58,8 @@ size_t application_record_room(uint32_t *slots);
  * unbound. Binding an existing capture returns its original tag unchanged. */
 #define APPLICATION_RECORD_TAG_SIZE 16
 void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
-	bool *variable, bool *paused);
+	bool *variable, bool *paused, bool *segments);
+int application_record_advance(uint32_t generation, uint64_t index);
 int application_record_bind(uint32_t generation, const uint8_t candidate[APPLICATION_RECORD_TAG_SIZE],
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
 /* Exclusive complete-record boundary. One management session owns retirement;

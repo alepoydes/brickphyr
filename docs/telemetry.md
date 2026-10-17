@@ -221,13 +221,19 @@ had three pauses and 249 unrecorded steps. These are short, USB-powered checks
 without motor drive or concurrent parameter updates; they do not establish
 sustained operation for a moving robot.
 
-In a longer USB-powered BLE check on the same F4, a Python primary published 29
-parameter updates while a passive native controller collected 1200 records at a
-15 ms requested period. The collector restored all 30 applied revisions and lost
-no transferred records. The controller kept running while its buffer paused:
-277 control steps were not recorded, and collection took 23.46 s. This profile
-still exceeds the measured BLE delivery rate; continuous capture without gaps
-is not established.
+For live application telemetry, the native SDK offers a recent-value ring and a
+[continuous-series policy](applications.md#application-recording). Both use the
+same compact transfer for `brickphyr.capture/2` control records and send no
+separate telemetry acknowledgement. On one USB-powered Inventor F4, with passive
+IMU, battery, encoder and inactive-output observations every requested 15 ms,
+the ring delivered 1118 of 1200 records over BLE and exposed 82 overwritten
+indices. A separate continuous-series run delivered all 1200 records in long
+series; three boundaries exposed 389 control steps without a recorded observation,
+and the longest consecutive series held 530 records. A Python primary sent
+parameter updates during both runs. Every delivered record retained its exact
+control timestamps and applied parameter revision. BLE scheduling varied between
+the runs, so these are behavior checks rather than a throughput guarantee; neither
+run energized motors.
 
 On one USB-powered Inventor F4, a retained 13,800-byte payload took 4.05 seconds
 to collect over BLE at ATT MTU 130 and a 7.5 ms connection interval, versus

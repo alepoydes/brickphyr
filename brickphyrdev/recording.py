@@ -34,6 +34,7 @@ class InfoResponse(message.ReadResponse):
     control: bool = False
     variable: bool = False
     paused: bool = False
+    segments: bool = False
     parameter_size: int = 0
     block: int = 0
     compact: bool = False
@@ -166,7 +167,7 @@ def _range(first, next):
 def _identity(info):
     return (info.size, info.capacity, info.record_schema, info.config_size,
             info.control, getattr(info, "variable", False), info.parameter_size,
-            getattr(info, "paused", False))
+            getattr(info, "paused", False), getattr(info, "segments", False))
 
 
 async def _ack(client, generation, first, next_index):
@@ -261,10 +262,13 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         raise RuntimeError("Invalid recording metadata")
     variable = getattr(info, "variable", False)
     paused = getattr(info, "paused", False)
+    segments = getattr(info, "segments", False)
     if type(variable) is not bool or variable and info.control:
         raise RuntimeError("Invalid variable recording mode")
-    if type(paused) is not bool:
-        raise RuntimeError("Invalid paused recording mode")
+    if type(paused) is not bool or type(segments) is not bool or (
+        segments and (paused or variable)
+    ):
+        raise RuntimeError("Invalid recording delivery mode")
     if variable and paused:
         data_budget = info.size * info.capacity + info.config_size + 2 * info.capacity
     elif variable:
@@ -278,7 +282,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     if not 0 <= info.parameter_size <= 256 or not info.control and info.parameter_size:
         raise RuntimeError("Invalid recording control parameter size")
     trigger, trigger_after, reason = _metadata(
-        info, info.capacity, config_size=info.config_size, variable=variable, paused=paused
+        info, info.capacity, config_size=info.config_size, variable=variable,
+        paused=paused or segments
     )
     if not info.record_schema or len(info.record_schema) > 47 or any(
         not 32 <= ord(char) <= 126 for char in info.record_schema
@@ -295,8 +300,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
 
     generation = info.generation
     if after is not None:
-        if paused:
-            raise ValueError("Triggered recording is unavailable in paused mode")
+        if paused or segments:
+            raise ValueError("Triggered recording is unavailable in streaming mode")
         if not 0 <= after < info.capacity:
             raise ValueError("--after must be between zero and recording capacity minus one")
         if info.first == info.next:
@@ -311,7 +316,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording metadata changed within generation")
         state = _metadata(
             triggered_info, info.capacity, config_size=triggered_info.config_size,
-            variable=variable, paused=paused
+            variable=variable, paused=paused or segments
         )
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (triggered_info.first, triggered_info.next, *state))
@@ -341,7 +346,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if _identity(current) != _identity(info):
             raise RuntimeError("Recording metadata changed within generation")
         state = _metadata(current, info.capacity, config_size=current.config_size,
-                          variable=variable, paused=paused)
+                          variable=variable, paused=paused or segments)
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (current.first, current.next, *state))
         info = current
@@ -350,12 +355,12 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     record_codec.check_size(info.record_schema, info.size, bytes(config), variable=variable)
     compact = getattr(info, "compact", False)
     if type(compact) is not bool or compact and not (
-        block and info.control and paused and not variable and
+        block and info.control and not variable and
         info.record_schema == capture_codec.SCHEMA_V2
     ):
         raise RuntimeError("Invalid compact recording mode")
     compact_ack = getattr(info, "compact_ack", False)
-    if type(compact_ack) is not bool or compact_ack and not compact:
+    if type(compact_ack) is not bool or compact_ack and not (compact and paused):
         raise RuntimeError("Invalid compact acknowledgement mode")
 
     tag = getattr(info, "tag", None)
@@ -369,6 +374,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             saved["size"], saved["capacity"], saved["schema"], saved.get("config_size", 0),
             saved.get("control", False), saved.get("variable", False),
             saved.get("parameter_size", 0), saved.get("paused", False),
+            saved.get("segments", False),
         ) or bytes(config) != resume.config:
             raise RuntimeError("Recording metadata changed; cannot resume this download")
         _advance((saved["first"], saved["next"], saved.get("trigger"),
@@ -417,6 +423,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     "control": info.control,
                     **({"variable": True} if variable else {}),
                     **({"paused": True} if paused else {}),
+                    **({"segments": True} if segments else {}),
                     "parameter_size": info.parameter_size,
                     "tag": tag,
                 },
@@ -438,9 +445,12 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     pending_ack = None
     while True:
         if index < first:
-            pending_gap += first - index
-            await _write(log, {"type": "gap", "from": index, "to": first}, counts=counts)
-            index = first
+            target = max(first, next - max(1, info.capacity // 2)) if compact and active and not (
+                paused or segments
+            ) else first
+            pending_gap += target - index
+            await _write(log, {"type": "gap", "from": index, "to": target}, counts=counts)
+            index = target
             partial.clear()
             partial_step = None
         if not active and index >= next:
@@ -457,7 +467,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 raise RuntimeError("Recording metadata changed within generation")
             state = _metadata(
                 terminal_info, info.capacity, config_size=terminal_info.config_size,
-                variable=variable, paused=paused
+                variable=variable, paused=paused or segments
             )
             _advance((first, next, trigger, trigger_after, reason),
                      (terminal_info.first, terminal_info.next, *state))
@@ -509,7 +519,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
             )
-        state = _metadata(reply, info.capacity, variable=variable, paused=paused)
+        state = _metadata(reply, info.capacity, variable=variable, paused=paused or segments)
         _advance((first, next, trigger, trigger_after, reason),
                  (reply.first, reply.next, *state))
         first, next, active = reply.first, reply.next, reply.active

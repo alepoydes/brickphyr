@@ -184,6 +184,7 @@ static struct {
 	size_t length;
 	bool control;
 	bool paused;
+	bool segments;
 	bool variable;
 } record_request;
 static atomic_t record_pending;
@@ -1977,7 +1978,7 @@ static inline int z_vrfy_bp_control_motor_group_set(const struct bp_motor_group_
 #include <zephyr/syscalls/bp_control_motor_group_set_mrsh.c>
 
 static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, bool paused, bool variable)
+	bool control, bool paused, bool segments, bool variable)
 {
 	/* Allocation belongs to the supervisor. Aborting this caller must not
 	 * strand a just-allocated buffer or a lock in the application's thread. */
@@ -1986,6 +1987,7 @@ static int record_begin(const struct bp_record_spec *spec, const void *config, s
 	record_request.length = length;
 	record_request.control = control;
 	record_request.paused = paused;
+	record_request.segments = segments;
 	record_request.variable = variable;
 	atomic_set(&record_pending, 1);
 	k_sem_take(&record_done, K_FOREVER);
@@ -1993,7 +1995,7 @@ static int record_begin(const struct bp_record_spec *spec, const void *config, s
 }
 int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, false, false, false);
+	return record_begin(spec, config, length, false, false, false, false);
 }
 static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -2008,7 +2010,7 @@ static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spe
 
 int z_impl_bp_control_record_begin(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, true, false, false);
+	return record_begin(spec, config, length, true, false, false, false);
 }
 static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -2024,7 +2026,7 @@ static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *sp
 int z_impl_bp_record_begin_paused(const struct bp_record_spec *spec, const void *config,
 	size_t length, bool control)
 {
-	return record_begin(spec, config, length, control, true, false);
+	return record_begin(spec, config, length, control, true, false, false);
 }
 static inline int z_vrfy_bp_record_begin_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length, bool control)
@@ -2037,10 +2039,26 @@ static inline int z_vrfy_bp_record_begin_paused(const struct bp_record_spec *spe
 }
 #include <zephyr/syscalls/bp_record_begin_paused_mrsh.c>
 
+int z_impl_bp_record_begin_segments(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control)
+{
+	return record_begin(spec, config, length, control, false, true, false);
+}
+static inline int z_vrfy_bp_record_begin_segments(const struct bp_record_spec *spec,
+	const void *config, size_t length, bool control)
+{
+	if (!control_caller()) return -EPERM;
+	if (length > 1024) return -EMSGSIZE;
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	if (length) user_memory_check(config, length, 1, false, __func__);
+	return z_impl_bp_record_begin_segments(spec, config, length, control);
+}
+#include <zephyr/syscalls/bp_record_begin_segments_mrsh.c>
+
 int z_impl_bp_record_begin_variable_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length)
 {
-	return record_begin(spec, config, length, false, true, true);
+	return record_begin(spec, config, length, false, true, false, true);
 }
 static inline int z_vrfy_bp_record_begin_variable_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -3032,6 +3050,8 @@ void application_poll(void)
 		record_result = record_request.variable ?
 			application_record_begin_variable_paused(&record_request.spec,
 				record_request.config, record_request.length) :
+			record_request.segments ? application_record_begin_segments(&record_request.spec,
+				record_request.config, record_request.length, record_request.control, parameter_size) :
 			record_request.paused ? application_record_begin_paused(&record_request.spec,
 			record_request.config, record_request.length, record_request.control, parameter_size) :
 			application_record_begin(&record_request.spec, record_request.config,

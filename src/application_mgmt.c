@@ -265,9 +265,9 @@ BUILD_ASSERT(RECORD_BLOCK_BYTES > 0);
 #define RECORD_COMPACT_BYTES MIN(1024, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 144)
 BUILD_ASSERT(RECORD_COMPACT_BYTES >= 104);
 
-static bool record_compact_supported(const struct bp_record_info *info, bool variable, bool paused)
+static bool record_compact_supported(const struct bp_record_info *info, bool variable)
 {
-	return paused && info->control && !variable && info->config_size == CONFIG_SIZE &&
+	return info->control && !variable && info->config_size == CONFIG_SIZE &&
 		!strcmp(info->spec.schema, "brickphyr.capture/2") &&
 		info->spec.size + 32 + 8 <= RECORD_COMPACT_BYTES;
 }
@@ -278,8 +278,8 @@ static int record_info_read(struct smp_streamer *stream)
 	struct bp_record_info info;
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE];
 	bool variable;
-	bool paused;
-	application_record_snapshot(&info, tag, &variable, &paused);
+	bool paused, segments;
+	application_record_snapshot(&info, tag, &variable, &paused, &segments);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "tag") &&
 		zcbor_bstr_encode_ptr(zs, tag, sizeof(tag)) && number(zs, "block", RECORD_BLOCK_BYTES) &&
@@ -288,11 +288,12 @@ static int record_info_read(struct smp_streamer *stream)
 		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
 		zcbor_tstr_put_lit(zs, "variable") && zcbor_bool_put(zs, variable) &&
 		zcbor_tstr_put_lit(zs, "paused") && zcbor_bool_put(zs, paused) &&
+		zcbor_tstr_put_lit(zs, "segments") && zcbor_bool_put(zs, segments) &&
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 		zcbor_tstr_put_lit(zs, "compact") &&
-		zcbor_bool_put(zs, record_compact_supported(&info, variable, paused)) &&
+		zcbor_bool_put(zs, record_compact_supported(&info, variable)) &&
 		zcbor_tstr_put_lit(zs, "compact_ack") &&
-		zcbor_bool_put(zs, record_compact_supported(&info, variable, paused)) &&
+		zcbor_bool_put(zs, paused && record_compact_supported(&info, variable)) &&
 #endif
 		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
@@ -325,7 +326,9 @@ static int record_read(struct smp_streamer *stream)
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
 		zcbor_bstr_encode_ptr(zs, data, length) && zcbor_tstr_put_lit(zs, "step") &&
 		zcbor_bstr_encode_ptr(zs, (void *)&step, info.control && length ? sizeof(step) : 0);
-	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	if (!ok) return MGMT_ERR_EMSGSIZE;
+	int err = application_record_advance(generation, index);
+	return err ? result(stream, err) : MGMT_ERR_EOK;
 }
 
 static int record_block_read(struct smp_streamer *stream)
@@ -347,7 +350,9 @@ static int record_block_read(struct smp_streamer *stream)
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "data") &&
 		zcbor_bstr_encode_ptr(zs, data, length);
-	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	if (!ok) return MGMT_ERR_EMSGSIZE;
+	int err = application_record_advance(generation, index);
+	return err ? result(stream, err) : MGMT_ERR_EOK;
 }
 
 #ifdef CONFIG_BRICKPHYR_CAPTURE
@@ -356,6 +361,15 @@ struct record_compact_workspace {
 	uint8_t encoded[RECORD_COMPACT_BYTES];
 	uint8_t rows[];
 };
+
+static int record_compact_empty(struct smp_streamer *stream, const struct bp_record_info *info)
+{
+	uint8_t empty = 0;
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = record_position(zs, info) && number(zs, "rows", 0) &&
+		zcbor_tstr_put_lit(zs, "data") && zcbor_bstr_encode_ptr(zs, &empty, 0);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
 
 /* Compress retained rows in the management context, never in the controller's
  * release path. Each response starts with a complete control step and frame. */
@@ -374,21 +388,22 @@ static int record_compact_read(struct smp_streamer *stream)
 	    !generation || index == UINT64_MAX || (ack && ack != index)) return MGMT_ERR_EINVAL;
 	struct bp_record_info info;
 	bool variable, paused;
-	application_record_snapshot(&info, NULL, &variable, &paused);
+	application_record_snapshot(&info, NULL, &variable, &paused, NULL);
 	if (info.generation != generation) return result(stream, -ESTALE);
-	if (!record_compact_supported(&info, variable, paused)) return result(stream, -ENOTSUP);
+	if (!record_compact_supported(&info, variable)) return result(stream, -ENOTSUP);
+	if (ack && !paused) return result(stream, -ENOTSUP);
+	int err;
 	/* The host flushed this prefix before asking for the next block. */
 	if (ack) {
-		int err = application_record_ack(generation, ack, application_session_id());
+		err = application_record_ack(generation, ack, application_session_id());
 		if (err) return result(stream, err);
-		application_record_snapshot(&info, NULL, NULL, NULL);
 	}
+	application_record_snapshot(&info, NULL, NULL, NULL, NULL);
 	if (index < info.first || index >= info.next) {
-		uint8_t empty = 0;
-		zcbor_state_t *zs = stream->writer->zs;
-		bool ok = record_position(zs, &info) && number(zs, "rows", 0) &&
-			zcbor_tstr_put_lit(zs, "data") && zcbor_bstr_encode_ptr(zs, &empty, 0);
-		return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+		int response = record_compact_empty(stream, &info);
+		if (response) return response;
+		err = application_record_advance(generation, index);
+		return err ? result(stream, err) : MGMT_ERR_EOK;
 	}
 	uint8_t config[CONFIG_SIZE];
 	struct bp_record_info current;
@@ -415,7 +430,7 @@ static int record_compact_read(struct smp_streamer *stream)
 		if (work->wire[field].alias >= 0) work->wire[field].alias += 6;
 	}
 	struct telemetry_block block;
-	int err = telemetry_block_init(&block, work->encoded, sizeof(work->encoded),
+	err = telemetry_block_init(&block, work->encoded, sizeof(work->encoded),
 		work->rows, row_size,
 		work->wire, count + 6);
 	if (err) {
@@ -430,7 +445,8 @@ static int record_compact_read(struct smp_streamer *stream)
 			row + sizeof(step), info.spec.size, &current, &step);
 		if (current.generation != generation || cursor < current.first ||
 		    cursor >= current.next || length != info.spec.size) {
-			err = current.generation != generation ? -ESTALE : -ENODATA;
+			err = current.generation != generation ? -ESTALE :
+				cursor < current.first ? -EOVERFLOW : -EIO;
 			break;
 		}
 		memcpy(row, &step, sizeof(step));
@@ -441,8 +457,14 @@ static int record_compact_read(struct smp_streamer *stream)
 		}
 		if (err) break;
 	}
-	application_record_snapshot(&current, NULL, NULL, NULL);
-	if (!err && (current.generation != generation || index < current.first)) err = -ESTALE;
+	application_record_snapshot(&current, NULL, NULL, NULL, NULL);
+	if (current.generation != generation) err = -ESTALE;
+	else if (!paused && index < current.first) {
+		/* The ring overtook this block while it was encoded. No partial
+		 * block or stale parameter reference may reach the collector. */
+		k_free(work);
+		return record_compact_empty(stream, &current);
+	} else if (!err && index < current.first) err = -ESTALE;
 	if (err) {
 		k_free(work);
 		return result(stream, err);
@@ -452,7 +474,9 @@ static int record_compact_read(struct smp_streamer *stream)
 		zcbor_tstr_put_lit(zs, "data") &&
 		zcbor_bstr_encode_ptr(zs, work->encoded, block.rows ? block.length : 0);
 	k_free(work);
-	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	if (!ok) return MGMT_ERR_EMSGSIZE;
+	err = application_record_advance(generation, index);
+	return err ? result(stream, err) : MGMT_ERR_EOK;
 }
 #endif
 

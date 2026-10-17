@@ -245,7 +245,7 @@ ZTEST(record_memory, test_variable_paused_blocks_wrap_without_padding_on_wire)
 	bool variable;
 	application_record_reset();
 	zassert_ok(application_record_begin_variable_paused(&spec, NULL, 0));
-	application_record_snapshot(&info, NULL, &variable, NULL);
+	application_record_snapshot(&info, NULL, &variable, NULL, NULL);
 	zassert_true(variable);
 	uint32_t generation = info.generation;
 	for (size_t length = 2; length <= 4; length++) {
@@ -263,6 +263,45 @@ ZTEST(record_memory, test_variable_paused_blocks_wrap_without_padding_on_wire)
 	application_record_clear();
 }
 
+ZTEST(record_memory, test_segments_resume_only_after_previous_series_is_drained)
+{
+	const struct bp_record_spec spec = {.size = 2, .capacity = 3, .schema = "segments/1"};
+	struct bp_record_info info;
+	struct bp_control_step step;
+	uint8_t value[2] = {0}, applied[4], parameter[4] = {7};
+	bool paused, segments;
+	application_record_reset();
+	zassert_ok(application_record_begin_segments(&spec, NULL, 0, true, sizeof(parameter)));
+	application_record_snapshot(&info, NULL, NULL, &paused, &segments);
+	zassert_false(paused);
+	zassert_true(segments);
+	uint32_t generation = info.generation;
+	for (unsigned int i = 1; i <= 3; i++) {
+		step = (struct bp_control_step){.sequence = i, .parameter_revision = 1,
+			.parameter_size = sizeof(parameter)};
+		application_record_step(&step, parameter);
+		value[0] = i;
+		zassert_ok(application_record_write(value, sizeof(value)));
+	}
+	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
+	zassert_equal(application_record_ack(generation, 3, 1), -ENOTSUP);
+	zassert_ok(application_record_advance(generation, 2));
+	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
+	zassert_equal(application_record_copy(generation, 2, value, sizeof(value), applied,
+		sizeof(applied), &info, &step), sizeof(value));
+	zassert_equal(step.sequence, 3);
+	zassert_mem_equal(applied, parameter, sizeof(applied));
+	zassert_ok(application_record_advance(generation, 3));
+	step = (struct bp_control_step){.sequence = 9, .parameter_revision = 2,
+		.parameter_size = sizeof(parameter)};
+	application_record_step(&step, parameter);
+	zassert_ok(application_record_write(value, sizeof(value)));
+	application_record_info(&info);
+	zassert_equal(info.first, 3);
+	zassert_equal(info.next, 4);
+	application_record_clear();
+}
+
 ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 {
 	const struct bp_record_spec spec = {.size = 1, .capacity = 1, .schema = "tag/1"};
@@ -271,7 +310,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	struct bp_record_info info;
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
-	application_record_snapshot(&info, tag, NULL, NULL);
+	application_record_snapshot(&info, tag, NULL, NULL, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	uint32_t generation = info.generation;
 	zassert_equal(application_record_bind(generation, empty, tag), -EINVAL);
@@ -283,7 +322,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
 	zassert_equal(application_record_bind(generation, original, tag), -ESTALE);
-	application_record_snapshot(&info, tag, NULL, NULL);
+	application_record_snapshot(&info, tag, NULL, NULL, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	zassert_ok(application_record_bind(info.generation, other, tag));
 	zassert_mem_equal(tag, other, sizeof(tag));
@@ -358,7 +397,7 @@ ZTEST(record_memory, test_compact_capture_crosses_blocks_and_resumes_mid_prefix)
 	zassert_equal(application_record_memory(), bytes);
 	struct bp_record_info info;
 	bool variable;
-	application_record_snapshot(&info, NULL, &variable, NULL);
+	application_record_snapshot(&info, NULL, &variable, NULL, NULL);
 	zassert_true(variable);
 	uint32_t generation = info.generation;
 	for (size_t i = 0; i < ARRAY_SIZE(lengths); i++) {
@@ -394,7 +433,7 @@ ZTEST(record_memory, test_compact_capture_crosses_blocks_and_resumes_mid_prefix)
 	zassert_equal(output[0], (uint8_t)(2 + 3 * 172));
 	zassert_equal(application_record_read_block(generation, 2, 175, output, 1, &info), -EINVAL);
 	application_record_clear();
-	application_record_snapshot(&info, NULL, &variable, NULL);
+	application_record_snapshot(&info, NULL, &variable, NULL, NULL);
 	zassert_false(variable);
 	zassert_equal(application_record_memory(), 0);
 }

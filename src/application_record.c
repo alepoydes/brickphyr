@@ -20,6 +20,7 @@ static uint16_t *lengths;
 enum { PACKED_BLOCK_SIZE = 1024 };
 static uint32_t full_reason;
 static bool pause_on_full;
+static bool segments_on_read, segment_stalled;
 static uint32_t ack_session;
 struct recorded_step {
 	struct bp_control_step value;
@@ -97,6 +98,7 @@ static void reset(bool active)
 	current_step = (struct bp_control_step){0};
 	full_reason = BP_RECORD_OPEN;
 	pause_on_full = false;
+	segments_on_read = segment_stalled = false;
 	ack_session = 0;
 	uint32_t generation = state.generation + 1;
 	state = (struct bp_record_info){.generation = generation ? generation : 1,
@@ -185,8 +187,10 @@ int application_record_compact_budget(size_t size, size_t capacity, size_t lengt
 
 static int begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size, uint32_t completion_reason, size_t payload_bytes,
-	bool paused, bool variable_ring)
+	bool paused, bool segments, bool variable_ring)
 {
+	if (segments && (paused || variable_ring || payload_bytes || completion_reason != BP_RECORD_OPEN))
+		return -EINVAL;
 	if (variable_ring && (!paused || control || payload_bytes)) return -EINVAL;
 	struct record_layout layout;
 	int err = payload_bytes ? compact_layout(spec->size, spec->capacity, length, payload_bytes, &layout) :
@@ -237,7 +241,9 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 	state.control = control;
 	state.parameter_size = parameter_size;
 	full_reason = completion_reason;
-	pause_on_full = paused;
+	pause_on_full = paused || segments;
+	segments_on_read = segments;
+	segment_stalled = false;
 	ack_session = 0;
 	step_size = step_bytes;
 	parameter_stride = stride;
@@ -259,33 +265,39 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size)
 {
-	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, false, false);
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, false, false, false);
 }
 
 int application_record_begin_paused(const struct bp_record_spec *spec, const void *config,
 	size_t length, bool control, size_t parameter_size)
 {
-	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, true, false);
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, true, false, false);
+}
+
+int application_record_begin_segments(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control, size_t parameter_size)
+{
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, false, true, false);
 }
 
 int application_record_begin_variable_paused(const struct bp_record_spec *spec,
 	const void *config, size_t length)
 {
-	return begin(spec, config, length, false, 0, BP_RECORD_OPEN, 0, true, true);
+	return begin(spec, config, length, false, 0, BP_RECORD_OPEN, 0, true, false, true);
 }
 
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
 	size_t length, uint32_t reason)
 {
 	if (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION) return -EINVAL;
-	return begin(spec, config, length, false, 0, reason, 0, false, false);
+	return begin(spec, config, length, false, 0, reason, 0, false, false, false);
 }
 
 int application_record_begin_compact(const struct bp_record_spec *spec, const void *config,
 	size_t length, size_t payload_bytes, uint32_t reason)
 {
 	if (!payload_bytes || (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION)) return -EINVAL;
-	return begin(spec, config, length, false, 0, reason, payload_bytes, false, false);
+	return begin(spec, config, length, false, 0, reason, payload_bytes, false, false, false);
 }
 
 void application_record_finish(uint32_t reason)
@@ -324,6 +336,7 @@ void application_record_step(const struct bp_control_step *step, const void *dat
 static int write_record(const void *data, size_t length, uint32_t reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool full = pause_on_full && state.next - state.first == state.spec.capacity;
 	int err = !records ? -ENODATA : !state.active ?
 		(state.reason == BP_RECORD_TRIGGER_END ||
 			(full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity) ?
@@ -333,10 +346,11 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 		reason != BP_RECORD_OPEN && full_reason == BP_RECORD_OPEN ? -EINVAL :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
-		pause_on_full && state.next - state.first == state.spec.capacity ? -ENOSPC :
+		(segment_stalled || full) ? -ENOSPC :
 		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
 		offsets && length > packed_capacity - offsets[state.next] ? -ENOSPC :
 		state.next == UINT64_MAX ? -EOVERFLOW : 0;
+	if (err == -ENOSPC && segments_on_read && full) segment_stalled = true;
 	if (!err) {
 		size_t index = state.next % state.spec.capacity;
 		if (state.control) {
@@ -426,7 +440,7 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 
 void application_record_info(struct bp_record_info *info)
 {
-	application_record_snapshot(info, NULL, NULL, NULL);
+	application_record_snapshot(info, NULL, NULL, NULL, NULL);
 }
 
 size_t application_record_room(uint32_t *slots)
@@ -443,14 +457,47 @@ size_t application_record_room(uint32_t *slots)
 }
 
 void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
-	bool *variable, bool *paused)
+	bool *variable, bool *paused, bool *segments)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
 	if (tag) memcpy(tag, capture_tag, sizeof(capture_tag));
 	if (variable) *variable = offsets || lengths;
-	if (paused) *paused = pause_on_full;
+	if (paused) *paused = pause_on_full && !segments_on_read;
+	if (segments) *segments = segments_on_read;
 	k_spin_unlock(&lock, key);
+}
+
+static void retire_first(void)
+{
+	if (state.control && state.parameter_size) {
+		uint16_t selected = recorded_step(state.first % state.spec.capacity)->parameters;
+		struct parameter_slot *slot = parameter_slot(selected);
+		if (!--slot->references) {
+			slot->next = free_parameters;
+			free_parameters = selected;
+		}
+	}
+	state.first++;
+}
+
+int application_record_advance(uint32_t generation, uint64_t index)
+{
+	for (;;) {
+		k_spinlock_key_t key = k_spin_lock(&lock);
+		int err = !segments_on_read ? 0 : generation != state.generation ? -ESTALE :
+			!records ? -ENODATA : index > state.next ? -EINVAL : 0;
+		if (err || !segments_on_read || index <= state.first) {
+			k_spin_unlock(&lock, key);
+			return err;
+		}
+		uint64_t count = MIN(index - state.first, 32);
+		for (uint64_t i = 0; i < count; i++) retire_first();
+		if (state.first == state.next) segment_stalled = false;
+		bool complete = state.first == index;
+		k_spin_unlock(&lock, key);
+		if (complete) return 0;
+	}
 }
 
 int application_record_ack(uint32_t generation, uint64_t next, uint32_t session)
@@ -458,22 +505,12 @@ int application_record_ack(uint32_t generation, uint64_t next, uint32_t session)
 	if (!generation || !session) return -EINVAL;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = generation != state.generation ? -ESTALE : !records ? -ENODATA :
-		!pause_on_full ? -ENOTSUP : ack_session && ack_session != session ? -EBUSY :
+		!pause_on_full || segments_on_read ? -ENOTSUP : ack_session && ack_session != session ? -EBUSY :
 		next < state.first || next > state.next ? -EINVAL :
 		next - state.first > 32 ? -E2BIG : 0;
 	if (!err) {
 		ack_session = session;
-		while (state.first < next) {
-			if (state.control && state.parameter_size) {
-				uint16_t selected = recorded_step(state.first % state.spec.capacity)->parameters;
-				struct parameter_slot *slot = parameter_slot(selected);
-				if (!--slot->references) {
-					slot->next = free_parameters;
-					free_parameters = selected;
-				}
-			}
-			state.first++;
-		}
+		while (state.first < next) retire_first();
 	}
 	k_spin_unlock(&lock, key);
 	return err;

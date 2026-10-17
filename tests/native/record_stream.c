@@ -3,10 +3,16 @@
 #include <zephyr/sys/byteorder.h>
 #include <errno.h>
 
+#ifndef RECORD_RING
+#define RECORD_RING 0
+#endif
+#ifndef RECORD_SEGMENTS
+#define RECORD_SEGMENTS 0
+#endif
+
 BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU | BP_CAP_BATTERY | BP_CAP_PORTS, 2048);
 
-/* Physical BLE transfer workload. Port state is read only; no motor API is called.
- * A full buffer skips recording, not control, until acknowledged by the host. */
+/* Physical BLE transfer workload. Port state is read only; no motor API is called. */
 static struct bp_control_frame frame;
 static uint8_t row[240];
 
@@ -23,7 +29,9 @@ int app_main(void)
 	config[18] = config[19] = config[20] = config[21] = config[22] = 1;
 	const struct bp_record_spec spec = {.size = sizeof(row), .capacity = 80,
 		.schema = "brickphyr.capture/2"};
-	err = bp_record_begin_paused(&spec, config, sizeof(config), true);
+	err = RECORD_SEGMENTS ? bp_record_begin_segments(&spec, config, sizeof(config), true) :
+		RECORD_RING ? bp_control_record_begin(&spec, config, sizeof(config)) :
+		bp_record_begin_paused(&spec, config, sizeof(config), true);
 	if (err) return err;
 	unsigned int limit = 100;
 	for (unsigned int written = 0; written < limit;) {
