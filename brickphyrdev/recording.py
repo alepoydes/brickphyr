@@ -12,10 +12,17 @@ from pathlib import Path
 from pydantic import Field
 from smp import message
 
-from . import application, capture_block_codec, capture_codec, monitor, record_codec, records, telemetry
+from . import (
+    application,
+    capture_block_codec,
+    capture_codec,
+    monitor,
+    record_codec,
+    records,
+    telemetry,
+)
 from .recording_io import write_event, write_events
 from .smp import checked, connection
-
 
 _writer = ThreadPoolExecutor(max_workers=1)
 
@@ -228,9 +235,7 @@ async def _write(log, *events, counts=None):
     # appends its footer. The event loop remains available to the terminal.
     future = _writer.submit(write_events, log, events)
     try:
-        while not future.done():
-            await asyncio.sleep(0.001)
-        future.result()
+        await asyncio.shield(asyncio.wrap_future(future))
     except BaseException:
         while not future.done():
             with contextlib.suppress(BaseException):
