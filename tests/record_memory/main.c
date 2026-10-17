@@ -173,6 +173,67 @@ ZTEST(record_memory, test_blocks_cross_slots_headers_and_ring_wrap)
 	}
 }
 
+ZTEST(record_memory, test_paused_control_stream_retains_only_unacknowledged_steps)
+{
+	const struct bp_record_spec spec = {.size = 2, .capacity = 3, .schema = "paused/1"};
+	struct bp_record_info info;
+	struct bp_control_step step;
+	uint8_t values[2], applied[4], parameter[4];
+	application_record_reset();
+	zassert_ok(application_record_begin_paused(&spec, NULL, 0, true, sizeof(parameter)));
+	application_record_info(&info);
+	uint32_t generation = info.generation;
+	for (unsigned int i = 0; i < 3; i++) {
+		memset(parameter, i + 1, sizeof(parameter));
+		step = (struct bp_control_step){.sequence = i + 1,
+			.parameter_revision = i + 1, .parameter_size = sizeof(parameter)};
+		application_record_step(&step, parameter);
+		values[0] = i;
+		zassert_ok(application_record_write(values, sizeof(values)));
+	}
+	values[0] = 99;
+	zassert_equal(application_record_write(values, sizeof(values)), -ENOSPC);
+	application_record_info(&info);
+	zassert_true(info.active);
+	zassert_equal(info.first, 0);
+	zassert_equal(info.next, 3);
+	zassert_equal(application_record_ack(generation + 1, 2, 1), -ESTALE);
+	zassert_equal(application_record_ack(generation, 4, 1), -EINVAL);
+	zassert_ok(application_record_ack(generation, 2, 1));
+	zassert_equal(application_record_ack(generation, 3, 2), -EBUSY);
+	application_record_session_closed(1);
+	zassert_ok(application_record_ack(generation, 2, 2));
+	for (unsigned int i = 3; i < 5; i++) {
+		memset(parameter, i + 1, sizeof(parameter));
+		step = (struct bp_control_step){.sequence = i + 1,
+			.parameter_revision = i + 1, .parameter_size = sizeof(parameter)};
+		application_record_step(&step, parameter);
+		values[0] = i;
+		zassert_ok(application_record_write(values, sizeof(values)));
+	}
+	for (unsigned int i = 2; i < 5; i++) {
+		zassert_equal(application_record_copy(generation, i, values, sizeof(values), applied,
+			sizeof(applied), &info, &step), sizeof(values));
+		zassert_equal(values[0], i);
+		zassert_equal(step.sequence, i + 1);
+		for (size_t j = 0; j < sizeof(applied); j++) zassert_equal(applied[j], i + 1);
+	}
+	zassert_ok(application_record_ack(generation, 5, 2));
+	/* The last revision's slot was retired too; next insertion must not reuse it. */
+	memset(parameter, 5, sizeof(parameter));
+	step = (struct bp_control_step){.sequence = 6, .parameter_revision = 5,
+		.parameter_size = sizeof(parameter)};
+	application_record_step(&step, parameter);
+	values[0] = 5;
+	zassert_ok(application_record_write(values, sizeof(values)));
+	zassert_equal(application_record_copy(generation, 5, values, sizeof(values), applied,
+		sizeof(applied), &info, &step), sizeof(values));
+	zassert_equal(values[0], 5);
+	zassert_equal(step.sequence, 6);
+	for (size_t j = 0; j < sizeof(applied); j++) zassert_equal(applied[j], 5);
+	application_record_clear();
+}
+
 ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 {
 	const struct bp_record_spec spec = {.size = 1, .capacity = 1, .schema = "tag/1"};
@@ -181,7 +242,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	struct bp_record_info info;
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
-	application_record_snapshot(&info, tag, NULL);
+	application_record_snapshot(&info, tag, NULL, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	uint32_t generation = info.generation;
 	zassert_equal(application_record_bind(generation, empty, tag), -EINVAL);
@@ -193,7 +254,7 @@ ZTEST(record_memory, test_capture_tag_is_bound_once_and_expires_with_data)
 	application_record_reset();
 	zassert_ok(application_record_begin(&spec, NULL, 0, false, 0));
 	zassert_equal(application_record_bind(generation, original, tag), -ESTALE);
-	application_record_snapshot(&info, tag, NULL);
+	application_record_snapshot(&info, tag, NULL, NULL);
 	zassert_mem_equal(tag, empty, sizeof(tag));
 	zassert_ok(application_record_bind(info.generation, other, tag));
 	zassert_mem_equal(tag, other, sizeof(tag));
@@ -268,7 +329,7 @@ ZTEST(record_memory, test_compact_capture_crosses_blocks_and_resumes_mid_prefix)
 	zassert_equal(application_record_memory(), bytes);
 	struct bp_record_info info;
 	bool variable;
-	application_record_snapshot(&info, NULL, &variable);
+	application_record_snapshot(&info, NULL, &variable, NULL);
 	zassert_true(variable);
 	uint32_t generation = info.generation;
 	for (size_t i = 0; i < ARRAY_SIZE(lengths); i++) {
@@ -304,7 +365,7 @@ ZTEST(record_memory, test_compact_capture_crosses_blocks_and_resumes_mid_prefix)
 	zassert_equal(output[0], (uint8_t)(2 + 3 * 172));
 	zassert_equal(application_record_read_block(generation, 2, 175, output, 1, &info), -EINVAL);
 	application_record_clear();
-	application_record_snapshot(&info, NULL, &variable);
+	application_record_snapshot(&info, NULL, &variable, NULL);
 	zassert_false(variable);
 	zassert_equal(application_record_memory(), 0);
 }

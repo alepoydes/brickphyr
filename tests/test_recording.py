@@ -74,7 +74,7 @@ def _fragment(**changes):
 
 
 def _fixture(monkeypatch, fragments, info, *, terminal_info=None, infos=None,
-             configs=(), triggers=None, status=None, params=()):
+             configs=(), triggers=None, status=None, params=(), acks=None):
     reads = []
     infos = iter(infos) if infos is not None else None
     configs = iter(configs)
@@ -111,6 +111,10 @@ def _fixture(monkeypatch, fragments, info, *, terminal_info=None, infos=None,
             if triggers is not None:
                 triggers.append((request.generation, request.after))
             return SimpleNamespace()
+        if isinstance(request, recording.Ack):
+            if acks is not None:
+                acks.append(request.next)
+            return SimpleNamespace()
         if isinstance(request, recording.application.Status):
             return status or SimpleNamespace(
                 model_dump=lambda **_kw: {"api": 1, "abi": "test", "state": 1},
@@ -127,6 +131,27 @@ def _fixture(monkeypatch, fragments, info, *, terminal_info=None, infos=None,
     monkeypatch.setattr(recording, "checked", checked)
     monkeypatch.setattr(recording.telemetry, "info", identity)
     return reads
+
+
+def test_paused_recording_acks_only_complete_persisted_records(monkeypatch):
+    fragments = iter((_fragment(next=2, data=b"ab"),
+                      _fragment(next=2, data=b"cd"),
+                      _fragment(first=1, next=2, data=b"WXYZ")))
+    acks = []
+    _fixture(monkeypatch, fragments, _info(next=2, paused=True), acks=acks)
+
+    class FailingLog(io.StringIO):
+        def write(self, text):
+            if '"index":1' in text:
+                raise OSError("disk failed")
+            return super().write(text)
+
+    log = FailingLog()
+    with pytest.raises(OSError, match="disk failed"):
+        asyncio.run(recording.collect(object(), log, "fixture", {"records": 0, "gaps": 0}))
+    assert acks == [1]
+    events = [json.loads(line) for line in log.getvalue().splitlines()]
+    assert [event["index"] for event in events if event["type"] == "record"] == [0]
 
 
 def test_recording_discards_partial_on_overwrite_and_reports_gaps(monkeypatch):

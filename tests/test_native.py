@@ -273,6 +273,35 @@ def test_native_recording():
         asyncio.run(exercise(port))
 
 
+def test_paused_recording_collects_through_smp_without_loss():
+    import io
+    import json
+
+    from brickphyrdev import recording
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            await upload(client, transport, (build / "record_paused_probe.elf").read_bytes())
+            await checked(client, Start())
+            output = io.StringIO()
+            counts = {"records": 0, "gaps": 0}
+            await asyncio.wait_for(recording.collect(client, output, "paused", counts, wait=True), 5)
+            events = [json.loads(line) for line in output.getvalue().splitlines()]
+            records = [event for event in events if event["type"] == "record"]
+            assert [struct.unpack("<I", bytes.fromhex(event["data"]))[0]
+                    for event in records] == list(range(10))
+            assert not any(event["type"] == "gap" for event in events)
+            assert counts == {"records": 10, "gaps": 0}
+            info = await checked(client, recording.Info())
+            assert (info.first, info.next, info.active, info.paused) == (10, 10, False, True)
+            await checked(client, recording.Clear())
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
 def test_native_smp_and_cli():
     build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
     examples = build.with_name("native-smp-examples")

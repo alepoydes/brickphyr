@@ -183,6 +183,7 @@ static struct {
 	const void *config;
 	size_t length;
 	bool control;
+	bool paused;
 } record_request;
 static atomic_t record_pending;
 static int record_result;
@@ -750,12 +751,19 @@ static void expire_upload(void)
 
 void application_session_closed(void)
 {
+	application_record_session_closed(application_session_id());
 	atomic_inc(&session_generation);
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	application_output_stream(false);
 	application_message_attach(0);
 	k_sem_give(&io_ready);
 #endif
+}
+
+uint32_t application_session_id(void)
+{
+	uint32_t id = (uint32_t)atomic_get(&session_generation) + 1;
+	return id ? id : 1;
 }
 
 void application_discard_upload(void)
@@ -1967,7 +1975,8 @@ static inline int z_vrfy_bp_control_motor_group_set(const struct bp_motor_group_
 }
 #include <zephyr/syscalls/bp_control_motor_group_set_mrsh.c>
 
-static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length, bool control)
+static int record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
+	bool control, bool paused)
 {
 	/* Allocation belongs to the supervisor. Aborting this caller must not
 	 * strand a just-allocated buffer or a lock in the application's thread. */
@@ -1975,13 +1984,14 @@ static int record_begin(const struct bp_record_spec *spec, const void *config, s
 	record_request.config = config;
 	record_request.length = length;
 	record_request.control = control;
+	record_request.paused = paused;
 	atomic_set(&record_pending, 1);
 	k_sem_take(&record_done, K_FOREVER);
 	return record_result;
 }
 int z_impl_bp_record_begin_config(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, false);
+	return record_begin(spec, config, length, false, false);
 }
 static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -1996,7 +2006,7 @@ static inline int z_vrfy_bp_record_begin_config(const struct bp_record_spec *spe
 
 int z_impl_bp_control_record_begin(const struct bp_record_spec *spec, const void *config, size_t length)
 {
-	return record_begin(spec, config, length, true);
+	return record_begin(spec, config, length, true, false);
 }
 static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *spec,
 	const void *config, size_t length)
@@ -2008,6 +2018,22 @@ static inline int z_vrfy_bp_control_record_begin(const struct bp_record_spec *sp
 	return z_impl_bp_control_record_begin(spec, config, length);
 }
 #include <zephyr/syscalls/bp_control_record_begin_mrsh.c>
+
+int z_impl_bp_record_begin_paused(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control)
+{
+	return record_begin(spec, config, length, control, true);
+}
+static inline int z_vrfy_bp_record_begin_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length, bool control)
+{
+	if (!control_caller()) return -EPERM;
+	if (length > 1024) return -EMSGSIZE;
+	user_memory_check(spec, sizeof(*spec), __alignof__(*spec), false, __func__);
+	if (length) user_memory_check(config, length, 1, false, __func__);
+	return z_impl_bp_record_begin_paused(spec, config, length, control);
+}
+#include <zephyr/syscalls/bp_record_begin_paused_mrsh.c>
 
 int z_impl_bp_record_begin(const struct bp_record_spec *spec)
 {
@@ -2951,8 +2977,10 @@ void application_poll(void)
 	if (atomic_get(&record_pending)) {
 		size_t parameter_size = 0;
 		if (record_request.control && controller) parameter_size = controller->parameter_size;
-		record_result = application_record_begin(&record_request.spec,
-			record_request.config, record_request.length, record_request.control, parameter_size);
+		record_result = record_request.paused ? application_record_begin_paused(&record_request.spec,
+			record_request.config, record_request.length, record_request.control, parameter_size) :
+			application_record_begin(&record_request.spec, record_request.config,
+				record_request.length, record_request.control, parameter_size);
 		atomic_clear(&record_pending);
 		k_sem_give(&record_done);
 	}

@@ -33,6 +33,7 @@ class InfoResponse(message.ReadResponse):
     reason: int | None = None
     control: bool = False
     variable: bool = False
+    paused: bool = False
     parameter_size: int = 0
     block: int = 0
     tag: bytes | None = None
@@ -93,6 +94,13 @@ class Bind(application._Group, message.WriteRequest):
     tag: bytes
 
 
+class Ack(application._Group, message.WriteRequest):
+    _COMMAND_ID = 24
+    _Response = application.Done
+    generation: int
+    next: int
+
+
 class ConfigResponse(message.ReadResponse):
     _GROUP_ID = application.GROUP
     _COMMAND_ID = 16
@@ -139,10 +147,21 @@ def _range(first, next):
 
 def _identity(info):
     return (info.size, info.capacity, info.record_schema, info.config_size,
-            info.control, getattr(info, "variable", False), info.parameter_size)
+            info.control, getattr(info, "variable", False), info.parameter_size,
+            getattr(info, "paused", False))
 
 
-def _metadata(reply, capacity, *, config_size=0, variable=False):
+async def _ack(client, generation, first, next_index):
+    # Firmware retires at most 32 complete records per request so parameter
+    # reference cleanup cannot monopolize its short recorder spinlock.
+    while first < next_index:
+        target = min(first + 32, next_index)
+        await checked(client, Ack(generation=generation, next=target))
+        first = target
+    return first
+
+
+def _metadata(reply, capacity, *, config_size=0, variable=False, paused=False):
     _range(reply.first, reply.next)
     trigger, after, reason = reply.trigger, reply.after, reply.reason
     if reason is None:
@@ -151,6 +170,8 @@ def _metadata(reply, capacity, *, config_size=0, variable=False):
         reason = 0 if reply.active else 1
     if reason not in (0, 1, *record_codec.END_REASONS) or reply.active != (reason == 0):
         raise RuntimeError("Invalid recording end reason")
+    if paused and (trigger is not None or reason >= 2):
+        raise RuntimeError("Invalid paused recording boundary")
     if reason >= 3 and (trigger is not None or reply.first or reply.next > capacity or
                         reason == 3 and not variable and reply.next != capacity):
         raise RuntimeError("Invalid finite recording boundary")
@@ -221,8 +242,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     if not 0 < info.generation < 1 << 32:
         raise RuntimeError("Invalid recording metadata")
     variable = getattr(info, "variable", False)
+    paused = getattr(info, "paused", False)
     if type(variable) is not bool or variable and info.control:
         raise RuntimeError("Invalid variable recording mode")
+    if type(paused) is not bool or paused and variable:
+        raise RuntimeError("Invalid paused recording mode")
     if not 0 < info.size <= 1024 or not 0 < info.capacity < 1 << 32 or (
         not 0 <= info.config_size <= 1024 or
         (info.config_size + info.capacity + 2 * (info.capacity + 1) + 4
@@ -232,7 +256,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     if not 0 <= info.parameter_size <= 256 or not info.control and info.parameter_size:
         raise RuntimeError("Invalid recording control parameter size")
     trigger, trigger_after, reason = _metadata(
-        info, info.capacity, config_size=info.config_size, variable=variable
+        info, info.capacity, config_size=info.config_size, variable=variable, paused=paused
     )
     if not info.record_schema or len(info.record_schema) > 47 or any(
         not 32 <= ord(char) <= 126 for char in info.record_schema
@@ -249,6 +273,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
 
     generation = info.generation
     if after is not None:
+        if paused:
+            raise ValueError("Triggered recording is unavailable in paused mode")
         if not 0 <= after < info.capacity:
             raise ValueError("--after must be between zero and recording capacity minus one")
         if info.first == info.next:
@@ -263,7 +289,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording metadata changed within generation")
         state = _metadata(
             triggered_info, info.capacity, config_size=triggered_info.config_size,
-            variable=variable
+            variable=variable, paused=paused
         )
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (triggered_info.first, triggered_info.next, *state))
@@ -293,7 +319,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if _identity(current) != _identity(info):
             raise RuntimeError("Recording metadata changed within generation")
         state = _metadata(current, info.capacity, config_size=current.config_size,
-                          variable=variable)
+                          variable=variable, paused=paused)
         _advance((info.first, info.next, trigger, trigger_after, reason),
                  (current.first, current.next, *state))
         info = current
@@ -311,7 +337,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if _identity(info) != (
             saved["size"], saved["capacity"], saved["schema"], saved.get("config_size", 0),
             saved.get("control", False), saved.get("variable", False),
-            saved.get("parameter_size", 0),
+            saved.get("parameter_size", 0), saved.get("paused", False),
         ) or bytes(config) != resume.config:
             raise RuntimeError("Recording metadata changed; cannot resume this download")
         _advance((saved["first"], saved["next"], saved.get("trigger"),
@@ -359,6 +385,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     "reason": reason,
                     "control": info.control,
                     **({"variable": True} if variable else {}),
+                    **({"paused": True} if paused else {}),
                     "parameter_size": info.parameter_size,
                     "tag": tag,
                 },
@@ -367,6 +394,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
 
     first, next, active = info.first, info.next, info.active
     index = resume.next_index if resume else 0
+    if paused and resume is not None and index >= first:
+        first = await _ack(client, generation, first, index)
     partial = bytearray()
     partial_step = None
     previous = resume.last_control if resume else None
@@ -392,7 +421,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 raise RuntimeError("Recording metadata changed within generation")
             state = _metadata(
                 terminal_info, info.capacity, config_size=terminal_info.config_size,
-                variable=variable
+                variable=variable, paused=paused
             )
             _advance((first, next, trigger, trigger_after, reason),
                      (terminal_info.first, terminal_info.next, *state))
@@ -430,7 +459,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
             )
-        state = _metadata(reply, info.capacity, variable=variable)
+        state = _metadata(reply, info.capacity, variable=variable, paused=paused)
         _advance((first, next, trigger, trigger_after, reason),
                  (reply.first, reply.next, *state))
         first, next, active = reply.first, reply.next, reply.active
@@ -518,6 +547,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Recording data outside retained range")
         if events:
             await _write(log, *events, counts=counts)
+            if paused:
+                first = await _ack(client, generation, first, index)
             if on_observation is not None:
                 for event in events:
                     if event["type"] != "record":

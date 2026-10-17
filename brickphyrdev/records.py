@@ -118,12 +118,15 @@ class Recording:
             self.config = _blob(meta.get("config", ""), config_size, "configuration")
             self.control = meta.get("control", False)
             self.variable = meta.get("variable", False)
+            self.paused = meta.get("paused", False)
             self.parameter_size = _integer(meta.get("parameter_size", 0),
                                            "parameter size", 0, 256)
             if type(self.control) is not bool or not self.control and self.parameter_size:
                 raise ValueError("Invalid recording control mode")
             if type(self.variable) is not bool or self.variable and self.control:
                 raise ValueError("Invalid variable recording mode")
+            if type(self.paused) is not bool or self.paused and self.variable:
+                raise ValueError("Invalid paused recording mode")
             # Compact records need at least one payload byte, one 16-bit index
             # per slot plus the sentinel, and one 32-bit block pointer.
             minimum = config_size + capacity + 2 * (capacity + 1) + 4
@@ -148,6 +151,8 @@ class Recording:
                 self._active != (self._reason == 0)
             ):
                 raise ValueError("Invalid recording end reason")
+            if self.paused and (self._trigger is not None or self._reason >= 2):
+                raise ValueError("Invalid paused recording boundary")
             self._capture(self._trigger, self._after, self._next, self._reason == 2)
             if self._reason >= 3:
                 self._finite_boundary(self._reason, self._next)
@@ -201,6 +206,8 @@ class Recording:
             raise ValueError("Invalid finite recording boundary")
 
     def _outcome(self, event, next_index):
+        if self.paused and (event["type"] == "recording-end" or event.get("capture") is not None):
+            raise ValueError("Invalid paused recording boundary")
         reason = event.get("reason")
         finite_reasons = {name: value for value, name in record_codec.END_REASONS.items() if value >= 3}
         if event["type"] == "recording-end" and reason in finite_reasons:

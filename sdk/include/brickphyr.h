@@ -501,6 +501,16 @@ __syscall int bp_settings_save_start(void);
  * A newer accepted request makes older IDs ESTALE; IDs last one boot. */
 __syscall int bp_settings_save_status(uint32_t request);
 
+/* Start a fixed-size bounded recording with host acknowledgement. On full,
+ * record_write returns ENOSPC immediately and leaves the stream active; the
+ * control loop keeps running. A host confirms complete received records to
+ * release capacity. Skipped writes must be reflected in the application's own
+ * sequence or in the associated control-step sequence. Trigger is unsupported.
+ * control=true attaches each delivered step and parameter revision as in
+ * bp_control_record_begin(). */
+__syscall int bp_record_begin_paused(const struct bp_record_spec *spec,
+	const void *config, size_t length, bool control);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

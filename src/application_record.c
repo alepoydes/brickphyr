@@ -18,6 +18,8 @@ static size_t block_count, packed_capacity;
 static uint16_t *offsets;
 enum { PACKED_BLOCK_SIZE = 1024 };
 static uint32_t full_reason;
+static bool pause_on_full;
+static uint32_t ack_session;
 struct recorded_step {
 	struct bp_control_step value;
 	uint16_t parameters;
@@ -91,6 +93,8 @@ static void reset(bool active)
 	configuration = applied_parameters = NULL;
 	current_step = (struct bp_control_step){0};
 	full_reason = BP_RECORD_OPEN;
+	pause_on_full = false;
+	ack_session = 0;
 	uint32_t generation = state.generation + 1;
 	state = (struct bp_record_info){.generation = generation ? generation : 1,
 		.active = active};
@@ -177,7 +181,8 @@ int application_record_compact_budget(size_t size, size_t capacity, size_t lengt
 }
 
 static int begin(const struct bp_record_spec *spec, const void *config, size_t length,
-	bool control, size_t parameter_size, uint32_t completion_reason, size_t payload_bytes)
+	bool control, size_t parameter_size, uint32_t completion_reason, size_t payload_bytes,
+	bool paused)
 {
 	struct record_layout layout;
 	int err = payload_bytes ? compact_layout(spec->size, spec->capacity, length, payload_bytes, &layout) :
@@ -225,6 +230,8 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 	state.control = control;
 	state.parameter_size = parameter_size;
 	full_reason = completion_reason;
+	pause_on_full = paused;
+	ack_session = 0;
 	step_size = step_bytes;
 	parameter_stride = stride;
 	block_shift = layout.shift;
@@ -244,21 +251,27 @@ static int begin(const struct bp_record_spec *spec, const void *config, size_t l
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size)
 {
-	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0);
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, false);
+}
+
+int application_record_begin_paused(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control, size_t parameter_size)
+{
+	return begin(spec, config, length, control, parameter_size, BP_RECORD_OPEN, 0, true);
 }
 
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
 	size_t length, uint32_t reason)
 {
 	if (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION) return -EINVAL;
-	return begin(spec, config, length, false, 0, reason, 0);
+	return begin(spec, config, length, false, 0, reason, 0, false);
 }
 
 int application_record_begin_compact(const struct bp_record_spec *spec, const void *config,
 	size_t length, size_t payload_bytes, uint32_t reason)
 {
 	if (!payload_bytes || (reason != BP_RECORD_FULL && reason != BP_RECORD_DURATION)) return -EINVAL;
-	return begin(spec, config, length, false, 0, reason, payload_bytes);
+	return begin(spec, config, length, false, 0, reason, payload_bytes, false);
 }
 
 void application_record_finish(uint32_t reason)
@@ -305,6 +318,7 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 		reason != BP_RECORD_OPEN && full_reason == BP_RECORD_OPEN ? -EINVAL :
 		state.control && !current_step.sequence ? -ENODATA :
 		state.control && current_step.parameter_size != state.parameter_size ? -EMSGSIZE :
+		pause_on_full && state.next - state.first == state.spec.capacity ? -ENOSPC :
 		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
 		offsets && length > packed_capacity - offsets[state.next] ? -ENOSPC :
 		state.next == UINT64_MAX ? -EOVERFLOW : 0;
@@ -313,14 +327,14 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 		if (state.control) {
 			uint16_t selected = UINT16_MAX;
 			if (state.parameter_size) {
-				if (state.next) {
+				if (state.next > state.first) {
 					const struct recorded_step *previous = recorded_step((state.next - 1) % state.spec.capacity);
 					if (previous->value.parameter_revision == current_step.parameter_revision) {
 						selected = previous->parameters;
 						parameter_slot(selected)->references++;
 					}
 				}
-				if (state.next - state.first == state.spec.capacity) {
+				if (!pause_on_full && state.next - state.first == state.spec.capacity) {
 					uint16_t old = recorded_step(index)->parameters;
 					struct parameter_slot *slot = parameter_slot(old);
 					if (!--slot->references) {
@@ -374,7 +388,7 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = generation && generation != state.generation ? -ESTALE :
-		full_reason != BP_RECORD_OPEN ? -ENOTSUP :
+		full_reason != BP_RECORD_OPEN || pause_on_full ? -ENOTSUP :
 		state.triggered ? -EALREADY :
 		!records || !state.active || !state.next ? -ENODATA :
 		after >= state.spec.capacity ? -EINVAL :
@@ -394,7 +408,7 @@ int application_record_trigger(uint32_t generation, uint32_t after)
 
 void application_record_info(struct bp_record_info *info)
 {
-	application_record_snapshot(info, NULL, NULL);
+	application_record_snapshot(info, NULL, NULL, NULL);
 }
 
 size_t application_record_room(uint32_t *slots)
@@ -411,12 +425,46 @@ size_t application_record_room(uint32_t *slots)
 }
 
 void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
-	bool *variable)
+	bool *variable, bool *paused)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	*info = state;
 	if (tag) memcpy(tag, capture_tag, sizeof(capture_tag));
 	if (variable) *variable = offsets != NULL;
+	if (paused) *paused = pause_on_full;
+	k_spin_unlock(&lock, key);
+}
+
+int application_record_ack(uint32_t generation, uint64_t next, uint32_t session)
+{
+	if (!generation || !session) return -EINVAL;
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = generation != state.generation ? -ESTALE : !records ? -ENODATA :
+		!pause_on_full ? -ENOTSUP : ack_session && ack_session != session ? -EBUSY :
+		next < state.first || next > state.next ? -EINVAL :
+		next - state.first > 32 ? -E2BIG : 0;
+	if (!err) {
+		ack_session = session;
+		while (state.first < next) {
+			if (state.control && state.parameter_size) {
+				uint16_t selected = recorded_step(state.first % state.spec.capacity)->parameters;
+				struct parameter_slot *slot = parameter_slot(selected);
+				if (!--slot->references) {
+					slot->next = free_parameters;
+					free_parameters = selected;
+				}
+			}
+			state.first++;
+		}
+	}
+	k_spin_unlock(&lock, key);
+	return err;
+}
+
+void application_record_session_closed(uint32_t session)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (ack_session == session) ack_session = 0;
 	k_spin_unlock(&lock, key);
 }
 

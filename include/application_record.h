@@ -24,6 +24,10 @@ void application_record_end(void);
 void application_record_clear(void);
 int application_record_begin(const struct bp_record_spec *spec, const void *config, size_t length,
 	bool control, size_t parameter_size);
+/* Fixed-size stream retains every unacknowledged record. A full write returns
+ * ENOSPC while the producer remains active; host acknowledgement frees slots. */
+int application_record_begin_paused(const struct bp_record_spec *spec, const void *config,
+	size_t length, bool control, size_t parameter_size);
 /* Fixed-capacity capture: no control metadata or overwrite. The final slot
  * completes with FULL or DURATION, as selected at admission. */
 int application_record_begin_finite(const struct bp_record_spec *spec, const void *config,
@@ -46,9 +50,13 @@ size_t application_record_room(uint32_t *slots);
  * unbound. Binding an existing capture returns its original tag unchanged. */
 #define APPLICATION_RECORD_TAG_SIZE 16
 void application_record_snapshot(struct bp_record_info *info, uint8_t tag[APPLICATION_RECORD_TAG_SIZE],
-	bool *variable);
+	bool *variable, bool *paused);
 int application_record_bind(uint32_t generation, const uint8_t candidate[APPLICATION_RECORD_TAG_SIZE],
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE]);
+/* Exclusive complete-record boundary. One management session owns retirement;
+ * disconnection releases ownership but does not discard retained records. */
+int application_record_ack(uint32_t generation, uint64_t next, uint32_t session);
+void application_record_session_closed(uint32_t session);
 int application_record_read(uint32_t generation, uint64_t index, size_t offset,
 	void *data, size_t capacity, struct bp_record_info *info, struct bp_control_step *step);
 /* Consecutive slots, each containing the optional 32-byte control step followed

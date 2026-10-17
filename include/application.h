@@ -98,6 +98,7 @@ int application_upload_finish(size_t total);
 void application_discard_upload(void);
 /* Nonblocking; call after accepted operations have finished at session close. */
 void application_session_closed(void);
+uint32_t application_session_id(void);
 int application_stop(void);
 /* Discard retained records only after the application has terminated. */
 int application_clear_recording(void);
@@ -145,6 +146,7 @@ static inline int application_shutdown(void) { return 0; }
 static inline void application_poll(void) { }
 static inline void application_buttons(uint32_t buttons) { }
 static inline void application_session_closed(void) { }
+static inline uint32_t application_session_id(void) { return 0; }
 #endif
 
 #ifdef CONFIG_BRICKPHYR_PYTHON

@@ -826,11 +826,32 @@ returns `EOVERFLOW`; it does not silently wrap to a previous sequence.
 
 Each write copies one complete record and returns without allocation, transport
 work or waiting for a reader. Wrong lengths are rejected before modifying the
-buffer. When full, the buffer replaces its oldest record. Monotonic 64-bit record
-numbers expose the missing interval; sequence exhaustion returns `EOVERFLOW`.
+buffer. The ordinary recording replaces its oldest record when full. Monotonic
+64-bit record numbers expose the missing interval; sequence exhaustion returns `EOVERFLOW`.
 The application owns the binary schema and must include the measurements,
 commands, parameter revisions and times needed to interpret its calculation.
 The firmware does not infer those values from a later sensor read.
+
+Native ABI 2.4 also offers `bp_record_begin_paused(&spec, config, length, control)`
+for a fixed-size stream. `control=true` attaches the same step and applied
+parameters as `bp_control_record_begin`. When its buffer fills, `bp_record_write`
+returns `ENOSPC` immediately, retains all unacknowledged records and leaves the
+application running. After a collector receives and flushes complete records,
+it acknowledges their exclusive end index through the same SMP connection;
+those slots become available for later steps. The acknowledgement confirms
+computer receipt, not completion of any analysis or a durable disk sync. An
+interrupted download can resume after validating the recording identity. The
+current management session alone can retire records; disconnect releases that
+claim without erasing data. The collector acknowledges again after reconnection
+if its saved file contains records that the hub still retains.
+
+A full buffer can leave an unrecorded interval while control continues. The
+application must make that interval visible in its own record sequence, or use
+the attached control-step sequence; a later write is a new observation, not a
+retry of a stale control step. Finite RAM cannot preserve a continuous history
+across an arbitrarily slow or absent collector. Triggered capture and variable
+payloads are unavailable in this mode; the ordinary ring and finite diagnostic
+capture retain their existing behavior.
 
 Return, fault and forced stop freeze the retained tail for retrieval. Normal
 host disconnect does not stop recording. Starting another application, Python

@@ -260,7 +260,8 @@ static int record_info_read(struct smp_streamer *stream)
 	struct bp_record_info info;
 	uint8_t tag[APPLICATION_RECORD_TAG_SIZE];
 	bool variable;
-	application_record_snapshot(&info, tag, &variable);
+	bool paused;
+	application_record_snapshot(&info, tag, &variable, &paused);
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &info) && zcbor_tstr_put_lit(zs, "tag") &&
 		zcbor_bstr_encode_ptr(zs, tag, sizeof(tag)) && number(zs, "block", RECORD_BLOCK_BYTES) &&
@@ -268,6 +269,7 @@ static int record_info_read(struct smp_streamer *stream)
 		number(zs, "config_size", info.config_size) &&
 		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
 		zcbor_tstr_put_lit(zs, "variable") && zcbor_bool_put(zs, variable) &&
+		zcbor_tstr_put_lit(zs, "paused") && zcbor_bool_put(zs, paused) &&
 		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
 		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));
@@ -342,6 +344,20 @@ static int record_bind(struct smp_streamer *stream)
 	bool ok = number(zs, "generation", generation) && zcbor_tstr_put_lit(zs, "tag") &&
 		zcbor_bstr_encode_ptr(zs, tag, sizeof(tag));
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int record_ack_write(struct smp_streamer *stream)
+{
+	uint32_t generation = 0;
+	uint64_t next = UINT64_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("next", zcbor_uint64_decode, &next),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || next == UINT64_MAX) return MGMT_ERR_EINVAL;
+	return result(stream, application_record_ack(generation, next, application_session_id()));
 }
 
 static int record_parameters_read(struct smp_streamer *stream)
@@ -543,6 +559,7 @@ static const struct mgmt_handler handlers[] = {
 	[21] = {.mh_read = record_budget_read},
 	[22] = {.mh_read = record_block_read},
 	[23] = {.mh_write = record_bind},
+	[24] = {.mh_write = record_ack_write},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL
