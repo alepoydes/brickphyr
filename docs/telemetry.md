@@ -235,18 +235,15 @@ motor-loaded timing.
 
 The F4 controller also runs at 3 Mbaud, as in the Pybricks F4 driver. The SMP BLE
 transport queues ordered notification fragments up to the available buffers
-instead of waiting for each fragment's completion before sending the next. On
-one USB-powered Robot Inventor F4, a passive 2,401-row recording at a requested
-15 ms period started after six seconds on the connected BLE link. It transferred
-320,445 compact payload bytes in 36.194 seconds while 57 parameter updates
-completed.
-All rows and control steps were consecutive; the same observations span 36.0
-seconds on the hub. Motors were off. A run started without the additional wait
-lost 156 control steps during one early recording pause, then continued without
-another step gap. The central's chosen interval and Zephyr's initial parameter
-update delay make startup throughput variable. This establishes capacity for
-this passive stream on an established link, not a lossless or fixed-latency BLE
-contract for every workload or connection.
+instead of waiting for each fragment's completion before sending the next.
+The F4 profile prefers a 7.5 ms interval with peripheral latency 4 and requests
+latency 0 during active SMP traffic. On one USB-powered Robot Inventor F4 and
+Linux central, an immediately started passive 2,400-row recording at a requested
+15 ms period transferred 315,005 compact payload bytes in 36.440 seconds while
+56 parameter updates completed. All records and control steps were consecutive;
+the observations span 35.985 seconds on the hub. Motors were off. The central
+may choose different parameters, and these bounded measurements do not establish
+lossless or fixed-latency BLE for every workload or connection.
 
 For live application telemetry, the native SDK offers a recent-value ring and a
 [continuous-series policy](applications.md#application-recording). Both use the

@@ -53,6 +53,11 @@ The controller and STM32 use 115200 baud while loading the TI service pack, then
 switch together to 3,000,000 baud before normal HCI traffic. A version command at
 the new speed must succeed or Bluetooth startup reports an error; USB recovery
 remains available.
+The F4 profile advertises a preferred 7.5 ms connection interval with peripheral
+latency 4. Active SMP traffic requests latency 0; after five seconds without an
+SMP request, the transport restores latency 4. A central chooses the negotiated
+parameters. Peripheral latency permits idle radio-event skipping, but battery
+current under this policy has not been measured.
 The native application API includes experimental LEGO peripheral connections;
 see [application LEGO devices](#application-lego-devices) for its limits and evidence.
 Program execution through the Pybricks endpoint requires Python.
