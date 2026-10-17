@@ -205,6 +205,21 @@ F4 native and Python profiles use four 1024-byte SMP buffers, allowing up to
 912 packed recording bytes per response. This retains the request/response pool
 capacity and costs 2048 bytes more static RAM than 512-byte buffers; the shared
 heap budgets account for that cost. The client uses the advertised block size.
+The F4 BLE profile also allows five ACL transmit buffers instead of three, enough
+for the five 27-byte controller packets carrying one full 127-byte ATT value.
+The native and Python shared-heap reservations are 512 bytes smaller to fit the
+extra buffers. This changes transfer scheduling, not the recorded values or the
+controller's 27-byte packet limit.
+
+In a bounded SPIKE Prime F4 check, a frozen 80-row native control recording
+(IMU, battery, A/B encoders and inactive outputs) contained 21,760 bytes of
+step-plus-row data. Compact transfer sent about 7.3 KiB of block data, with exact
+offline reconstruction. At an established 7.5 ms BLE interval, collection took
+2.81 s with three ACL TX buffers and 1.80 s with five. A separate live 100-row
+check at 15 ms had no unrecorded steps with five buffers; the three-buffer run
+had three pauses and 249 unrecorded steps. These are short, USB-powered checks
+without motor drive or concurrent parameter updates; they do not establish
+sustained operation for a moving robot.
 
 On one USB-powered Inventor F4, a retained 13,800-byte payload took 4.05 seconds
 to collect over BLE at ATT MTU 130 and a 7.5 ms connection interval, versus
