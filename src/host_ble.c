@@ -34,6 +34,11 @@ static struct k_spinlock session_lock;
 struct link_diagnostics {
 	uint32_t up, down, active, admitted, connect_failed, admission_failed, shell_failed;
 	uint32_t local_disconnects, last_up_ms, last_down_ms, last_failure_ms;
+	struct {
+		uint32_t at_ms, interval_us;
+		uint16_t latency, timeout_ms;
+	} params[3];
+	uint32_t parameter_updates;
 	int last_failure;
 	uint8_t last_failure_stage, last_reason;
 };
@@ -420,6 +425,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		link_stats.up++;
 		link_stats.active++;
 		link_stats.last_up_ms = now;
+		link_stats.params[0].at_ms = now;
+		link_stats.params[0].interval_us = info.le.interval_us;
+		link_stats.params[0].latency = info.le.latency;
+		link_stats.params[0].timeout_ms = info.le.timeout * 10U;
+		link_stats.parameter_updates = 0;
 		if (admission) {
 			link_stats.admission_failed++;
 			link_stats.last_failure_stage = 'a';
@@ -432,6 +442,22 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	atomic_clear(&advertising);
 	k_spin_unlock(&session_lock, key);
 	if (admission) request_disconnect(conn);
+}
+
+static void le_param_updated(struct bt_conn *conn, uint16_t interval,
+	uint16_t latency, uint16_t timeout)
+{
+	struct bt_conn_info info;
+	if (bt_conn_get_info(conn, &info) || info.type != BT_CONN_TYPE_LE ||
+	    info.role != BT_CONN_ROLE_PERIPHERAL) return;
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	link_stats.parameter_updates++;
+	uint32_t index = MIN(link_stats.parameter_updates, 2U);
+	link_stats.params[index].at_ms = k_uptime_get_32();
+	link_stats.params[index].interval_us = interval * 1250U;
+	link_stats.params[index].latency = latency;
+	link_stats.params[index].timeout_ms = timeout * 10U;
+	k_spin_unlock(&session_lock, key);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -680,6 +706,7 @@ static void recycled(void)
 
 BT_CONN_CB_DEFINE(host_ble_callbacks) = {
 	.connected = connected, .disconnected = disconnected, .recycled = recycled,
+	.le_param_updated = le_param_updated,
 };
 
 static void print_connection(struct bt_conn *conn, void *data)
@@ -708,6 +735,13 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 		shell_print(shell, "last fail=%s:%d at %u ms; reason=0x%02x up=%u down=%u ms",
 			stage, stats.last_failure, stats.last_failure_ms, stats.last_reason,
 			stats.last_up_ms, stats.last_down_ms);
+		shell_print(shell, "last parameter updates=%u", stats.parameter_updates);
+		for (uint32_t i = 0; i <= MIN(stats.parameter_updates, 2U); i++) {
+			shell_print(shell, "params[%u] at=%u ms interval=%u us latency=%u timeout=%u ms",
+				i, stats.params[i].at_ms, stats.params[i].interval_us,
+				(unsigned int)stats.params[i].latency,
+				(unsigned int)stats.params[i].timeout_ms);
+		}
 		return 0;
 	}
 	if (argc == 1) {

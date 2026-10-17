@@ -54,10 +54,13 @@ switch together to 3,000,000 baud before normal HCI traffic. A version command a
 the new speed must succeed or Bluetooth startup reports an error; USB recovery
 remains available.
 The F4 profile advertises a preferred 7.5 ms connection interval with peripheral
-latency 4. Active SMP traffic requests latency 0; after five seconds without an
-SMP request, the transport restores latency 4. A central chooses the negotiated
-parameters. Peripheral latency permits idle radio-event skipping, but battery
-current under this policy has not been measured.
+latency 0. Active SMP traffic requests the same parameters; the transport restores
+that preference after five seconds without an SMP request. A central chooses the
+negotiated parameters. On one Inventor F4, a first management link negotiated
+latency 4 and then timed out 420 ms after changing to latency 0; the latency-zero
+preference passed bounded cold-link and passive-transfer checks without that
+transition. Sustained reliability and idle connected battery current remain
+unmeasured.
 The native application API includes experimental LEGO peripheral connections;
 see [application LEGO devices](#application-lego-devices) for its limits and evidence.
 Program execution through the Pybricks endpoint requires Python.
@@ -103,6 +106,12 @@ stage, code and time across subsequent successes. A connection failure uses an
 HCI status; admission and Shell failures use the corresponding negative service
 or ATT error. `reason` is the last HCI disconnection reason. Times are uptime
 milliseconds modulo 2^32; the history resets on reboot and uses bounded storage.
+`params[0]` retains the last incoming management link's initial interval,
+peripheral latency and supervision timeout. `params[1]` records its first update
+callback; `params[2]` records the second or most recent later callback. The uptime
+stamps and callback count remain available after disconnection. A callback can
+also report unchanged parameters; these values do not prove sustained data rate
+or radio reliability.
 It can be read over USB after a failed BLE connection has released ownership.
 
 Closing a Linux client need not terminate the radio link immediately. For example,

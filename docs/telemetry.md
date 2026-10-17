@@ -236,9 +236,12 @@ motor-loaded timing.
 The F4 controller also runs at 3 Mbaud, as in the Pybricks F4 driver. The SMP BLE
 transport queues ordered notification fragments up to the available buffers
 instead of waiting for each fragment's completion before sending the next.
-The F4 profile prefers a 7.5 ms interval with peripheral latency 4 and requests
-latency 0 during active SMP traffic. On one USB-powered Robot Inventor F4 and
-Linux central, an immediately started passive 2,400-row recording at a requested
+The image used for the following run preferred a 7.5 ms interval with peripheral
+latency 4 and requested latency 0 during active SMP traffic. The current F4
+profile prefers latency 0 from connection establishment; see
+[Bluetooth integration](bluetooth.md#experimental-f4-controller). On one
+USB-powered Robot Inventor F4 and Linux central, an immediately started passive
+2,400-row recording at a requested
 15 ms period transferred 315,005 compact payload bytes in 36.440 seconds while
 56 parameter updates completed. All records and control steps were consecutive;
 the observations span 35.985 seconds on the hub. Motors were off. The central
