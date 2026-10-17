@@ -314,6 +314,12 @@ def test_native_frame_uses_shared_capture_fields():
         async with connection(port=port) as (client, transport):
             await upload(client, transport, (build / "record_frame_probe.elf").read_bytes())
             await checked(client, Start())
+            for _ in range(100):
+                info = await checked(client, recording.Info())
+                if info.size:
+                    break
+                await asyncio.sleep(0.01)
+            assert info.compact
             output = io.StringIO()
             counts = {"records": 0, "gaps": 0}
             await asyncio.wait_for(recording.collect(client, output, "frame", counts, wait=True), 5)

@@ -5,6 +5,11 @@
 #include "native_image.h"
 #include "app_store.h"
 #include "python_source.h"
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+#include "capture.h"
+#include "telemetry_block.h"
+#include <brickphyr_capture.h>
+#endif
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
 #endif
@@ -12,6 +17,7 @@
 #include <brickphyr_abi.h>
 #include <errno.h>
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
@@ -254,6 +260,18 @@ static bool record_position(zcbor_state_t *zs, const struct bp_record_info *info
  * bytes. Bound the copy/stack even if another service selects large buffers. */
 #define RECORD_BLOCK_BYTES MIN(1024, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 112)
 BUILD_ASSERT(RECORD_BLOCK_BYTES > 0);
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+/* Leave room for the position, row count and CBOR/SMP framing. */
+#define RECORD_COMPACT_BYTES MIN(1024, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 144)
+BUILD_ASSERT(RECORD_COMPACT_BYTES >= 104);
+
+static bool record_compact_supported(const struct bp_record_info *info, bool variable, bool paused)
+{
+	return paused && info->control && !variable && info->config_size == CONFIG_SIZE &&
+		!strcmp(info->spec.schema, "brickphyr.capture/2") &&
+		info->spec.size + 32 + 8 <= RECORD_COMPACT_BYTES;
+}
+#endif
 
 static int record_info_read(struct smp_streamer *stream)
 {
@@ -270,6 +288,10 @@ static int record_info_read(struct smp_streamer *stream)
 		zcbor_tstr_put_lit(zs, "control") && zcbor_bool_put(zs, info.control) &&
 		zcbor_tstr_put_lit(zs, "variable") && zcbor_bool_put(zs, variable) &&
 		zcbor_tstr_put_lit(zs, "paused") && zcbor_bool_put(zs, paused) &&
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+		zcbor_tstr_put_lit(zs, "compact") &&
+		zcbor_bool_put(zs, record_compact_supported(&info, variable, paused)) &&
+#endif
 		number(zs, "parameter_size", info.parameter_size) &&
 		number(zs, "capacity", info.spec.capacity) && zcbor_tstr_put_lit(zs, "schema") &&
 		zcbor_tstr_encode_ptr(zs, info.spec.schema, strlen(info.spec.schema));
@@ -325,6 +347,104 @@ static int record_block_read(struct smp_streamer *stream)
 		zcbor_bstr_encode_ptr(zs, data, length);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
+
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+struct record_compact_workspace {
+	struct telemetry_wire_field wire[CAPTURE_MAX_FIELDS + 6];
+	uint8_t encoded[RECORD_COMPACT_BYTES];
+	uint8_t rows[];
+};
+
+/* Compress retained rows in the management context, never in the controller's
+ * release path. Each response starts with a complete control step and frame. */
+static int record_compact_read(struct smp_streamer *stream)
+{
+	uint32_t generation = 0;
+	uint64_t index = UINT64_MAX;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !generation || index == UINT64_MAX) return MGMT_ERR_EINVAL;
+	struct bp_record_info info;
+	bool variable, paused;
+	application_record_snapshot(&info, NULL, &variable, &paused);
+	if (info.generation != generation) return result(stream, -ESTALE);
+	if (!record_compact_supported(&info, variable, paused)) return result(stream, -ENOTSUP);
+	if (index < info.first || index >= info.next) {
+		uint8_t empty = 0;
+		zcbor_state_t *zs = stream->writer->zs;
+		bool ok = record_position(zs, &info) && number(zs, "rows", 0) &&
+			zcbor_tstr_put_lit(zs, "data") && zcbor_bstr_encode_ptr(zs, &empty, 0);
+		return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	}
+	uint8_t config[CONFIG_SIZE];
+	struct bp_record_info current;
+	int length = application_record_config_read(generation, 0, config, sizeof(config), &current);
+	if (length != sizeof(config) || current.generation != generation) {
+		return result(stream, current.generation != generation ? -ESTALE : -EINVAL);
+	}
+	size_t row_size = info.spec.size + sizeof(struct bp_control_step);
+	struct record_compact_workspace *work = k_malloc(sizeof(*work) + 2 * row_size);
+	if (!work) return result(stream, -ENOMEM);
+	int count = capture_wire_layout(config, info.spec.size, work->wire + 6, CAPTURE_MAX_FIELDS);
+	if (count < 0) {
+		k_free(work);
+		return result(stream, count);
+	}
+	static const uint8_t step_widths[] = {8, 8, 4, 4, 4, 4};
+	size_t offset = 0;
+	for (unsigned int field = 0; field < ARRAY_SIZE(step_widths); field++) {
+		work->wire[field] = (struct telemetry_wire_field){offset, step_widths[field], -1, 1};
+		offset += step_widths[field];
+	}
+	for (int field = 6; field < count + 6; field++) {
+		work->wire[field].offset += sizeof(struct bp_control_step);
+		if (work->wire[field].alias >= 0) work->wire[field].alias += 6;
+	}
+	struct telemetry_block block;
+	int err = telemetry_block_init(&block, work->encoded, sizeof(work->encoded),
+		work->rows, row_size,
+		work->wire, count + 6);
+	if (err) {
+		k_free(work);
+		return result(stream, err);
+	}
+	while (index + block.rows < info.next) {
+		struct bp_control_step step;
+		uint64_t cursor = index + block.rows;
+		uint8_t *row = work->rows + row_size;
+		length = application_record_read(generation, cursor, 0,
+			row + sizeof(step), info.spec.size, &current, &step);
+		if (current.generation != generation || cursor < current.first ||
+		    cursor >= current.next || length != info.spec.size) {
+			err = current.generation != generation ? -ESTALE : -ENODATA;
+			break;
+		}
+		memcpy(row, &step, sizeof(step));
+		err = telemetry_block_append(&block, row);
+		if (err == -ENOSPC && block.rows) {
+			err = 0;
+			break;
+		}
+		if (err) break;
+	}
+	application_record_snapshot(&current, NULL, NULL, NULL);
+	if (!err && (current.generation != generation || index < current.first)) err = -ESTALE;
+	if (err) {
+		k_free(work);
+		return result(stream, err);
+	}
+	zcbor_state_t *zs = stream->writer->zs;
+	bool ok = record_position(zs, &current) && number(zs, "rows", block.rows) &&
+		zcbor_tstr_put_lit(zs, "data") &&
+		zcbor_bstr_encode_ptr(zs, work->encoded, block.rows ? block.length : 0);
+	k_free(work);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+#endif
 
 static int record_bind(struct smp_streamer *stream)
 {
@@ -560,6 +680,9 @@ static const struct mgmt_handler handlers[] = {
 	[22] = {.mh_read = record_block_read},
 	[23] = {.mh_write = record_bind},
 	[24] = {.mh_write = record_ack_write},
+#ifdef CONFIG_BRICKPHYR_CAPTURE
+	[25] = {.mh_read = record_compact_read},
+#endif
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

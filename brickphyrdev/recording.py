@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import Field
 from smp import message
 
-from . import application, monitor, record_codec, records, telemetry
+from . import application, capture_block_codec, capture_codec, monitor, record_codec, records, telemetry
 from .recording_io import write_event, write_events
 from .smp import checked, connection
 
@@ -36,6 +36,7 @@ class InfoResponse(message.ReadResponse):
     paused: bool = False
     parameter_size: int = 0
     block: int = 0
+    compact: bool = False
     tag: bytes | None = None
 
 
@@ -78,6 +79,18 @@ class BlockResponse(RecordResponse):
 class Block(Record):
     _COMMAND_ID = 22
     _Response = BlockResponse
+
+
+class CompactResponse(RecordResponse):
+    _COMMAND_ID = 25
+    rows: int
+
+
+class Compact(application._Group, message.ReadRequest):
+    _COMMAND_ID = 25
+    _Response = CompactResponse
+    generation: int
+    index: int
 
 
 class BindResponse(message.WriteResponse):
@@ -330,6 +343,12 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         trigger, trigger_after, reason = state
 
     record_codec.check_size(info.record_schema, info.size, bytes(config), variable=variable)
+    compact = getattr(info, "compact", False)
+    if type(compact) is not bool or compact and not (
+        block and info.control and paused and not variable and
+        info.record_schema == capture_codec.SCHEMA_V2
+    ):
+        raise RuntimeError("Invalid compact recording mode")
 
     tag = getattr(info, "tag", None)
     if tag is not None and len(tag) != 16:
@@ -404,6 +423,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     partial_step = None
     previous = resume.last_control if resume else None
     last_sequence = previous["sequence"] if previous else None
+    observed_sequence = last_sequence
     last_revision = previous["parameter_revision"] if previous else None
     cached_revision = resume.parameter_revision if resume else None
     pending_gap = 0
@@ -457,8 +477,14 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             await _write(log, event)
             return generation
 
-        request = Block if block else Record
-        reply = await checked(client, request(generation=generation, index=index, off=len(partial)))
+        if compact:
+            if partial:
+                raise RuntimeError("Partial compact recording block")
+            reply = await checked(client, Compact(generation=generation, index=index))
+        else:
+            request = Block if block else Record
+            reply = await checked(client, request(generation=generation, index=index,
+                                                  off=len(partial)))
         if reply.generation != generation:
             raise RuntimeError(
                 f"Recording generation changed from {generation} to {reply.generation}"
@@ -471,7 +497,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
         if index < first:
             continue  # Discard the partial record before the next request.
         if index >= next:
-            if reply.data or reply.step:
+            if reply.data or reply.step or compact and reply.rows:
                 raise RuntimeError("Recording data outside retained range")
             if active:
                 await asyncio.sleep(0.02)
@@ -484,11 +510,23 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 raise RuntimeError("Control step changed between record fragments")
         elif reply.step:
             raise RuntimeError("Unexpected control step on ordinary recording")
-        limit = block or (224 if info.control else 256)
+        if compact:
+            if not 1 <= reply.rows <= 255 or index + reply.rows > next or not reply.data or (
+                len(reply.data) > 1024 or reply.step
+            ):
+                raise RuntimeError("Invalid compact recording block")
+            rows = capture_block_codec.decode_control(reply.data, bytes(config))
+            if len(rows) != reply.rows or any(len(row) != max_stride for row in rows):
+                raise RuntimeError("Invalid compact recording row count or size")
+            payload = b"".join(rows)
+            limit = len(payload)
+        else:
+            payload = reply.data
+            limit = block or (224 if info.control else 256)
         available = (next - index) * max_stride if block else info.size
-        if not reply.data or len(reply.data) > limit or len(reply.data) > available - len(partial):
+        if not payload or len(payload) > limit or len(payload) > available - len(partial):
             raise RuntimeError("Invalid recording fragment")
-        partial.extend(reply.data)
+        partial.extend(payload)
         events = []
         while True:
             if index >= next:
@@ -557,6 +595,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 for event in events:
                     if event["type"] != "record":
                         continue
+                    sequence = event.get("control", {}).get("sequence")
+                    step_gap = max(0, sequence - observed_sequence - 1) if (
+                        sequence is not None and observed_sequence is not None and
+                        not pending_gap
+                    ) else 0
                     values = event.get("values")
                     if values is None:
                         values = record_codec.decode(info.record_schema, event["data"],
@@ -564,11 +607,14 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     for row_index, sample in enumerate(record_codec.samples(values)):
                         observation = records.Observation(event["index"], row_index,
                                                           pending_gap if row_index == 0 else 0,
-                                                          sample)
+                                                          sample,
+                                                          step_gap if row_index == 0 else 0)
                         result = on_observation(observation)
                         if inspect.isawaitable(result):
                             await result
                     pending_gap = 0
+                    if sequence is not None:
+                        observed_sequence = sequence
 
 
 @contextlib.contextmanager

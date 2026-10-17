@@ -7,6 +7,10 @@
 #include <stdint.h>
 
 #ifdef CONFIG_BRICKPHYR_CAPTURE
+struct telemetry_wire_field;
+/* Describe an exact capture/2 row for the shared lossless block encoder. */
+int capture_wire_layout(const uint8_t config[BP_CAPTURE_CONFIG_SIZE], size_t row_size,
+	struct telemetry_wire_field *wire, size_t capacity);
 /* Pack a cached frame with the same generated fields as diagnostic capture.
  * No hardware read, allocation or persistent pointer. */
 int capture_pack_frame(const uint8_t config[BP_CAPTURE_CONFIG_SIZE],

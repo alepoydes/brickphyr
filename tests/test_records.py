@@ -98,6 +98,22 @@ def test_reader_streams_exact_parameters_and_reports_missing_history():
         list(recording.frames())
 
 
+def test_paused_control_sequence_exposes_segment_boundary():
+    events = copy.deepcopy(_events())
+    events[0]["recording"].update(first=0, next=2, paused=True)
+    events.pop(1)
+    events[2]["index"] = 0
+    events[4]["index"] = 1
+    events[4]["control"]["sequence"] = 5
+    events[-1]["gaps"] = 0
+    with pytest.raises(ValueError, match="Unrecorded control steps"):
+        list(Recording(_source(events)).frames())
+    reader = Recording(_source(events))
+    frames = list(reader.frames(allow_gaps=True))
+    assert [frame.preceding_step_gap for frame in frames] == [0, 3]
+    assert (reader.step_gaps, reader.unrecorded_steps) == (1, 3)
+
+
 @pytest.mark.parametrize("event,field,value,message", [
     (3, "index", 3, "Unexpected record index"),
     (4, "revision", 2, "parameter revision"),

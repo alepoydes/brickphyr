@@ -136,11 +136,7 @@ def encode(rows, config):
     return bytes(output)
 
 
-def decode(block, config):
-    """Return exact capture/2 bytes; reject truncated, extra or malformed data."""
-    fields = _field_formats(config)
-    aliases = _aliases(config, len(fields))
-    deltas = _delta_flags(config)
+def _decode(block, fields, aliases, deltas):
     size = sum(field.size for field in fields)
     if not _HEADER.size <= len(block) <= _MAX_BYTES:
         raise ValueError("Invalid block length")
@@ -195,3 +191,21 @@ def decode(block, config):
     if offset != len(block):
         raise ValueError("Extra block bytes")
     return rows
+
+
+def decode(block, config):
+    """Return exact capture/2 bytes; reject truncated, extra or malformed data."""
+    fields = _field_formats(config)
+    return _decode(block, fields, _aliases(config, len(fields)), _delta_flags(config))
+
+
+def decode_control(block, capture_config):
+    """Return exact 32-byte control steps followed by capture/2 rows."""
+    capture_fields = _field_formats(capture_config)
+    step_fields = (struct.Struct("<q"),) * 2 + (struct.Struct("<I"),) * 4
+    aliases = [-1] * len(step_fields) + [
+        alias + len(step_fields) if alias >= 0 else -1
+        for alias in _aliases(capture_config, len(capture_fields))
+    ]
+    deltas = [True] * len(step_fields) + _delta_flags(capture_config)
+    return _decode(block, step_fields + capture_fields, aliases, deltas)

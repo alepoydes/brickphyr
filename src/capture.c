@@ -219,29 +219,51 @@ static void observe(struct capture_task *run, uint8_t *out)
 	(void)pack_sources(plan.mask, plan.fields, frame, out);
 }
 
-static size_t wire_layout(struct telemetry_wire_field *wire)
+static size_t wire_layout(uint32_t mask, const uint8_t fields[SOURCE_COUNT], size_t row_size,
+	struct telemetry_wire_field *wire, size_t capacity)
 {
 	static const struct { uint8_t size, delta; } header[] = {{8, 1}, {8, 1}, {8, 1}, {4, 1}};
 	size_t count = 0, offset = 0;
 	for (size_t i = 0; i < ARRAY_SIZE(header); i++) {
+		if (count == capacity) return 0;
 		wire[count++] = (struct telemetry_wire_field){offset, header[i].size, -1, header[i].delta};
 		offset += header[i].size;
 	}
 	int raw_base = -1;
 	for (unsigned int source = 0; source < SOURCE_COUNT; source++) {
-		if (!(plan.mask & BIT(source))) continue;
+		if (!(mask & BIT(source))) continue;
 		if (source == RAW_IMU) raw_base = count;
 		const struct capture_fields *kind = &field_kinds[source_kinds[source]];
 		for (unsigned int field = 0; field < kind->wire_count; field++) {
 			const struct capture_wire_field *entry = &kind->wire[field];
-			if (entry->selected >= 0 && !(plan.fields[source] & BIT(entry->selected))) continue;
+			if (entry->selected >= 0 && !(fields[source] & BIT(entry->selected))) continue;
 			int alias = source == CALIBRATED_IMU && raw_base >= 0 && field < CAPTURE_IMU_SHARED_FIELDS ?
 				raw_base + field : -1;
+			if (count == capacity) return 0;
 			wire[count++] = (struct telemetry_wire_field){offset, entry->size, alias, entry->delta};
 			offset += entry->size;
 		}
 	}
-	return offset == plan.snapshot_size ? count : 0;
+	return offset == row_size ? count : 0;
+}
+
+int capture_wire_layout(const uint8_t config[CONFIG_SIZE], size_t row_size,
+	struct telemetry_wire_field *wire, size_t capacity)
+{
+	uint32_t mask = sys_get_le32(config);
+	if (!mask || mask >> SOURCE_COUNT || !sys_get_le32(config + 4) ||
+	    !sys_get_le32(config + 12)) return -EINVAL;
+	for (unsigned int source = 0; source < SOURCE_COUNT; source++) {
+		uint8_t selected = config[16 + source];
+		if (!(mask & BIT(source))) {
+			if (selected) return -EINVAL;
+			continue;
+		}
+		const struct capture_fields *kind = &field_kinds[source_kinds[source]];
+		if (!selected || selected & ~((1U << kind->count) - 1)) return -EINVAL;
+	}
+	size_t count = wire_layout(mask, config + 16, row_size, wire, capacity);
+	return count ? count : -EINVAL;
 }
 
 static int block_start(struct capture_task *run)
@@ -790,7 +812,8 @@ static int start(void)
 		k_free(run);
 		return -ENOMEM;
 	}
-	run->field_count = wire_layout(run->wire);
+	run->field_count = wire_layout(plan.mask, plan.fields, plan.snapshot_size,
+		run->wire, ARRAY_SIZE(run->wire));
 	if (!run->field_count) {
 		(void)k_thread_stack_free(run->stack);
 		k_free(run);

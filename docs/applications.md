@@ -457,8 +457,9 @@ fixed; append calls at the end and increase the minor version. Incompatible
 changes require a new major and table symbol. The table is generated from the
 public syscall declarations; bindings keep using the same implementation.
 
-The current version is 2.3. It adds explicit
-[Brickphyr settings saving](settings.md#saving-from-an-application).
+The current version is 2.5. It adds the paused variable recorder and shared
+capture-frame packer described below. Version 2.4 added paused fixed recording;
+2.3 added explicit [Brickphyr settings saving](settings.md#saving-from-an-application).
 Version 2.2 added controller loading from a named installed ELF; 2.1 added
 explicit application user-data saving. ABI 2.0 through 2.2 ELF
 applications retain their existing table slots and remain supported.
@@ -852,6 +853,11 @@ retry of a stale control step. Finite RAM cannot preserve a continuous history
 across an arbitrarily slow or absent collector. Triggered capture is unavailable
 in this mode; the ordinary ring and finite diagnostic capture retain their
 existing behavior.
+The offline reader exposes the number of intervening unrecorded control steps
+as `Frame.preceding_step_gap` and `Observation.preceding_step_gap` on the first
+row of a record. A block boundary alone has no gap. Strict replay rejects such
+an interval unless `allow_gaps=True`; `record-info` counts these boundaries
+separately from missing record indices.
 
 Native ABI 2.5 adds `bp_record_begin_variable_paused(&spec, config, length)` for
 independently decodable blocks of 1–`spec.size` bytes. Each slot reserves the
@@ -865,8 +871,17 @@ sensor read. The 31-byte configuration selects sources and fields as described
 in [finite RAM capture](telemetry.md#finite-ram-capture); the supplied frame must
 include selected ports and matching timestamp resolution. An application can
 write the row to a fixed control recording, preserving its applied parameters.
-Compact application blocks still need a shared SDK writer for step/parameter
-metadata before they can replace that fixed control recording.
+For paused control recordings with this schema, the management service packs
+several complete steps and rows into an independently decodable block when
+downloading. It reuses the diagnostic capture field descriptions: unchanged
+metadata is omitted within a block, shared IMU metadata is sent once, and
+timestamps and counters use exact differences when shorter. The client restores
+the original step and row bytes before saving them, so recording files and
+offline readers keep the same format. Applied parameter blocks remain separate
+and are fetched only when their revision changes. Encoding runs on the download
+path, outside the controller's recording call; retained RAM still holds the
+original fixed-size records. Other application schemas use the ordinary binary
+block transfer.
 
 Return, fault and forced stop freeze the retained tail for retrieval. Normal
 host disconnect does not stop recording. Starting another application, Python

@@ -38,6 +38,7 @@ class Frame:
     control: dict | None
     gap: int
     values: dict | None
+    preceding_step_gap: int = 0
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class Observation:
     row_index: int
     preceding_record_gap: int
     values: dict
+    preceding_step_gap: int = 0
 
 
 class _CountedReader:
@@ -83,6 +85,7 @@ class Recording:
         self._line = 0
         self._used = False
         self.count = self.gaps = self.missing = self.revisions = 0
+        self.step_gaps = self.unrecorded_steps = 0
         self.end = self.outcome = None
         self.complete = False
         self.needs_separator = False
@@ -310,6 +313,7 @@ class Recording:
                     data = _blob(event["data"], self.size, "record",
                                  minimum=1 if self.variable else None)
                     control = event.get("control")
+                    step_gap = 0
                     if self.control:
                         if not isinstance(control, dict):
                             raise ValueError("Missing control step")
@@ -329,6 +333,13 @@ class Recording:
                             step[2] == previous_step[2] and step != previous_step
                         ):
                             raise ValueError("Control step moved backwards or changed")
+                        if previous_step is not None and not gap:
+                            step_gap = max(0, step[2] - previous_step[2] - 1)
+                            if step_gap:
+                                self.step_gaps += 1
+                                self.unrecorded_steps += step_gap
+                                if not allow_gaps:
+                                    raise ValueError(f"Unrecorded control steps before index {index}")
                         previous_step = step
                     elif control is not None:
                         raise ValueError("Control step on an ordinary recording")
@@ -337,7 +348,7 @@ class Recording:
                     self.next_index = index
                     self.last_control = control.copy() if control is not None else None
                     frame = Frame(index - 1, data, parameters, control, gap,
-                                  record_codec.decode(self.schema, data, self.config))
+                                  record_codec.decode(self.schema, data, self.config), step_gap)
                     gap = 0
                     yield frame
                 elif kind in ("application-end", "recording-end"):
@@ -370,7 +381,8 @@ class Recording:
         for frame in self.frames(allow_gaps=allow_gaps, allow_incomplete=allow_incomplete):
             for row_index, values in enumerate(record_codec.samples(frame.values)):
                 yield Observation(frame.index, row_index,
-                                  frame.gap if row_index == 0 else 0, values)
+                                  frame.gap if row_index == 0 else 0, values,
+                                  frame.preceding_step_gap if row_index == 0 else 0)
 
 
 def run(args):
@@ -393,6 +405,8 @@ def run(args):
             "payload_bytes": payload_bytes,
             "gaps": recording.gaps,
             "missing_records": recording.missing,
+            "step_gaps": recording.step_gaps,
+            "unrecorded_steps": recording.unrecorded_steps,
             "parameter_revisions": recording.revisions,
             "collection_complete": recording.complete,
             "outcome": recording.outcome,

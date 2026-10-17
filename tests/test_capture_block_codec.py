@@ -15,7 +15,7 @@ from brickphyrdev import bench_codec, capture_block_codec, capture_codec, record
 from brickphyrdev.records import Recording
 
 
-def _native_encode(tmp_path, rows, config):
+def _native_encode(tmp_path, rows, config, *, control=False):
     compiler = shutil.which("cc")
     if not compiler:
         pytest.skip("host C compiler unavailable")
@@ -36,9 +36,13 @@ def _native_encode(tmp_path, rows, config):
 
     widths = [field.size for field in capture_block_codec._field_formats(config)]
     offset = 0
-    fields = (WireField * len(widths))()
     aliases = capture_block_codec._aliases(config, len(widths))
     deltas = capture_block_codec._delta_flags(config)
+    if control:
+        widths = [8, 8, 4, 4, 4, 4] + widths
+        aliases = [-1] * 6 + [alias + 6 if alias >= 0 else -1 for alias in aliases]
+        deltas = [True] * 6 + deltas
+    fields = (WireField * len(widths))()
     for index, width in enumerate(widths):
         fields[index] = WireField(offset, width, aliases[index], deltas[index])
         offset += width
@@ -168,3 +172,54 @@ def test_shared_imu_metadata_is_transmitted_once(tmp_path):
     damaged[8 + len(rows[0]) - 32 + first_alias // 8] &= ~(1 << (first_alias % 8))
     with pytest.raises(ValueError, match="Shared IMU"):
         capture_block_codec.decode(damaged, config)
+
+
+def test_control_block_exact_rows_and_corruption(tmp_path):
+    selected = bytearray(15)
+    selected[0] = selected[1] = 1
+    config = struct.pack("<4I", 3, 15, 30, 1) + selected
+
+    def row(time, sequence, acceleration, revision, parameter_size):
+        step = struct.pack("<2q4I", time - 10, time, sequence, 0,
+                           revision, parameter_size)
+        raw = struct.pack("<2q3Ii", time, time + 2, sequence, 0, 0, 0)
+        capture = (struct.pack("<3qI", time, time + 3, time + 5, 0) +
+                   raw + struct.pack("<i", acceleration) + raw +
+                   struct.pack("<IiIi", 1, 0, 1, acceleration))
+        return step + capture
+
+    rows = [row(100_000, 7, 100, 3, 16), row(115_000, 8, 110, 3, 16),
+            row(130_000, 9, 120, 4, 20)]
+    block = _native_encode(tmp_path, rows, config, control=True)
+    assert struct.unpack_from("<4sHH", block) == (b"BCB3", len(rows), len(rows[0]))
+    assert capture_block_codec.decode_control(block, config) == rows
+    assert len(block) < 8 + sum(map(len, rows)) - 32
+
+    with pytest.raises(ValueError, match="Truncated"):
+        capture_block_codec.decode_control(block[:-1], config)
+    with pytest.raises(ValueError, match="Extra"):
+        capture_block_codec.decode_control(block + b"\0", config)
+    with pytest.raises(ValueError, match="header"):
+        capture_block_codec.decode_control(capture_block_codec.encode(
+            [value[32:] for value in rows], config), config)
+
+    aliases = [-1] * 6 + [
+        alias + 6 if alias >= 0 else -1
+        for alias in capture_block_codec._aliases(
+            config, len(capture_block_codec._field_formats(config)))
+    ]
+    widths = [8, 8, 4, 4, 4, 4] + [
+        field.size for field in capture_block_codec._field_formats(config)
+    ]
+    first_size = sum(width for width, alias in zip(widths, aliases, strict=True)
+                     if alias < 0)
+    mask_start = 8 + first_size
+    damaged = bytearray(block)
+    first_alias = next(index for index, alias in enumerate(aliases) if alias >= 0)
+    damaged[mask_start + first_alias // 8] &= ~(1 << (first_alias % 8))
+    with pytest.raises(ValueError, match="Shared IMU"):
+        capture_block_codec.decode_control(damaged, config)
+    damaged = bytearray(block)
+    damaged[mask_start + (len(widths) + 7) // 8] = 8
+    with pytest.raises(ValueError, match="delta length"):
+        capture_block_codec.decode_control(damaged, config)
