@@ -17,6 +17,9 @@ from .recording_io import write_event, write_events
 from .smp import checked, connection
 
 
+_writer = ThreadPoolExecutor(max_workers=1)
+
+
 class InfoResponse(message.ReadResponse):
     _GROUP_ID = application.GROUP
     _COMMAND_ID = 14
@@ -223,8 +226,7 @@ def _advance(old, new):
 async def _write(log, *events, counts=None):
     # A bounded write must finish before cancellation closes the file or
     # appends its footer. The event loop remains available to the terminal.
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(write_events, log, events)
+    future = _writer.submit(write_events, log, events)
     try:
         while not future.done():
             await asyncio.sleep(0.001)
@@ -235,7 +237,6 @@ async def _write(log, *events, counts=None):
                 await asyncio.sleep(0.001)
         raise
     finally:
-        executor.shutdown(wait=True)
         if future.done() and not future.cancelled() and future.exception() is None and counts is not None:
             for event in events:
                 if event["type"] == "record":
