@@ -1296,12 +1296,14 @@ only an entirely erased partition is initialized automatically.
 
 Standard SMP file management transfers `/apps/.incoming`. This reserved staging
 file is excluded from the application list. Installed names contain 1–32 ASCII
-letters, digits, dots, underscores or hyphens, with no leading dot. Reserved
-`@N` names identify [Pybricks slots](host.md#stored-pybricks-programs); they can be
-listed, run, read and removed through the same store, but ordinary installation
-cannot overwrite them. Other paths,
-including settings and traversal aliases, are denied. Installed files are readable
-through SMP but cannot be overwritten through the file-upload command.
+letters, digits, dots, underscores or hyphens, with no leading dot. A leading
+underscore hides a program from the hub's button selector, but it remains visible
+in `app list` and can be run or removed by name. Reserved `@N` names identify
+[Pybricks slots](host.md#stored-pybricks-programs); they can be listed, run, read
+and removed through the same store, but ordinary installation cannot overwrite
+them. Other paths, including settings and traversal aliases, are denied.
+Installed files are readable through SMP but cannot be overwritten through the
+file-upload command.
 
 Publication closes the transfer, checks the declared size and the complete ELF
 using the same admission checks as RAM, then atomically renames the staging file.
@@ -1315,13 +1317,15 @@ previously installed applications.
 `app list`, `app run NAME`, and `app remove NAME` are available in the shared Shell.
 The host [CLI](host.md#native-applications) provides the same lifecycle over USB
 and BLE. With no program or management session active, the hub's left/right
-buttons browse named applications and a short center press runs the selection
-through the same store and supervisor. Storage lookup and loading run on the
+buttons browse visible named applications and a short center press runs the
+selection through the same store and supervisor. Storage lookup and loading run on the
 existing storage worker so they do not block button or power handling. Removal
 or replacement affects the stored image, not a running instance:
 LLEXT has already copied its execution sections into protected RAM. There is no
-autorun. Installed images retain their ABI requirements; incompatible interface changes can
-require rebuilding and reinstalling them.
+autorun. The selected visible name is kept in RAM until power-off and revalidated
+when the selector returns; deleting it selects the next visible program. Installed
+images retain their ABI requirements; incompatible interface changes can require
+rebuilding and reinstalling them.
 
 File runs use Zephyr's LLEXT file loader without reserving a full ELF receive
 buffer. File admission and loading hold the store lock so replacement cannot

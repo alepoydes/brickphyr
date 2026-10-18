@@ -297,7 +297,8 @@ def installed_name(name, *, allow_slot=False):
         )
     ):
         raise ValueError(
-            "Application names use 1–32 ASCII letters, digits, '.', '_' or '-'; no leading '.'"
+            "Application names use 1–32 ASCII letters, digits, '.', '_' or '-'; "
+            "a leading '_' hides the program from the hub selector; no leading '.'"
         )
     return name
 

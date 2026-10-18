@@ -323,18 +323,24 @@ retry it. Shutdown closes admission and requests a blank.
 While no application, REPL or management session is active, the F4 matrix shows
 the selected program. Pybricks USB mode shows slot 0–4 when slot execution is
 included in the build; `!` indicates that it is unavailable. In Brickphyr USB mode,
-left/right browse installed named programs in lexical order with wraparound;
-`-` means there are none. The selected name starts with its first character and
-scrolls across the matrix once after a short pause. A new key press interrupts
-the scroll. A short center press launches the selection, and `X` briefly reports
-an empty slot or failed launch. The two-second center hold still shuts down.
+left/right browse visible installed named programs in lexical order with wraparound;
+names beginning with an underscore are skipped. The last selection remains in RAM
+after the program completes and after returning from Pybricks mode; a removed
+selection advances to the next visible name. `-` means there are none. The selected
+name starts with its first character and scrolls across the matrix once after a
+short pause. A new key press interrupts the scroll. A short center press launches
+the selection, and `X` briefly reports an empty slot or failed launch. The
+two-second center hold still shuts down.
 Holding the wake button at boot does not launch a program. The system preview
 releases the matrix before a button-launched program runs and returns when it
 stops and the hub is idle. A host-launched program can take the display on its
 first write. Named-program selection, scrolling and short-center launch are
 operator-confirmed on the Inventor F4 with a motorless native example. Pybricks
 slot digits, right-button selection and short-center launch of a motorless
-Python example are also confirmed there.
+Python example are also confirmed there. The same board retained a motorless
+Python selection after button launch and skipped an underscore-prefixed installed
+program while browsing. USB Shell removal of both test programs left the
+pre-existing applications intact.
 
 `bp_matrix_write(first, values, count)` accepts a contiguous portion of the
 25-pixel row-major frame, including a single pixel or the whole display. It

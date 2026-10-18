@@ -205,6 +205,12 @@ name uses the waiting RAM upload. In either hub terminal, use `app list`,
 changes may require rebuilding stored applications. See
 [storage semantics](applications.md#installed-native-files).
 
+Prefix a program name with `_` to keep it out of the hub's button selector while
+leaving it available from the CLI and terminal. For example,
+`uv run brickphyrdev app install build/native-examples/hello.elf --name _helper`
+installs a hidden program. Number visible programs such as `01-start`, `02-next`
+to set their browsing order.
+
 For Python, `--stack BYTES` on `app run` or `app start` requests a user stack
 before upload/start. The client checks the firmware's advertised minimum and
 maximum first; omitting the option uses its default. On the full F4 Python

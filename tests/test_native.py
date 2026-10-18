@@ -55,6 +55,11 @@ def check_arm_fixture(build):
 def test_reserved_slot_names():
     from brickphyrdev.application import installed_name
 
+    for name in ("01-start", "_helper"):
+        assert installed_name(name) == name
+    for name in (".incoming", ".userdata"):
+        with pytest.raises(ValueError):
+            installed_name(name)
     for name in ("@0", "@127"):
         assert installed_name(name, allow_slot=True) == name
         with pytest.raises(ValueError):

@@ -18,7 +18,9 @@ int app_store_status(void);
 int app_store_format(void);
 /* Lexical pagination; an empty returned name ends iteration. */
 int app_store_next(const char *after, struct app_file *entry, size_t *available);
-/* Browse named programs only. Direction is -1, 0 (first), or +1; wrap at ends. */
+/* Browse visible named programs with -1, 0 or +1. Zero retains current if present,
+ * otherwise chooses the next name; an empty current starts at the first.
+ * The other directions wrap at the ends. */
 int app_store_browse(const char *current, int direction, struct app_file *entry);
 int app_store_remove(const char *name);
 /* Called by the serial SMP dispatcher, after closing its standard FS transfer. */

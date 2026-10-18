@@ -7,6 +7,7 @@
 #include "host_transport.h"
 #include "hub_ble_peer.h"
 #include "hub_network.h"
+#include <string.h>
 #include <pbio/protocol.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -1850,6 +1851,44 @@ static const uint8_t padded[] = {
 #include <padded.inc>
 };
 
+ZTEST(python_ble_store, test_hidden_installed_programs)
+{
+	const uint8_t image[] = "\xa1\x67main.py\x4a" "print(42)\n";
+	const char *names[] = {"_helper", "zz01-step", "zz02-step"};
+	size_t next;
+	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
+		zassert_ok(application_upload(APPLICATION_FILES, 0, sizeof(image) - 1,
+			image, sizeof(image) - 1, &next));
+		zassert_ok(app_store_publish_upload(names[i]));
+	}
+	zassert_equal(app_store_remove(".incoming"), -EINVAL);
+	zassert_equal(app_store_remove(".userdata"), -EINVAL);
+	zassert_equal(app_store_remove(".userdata.tmp"), -EINVAL);
+	zassert_equal(app_store_remove(".."), -EINVAL);
+	struct app_file entry;
+	size_t available;
+	char after[sizeof(entry.name)] = "";
+	for (;;) {
+		zassert_ok(app_store_next(after, &entry, &available));
+		if (!entry.name[0] || !strcmp(entry.name, "_helper")) break;
+		strcpy(after, entry.name);
+	}
+	zassert_str_equal(entry.name, "_helper");
+	zassert_equal(app_store_browse("_helper", 0, &entry), -EINVAL);
+	zassert_ok(app_store_browse("zz01-step", 0, &entry));
+	zassert_str_equal(entry.name, "zz01-step");
+	zassert_ok(app_store_browse("zz01-step", 1, &entry));
+	zassert_str_equal(entry.name, "zz02-step");
+	zassert_ok(app_store_browse("zz02-step", 1, &entry));
+	zassert_not_equal(entry.name[0], '_');
+	zassert_ok(app_store_remove("zz01-step"));
+	zassert_ok(app_store_browse("zz01-step", 0, &entry));
+	zassert_str_equal(entry.name, "zz02-step");
+	zassert_ok(app_store_remove("_helper"));
+	zassert_equal(app_store_run("_helper", 0), -ENOENT);
+	zassert_ok(app_store_remove("zz02-step"));
+}
+
 ZTEST(python_ble, test_slot_capacity_preserves_previous_image)
 {
 	/* A normal named program shares the store and survives client-slot work. */
@@ -2038,15 +2077,20 @@ static void teardown(void *unused)
 ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_network, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_terminal_failure, NULL, setup, NULL, NULL, NULL);
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+ZTEST_SUITE(python_ble_store, NULL, NULL, NULL, NULL, NULL);
+#endif
 
 /* This Zephyr ARM ztest port provides weak test_main(), but no case filter.
- * The focused suite has exactly one case; both modes share one fixture. */
+ * Focused suites exercise one case; the store case needs no BLE setup. */
 void test_main(void)
 {
 #ifdef BRICKPHYR_FOCUSED_NETWORK_TEST
 	ztest_run_test_suite(python_ble_network, false, 1, 1, NULL);
 #elif defined(BRICKPHYR_FOCUSED_TERMINAL_FAILURE_TEST)
 	ztest_run_test_suite(python_ble_terminal_failure, false, 1, 1, NULL);
+#elif defined(BRICKPHYR_FOCUSED_STORE_TEST)
+	ztest_run_test_suite(python_ble_store, false, 1, 1, NULL);
 #else
 	ztest_run_all(NULL, false, 1, 1);
 	ztest_verify_all_test_suites_ran();

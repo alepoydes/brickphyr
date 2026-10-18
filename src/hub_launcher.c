@@ -30,6 +30,7 @@ static struct {
 	bool visible, pybricks, launching, dirty, need_initial_browse, start_pending;
 	uint8_t slot;
 	uint32_t generation;
+	/* Pybricks displays slot; this keeps the Brickphyr selection in RAM. */
 	char name[APP_NAME_MAX + 1];
 	int browse_error;
 	int8_t queued_direction;
@@ -175,6 +176,14 @@ static void preview_frame(uint8_t frame[BP_MATRIX_PIXELS], int64_t now)
 		glyph('X', frame);
 		return;
 	}
+	if (ui.pybricks) {
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+		glyph('0' + ui.slot, frame);
+#else
+		glyph('!', frame);
+#endif
+		return;
+	}
 	if (!ui.name[0]) {
 		glyph(ui.browse_error == -ENOENT ? '-' : '!', frame);
 		return;
@@ -202,7 +211,7 @@ static void display(int64_t now)
 		ui.error_until = 0;
 		select_name(ui.name, ui.browse_error, now);
 	}
-	if (!ui.dirty && ui.name[1] && now >= ui.frame_at &&
+	if (!ui.pybricks && !ui.dirty && ui.name[1] && now >= ui.frame_at &&
 	    ui.preview != PREVIEW_DONE) {
 		if (ui.preview == PREVIEW_FIRST) {
 			ui.preview = PREVIEW_SCROLL;
@@ -250,23 +259,15 @@ void hub_launcher_poll(bool available, bool pybricks, unsigned int slot, int64_t
 		ui.start_pending = false;
 		ui.error_until = 0;
 		ui.slot = slot;
-		select_name("", -ENOENT, now);
+		select_name(ui.name, ui.name[0] ? 0 : -ENOENT, now);
 		ui.need_initial_browse = !pybricks;
-		if (pybricks) {
-#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
-			char digit[] = {(char)('0' + slot), 0};
-			select_name(digit, 0, now);
-#else
-			select_name("", -ENOTSUP, now);
-#endif
-		}
 	}
 	if (pybricks) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 		if (slot != ui.slot) {
 			ui.slot = slot;
-			char digit[] = {(char)('0' + slot), 0};
-			select_name(digit, 0, now);
+			ui.error_until = 0;
+			ui.dirty = true;
 		}
 #endif
 	} else if (!ui.launching) {
@@ -277,7 +278,7 @@ void hub_launcher_poll(bool available, bool pybricks, unsigned int slot, int64_t
 				ui.need_initial_browse = false;
 			}
 		} else if (ui.need_initial_browse && job_available()) {
-			if (!submit(JOB_BROWSE, "", 0)) ui.need_initial_browse = false;
+			if (!submit(JOB_BROWSE, ui.name, 0)) ui.need_initial_browse = false;
 		}
 	}
 	if (ui.start_pending && job_available()) {
@@ -299,7 +300,11 @@ void hub_launcher_navigate(int direction)
 void hub_launcher_start(int64_t now)
 {
 	if (!ui.visible || ui.launching) return;
-	if (!ui.name[0]) {
+	if (ui.need_initial_browse) {
+		ui.start_pending = true;
+		return;
+	}
+	if (!ui.pybricks && !ui.name[0]) {
 		ui.error_until = now + 700;
 		ui.dirty = true;
 		return;
