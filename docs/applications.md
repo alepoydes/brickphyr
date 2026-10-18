@@ -1032,6 +1032,14 @@ revision once in the output; it discards an incomplete record if its parameter s
 overwritten before retrieval and reports the gap. A replay must use these values
 and the application schema, not current hub settings or a later sensor read.
 
+Programs calling `brickphyrdev.recording.collect()` may pass `on_frame` to receive
+one `records.Frame` per saved record, with its applied parameter bytes, control
+step, decoded values and preceding record/step gaps. The callback may be synchronous
+or awaitable. If `on_observation` is also set, the frame callback runs first;
+both receive data from the same saved record. Slow callbacks delay downloading,
+not control execution. Resuming a download calls callbacks only for newly appended
+records; replay the saved file to recover earlier frames.
+
 ### Offline inspection and numerical replay
 
 Inspect a collected file without connecting to a hub:

@@ -89,7 +89,7 @@ class Recording:
         self.end = self.outcome = None
         self.complete = False
         self.needs_separator = False
-        self.next_index = 0
+        self.next_index = self.pending_gap = 0
         self.parameter_revision = self.parameters = self.last_control = None
         try:
             self.session = self._read()
@@ -298,6 +298,7 @@ class Recording:
                     self.gaps += 1
                     index = next_index
                     self.next_index = index
+                    self.pending_gap = gap
                 elif kind == "parameters":
                     if not self.control:
                         raise ValueError("Parameters on an ordinary recording")
@@ -354,6 +355,7 @@ class Recording:
                     frame = Frame(index - 1, data, parameters, control, gap,
                                   record_codec.decode(self.schema, data, self.config), step_gap)
                     gap = 0
+                    self.pending_gap = 0
                     yield frame
                 elif kind in ("application-end", "recording-end"):
                     self._outcome(event, index)

@@ -171,9 +171,12 @@ def test_paused_recording_acks_only_complete_persisted_records(monkeypatch):
             return super().write(text)
 
     log = FailingLog()
+    frames = []
     with pytest.raises(OSError, match="disk failed"):
-        asyncio.run(recording.collect(object(), log, "fixture", {"records": 0, "gaps": 0}))
+        asyncio.run(recording.collect(object(), log, "fixture", {"records": 0, "gaps": 0},
+                                      on_frame=frames.append))
     assert acks == [1]
+    assert [frame.index for frame in frames] == [0]
     events = [json.loads(line) for line in log.getvalue().splitlines()]
     assert [event["index"] for event in events if event["type"] == "record"] == [0]
 
@@ -408,8 +411,9 @@ def test_recording_trigger_completion_keeps_live_application(monkeypatch):
 def test_control_parameters_follow_retained_revision_across_overwrite(monkeypatch):
     payload = bytes(176) + struct.pack("<2I", 3, 0)
     step1 = struct.pack("<qq4I", 100, 110, 1, 0, 1, 2)
-    step2 = struct.pack("<qq4I", 200, 210, 2, 0, 2, 2)
-    step3 = struct.pack("<qq4I", 300, 310, 3, 0, 2, 2)
+    step1_later = struct.pack("<qq4I", 150, 160, 4, 0, 1, 2)
+    step2 = struct.pack("<qq4I", 200, 210, 4, 0, 2, 2)
+    step3 = struct.pack("<qq4I", 300, 310, 7, 0, 2, 2)
     info = _info(
         size=184, capacity=3, next=2, control=True, parameter_size=2,
         record_schema="brickphyr.control-loop/1",
@@ -417,7 +421,7 @@ def test_control_parameters_follow_retained_revision_across_overwrite(monkeypatc
     reads = _fixture(
         monkeypatch, iter((
             _fragment(next=2, data=payload, step=step1),
-            _fragment(first=1, next=3, data=payload, step=step1),
+            _fragment(first=1, next=3, data=payload, step=step1_later),
             _fragment(first=1, next=3, data=payload, step=step2),
             _fragment(first=3, next=4, active=False, data=payload, step=step3),
         )), info,
@@ -428,7 +432,17 @@ def test_control_parameters_follow_retained_revision_across_overwrite(monkeypatc
         ),
     )
     output = io.StringIO()
-    asyncio.run(recording.collect(object(), output, "fixture", {"records": 0, "gaps": 0}))
+    live_frames = []
+
+    async def on_frame(frame):
+        assert any(event.get("index") == frame.index for event in map(
+            json.loads, output.getvalue().splitlines()
+        ))
+        live_frames.append(frame)
+        await asyncio.sleep(0)
+
+    asyncio.run(recording.collect(object(), output, "fixture", {"records": 0, "gaps": 0},
+                                  on_frame=on_frame))
     events = [json.loads(line) for line in output.getvalue().splitlines()]
     assert [event["type"] for event in events[1:-1]] == [
         "parameters", "record", "record", "gap", "parameters", "record",
@@ -445,10 +459,85 @@ def test_control_parameters_follow_retained_revision_across_overwrite(monkeypatc
     assert events[2]["values"]["port_mask"] == 3
     offline = Recording(io.StringIO(output.getvalue()))
     frames = list(offline.frames(allow_gaps=True, allow_incomplete=True))
+    assert live_frames == frames
     assert [(frame.index, frame.gap, frame.parameters) for frame in frames] == [
         (0, 0, b"ab"), (1, 0, b"ab"), (3, 1, b"cd"),
     ]
+    assert [frame.preceding_step_gap for frame in frames] == [0, 2, 0]
     assert not offline.complete  # collect() itself does not write the CLI footer.
+
+
+def test_frame_and_observation_callbacks_share_persisted_sample(monkeypatch):
+    config = struct.pack("<4I", 1, 20, 1000, 1)
+    payload = struct.pack("<3qI", 100, 101, 102, 0) + struct.pack(
+        "<2q3Ii6i", 10, 11, 2, 3, 4, -5, -6, 7, -8, 9, -10, 11
+    )
+    info = _info(size=len(payload), active=False, record_schema="brickphyr.capture/1",
+                 config_size=len(config))
+    _fixture(monkeypatch, iter((_fragment(active=False, data=payload),)), info,
+             terminal_info=info, configs=(SimpleNamespace(
+                 generation=7, total=len(config), data=config
+             ),))
+    output = io.BytesIO()
+    received = []
+
+    def on_frame(frame):
+        assert list(Recording(io.BytesIO(output.getvalue())).frames(
+            allow_incomplete=True
+        )) == [frame]
+        received.append(("frame", frame))
+
+    async def on_observation(observation):
+        await asyncio.sleep(0)
+        received.append(("observation", observation))
+
+    asyncio.run(recording.collect(object(), output, "fixture", {"records": 0, "gaps": 0},
+                                  on_frame=on_frame, on_observation=on_observation))
+    frame = list(Recording(io.BytesIO(output.getvalue())).frames(allow_incomplete=True))[0]
+    observation = list(Recording(io.BytesIO(output.getvalue())).observations(
+        allow_incomplete=True
+    ))[0]
+    assert received == [("frame", frame), ("observation", observation)]
+    assert frame.control is frame.parameters is None
+
+
+def test_frame_resume_keeps_applied_parameters_and_pending_gap(monkeypatch):
+    tag = b"T" * 16
+    first = _info(next=1, control=True, parameter_size=2, tag=tag)
+    step1 = struct.pack("<qq4I", 100, 110, 1, 0, 1, 2)
+    step2 = struct.pack("<qq4I", 200, 210, 5, 0, 1, 2)
+
+    def interrupted():
+        yield _fragment(data=b"ABCD", step=step1)
+        yield _fragment(first=2, next=3, data=b"")
+        raise ConnectionError("link lost")
+
+    _fixture(monkeypatch, interrupted(), first, params=(SimpleNamespace(
+        generation=7, first=0, next=1, revision=1, data=b"ab"
+    ),))
+    output = io.StringIO()
+    with pytest.raises(ConnectionError, match="link lost"):
+        asyncio.run(recording.collect(object(), output, "fixture",
+                                      {"records": 0, "gaps": 0}))
+    saved = Recording(io.StringIO(output.getvalue()))
+    assert len(list(saved.frames(allow_gaps=True, allow_incomplete=True))) == 1
+    assert (saved.next_index, saved.pending_gap, saved.parameters) == (2, 1, b"ab")
+
+    resumed = _info(first=2, next=3, active=False, control=True, parameter_size=2,
+                    tag=tag)
+    _fixture(monkeypatch, iter((_fragment(first=2, next=3, active=False,
+                                         data=b"EFGH", step=step2),)), resumed,
+             terminal_info=resumed)
+    output.seek(0, io.SEEK_END)
+    live = []
+    asyncio.run(recording.collect(object(), output, "fixture",
+                                  {"records": 1, "gaps": 1}, resume=saved,
+                                  on_frame=live.append))
+    assert live == list(Recording(io.StringIO(output.getvalue())).frames(
+        allow_gaps=True, allow_incomplete=True
+    ))[1:]
+    assert [(frame.index, frame.gap, frame.preceding_step_gap, frame.parameters)
+            for frame in live] == [(2, 1, 0, b"ab")]
 
 
 def test_control_step_must_remain_stable_across_fragments(monkeypatch):

@@ -253,12 +253,13 @@ async def _write(log, *events, counts=None):
 
 
 async def collect(client, log, session, counts, *, after=None, wait=False, resume=None,
-                  on_observation=None):
-    """Collect one recording; optionally deliver persisted observations as they arrive.
+                  on_observation=None, on_frame=None):
+    """Collect one recording; optionally deliver persisted frames and observations.
 
-    The callback receives the same Observation values as the offline reader.
-    It may be synchronous or awaitable; slow callbacks delay downloading, never
-    the hub's sampling thread. No additional acquisition or host queue is used.
+    Callbacks receive the same Frame and Observation values as the offline reader,
+    after their record is saved. They may be synchronous or awaitable; slow
+    callbacks delay downloading, never the hub's sampling thread. No additional
+    acquisition or host queue is used.
     """
     if resume is not None and after is not None:
         raise ValueError("Cannot trigger a recording while resuming its download")
@@ -465,7 +466,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     observed_sequence = last_sequence
     last_revision = previous["parameter_revision"] if previous else None
     cached_revision = resume.parameter_revision if resume else None
-    pending_gap = 0
+    applied_parameters = resume.parameters if resume else None
+    pending_gap = resume.pending_gap if resume else 0
     pending_ack = None
     prefetched = None
     clock = asyncio.get_running_loop()
@@ -721,8 +723,11 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     pending_ack = index
                 else:
                     first = await _ack(client, generation, first, index)
-            if on_observation is not None:
+            if on_frame is not None or on_observation is not None:
                 for event in events:
+                    if event["type"] == "parameters":
+                        applied_parameters = event["data"]
+                        continue
                     if event["type"] != "record":
                         continue
                     sequence = event.get("control", {}).get("sequence")
@@ -734,14 +739,23 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     if values is None:
                         values = record_codec.decode(info.record_schema, event["data"],
                                                      bytes(config))
-                    for row_index, sample in enumerate(record_codec.samples(values)):
-                        observation = records.Observation(event["index"], row_index,
-                                                          pending_gap if row_index == 0 else 0,
-                                                          sample,
-                                                          step_gap if row_index == 0 else 0)
-                        result = on_observation(observation)
+                    if on_frame is not None:
+                        frame = records.Frame(event["index"], event["data"],
+                                              applied_parameters, event.get("control"),
+                                              pending_gap, values, step_gap)
+                        result = on_frame(frame)
                         if inspect.isawaitable(result):
                             await result
+                    if on_observation is not None:
+                        for row_index, sample in enumerate(record_codec.samples(values)):
+                            observation = records.Observation(
+                                event["index"], row_index,
+                                pending_gap if row_index == 0 else 0,
+                                sample, step_gap if row_index == 0 else 0,
+                            )
+                            result = on_observation(observation)
+                            if inspect.isawaitable(result):
+                                await result
                     pending_gap = 0
                     if sequence is not None:
                         observed_sequence = sequence
