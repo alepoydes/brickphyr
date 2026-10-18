@@ -201,15 +201,27 @@ these checks do not establish sustained throughput.
 
 ### BLE transfer budget
 
-F4 native and Python profiles use four 1024-byte SMP buffers, allowing up to
-912 packed recording bytes per response. This retains the request/response pool
-capacity and costs 2048 bytes more static RAM than 512-byte buffers; the shared
-heap budgets account for that cost. The client uses the advertised block size.
+F4 native and Python profiles use three 1536-byte SMP buffers for an active
+request, one queued request and a response. This uses 512 bytes more payload
+storage than the earlier four 1024-byte buffers. A compact response can carry
+up to 1392 bytes before parameter context and SMP/CBOR framing. The host accepts
+the larger blocks and decodes the same lossless format. The encoder sizes its
+field table to selected sources rather than every possible source.
 The F4 BLE profile allows five ACL transmit buffers instead of three. At the
 current ATT MTU 247, a full notification takes ten 27-byte controller fragments,
 sent through that queue in successive batches. The shared-heap reservations
 account for the larger MTU and buffers. This changes transfer scheduling, not
 the recorded values or the controller's 27-byte packet limit.
+
+On one USB-powered Inventor F4, the current profile transferred an 80-row
+retained passive recording in 0.771–0.801 s using six compact requests.
+The same workload on the earlier four-buffer profile took 0.840–0.851 s and
+nine requests; sensor values varied between runs. Ten pairs of consecutive SMP
+Echo requests also returned in order. A live 1200-row check at a requested
+15 ms period, with passive BLE scanning and 28 parameter updates,
+recovered consecutive records without pauses or step gaps. Motors were off and
+USB supplied power; these checks do not establish battery-powered throughput
+or gap-free delivery under motor load.
 
 In an earlier bounded SPIKE Prime F4 check, a frozen 80-row native control recording
 (IMU, battery, A/B encoders and inactive outputs) contained 21,760 bytes of

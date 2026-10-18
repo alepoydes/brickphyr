@@ -271,7 +271,7 @@ static bool record_inline_parameters(const struct bp_record_info *info, bool seg
 }
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 /* Leave room for the position, row count and CBOR/SMP framing. */
-#define RECORD_COMPACT_BYTES MIN(1024, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 144)
+#define RECORD_COMPACT_BYTES MIN(2048, CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE - 144)
 BUILD_ASSERT(RECORD_COMPACT_BYTES >= 104);
 
 static bool record_compact_supported(const struct bp_record_info *info, bool variable,
@@ -407,12 +407,6 @@ static int record_block_read(struct smp_streamer *stream)
 }
 
 #ifdef CONFIG_BRICKPHYR_CAPTURE
-struct record_compact_workspace {
-	struct telemetry_wire_field wire[CAPTURE_MAX_FIELDS + 6];
-	uint8_t encoded[RECORD_COMPACT_BYTES];
-	uint8_t rows[];
-};
-
 static int record_compact_empty(struct smp_streamer *stream, const struct bp_record_info *info)
 {
 	uint8_t empty = 0;
@@ -470,36 +464,40 @@ static int record_compact_read(struct smp_streamer *stream)
 		return result(stream, current.generation != generation ? -ESTALE : -EINVAL);
 	}
 	size_t row_size = info.spec.size + sizeof(struct bp_control_step);
-	struct record_compact_workspace *work = k_malloc(sizeof(*work) + 2 * row_size);
-	if (!work) return result(stream, -ENOMEM);
-	int count = capture_wire_layout(config, info.spec.size, work->wire + 6, CAPTURE_MAX_FIELDS);
-	if (count < 0) {
-		k_free(work);
-		return result(stream, count);
+	int count = capture_wire_layout(config, info.spec.size, NULL, 0);
+	if (count < 0) return result(stream, count);
+	struct telemetry_wire_field *wire = k_malloc((count + 6) * sizeof(*wire) +
+		RECORD_COMPACT_BYTES + 2 * row_size);
+	if (!wire) return result(stream, -ENOMEM);
+	uint8_t *encoded = (uint8_t *)(wire + count + 6);
+	uint8_t *rows = encoded + RECORD_COMPACT_BYTES;
+	int filled = capture_wire_layout(config, info.spec.size, wire + 6, count);
+	if (filled != count) {
+		k_free(wire);
+		return result(stream, filled < 0 ? filled : -EINVAL);
 	}
 	static const uint8_t step_widths[] = {8, 8, 4, 4, 4, 4};
 	size_t offset = 0;
 	for (unsigned int field = 0; field < ARRAY_SIZE(step_widths); field++) {
-		work->wire[field] = (struct telemetry_wire_field){offset, step_widths[field], -1, 1};
+		wire[field] = (struct telemetry_wire_field){offset, step_widths[field], -1, 1};
 		offset += step_widths[field];
 	}
 	for (int field = 6; field < count + 6; field++) {
-		work->wire[field].offset += sizeof(struct bp_control_step);
-		if (work->wire[field].alias >= 0) work->wire[field].alias += 6;
+		wire[field].offset += sizeof(struct bp_control_step);
+		if (wire[field].alias >= 0) wire[field].alias += 6;
 	}
 	struct telemetry_block block;
 	size_t context = segments && info.parameter_size ? info.parameter_size + 16 : 0;
-	err = telemetry_block_init(&block, work->encoded, sizeof(work->encoded) - context,
-		work->rows, row_size,
-		work->wire, count + 6);
+	err = telemetry_block_init(&block, encoded, RECORD_COMPACT_BYTES - context,
+		rows, row_size, wire, count + 6);
 	if (err) {
-		k_free(work);
+		k_free(wire);
 		return result(stream, err);
 	}
 	while (index + block.rows < info.next) {
 		struct bp_control_step step;
 		uint64_t cursor = index + block.rows;
-		uint8_t *row = work->rows + row_size;
+		uint8_t *row = rows + row_size;
 		length = application_record_read(generation, cursor, 0,
 			row + sizeof(step), info.spec.size, &current, &step);
 		if (current.generation != generation || cursor < current.first ||
@@ -525,22 +523,22 @@ static int record_compact_read(struct smp_streamer *stream)
 	else if (!paused && index < current.first) {
 		/* The ring overtook this block while it was encoded. No partial
 		 * block or stale parameter reference may reach the collector. */
-		k_free(work);
+		k_free(wire);
 		return record_compact_empty(stream, &current);
 	} else if (!err && index < current.first) err = -ESTALE;
 	if (err) {
-		k_free(work);
+		k_free(wire);
 		return result(stream, err);
 	}
 	zcbor_state_t *zs = stream->writer->zs;
 	bool ok = record_position(zs, &current) && number(zs, "rows", block.rows) &&
 		zcbor_tstr_put_lit(zs, "data") &&
-		zcbor_bstr_encode_ptr(zs, work->encoded, block.rows ? block.length : 0);
+		zcbor_bstr_encode_ptr(zs, encoded, block.rows ? block.length : 0);
 	if (ok && segments && info.parameter_size && block.rows) {
 		ok = zcbor_tstr_put_lit(zs, "parameters") &&
 			zcbor_bstr_encode_ptr(zs, parameters, info.parameter_size);
 	}
-	k_free(work);
+	k_free(wire);
 	if (!ok) return MGMT_ERR_EMSGSIZE;
 	if (!block.rows) return MGMT_ERR_EOK;
 	err = application_record_advance(generation, index, index + block.rows);

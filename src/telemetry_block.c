@@ -31,7 +31,7 @@ int telemetry_block_init(struct telemetry_block *block, uint8_t *data, size_t ca
 {
 	if (!block || !data || !previous || !fields || !field_count ||
 	    field_count > MAX_FIELDS || !row_size || row_size > UINT16_MAX ||
-	    capacity > 1024 || capacity < HEADER_SIZE + row_size) return -EINVAL;
+	    capacity > 2048 || capacity < HEADER_SIZE + row_size) return -EINVAL;
 	size_t end = 0;
 	for (size_t i = 0; i < field_count; i++) {
 		if (!fields[i].size || fields[i].offset != end || fields[i].alias >= (int)i ||

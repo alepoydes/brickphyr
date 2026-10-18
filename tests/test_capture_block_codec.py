@@ -15,7 +15,7 @@ from brickphyrdev import bench_codec, capture_block_codec, capture_codec, record
 from brickphyrdev.records import Recording
 
 
-def _native_encode(tmp_path, rows, config, *, control=False):
+def _native_encode(tmp_path, rows, config, *, control=False, capacity=1024):
     compiler = shutil.which("cc")
     if not compiler:
         pytest.skip("host C compiler unavailable")
@@ -46,7 +46,7 @@ def _native_encode(tmp_path, rows, config, *, control=False):
     for index, width in enumerate(widths):
         fields[index] = WireField(offset, width, aliases[index], deltas[index])
         offset += width
-    output = (ctypes.c_uint8 * 1024)()
+    output = (ctypes.c_uint8 * capacity)()
     previous = (ctypes.c_uint8 * len(rows[0]))()
     state = Block()
     native = ctypes.CDLL(str(library))
@@ -55,7 +55,7 @@ def _native_encode(tmp_path, rows, config, *, control=False):
                                             ctypes.c_size_t, ctypes.c_void_p,
                                             ctypes.c_size_t)
     native.telemetry_block_append.argtypes = (ctypes.POINTER(Block), ctypes.c_void_p)
-    assert native.telemetry_block_init(ctypes.byref(state), output, 1024, previous,
+    assert native.telemetry_block_init(ctypes.byref(state), output, capacity, previous,
                                        len(rows[0]), fields, len(fields)) == 0
     for value in rows:
         source = (ctypes.c_uint8 * len(value)).from_buffer_copy(value)
@@ -92,6 +92,13 @@ def test_block_round_trip_and_corruption(tmp_path):
                                       config) == extremes
     assert _native_encode(tmp_path, extremes, config) == capture_block_codec.encode(
         extremes, config)
+    large_rows = [row(100_000 + index * 15_000, 7000 + index, index,
+                      sequence=index) for index in range(50)]
+    large_block = _native_encode(tmp_path, large_rows, config, capacity=2048)
+    assert 1024 < len(large_block) <= 2048
+    assert capture_block_codec.decode(large_block, config) == large_rows
+    with pytest.raises(ValueError, match="block length"):
+        capture_block_codec.decode(large_block.ljust(2049, b"\0"), config)
     record_codec.check_size(capture_codec.SCHEMA_V3, 1024, config, variable=True)
     assert record_codec.decode(capture_codec.SCHEMA_V3, block, config)["samples"] == [
         capture_codec.decode(value, config, schema=capture_codec.SCHEMA_V2)

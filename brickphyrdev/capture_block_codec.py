@@ -14,7 +14,8 @@ from .capture_layout import DELTA_COUNTERS, IMU_SHARED_FIELDS, KINDS, SOURCE_KIN
 _HEADER = struct.Struct("<4sHH")
 _MAGIC = b"BCB3"
 _MAX_ROWS = 255
-_MAX_BYTES = 1024
+_MAX_RECORD_BYTES = 1024
+MAX_TRANSFER_BYTES = 2048
 
 
 def _field_formats(config):
@@ -125,7 +126,7 @@ def encode(rows, config):
                     if aliases[index] < 0:
                         changed.extend(_delta_encoding(old, new) if deltas[index] else new)
             addition = mask + changed
-        if len(output) + len(addition) > _MAX_BYTES:
+        if len(output) + len(addition) > _MAX_RECORD_BYTES:
             raise ValueError("Block exceeds 1024 bytes")
         output.extend(addition)
         previous = row
@@ -138,7 +139,7 @@ def encode(rows, config):
 
 def _decode(block, fields, aliases, deltas):
     size = sum(field.size for field in fields)
-    if not _HEADER.size <= len(block) <= _MAX_BYTES:
+    if not _HEADER.size <= len(block) <= MAX_TRANSFER_BYTES:
         raise ValueError("Invalid block length")
     magic, count, row_size = _HEADER.unpack_from(block)
     if magic != _MAGIC or not 1 <= count <= _MAX_ROWS or row_size != size:

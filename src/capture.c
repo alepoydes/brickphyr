@@ -225,8 +225,9 @@ static size_t wire_layout(uint32_t mask, const uint8_t fields[SOURCE_COUNT], siz
 	static const struct { uint8_t size, delta; } header[] = {{8, 1}, {8, 1}, {8, 1}, {4, 1}};
 	size_t count = 0, offset = 0;
 	for (size_t i = 0; i < ARRAY_SIZE(header); i++) {
-		if (count == capacity) return 0;
-		wire[count++] = (struct telemetry_wire_field){offset, header[i].size, -1, header[i].delta};
+		if (wire && count == capacity) return 0;
+		if (wire) wire[count] = (struct telemetry_wire_field){offset, header[i].size, -1, header[i].delta};
+		count++;
 		offset += header[i].size;
 	}
 	int raw_base = -1;
@@ -239,8 +240,9 @@ static size_t wire_layout(uint32_t mask, const uint8_t fields[SOURCE_COUNT], siz
 			if (entry->selected >= 0 && !(fields[source] & BIT(entry->selected))) continue;
 			int alias = source == CALIBRATED_IMU && raw_base >= 0 && field < CAPTURE_IMU_SHARED_FIELDS ?
 				raw_base + field : -1;
-			if (count == capacity) return 0;
-			wire[count++] = (struct telemetry_wire_field){offset, entry->size, alias, entry->delta};
+			if (wire && count == capacity) return 0;
+			if (wire) wire[count] = (struct telemetry_wire_field){offset, entry->size, alias, entry->delta};
+			count++;
 			offset += entry->size;
 		}
 	}

@@ -602,7 +602,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
             raise RuntimeError("Unexpected control step on ordinary recording")
         if compact:
             if not 1 <= reply.rows <= 255 or index + reply.rows > next or not reply.data or (
-                len(reply.data) > 1024 or reply.step
+                len(reply.data) > capture_block_codec.MAX_TRANSFER_BYTES or reply.step
             ):
                 raise RuntimeError("Invalid compact recording block")
             rows = capture_block_codec.decode_control(reply.data, bytes(config))
