@@ -1929,6 +1929,41 @@ clearly, before replacing a running application.
 
 ## Host and input devices
 
+### Host-to-native messages
+
+The native primary can call `bp_host_open()` once per run with up to eight
+`bp_host_type` descriptors. Each descriptor has a numeric type, human-readable
+name, binary-format version, maximum size (1–1024 bytes), and `BP_HOST_VALUE`
+or `BP_HOST_COMMAND` policy. Combined declared payload capacity is at most
+4096 bytes; it is allocated only while this native application runs. The
+application defines and validates the contents of each complete block. This
+supports controller parameters and other application commands without baking
+their schemas into the firmware. Python and background controllers cannot
+register an inbox. Include the declared capacity and descriptor overhead in
+`app budget --dynamic` when preflighting an application.
+
+`bp_host_read(type, buffer, capacity, &info)` copies one complete pending block
+and returns 1, including for an empty-payload command; 0 means no block. `info`
+contains the request number, byte length and hub receive timestamp. A short
+buffer returns `-EMSGSIZE` without consuming the block. The application applies
+it and calls `bp_host_finish(type, request, result, detail)` with zero or a
+negative error and an optional application-defined detail, such as the applied
+parameter revision. Neither call communicates with the host or allocates memory.
+An existing controller can then receive validated parameters through its normal
+primary-to-controller update API.
+
+`BP_HOST_VALUE` replaces an older **pending** value of the same type. An already
+read value remains in processing while a newer one waits. `BP_HOST_COMMAND`
+rejects another command of its type while one is pending or processing. Each
+type has monotonically increasing nonzero 32-bit request numbers; duplicates
+with the same payload return their current status, while changed retries and
+stale numbers are rejected. Status distinguishes pending, processing, completed
+and superseded. Messages and outcomes are volatile: a stopped, faulted, or
+replaced application loses them. The host must rediscover the new run ID after
+restart. Receipt is distinct from completion; reconnecting does not stop an
+autonomous application. The [CLI](host.md#native-application-messages) and Shell
+share these handlers over the existing SMP transport.
+
 An autonomous application can run with no computer. Normal host disconnection,
 recorder failure, or a full log queue must not implicitly STOP it. The application's
 input policy determines what controller loss means; the firmware reports the event

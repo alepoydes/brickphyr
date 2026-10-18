@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <brickphyr_host.h>
 
 enum application_state { APPLICATION_IDLE, APPLICATION_RUNNING, APPLICATION_RETURNED, APPLICATION_STOPPED, APPLICATION_FAULT };
 enum application_format { APPLICATION_NATIVE, APPLICATION_PYTHON, APPLICATION_MPY, APPLICATION_FILES,
@@ -55,6 +56,20 @@ struct application_stack_info {
 	int requested, user, unused, privileged, priv_unused;
 	int next;
 	bool present;
+};
+
+struct application_host_descriptor {
+	uint64_t run;
+	struct bp_host_type type;
+	uint32_t last;
+	bool present;
+};
+
+struct application_host_reply {
+	uint32_t request;
+	uint8_t state;
+	int result;
+	uint32_t detail;
 };
 
 /* Preflight accounting, not a fit guarantee. Native bytes are the admission
@@ -122,6 +137,11 @@ int application_observe(struct application_status *status);
 /* Read-only snapshots; EBUSY during lifecycle work. No background sampler. */
 int application_memory_get(struct application_memory *memory);
 int application_stack_get(size_t index, struct application_stack_info *stack);
+int application_host_descriptor_get(size_t index, struct application_host_descriptor *value);
+int application_host_send(uint64_t run, uint16_t type, uint32_t request,
+	const void *data, size_t length, struct application_host_reply *reply);
+int application_host_status(uint64_t run, uint16_t type, uint32_t request,
+	struct application_host_reply *reply);
 int application_budget_uploaded(const struct application_budget_request *request,
 	struct application_budget *budget);
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE

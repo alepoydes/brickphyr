@@ -21,6 +21,7 @@
 #include <brickphyr_system.h>
 #include <brickphyr_control.h>
 #include <brickphyr_record.h>
+#include <brickphyr_host.h>
 
 #if defined(__ZEPHYR__) && !defined(LL_EXTENSION_BUILD)
 #include <zephyr/toolchain.h>
@@ -533,6 +534,21 @@ __syscall int bp_record_begin_variable_paused(const struct bp_record_spec *spec,
 __syscall int bp_capture_pack_frame(const uint8_t *config, size_t config_size,
 	const struct bp_control_step *step, const struct bp_control_frame *frame,
 	void *data, size_t capacity);
+
+/* Native primary only. Register up to eight independent message types once per
+ * run. The supervisor allocates exactly the declared payload capacity and
+ * exposes the descriptor table through SMP. */
+__syscall int bp_host_open(const struct bp_host_type *types, size_t count);
+/* Copy one complete pending message into caller-owned memory. Returns 1
+ * (including an empty-payload command), zero when empty, EMSGSIZE without
+ * consumption for a short buffer, or EBUSY until the previous read for this
+ * type is finished. No allocation or transport operation occurs here. Data
+ * and info regions must not overlap. */
+__syscall int bp_host_read(uint16_t type, void *data, size_t capacity,
+	struct bp_host_message *info);
+/* Complete the exact read request. result is 0 or negative errno; detail is an
+ * optional application result such as the applied controller revision. */
+__syscall int bp_host_finish(uint16_t type, uint32_t request, int result, uint32_t detail);
 
 #include <zephyr/syscalls/brickphyr.h>
 #endif

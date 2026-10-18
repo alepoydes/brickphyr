@@ -758,6 +758,75 @@ static int remove_write(struct smp_streamer *s) { return file_operation(s, 8); }
 static int stored_run_write(struct smp_streamer *s) { return file_operation(s, 9); }
 #endif
 
+static int host_descriptor_read(struct smp_streamer *stream)
+{
+	uint32_t index = 0;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint32_decode, &index),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded)) return MGMT_ERR_EINVAL;
+	struct application_host_descriptor descriptor;
+	int err = application_host_descriptor_get(index, &descriptor);
+	if (err) return result(stream, err);
+	zcbor_state_t *zs = stream->writer->zs;
+	if (!zcbor_tstr_put_lit(zs, "present") || !zcbor_bool_put(zs, descriptor.present)) return MGMT_ERR_EMSGSIZE;
+	if (!descriptor.present) return MGMT_ERR_EOK;
+	bool ok = number(zs, "run", descriptor.run) &&
+		number(zs, "type", descriptor.type.type) &&
+		zcbor_tstr_put_lit(zs, "name") &&
+		zcbor_tstr_encode_ptr(zs, descriptor.type.name, strlen(descriptor.type.name)) &&
+		number(zs, "version", descriptor.type.version) &&
+		number(zs, "max_size", descriptor.type.max_size) &&
+		number(zs, "policy", descriptor.type.policy) &&
+		number(zs, "last", descriptor.last);
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static bool host_reply_encode(zcbor_state_t *zs, const struct application_host_reply *reply)
+{
+	return number(zs, "state", reply->state) && number(zs, "result", reply->result) &&
+		number(zs, "detail", reply->detail) && number(zs, "request", reply->request);
+}
+
+static int host_send_write(struct smp_streamer *stream)
+{
+	uint64_t run = 0;
+	uint32_t type = UINT32_MAX, request = 0;
+	struct zcbor_string data = {0};
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("run", zcbor_uint64_decode, &run),
+		ZCBOR_MAP_DECODE_KEY_DECODER("type", zcbor_uint32_decode, &type),
+		ZCBOR_MAP_DECODE_KEY_DECODER("request", zcbor_uint32_decode, &request),
+		ZCBOR_MAP_DECODE_KEY_DECODER("data", zcbor_bstr_decode, &data),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !run || type > UINT16_MAX || !request || !data.value) return MGMT_ERR_EINVAL;
+	struct application_host_reply reply;
+	int err = application_host_send(run, type, request, data.value, data.len, &reply);
+	if (err) return result(stream, err);
+	return host_reply_encode(stream->writer->zs, &reply) ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int host_status_read(struct smp_streamer *stream)
+{
+	uint64_t run = 0;
+	uint32_t type = UINT32_MAX, request = 0;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("run", zcbor_uint64_decode, &run),
+		ZCBOR_MAP_DECODE_KEY_DECODER("type", zcbor_uint32_decode, &type),
+		ZCBOR_MAP_DECODE_KEY_DECODER("request", zcbor_uint32_decode, &request),
+	};
+	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
+	    !run || type > UINT16_MAX) return MGMT_ERR_EINVAL;
+	struct application_host_reply reply;
+	int err = application_host_status(run, type, request, &reply);
+	if (err) return result(stream, err);
+	return host_reply_encode(stream->writer->zs, &reply) ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
 static const struct mgmt_handler handlers[] = {
 	[0] = {.mh_read = status_read},
 	[1] = {.mh_write = upload_write},
@@ -795,6 +864,9 @@ static const struct mgmt_handler handlers[] = {
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 	[25] = {.mh_read = record_compact_read},
 #endif
+	[26] = {.mh_read = host_descriptor_read},
+	[27] = {.mh_write = host_send_write},
+	[28] = {.mh_read = host_status_read},
 };
 
 #ifdef CONFIG_MCUMGR_SMP_SUPPORT_ORIGINAL_PROTOCOL

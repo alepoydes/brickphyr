@@ -19,7 +19,7 @@ if(NOT CONFIG_SHELL_BACKEND_SERIAL)
 endif()
 include(${BRICKPHYR_ROOT}/sdk/native.cmake)
 set(native_probes record record_event record_paused record_paused_segments record_variable record_frame record_frame_ring
-  record_app_fields
+  record_app_fields host_inbox
   record_frame_segments record_frame_segments_params record_frame_segments_params_raw
   record_frame_segments_params_big
   record_stream record_stream_ring record_stream_segments control control_file)

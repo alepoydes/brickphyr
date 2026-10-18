@@ -41,6 +41,7 @@
 #include <zephyr/fatal.h>
 #include <zephyr/internal/syscall_handler.h>
 #include <zephyr/kernel.h>
+#include <zephyr/random/random.h>
 #include <zephyr/llext/buf_loader.h>
 #include <zephyr/llext/llext.h>
 #include <zephyr/shell/shell.h>
@@ -207,6 +208,239 @@ static bool control_caller(void)
 static bool primary_caller(void)
 {
 	return atomic_get(&active) && k_sched_current_thread_query() == &application_thread;
+}
+
+/* The host owns delivery, never execution. Each type has one pending payload;
+ * the primary copies it before applying it. Neither path waits for radio I/O. */
+struct host_slot {
+	struct bp_host_type type;
+	uint8_t *data;
+	uint32_t last, pending, processing, completed, superseded;
+	int result;
+	uint32_t detail;
+	uint16_t size;
+	int64_t received_us;
+};
+struct host_inbox {
+	uint64_t run;
+	size_t count;
+	struct host_slot slots[];
+};
+static K_MUTEX_DEFINE(host_lock);
+static struct host_inbox *host_inbox;
+
+static struct host_slot *host_slot_find(struct host_inbox *inbox, uint16_t type)
+{
+	for (size_t i = 0; i < inbox->count; i++) {
+		if (inbox->slots[i].type.type == type) return &inbox->slots[i];
+	}
+	return NULL;
+}
+
+static int host_reply(const struct host_slot *slot, uint32_t request,
+	struct application_host_reply *reply)
+{
+	if (!request) request = slot->last;
+	*reply = (struct application_host_reply){.request = request, .state = BP_HOST_EMPTY};
+	if (!request) return 0;
+	if (request == slot->pending) reply->state = BP_HOST_PENDING;
+	else if (request == slot->processing) reply->state = BP_HOST_PROCESSING;
+	else if (request == slot->completed) {
+		reply->state = BP_HOST_COMPLETED;
+		reply->result = slot->result;
+		reply->detail = slot->detail;
+	} else if (request == slot->superseded) reply->state = BP_HOST_SUPERSEDED;
+	else return request <= slot->last ? -ESTALE : -ENOENT;
+	return 0;
+}
+
+static bool host_name_valid(const char *name)
+{
+	size_t length = strnlen(name, BP_HOST_NAME_SIZE);
+	if (!length || length == BP_HOST_NAME_SIZE) return false;
+	for (size_t i = 0; i < length; i++) {
+		char c = name[i];
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		      (i && ((c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')))) return false;
+	}
+	return true;
+}
+
+int z_impl_bp_host_open(const struct bp_host_type *types, size_t count)
+{
+	if (!primary_caller() || status.format != APPLICATION_NATIVE) return -EPERM;
+	if (!count || count > BP_HOST_MAX_TYPES) return -EINVAL;
+	size_t total = 0;
+	for (size_t i = 0; i < count; i++) {
+		const struct bp_host_type *type = &types[i];
+		if (!type->type || !type->version || !type->max_size ||
+		    type->max_size > BP_HOST_MAX_PAYLOAD ||
+		    (type->policy != BP_HOST_VALUE && type->policy != BP_HOST_COMMAND) ||
+		    !host_name_valid(type->name)) return -EINVAL;
+		for (size_t j = 0; j < i; j++) {
+			if (type->type == types[j].type || !strcmp(type->name, types[j].name)) return -EEXIST;
+		}
+		total += type->max_size;
+	}
+	if (total > BP_HOST_TOTAL_PAYLOAD) return -EMSGSIZE;
+	size_t header = sizeof(struct host_inbox) + count * sizeof(struct host_slot);
+	struct host_inbox *inbox = k_calloc(1, header + total);
+	if (!inbox) return -ENOMEM;
+	inbox->count = count;
+#if defined(CONFIG_ENTROPY_DEVICE_RANDOM_GENERATOR)
+	sys_rand_get(&inbox->run, sizeof(inbox->run));
+#else
+	/* QEMU has no entropy device; use its boot/runtime clock for an epoch.
+	 * Production boards use the hardware generator above. */
+	inbox->run = ((uint64_t)k_cycle_get_32() << 32) | (uint32_t)hub_time_us();
+#endif
+	inbox->run &= INT64_MAX;
+	if (!inbox->run) inbox->run = 1;
+	uint8_t *buffer = (uint8_t *)inbox + header;
+	for (size_t i = 0; i < count; i++) {
+		inbox->slots[i].type = types[i];
+		inbox->slots[i].data = buffer;
+		buffer += types[i].max_size;
+	}
+	k_mutex_lock(&host_lock, K_FOREVER);
+	int err = host_inbox ? -EALREADY : 0;
+	if (!err) host_inbox = inbox;
+	k_mutex_unlock(&host_lock);
+	if (err) k_free(inbox);
+	return err;
+}
+static inline int z_vrfy_bp_host_open(const struct bp_host_type *types, size_t count)
+{
+	if (!primary_caller() || status.format != APPLICATION_NATIVE) return -EPERM;
+	if (!count || count > BP_HOST_MAX_TYPES) return -EINVAL;
+	user_memory_check(types, count * sizeof(*types), __alignof__(*types), false, __func__);
+	struct bp_host_type copy[BP_HOST_MAX_TYPES];
+	memcpy(copy, types, count * sizeof(*types));
+	return z_impl_bp_host_open(copy, count);
+}
+#include <zephyr/syscalls/bp_host_open_mrsh.c>
+
+int z_impl_bp_host_read(uint16_t type, void *data, size_t capacity, struct bp_host_message *info)
+{
+	if (!primary_caller() || status.format != APPLICATION_NATIVE) return -EPERM;
+	k_mutex_lock(&host_lock, K_FOREVER);
+	struct host_slot *slot = host_inbox ? host_slot_find(host_inbox, type) : NULL;
+	int err = !host_inbox ? -ENODATA : !slot ? -ENOENT : slot->processing ? -EBUSY : 0;
+	if (!err && slot->pending) {
+		if (slot->size > capacity) err = -EMSGSIZE;
+		else {
+			if (slot->size) memcpy(data, slot->data, slot->size);
+			*info = (struct bp_host_message){slot->pending, slot->size, slot->received_us};
+			slot->processing = slot->pending;
+			slot->pending = 0;
+			err = 1;
+		}
+	}
+	k_mutex_unlock(&host_lock);
+	return err;
+}
+static inline int z_vrfy_bp_host_read(uint16_t type, void *data, size_t capacity,
+	struct bp_host_message *info)
+{
+	if (!primary_caller() || status.format != APPLICATION_NATIVE) return -EPERM;
+	if (capacity > BP_HOST_MAX_PAYLOAD) return -EMSGSIZE;
+	user_memory_check(info, sizeof(*info), __alignof__(*info), true, __func__);
+	if (capacity) user_memory_check(data, capacity, 1, true, __func__);
+	if (output_overlaps(data, capacity, info, sizeof(*info))) return -EINVAL;
+	return z_impl_bp_host_read(type, data, capacity, info);
+}
+#include <zephyr/syscalls/bp_host_read_mrsh.c>
+
+int z_impl_bp_host_finish(uint16_t type, uint32_t request, int result, uint32_t detail)
+{
+	if (!primary_caller() || status.format != APPLICATION_NATIVE) return -EPERM;
+	if (result > 0 || !request) return -EINVAL;
+	k_mutex_lock(&host_lock, K_FOREVER);
+	struct host_slot *slot = host_inbox ? host_slot_find(host_inbox, type) : NULL;
+	int err = !host_inbox ? -ENODATA : !slot ? -ENOENT : slot->processing != request ? -ESTALE : 0;
+	if (!err) {
+		slot->processing = 0;
+		slot->completed = request;
+		slot->result = result;
+		slot->detail = detail;
+	}
+	k_mutex_unlock(&host_lock);
+	return err;
+}
+static inline int z_vrfy_bp_host_finish(uint16_t type, uint32_t request, int result, uint32_t detail)
+{
+	return z_impl_bp_host_finish(type, request, result, detail);
+}
+#include <zephyr/syscalls/bp_host_finish_mrsh.c>
+
+int application_host_descriptor_get(size_t index, struct application_host_descriptor *value)
+{
+	if (!value) return -EINVAL;
+	k_mutex_lock(&host_lock, K_FOREVER);
+	if (!host_inbox || !atomic_get(&active)) {
+		k_mutex_unlock(&host_lock);
+		return -ENODATA;
+	}
+	*value = (struct application_host_descriptor){.present = index < host_inbox->count};
+	if (value->present) {
+		const struct host_slot *slot = &host_inbox->slots[index];
+		value->run = host_inbox->run;
+		value->type = slot->type;
+		value->last = slot->last;
+	}
+	k_mutex_unlock(&host_lock);
+	return 0;
+}
+
+int application_host_send(uint64_t run, uint16_t type, uint32_t request,
+	const void *data, size_t length, struct application_host_reply *reply)
+{
+	if (!reply || !request || (length && !data)) return -EINVAL;
+	k_mutex_lock(&host_lock, K_FOREVER);
+	int err = !host_inbox || !atomic_get(&active) ? -ENODATA :
+		run != host_inbox->run ? -ESTALE : 0;
+	struct host_slot *slot = err ? NULL : host_slot_find(host_inbox, type);
+	if (!err && !slot) err = -ENOENT;
+	if (!err && length > slot->type.max_size) err = -EMSGSIZE;
+	if (!err && request < slot->last) err = -ESTALE;
+	else if (!err && request == slot->last) {
+		err = slot->size == length && (!length || !memcmp(slot->data, data, length)) ?
+			host_reply(slot, request, reply) : -EALREADY;
+	} else if (!err) {
+		if (slot->type.policy == BP_HOST_COMMAND && (slot->pending || slot->processing)) err = -EBUSY;
+		else {
+			if (slot->pending) slot->superseded = slot->pending;
+			if (length) memcpy(slot->data, data, length);
+			slot->size = length;
+			slot->received_us = hub_time_us();
+			slot->last = slot->pending = request;
+			err = host_reply(slot, request, reply);
+		}
+	}
+	k_mutex_unlock(&host_lock);
+	return err;
+}
+
+int application_host_status(uint64_t run, uint16_t type, uint32_t request,
+	struct application_host_reply *reply)
+{
+	if (!reply) return -EINVAL;
+	k_mutex_lock(&host_lock, K_FOREVER);
+	int err = !host_inbox || !atomic_get(&active) ? -ENODATA :
+		run != host_inbox->run ? -ESTALE : 0;
+	struct host_slot *slot = err ? NULL : host_slot_find(host_inbox, type);
+	if (!err) err = slot ? host_reply(slot, request, reply) : -ENOENT;
+	k_mutex_unlock(&host_lock);
+	return err;
+}
+
+static void host_inbox_release(void)
+{
+	k_mutex_lock(&host_lock, K_FOREVER);
+	struct host_inbox *old = host_inbox;
+	host_inbox = NULL;
+	k_mutex_unlock(&host_lock);
+	k_free(old);
 }
 
 static enum bp_port_owner application_port_owner(void)
@@ -2752,6 +2986,7 @@ static int release_controller(void)
 static int release(bool keep_python_memory)
 {
 	ARG_UNUSED(keep_python_memory);
+	host_inbox_release();
 	/* Caller has joined the application. Retain its bounded record tail even
 	 * after a fault; cancellation prevents allocation from an abandoned begin. */
 	atomic_clear(&record_pending);
@@ -4086,8 +4321,88 @@ size_t application_read_output(void *data, size_t capacity, struct application_s
 	return count;
 }
 
+static int host_shell_type(const char *name, struct application_host_descriptor *descriptor)
+{
+	for (size_t i = 0; i < BP_HOST_MAX_TYPES; i++) {
+		int err = application_host_descriptor_get(i, descriptor);
+		if (err) return err;
+		if (!descriptor->present) break;
+		if (!strcmp(name, descriptor->type.name)) return 0;
+		int parse_err = 0;
+		unsigned long id = shell_strtoul(name, 10, &parse_err);
+		if (!parse_err && id == descriptor->type.type) return 0;
+	}
+	return -ENOENT;
+}
+
+static int host_hex_digit(char digit)
+{
+	if (digit >= '0' && digit <= '9') return digit - '0';
+	if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+	if (digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
+	return -EINVAL;
+}
+
+static int cmd_app_message(const struct shell *shell, size_t argc, char **argv)
+{
+	if (argc == 2) {
+		for (size_t i = 0; i < BP_HOST_MAX_TYPES; i++) {
+			struct application_host_descriptor descriptor;
+			int err = application_host_descriptor_get(i, &descriptor);
+			if (err) return err;
+			if (!descriptor.present) return 0;
+			shell_print(shell, "%u %s v%u max %u %s last %u run %llu",
+				descriptor.type.type, descriptor.type.name, descriptor.type.version,
+				descriptor.type.max_size,
+				descriptor.type.policy == BP_HOST_VALUE ? "value" : "command",
+				descriptor.last, (unsigned long long)descriptor.run);
+		}
+		return 0;
+	}
+	if (argc < 4 || argc > 5) return -EINVAL;
+	struct application_host_descriptor descriptor;
+	int err = host_shell_type(argv[3], &descriptor);
+	if (err) return err;
+	struct application_host_reply reply;
+	if (!strcmp(argv[2], "status") && argc <= 5) {
+		uint32_t request = 0;
+		if (argc == 5) {
+			int parse_err = 0;
+			unsigned long parsed = shell_strtoul(argv[4], 10, &parse_err);
+			if (parse_err || parsed > UINT32_MAX) return -EINVAL;
+			request = parsed;
+		}
+		err = application_host_status(descriptor.run, descriptor.type.type, request, &reply);
+	} else if (!strcmp(argv[2], "send") && argc == 5) {
+		size_t digits = strlen(argv[4]);
+		if (digits & 1) return -EINVAL;
+		size_t length = digits / 2;
+		if (length > descriptor.type.max_size) return -EMSGSIZE;
+		if (descriptor.last == UINT32_MAX) return -EOVERFLOW;
+		uint8_t *data = k_malloc(MAX(length, 1));
+		if (!data) return -ENOMEM;
+		for (size_t i = 0; i < length; i++) {
+			int hi = host_hex_digit(argv[4][i * 2]);
+			int lo = host_hex_digit(argv[4][i * 2 + 1]);
+			if (hi < 0 || lo < 0) {
+				k_free(data);
+				return -EINVAL;
+			}
+			data[i] = (hi << 4) | lo;
+		}
+		err = application_host_send(descriptor.run, descriptor.type.type,
+			descriptor.last + 1, data, length, &reply);
+		k_free(data);
+	} else return -EINVAL;
+	if (err) return err;
+	shell_print(shell, "Request %u: state %u result %d detail %u", reply.request,
+		reply.state, reply.result, reply.detail);
+	return 0;
+}
+
 static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc >= 2 && !strcmp(argv[1], "message")) return cmd_app_message(shell, argc, argv);
 	if (argc == 2 && !strcmp(argv[1], "memory")) {
 		struct application_memory value;
 		int err = application_memory_get(&value);
@@ -4194,7 +4509,7 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 		return 0;
 	}
 	if (argc != 1 && (argc != 2 || strcmp(argv[1], "status"))) {
-		shell_error(shell, "Usage: app [status | memory | run [name [stack] | --stack bytes] | list | remove name | stop | output | discard"
+		shell_error(shell, "Usage: app [status | memory | run [name [stack] | --stack bytes] | list | remove name | stop | output | discard | message [send type hex | status type [id]]"
 #ifdef CONFIG_BRICKPHYR_PYTHON
 			" | input [text] | interrupt"
 #endif
@@ -4228,4 +4543,4 @@ static int cmd_app(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_ARG_REGISTER(app, NULL, "Application lifecycle, memory and I/O.", cmd_app, 1, 3);
+SHELL_CMD_ARG_REGISTER(app, NULL, "Application lifecycle, memory and I/O.", cmd_app, 1, 4);

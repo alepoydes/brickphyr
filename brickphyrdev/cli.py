@@ -161,6 +161,17 @@ def main():
     app_input = app_commands.add_parser("input", help="Send a line to the running Python program")
     app_input.add_argument("text")
     app_input.add_argument("--no-newline", action="store_true", help="Send text without a line ending")
+    app_commands.add_parser("message-types", help="List the running application's host inboxes")
+    message_send = app_commands.add_parser("message-send", help="Send a binary application message")
+    message_send.add_argument("type", help="Message type number or advertised name")
+    payload = message_send.add_mutually_exclusive_group(required=True)
+    payload.add_argument("--hex", help="Payload as hexadecimal bytes")
+    payload.add_argument("--file", metavar="PATH", help="Read payload bytes from a file")
+    message_send.add_argument("--request", type=int, help="Request number; default follows the last one")
+    message_status = app_commands.add_parser("message-status", help="Read an application message result")
+    message_status.add_argument("type", help="Message type number or advertised name")
+    message_status.add_argument("request", nargs="?", type=int, default=0,
+                                help="Request number; default 0 selects the latest")
 
     args = parser.parse_args()
     try:

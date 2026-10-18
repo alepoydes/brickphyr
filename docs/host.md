@@ -223,6 +223,32 @@ uv run brickphyrdev app start fibonacci --stack 8192
 port for an already selected Shell interface or a simulator. `--ble` accepts a
 Bluetooth name or address. The CLI reuses `smpclient` for both transports.
 
+### Native application messages
+
+A running native primary may register versioned binary inbox types. The host can
+discover them and send a complete block without writing flash or stopping the
+application. These commands work over the same USB or BLE SMP connection:
+
+```sh
+uv run brickphyrdev app message-types
+uv run brickphyrdev app message-send parameters --file controller.bin
+uv run brickphyrdev app message-status parameters
+uv run brickphyrdev app --ble Brickphyr message-send ping --hex ''
+```
+
+`message-send` reports receipt (`pending`), not application acceptance. Use
+`message-status TYPE [REQUEST]` to read the outcome. Each registration declares
+an ID, name, format version, maximum payload and either `value` or `command`
+policy. A newer pending value replaces the older one; commands reject another
+request until the primary completes the first. The request number supports
+idempotent retries, and a new application run gets a new run ID so old messages
+cannot reach its replacement. The hub Shell uses the same handlers with
+`app message`, `app message send TYPE HEX`, and `app message status TYPE [ID]`.
+States are 0 empty, 1 pending, 2 processing, 3 completed, 4 superseded;
+`result` is the application's zero or negative outcome, and `detail` is defined
+by that message type.
+See the [SDK contract](applications.md#host-to-native-messages).
+
 The experimental application management group is SMP group 65, API version 1:
 
 | Command ID | Operation | Fields/result |
@@ -256,6 +282,9 @@ The experimental application management group is SMP group 65, API version 1:
 | 23 | Write recording identity | Required `generation` and nonzero 16-byte `tag`; bind an untagged capture or retain its existing tag; returns `generation` and the retained `tag` |
 | 24 | Acknowledge paused recording | Required `generation` and exclusive `next`; available only for the optional acknowledged paused mode, not segmented telemetry |
 | 25 | Read compact control block | Required `generation` and starting `index`; optional `format=4` requests the smaller first-row encoding when possible; returns `rows`, independently decodable binary `data`, current position/capture fields, and optional applied `parameters`; optional `ack` belongs only to acknowledged paused mode |
+| 26 | Read native message type | Zero-based `index`; `present=false` ends the list, otherwise `run`, `type`, `name`, `version`, `max_size`, `policy`, `last` |
+| 27 | Write native message | Required `run`, `type`, nonzero `request`, binary `data`; returns `state`, `result`, `detail`, `request` |
+| 28 | Read native message status | Required `run`, `type`, `request` (zero selects latest); returns the same result fields |
 
 Recording metadata (command 14) advertises the maximum block payload as `block`.
 Its absence means only command 15 is available. A block slot consists of the

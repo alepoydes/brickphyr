@@ -415,6 +415,8 @@ async def launch(client, transport, args):
 
 
 async def execute(args):
+    if args.command == "message-send":
+        data = bytes.fromhex(args.hex) if args.hex is not None else Path(args.file).read_bytes()
     if args.command == "memory":
         interval = getattr(args, "interval", None)
         if interval is not None and (not math.isfinite(interval) or interval <= 0):
@@ -423,6 +425,21 @@ async def execute(args):
         client,
         transport,
     ):
+        if args.command in ("message-types", "message-send", "message-status"):
+            from . import host_messages
+
+            if args.command == "message-types":
+                entries = await host_messages.describe(client)
+                value = [entry.model_dump(exclude=_RESPONSE_FIELDS | {"present"}) |
+                         {"version": entry.message_version} for entry in entries]
+            elif args.command == "message-send":
+                reply = await host_messages.send(client, args.type, data, args.request)
+                value = reply.model_dump(exclude=_RESPONSE_FIELDS)
+            else:
+                reply = await host_messages.status(client, args.type, args.request)
+                value = reply.model_dump(exclude=_RESPONSE_FIELDS)
+            print(json.dumps(value))
+            return
         if args.command == "memory":
             while True:
                 print(json.dumps(await memory_snapshot(client)))
