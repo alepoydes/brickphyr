@@ -329,9 +329,11 @@ after the program completes and after returning from Pybricks mode; a removed
 selection advances to the next visible name. `-` means there are none. The selected
 name appears one letter at a time; each letter stays bright, fades out, then the
 next appears after a brief dark pause. After one pass, the first letter remains.
-A new key press starts the new selection immediately. A short center press launches
-the selection, and `X` briefly reports an empty slot or failed launch. The
-two-second center hold still shuts down.
+A left/right press sends a short light sweep in that direction; repeated presses
+replace the sweep, and the selected name appears when browsing finishes. A short
+center press flashes the whole matrix and fades it before launching the selection;
+the flash adds about 115 ms before execution. `X` briefly reports an empty slot or
+failed launch. The two-second center hold still shuts down.
 Holding the wake button at boot does not launch a program. The system preview
 releases the matrix before a button-launched program runs and returns when it
 stops and the hub is idle. A host-launched program can take the display on its

@@ -17,7 +17,8 @@ static atomic_t stopping;
 
 enum job_kind { JOB_BROWSE, JOB_START };
 enum { FIRST_HOLD_MS = 700, LETTER_HOLD_MS = 450, FADE_FRAME_MS = 20,
-	FADE_STEPS = 6, GAP_MS = 40 };
+	FADE_STEPS = 6, GAP_MS = 40, SWEEP_FRAME_MS = 20,
+	LAUNCH_HOLD_MS = 40, LAUNCH_FADE_MS = 25 };
 static struct {
 	struct k_spinlock lock;
 	bool busy, done;
@@ -30,15 +31,17 @@ static struct {
 
 static struct {
 	bool visible, pybricks, launching, dirty, need_initial_browse, start_pending;
-	uint8_t slot;
+	bool waiting_selection, launch_ready;
+	uint8_t slot, launch_slot;
 	uint32_t generation;
 	/* Pybricks displays slot; this keeps the Brickphyr selection in RAM. */
 	char name[APP_NAME_MAX + 1];
 	int browse_error;
-	int8_t queued_direction;
+	int8_t queued_direction, sweep_direction;
 	int64_t frame_at, error_until;
-	uint8_t offset, fade_step;
+	uint8_t offset, fade_step, effect_step;
 	enum { PREVIEW_HOLD, PREVIEW_FADE, PREVIEW_GAP, PREVIEW_DONE } preview;
+	enum { EFFECT_NONE, EFFECT_SWEEP, EFFECT_LAUNCH } effect;
 } ui;
 
 static bool can_start(void)
@@ -147,7 +150,12 @@ static bool finish_job(int64_t now)
 	if (!ui.visible || generation != ui.generation) return false;
 	if (kind == JOB_BROWSE) {
 		if (result && result != -ENOENT) LOG_ERR("Program browse failed: %d", result);
-		select_name(result ? "" : response, result, now);
+		if (ui.waiting_selection) {
+			strcpy(ui.name, result ? "" : response);
+			ui.browse_error = result;
+		} else {
+			select_name(result ? "" : response, result, now);
+		}
 	} else if (result) {
 		if (result != -ENOENT) LOG_ERR("Program start failed: %d", result);
 		ui.error_until = now + 700;
@@ -175,6 +183,23 @@ static void glyph(char character, uint8_t brightness, uint8_t frame[BP_MATRIX_PI
 
 static void preview_frame(uint8_t frame[BP_MATRIX_PIXELS], int64_t now)
 {
+	if (ui.effect == EFFECT_SWEEP) {
+		memset(frame, 0, BP_MATRIX_PIXELS);
+		if (ui.effect_step < 5) {
+			int col = ui.sweep_direction > 0 ? ui.effect_step : 4 - ui.effect_step;
+			for (size_t row = 0; row < 5; row++) {
+				frame[row * 5 + col] = 100;
+				int trail = col - ui.sweep_direction;
+				if (trail >= 0 && trail < 5) frame[row * 5 + trail] = 55;
+			}
+		}
+		return;
+	}
+	if (ui.effect == EFFECT_LAUNCH) {
+		static const uint8_t brightness[] = {100, 70, 35, 0};
+		memset(frame, brightness[ui.effect_step], BP_MATRIX_PIXELS);
+		return;
+	}
 	if (now < ui.error_until) {
 		glyph('X', 100, frame);
 		return;
@@ -208,7 +233,20 @@ static void display(int64_t now)
 		ui.error_until = 0;
 		select_name(ui.name, ui.browse_error, now);
 	}
-	if (!ui.pybricks && !ui.dirty && ui.name[1] && ui.preview != PREVIEW_DONE) {
+	if (ui.effect != EFFECT_NONE && !ui.dirty && now >= ui.frame_at) {
+		if (ui.effect == EFFECT_SWEEP && ui.effect_step < 5) {
+			ui.effect_step++;
+			ui.dirty = true;
+		} else if (ui.effect == EFFECT_LAUNCH && ui.effect_step < 3) {
+			ui.effect_step++;
+			ui.dirty = true;
+		} else {
+			ui.launch_ready = ui.effect == EFFECT_LAUNCH;
+			ui.effect = EFFECT_NONE;
+		}
+	}
+	if (ui.effect == EFFECT_NONE && !ui.waiting_selection && !ui.pybricks &&
+	    !ui.dirty && ui.name[1] && ui.preview != PREVIEW_DONE) {
 		if (now >= ui.frame_at) {
 			switch (ui.preview) {
 			case PREVIEW_HOLD:
@@ -234,13 +272,17 @@ static void display(int64_t now)
 			ui.dirty = true;
 		}
 	}
-	if (!ui.dirty || ui.launching) return;
+	if (!ui.dirty || (ui.launching && ui.effect != EFFECT_LAUNCH)) return;
 	uint8_t frame[BP_MATRIX_PIXELS];
 	preview_frame(frame, now);
 	int err = hub_matrix_write(BP_MATRIX_SYSTEM, 0, frame, sizeof(frame));
 	if (!err) {
 		ui.dirty = false;
-		if (ui.preview == PREVIEW_HOLD) {
+		if (ui.effect == EFFECT_SWEEP) {
+			ui.frame_at = now + SWEEP_FRAME_MS;
+		} else if (ui.effect == EFFECT_LAUNCH) {
+			ui.frame_at = now + (ui.effect_step ? LAUNCH_FADE_MS : LAUNCH_HOLD_MS);
+		} else if (ui.preview == PREVIEW_HOLD) {
 			ui.frame_at = now + (ui.offset ? LETTER_HOLD_MS : FIRST_HOLD_MS);
 		} else if (ui.preview == PREVIEW_FADE) {
 			ui.frame_at = now + FADE_FRAME_MS;
@@ -250,6 +292,11 @@ static void display(int64_t now)
 	} else if (err != -EBUSY && err != -ESHUTDOWN) {
 		LOG_ERR("Launcher display failed: %d", err);
 		ui.dirty = false;
+		if (ui.effect == EFFECT_LAUNCH) {
+			ui.launching = false;
+			ui.error_until = now + 700;
+		}
+		ui.effect = EFFECT_NONE;
 	}
 }
 
@@ -262,6 +309,10 @@ void hub_launcher_poll(bool available, bool pybricks, unsigned int slot, int64_t
 			ui.generation++;
 			ui.queued_direction = 0;
 			ui.start_pending = false;
+			ui.waiting_selection = false;
+			ui.launching = false;
+			ui.launch_ready = false;
+			ui.effect = EFFECT_NONE;
 			int err = hub_matrix_system_release();
 			if (err) LOG_ERR("Launcher display release failed: %d", err);
 		}
@@ -273,6 +324,10 @@ void hub_launcher_poll(bool available, bool pybricks, unsigned int slot, int64_t
 		ui.generation++;
 		ui.queued_direction = 0;
 		ui.start_pending = false;
+		ui.waiting_selection = false;
+		ui.launching = false;
+		ui.launch_ready = false;
+		ui.effect = EFFECT_NONE;
 		ui.error_until = 0;
 		ui.slot = slot;
 		select_name(ui.name, ui.name[0] ? 0 : -ENOENT, now);
@@ -287,19 +342,41 @@ void hub_launcher_poll(bool available, bool pybricks, unsigned int slot, int64_t
 		}
 #endif
 	} else if (!ui.launching) {
-		if (ui.queued_direction && job_available()) {
+		if (ui.queued_direction && ui.effect == EFFECT_NONE && job_available()) {
 			int direction = ui.queued_direction < 0 ? -1 : 1;
 			if (!submit(JOB_BROWSE, ui.name, direction)) {
 				ui.queued_direction -= direction;
 				ui.need_initial_browse = false;
 			}
-		} else if (ui.need_initial_browse && job_available()) {
+		} else if (ui.need_initial_browse && ui.effect == EFFECT_NONE &&
+			   job_available()) {
 			if (!submit(JOB_BROWSE, ui.name, 0)) ui.need_initial_browse = false;
 		}
 	}
-	if (ui.start_pending && job_available()) {
+	if (ui.waiting_selection && ui.effect == EFFECT_NONE &&
+	    !ui.queued_direction && job_available()) {
+		ui.waiting_selection = false;
+		select_name(ui.name, ui.browse_error, now);
+	}
+	if (ui.start_pending && !ui.waiting_selection && !ui.launching &&
+	    job_available()) {
 		ui.start_pending = false;
 		hub_launcher_start(now);
+	}
+	if (ui.launch_ready && job_available()) {
+		char name[APP_NAME_MAX + 1];
+		if (ui.pybricks) snprintk(name, sizeof(name), "@%u", ui.launch_slot);
+		else strcpy(name, ui.name);
+		int err = submit(JOB_START, name, 0);
+		if (!err) {
+			ui.launch_ready = false;
+		} else if (err != -EBUSY) {
+			LOG_ERR("Program start queue failed: %d", err);
+			ui.launch_ready = false;
+			ui.launching = false;
+			ui.error_until = now + 700;
+			ui.dirty = true;
+		}
 	}
 	display(now);
 }
@@ -308,6 +385,11 @@ void hub_launcher_navigate(int direction)
 {
 	if (!ui.visible || ui.pybricks || ui.launching) return;
 	ui.queued_direction = CLAMP(ui.queued_direction + direction, -8, 8);
+	ui.start_pending = false;
+	ui.waiting_selection = true;
+	ui.sweep_direction = direction;
+	ui.effect = EFFECT_SWEEP;
+	ui.effect_step = 0;
 	ui.preview = PREVIEW_DONE;
 	ui.offset = 0;
 	ui.dirty = true;
@@ -316,7 +398,7 @@ void hub_launcher_navigate(int direction)
 void hub_launcher_start(int64_t now)
 {
 	if (!ui.visible || ui.launching) return;
-	if (ui.need_initial_browse) {
+	if (ui.need_initial_browse || ui.waiting_selection || !job_available()) {
 		ui.start_pending = true;
 		return;
 	}
@@ -325,28 +407,17 @@ void hub_launcher_start(int64_t now)
 		ui.dirty = true;
 		return;
 	}
-	char name[APP_NAME_MAX + 1];
 	if (ui.pybricks) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
-		snprintk(name, sizeof(name), "@%u", ui.slot);
+		ui.launch_slot = ui.slot;
 #else
 		ui.error_until = now + 700;
 		ui.dirty = true;
 		return;
 #endif
-	} else {
-		strcpy(name, ui.name);
 	}
-	int err = submit(JOB_START, name, 0);
-	if (err == -EBUSY) {
-		ui.start_pending = true;
-		return;
-	}
-	if (err) {
-		LOG_ERR("Program start queue failed: %d", err);
-		ui.error_until = now + 700;
-		ui.dirty = true;
-		return;
-	}
+	ui.effect = EFFECT_LAUNCH;
+	ui.effect_step = 0;
+	ui.dirty = true;
 	ui.launching = true;
 }
