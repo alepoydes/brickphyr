@@ -244,9 +244,14 @@ ssize_t host_ble_session_shell_input(struct host_ble_link *conn, const void *buf
 
 static void shell_output(struct k_work *work)
 {
-	/* Native output can carry a complete serial SMP frame; the Pybricks
-	 * event limit does not constrain this byte stream. */
+	/* The native Shell is a byte stream, so the serial SMP frame limit does
+	 * not apply. Use the configured ATT payload on Zephyr BLE; the CC2640
+	 * adapter retains its existing bounded buffer. */
+#if defined(CONFIG_BT_L2CAP_TX_MTU)
+	uint8_t data[CONFIG_BT_L2CAP_TX_MTU - 3];
+#else
 	uint8_t data[MCUMGR_SERIAL_MAX_FRAME];
+#endif
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	struct host_ble_link *conn = shell_session && owner ? host_ble_link_ref(owner) : NULL;
 	uint32_t session = shell_session;

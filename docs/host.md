@@ -538,9 +538,10 @@ are serialized; terminal input and output remain independent of SMP framing.
 This requires firmware supporting both channels together. USB retains standard
 serial SMP framing in the Shell stream. BLE stream teardown joins accepted
 Shell handlers and SMP packets before releasing the connection's resources.
-Concurrent binary echo, Shell input and read-only device observations have a
-bounded Linux/Inventor F4 check. Sustained capture throughput is separate work;
-this check does not establish battery-powered robot timing.
+On one USB-powered Inventor F4, ten rounds of Shell output and SMP status
+completed on one BLE connection. A simultaneous passive 500-row capture at a
+requested 15 ms period and three full Shell replies decoded without gaps. Motors
+were off; these checks do not establish battery-powered robot timing.
 The F4 profile requests a 7.5 ms connection interval during SMP exchange through
 Zephyr's existing connection-parameter control, restoring its preferred idle
 parameters after five seconds without SMP traffic. The central may choose other
