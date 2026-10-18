@@ -231,6 +231,13 @@ found no record gaps or unrecorded control steps. Battery voltage after the run
 was 8,716 mV. This one bounded battery-powered run does not establish throughput
 under motor load, movement, or different radio conditions.
 
+In a separate battery-powered 300-record segmented run, BLE was deliberately
+disconnected while the passive controller continued. At reconnection the recording
+buffer was full. The host recovered two uninterrupted series of 80 and 220 records,
+with one explicit gap of 287 control steps between them and no record-index gaps.
+The connection can therefore resume collection, but disconnection does not imply
+continuous observation when the bounded recording memory fills.
+
 In an earlier bounded SPIKE Prime F4 check, a frozen 80-row native control recording
 (IMU, battery, A/B encoders and inactive outputs) contained 21,760 bytes of
 step-plus-row data. Compact transfer sent about 7.3 KiB of block data, with exact
