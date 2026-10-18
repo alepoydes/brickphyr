@@ -848,6 +848,12 @@ backlog drains; a partially freed buffer cannot produce a short fragment between
 long series. Choose this policy when contiguous trajectories matter more than
 minimizing pauses in observation.
 
+For a periodic compact segmented stream, `brickphyrdev` may wait up to 120 ms
+before its next read so several records share a block. It uses consecutive
+control timestamps and the available recording capacity to bound this local
+delivery lag. The application and control loop do not wait for the collector;
+ordinary rings, finite captures and noncompact streams are not batched this way.
+
 The collector reads applied parameters before releasing a segmented control
 record. When they fit in the SMP reply, the hub includes them with the record;
 otherwise the collector first reads the retained parameter snapshot separately.

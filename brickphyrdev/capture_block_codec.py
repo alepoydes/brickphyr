@@ -13,6 +13,7 @@ from .capture_layout import DELTA_COUNTERS, IMU_SHARED_FIELDS, KINDS, SOURCE_KIN
 
 _HEADER = struct.Struct("<4sHH")
 _MAGIC = b"BCB3"
+_COMPACT_FIRST_MAGIC = b"BCB4"
 _MAX_ROWS = 255
 _MAX_RECORD_BYTES = 1024
 MAX_TRANSFER_BYTES = 2048
@@ -142,7 +143,7 @@ def _decode(block, fields, aliases, deltas):
     if not _HEADER.size <= len(block) <= MAX_TRANSFER_BYTES:
         raise ValueError("Invalid block length")
     magic, count, row_size = _HEADER.unpack_from(block)
-    if magic != _MAGIC or not 1 <= count <= _MAX_ROWS or row_size != size:
+    if magic not in (_MAGIC, _COMPACT_FIRST_MAGIC) or not 1 <= count <= _MAX_ROWS or row_size != size:
         raise ValueError("Invalid block header")
     offset = _HEADER.size
 
@@ -154,8 +155,33 @@ def _decode(block, fields, aliases, deltas):
         offset += length
         return result
 
-    previous = [take(field.size) if aliases[index] < 0 else None
-                for index, field in enumerate(fields)]
+    if magic == _COMPACT_FIRST_MAGIC:
+        table_size = (len(fields) + 1) // 2
+        table = take(table_size)
+        if len(fields) % 2 and table[-1] >> 4:
+            raise ValueError("Invalid first-row padding nibble")
+        full_size, compact_size = 0, table_size
+        previous = []
+        for index, field in enumerate(fields):
+            width = table[index // 2] >> (4 * (index % 2)) & 15
+            if aliases[index] >= 0:
+                if width:
+                    raise ValueError("Aliased first-row field has data")
+                previous.append(None)
+                continue
+            full_size += field.size
+            if field.size > 15 or width > field.size:
+                raise ValueError("Invalid first-row field width")
+            part = take(width)
+            if width and not part[-1]:
+                raise ValueError("Noncanonical first-row field width")
+            compact_size += width
+            previous.append(bytes(part) + bytes(field.size - width))
+        if compact_size >= full_size:
+            raise ValueError("Noncanonical first-row block")
+    else:
+        previous = [take(field.size) if aliases[index] < 0 else None
+                    for index, field in enumerate(fields)]
     for index, alias in enumerate(aliases):
         if alias >= 0:
             previous[index] = previous[alias]

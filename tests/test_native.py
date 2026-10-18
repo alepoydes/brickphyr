@@ -424,7 +424,10 @@ def test_segmented_control_stream_collects_without_acknowledgement():
             class NoAckClient:
                 async def request(self, request):
                     assert not isinstance(request, (recording.Ack, recording.CompactAck))
-                    return await client.request(request)
+                    response = await client.request(request)
+                    if isinstance(request, recording.Compact) and request.format == 4 and response.rows:
+                        assert response.data[:4] == b"BCB4"
+                    return response
 
             output = io.BytesIO()
             with recording.session(output) as (session, counts):

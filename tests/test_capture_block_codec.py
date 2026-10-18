@@ -15,7 +15,8 @@ from brickphyrdev import bench_codec, capture_block_codec, capture_codec, record
 from brickphyrdev.records import Recording
 
 
-def _native_encode(tmp_path, rows, config, *, control=False, capacity=1024):
+def _native_encode(tmp_path, rows, config, *, control=False, capacity=1024,
+                   compact_first=False):
     compiler = shutil.which("cc")
     if not compiler:
         pytest.skip("host C compiler unavailable")
@@ -32,7 +33,8 @@ def _native_encode(tmp_path, rows, config, *, control=False, capacity=1024):
         _fields_ = (("data", ctypes.c_void_p), ("previous", ctypes.c_void_p),
                     ("fields", ctypes.c_void_p), ("capacity", ctypes.c_size_t),
                     ("length", ctypes.c_size_t), ("row_size", ctypes.c_size_t),
-                    ("field_count", ctypes.c_size_t), ("rows", ctypes.c_uint16))
+                    ("field_count", ctypes.c_size_t), ("rows", ctypes.c_uint16),
+                    ("compact_first", ctypes.c_bool))
 
     widths = [field.size for field in capture_block_codec._field_formats(config)]
     offset = 0
@@ -53,10 +55,10 @@ def _native_encode(tmp_path, rows, config, *, control=False, capacity=1024):
     native.telemetry_block_init.argtypes = (ctypes.POINTER(Block), ctypes.c_void_p,
                                             ctypes.c_size_t, ctypes.c_void_p,
                                             ctypes.c_size_t, ctypes.c_void_p,
-                                            ctypes.c_size_t)
+                                            ctypes.c_size_t, ctypes.c_bool)
     native.telemetry_block_append.argtypes = (ctypes.POINTER(Block), ctypes.c_void_p)
     assert native.telemetry_block_init(ctypes.byref(state), output, capacity, previous,
-                                       len(rows[0]), fields, len(fields)) == 0
+                                       len(rows[0]), fields, len(fields), compact_first) == 0
     for value in rows:
         source = (ctypes.c_uint8 * len(value)).from_buffer_copy(value)
         assert native.telemetry_block_append(ctypes.byref(state), source) == 0
@@ -92,6 +94,13 @@ def test_block_round_trip_and_corruption(tmp_path):
                                       config) == extremes
     assert _native_encode(tmp_path, extremes, config) == capture_block_codec.encode(
         extremes, config)
+    compact = _native_encode(tmp_path, rows, config, compact_first=True)
+    assert compact[:4] == b"BCB4" and len(compact) < len(block)
+    assert capture_block_codec.decode(compact, config) == rows
+    incompressible = [b"\xff" * len(rows[0])]
+    assert _native_encode(tmp_path, incompressible, config, compact_first=True) == (
+        _native_encode(tmp_path, incompressible, config)
+    )
     large_rows = [row(100_000 + index * 15_000, 7000 + index, index,
                       sequence=index) for index in range(50)]
     large_block = _native_encode(tmp_path, large_rows, config, capacity=2048)
@@ -200,6 +209,9 @@ def test_control_block_exact_rows_and_corruption(tmp_path):
     block = _native_encode(tmp_path, rows, config, control=True)
     assert struct.unpack_from("<4sHH", block) == (b"BCB3", len(rows), len(rows[0]))
     assert capture_block_codec.decode_control(block, config) == rows
+    compact = _native_encode(tmp_path, rows, config, control=True, compact_first=True)
+    assert compact[:4] == b"BCB4" and len(compact) < len(block)
+    assert capture_block_codec.decode_control(compact, config) == rows
     assert len(block) < 8 + sum(map(len, rows)) - 32
 
     with pytest.raises(ValueError, match="Truncated"):
@@ -223,6 +235,20 @@ def test_control_block_exact_rows_and_corruption(tmp_path):
     mask_start = 8 + first_size
     damaged = bytearray(block)
     first_alias = next(index for index, alias in enumerate(aliases) if alias >= 0)
+    damaged_compact = bytearray(compact)
+    damaged_compact[8 + first_alias // 2] |= 1 << (4 * (first_alias % 2))
+    with pytest.raises(ValueError, match="Aliased first-row"):
+        capture_block_codec.decode_control(damaged_compact, config)
+    damaged_compact = bytearray(compact)
+    damaged_compact[8 + len(widths) // 2] |= 0x10
+    with pytest.raises(ValueError, match="padding nibble"):
+        capture_block_codec.decode_control(damaged_compact, config)
+    damaged_compact = bytearray(compact)
+    damaged_compact[8 + 2 // 2] = (damaged_compact[8 + 2 // 2] & 0xF0) | 15
+    with pytest.raises(ValueError, match="field width"):
+        capture_block_codec.decode_control(damaged_compact, config)
+    with pytest.raises(ValueError, match="Truncated"):
+        capture_block_codec.decode_control(compact[:-1], config)
     damaged[mask_start + first_alias // 8] &= ~(1 << (first_alias % 8))
     with pytest.raises(ValueError, match="Shared IMU"):
         capture_block_codec.decode_control(damaged, config)

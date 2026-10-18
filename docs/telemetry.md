@@ -231,6 +231,19 @@ found no record gaps or unrecorded control steps. Battery voltage after the run
 was 8,716 mV. This one bounded battery-powered run does not establish throughput
 under motor load, movement, or different radio conditions.
 
+The optional BCB4 first-row encoding and bounded host-side batching have been
+checked on the USB-powered Inventor F4 over BLE. A 1,200-row segmented passive
+run at 15 ms with parameter updates recovered every row and control step;
+the batched collector transferred 86,761 compact payload bytes in 18.287 seconds.
+The same workload using BCB3 without batching transferred 159,450 bytes in
+18.561 seconds, also without gaps. These runs used different live sensor values;
+they demonstrate lower transfer work and bounded behavior. With USB disconnected,
+the BCB4 collector also recovered 2,400 consecutive passive records over
+35.985 seconds of observations, with 56 parameter updates and no record or
+control-step gaps. It transferred 174,409 compact payload bytes in 36.604
+seconds. These bounded runs do not establish a guarantee under motor load,
+movement, or different radio conditions.
+
 In a separate battery-powered 300-record segmented run, BLE was deliberately
 disconnected while the passive controller continued. At reconnection the recording
 buffer was full. The host recovered two uninterrupted series of 80 and 220 records,

@@ -421,16 +421,19 @@ static int record_compact_empty(struct smp_streamer *stream, const struct bp_rec
 static int record_compact_read(struct smp_streamer *stream)
 {
 	uint32_t generation = 0;
+	uint32_t format = 0;
 	uint64_t index = UINT64_MAX;
 	uint64_t ack = 0;
 	size_t decoded;
 	struct zcbor_map_decode_key_val fields[] = {
 		ZCBOR_MAP_DECODE_KEY_DECODER("generation", zcbor_uint32_decode, &generation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("format", zcbor_uint32_decode, &format),
 		ZCBOR_MAP_DECODE_KEY_DECODER("index", zcbor_uint64_decode, &index),
 		ZCBOR_MAP_DECODE_KEY_DECODER("ack", zcbor_uint64_decode, &ack),
 	};
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
-	    !generation || index == UINT64_MAX || (ack && ack != index)) return MGMT_ERR_EINVAL;
+	    !generation || index == UINT64_MAX || (ack && ack != index) ||
+	    (format && format != 4)) return MGMT_ERR_EINVAL;
 	struct bp_record_info info;
 	bool variable, paused, segments;
 	application_record_snapshot(&info, NULL, &variable, &paused, &segments);
@@ -489,7 +492,7 @@ static int record_compact_read(struct smp_streamer *stream)
 	struct telemetry_block block;
 	size_t context = segments && info.parameter_size ? info.parameter_size + 16 : 0;
 	err = telemetry_block_init(&block, encoded, RECORD_COMPACT_BYTES - context,
-		rows, row_size, wire, count + 6);
+		rows, row_size, wire, count + 6, format == 4);
 	if (err) {
 		k_free(wire);
 		return result(stream, err);

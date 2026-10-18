@@ -105,6 +105,7 @@ class Compact(application._Group, message.ReadRequest):
     _Response = CompactResponse
     generation: int
     index: int
+    format: int = 0
 
 
 class CompactAck(Compact):
@@ -457,12 +458,16 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     partial_step = None
     previous = resume.last_control if resume else None
     last_sequence = previous["sequence"] if previous else None
+    last_scheduled = previous["scheduled_us"] if previous else None
+    period_us = 0
+    stable_periods = 0
     observed_sequence = last_sequence
     last_revision = previous["parameter_revision"] if previous else None
     cached_revision = resume.parameter_revision if resume else None
     pending_gap = 0
     pending_ack = None
     prefetched = None
+    clock = asyncio.get_running_loop()
     while True:
         if index < first:
             target = max(first, next - max(1, info.capacity // 2)) if compact and active and not (
@@ -525,13 +530,15 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                 raise RuntimeError("Partial compact recording block")
             if pending_ack is not None:
                 reply = await checked(client, CompactAck(generation=generation, index=index,
-                                                         ack=pending_ack))
+                                                         ack=pending_ack, format=4))
                 if reply.first < pending_ack:
                     raise RuntimeError("Compact acknowledgement was not applied")
                 first = pending_ack
                 pending_ack = None
             else:
-                reply = await checked(client, Compact(generation=generation, index=index))
+                reply = await checked(client, Compact(generation=generation, index=index,
+                                                      format=4))
+            received_at = clock.time()
         else:
             request = Block if block else Record
             if segments and info.control and info.parameter_size and not inline_parameters and (
@@ -686,6 +693,17 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     record["values"] = values
             events.append(record)
             if info.control:
+                if segments and compact:
+                    interval = step["scheduled_us"] - last_scheduled if (
+                        last_scheduled is not None and last_sequence is not None and
+                        sequence == last_sequence + 1
+                    ) else 0
+                    if 0 < interval <= 60_000:
+                        stable_periods = min(2, stable_periods + 1) if interval == period_us else 1
+                        period_us = interval
+                    else:
+                        stable_periods = period_us = 0
+                    last_scheduled = step["scheduled_us"]
                 last_sequence, last_revision = sequence, revision
             index += 1
             del partial[:stride]
@@ -726,6 +744,15 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
                     pending_gap = 0
                     if sequence is not None:
                         observed_sequence = sequence
+            if segments and compact and active and stable_periods >= 2 and info.capacity >= 16:
+                # Accumulate several rows without approaching the bounded buffer's
+                # full edge. Account for decoding, file writes and callbacks that
+                # already let the producer advance while this reply was handled.
+                needed = info.capacity // 4 - (next - index)
+                delay = min(0.12, needed * period_us / 1_000_000 -
+                            (clock.time() - received_at))
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
 
 @contextlib.contextmanager

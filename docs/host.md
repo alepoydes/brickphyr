@@ -255,7 +255,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 22 | Read recording block | Required `generation`, starting `index` and slot byte `off`; returns consecutive slot bytes in `data` and the current position/capture fields, without a separate `step` field |
 | 23 | Write recording identity | Required `generation` and nonzero 16-byte `tag`; bind an untagged capture or retain its existing tag; returns `generation` and the retained `tag` |
 | 24 | Acknowledge paused recording | Required `generation` and exclusive `next`; available only for the optional acknowledged paused mode, not segmented telemetry |
-| 25 | Read compact control block | Required `generation` and starting `index`; returns `rows`, independently decodable binary `data`, current position/capture fields, and optional applied `parameters`; optional `ack` belongs only to acknowledged paused mode |
+| 25 | Read compact control block | Required `generation` and starting `index`; optional `format=4` requests the smaller first-row encoding when possible; returns `rows`, independently decodable binary `data`, current position/capture fields, and optional applied `parameters`; optional `ack` belongs only to acknowledged paused mode |
 
 Recording metadata (command 14) advertises the maximum block payload as `block`.
 Its absence means only command 15 is available. A block slot consists of the
@@ -269,6 +269,21 @@ blocks stop at a parameter-revision boundary and include applied parameters when
 needed. Generation and range checks apply to all record reads; missing data is never
 silently replaced. Block copying is bounded and performs no allocation or I/O
 while holding the recorder lock.
+
+Compact control blocks retain the eight-byte header: four-byte magic, then
+little-endian 16-bit row count and uncompressed row size. Without `format`, or
+with `format=0`, the response uses `BCB3`. With `format=4`, the hub may use `BCB4`
+when its first row is smaller, otherwise it returns `BCB3`. BCB4 places a
+`ceil(field_count/2)`-byte width table after the header, with the first field in
+the low nibble. Each non-aliased field contributes that many low-order bytes;
+omitted high-order bytes are zero. Aliased fields contribute no bytes and copy
+their source field. BCB4 is used only when each non-aliased field fits in 15
+bytes and the complete first row is shorter. Subsequent rows use the unchanged
+BCB3 change bitmap and exact field/delta encoding. The decoder must accept
+either magic and validate field widths and the complete block length. Every
+block remains independently decodable, with exact timestamps and values.
+Unsupported nonzero format values
+are rejected.
 
 Finite captures may advertise `variable=true` (absent means false). Their `size`
 is the maximum payload length, and each command-22 record is a uint16

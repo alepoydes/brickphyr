@@ -277,7 +277,7 @@ static int block_start(struct capture_task *run)
 	if (prefix) sys_put_le32(4, run->block_data);
 	return telemetry_block_init(&run->block, run->block_data + prefix,
 		MIN(sizeof(run->block_data) - prefix, room - prefix), run->data + 1024,
-		plan.snapshot_size, run->wire, run->field_count);
+		plan.snapshot_size, run->wire, run->field_count, false);
 }
 
 static int block_flush(struct capture_task *run)

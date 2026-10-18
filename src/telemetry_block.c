@@ -27,7 +27,7 @@ static unsigned int delta_bytes(const uint8_t *current, const uint8_t *previous,
 
 int telemetry_block_init(struct telemetry_block *block, uint8_t *data, size_t capacity,
 	uint8_t *previous, size_t row_size, const struct telemetry_wire_field *fields,
-	size_t field_count)
+	size_t field_count, bool compact_first)
 {
 	if (!block || !data || !previous || !fields || !field_count ||
 	    field_count > MAX_FIELDS || !row_size || row_size > UINT16_MAX ||
@@ -43,7 +43,8 @@ int telemetry_block_init(struct telemetry_block *block, uint8_t *data, size_t ca
 	if (end != row_size) return -EINVAL;
 	*block = (struct telemetry_block){.data = data, .previous = previous,
 		.fields = fields, .capacity = capacity, .length = HEADER_SIZE,
-		.row_size = row_size, .field_count = field_count};
+		.row_size = row_size, .field_count = field_count,
+		.compact_first = compact_first};
 	memcpy(data, "BCB3", 4);
 	data[4] = data[5] = 0;
 	data[6] = row_size;
@@ -61,11 +62,47 @@ int telemetry_block_append(struct telemetry_block *block, const uint8_t *row)
 			row + block->fields[field->alias].offset, field->size)) return -EINVAL;
 	}
 	if (!block->rows) {
-		for (size_t i = 0; i < block->field_count; i++) {
-			const struct telemetry_wire_field *field = &block->fields[i];
-			if (field->alias >= 0) continue;
-			memcpy(block->data + block->length, row + field->offset, field->size);
-			block->length += field->size;
+		bool use_compact = false;
+		if (block->compact_first) {
+			size_t full = 0;
+			size_t packed = (block->field_count + 1) / 2;
+			use_compact = true;
+			for (size_t i = 0; i < block->field_count; i++) {
+				const struct telemetry_wire_field *field = &block->fields[i];
+				if (field->alias >= 0) continue;
+				full += field->size;
+				if (field->size > 15) {
+					use_compact = false;
+					break;
+				}
+				size_t width = field->size;
+				while (width && !row[field->offset + width - 1]) width--;
+				packed += width;
+			}
+			use_compact = use_compact && packed < full;
+		}
+		if (use_compact) {
+			memcpy(block->data, "BCB4", 4);
+			size_t table = block->length;
+			size_t table_size = (block->field_count + 1) / 2;
+			memset(block->data + table, 0, table_size);
+			block->length += table_size;
+			for (size_t i = 0; i < block->field_count; i++) {
+				const struct telemetry_wire_field *field = &block->fields[i];
+				if (field->alias >= 0) continue;
+				size_t width = field->size;
+				while (width && !row[field->offset + width - 1]) width--;
+				block->data[table + i / 2] |= (uint8_t)width << (4 * (i % 2));
+				memcpy(block->data + block->length, row + field->offset, width);
+				block->length += width;
+			}
+		} else {
+			for (size_t i = 0; i < block->field_count; i++) {
+				const struct telemetry_wire_field *field = &block->fields[i];
+				if (field->alias >= 0) continue;
+				memcpy(block->data + block->length, row + field->offset, field->size);
+				block->length += field->size;
+			}
 		}
 	} else {
 		uint8_t mask[MAX_FIELDS / 8] = {0};
