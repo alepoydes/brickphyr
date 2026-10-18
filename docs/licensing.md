@@ -41,8 +41,8 @@ the MIT-licensed MicroPython core and shared GC/output helpers, with its
 is not integrated. The optional Python library also compiles selected Pybricks
 bindings and their portable helpers directly from the dependency, covered by
 the existing Pybricks MIT and LEGO BSD notices. The adapted hub bindings retain
-their source attribution. The directly compiled 5x5 font also carries the 2016
-British Broadcasting Corporation copyright in the Pybricks MIT notice.
+their source attribution. The shared 5x5 font is a local MIT-licensed port of
+the Pybricks font; it retains the 2016 British Broadcasting Corporation notice.
 The following is a preliminary platform inventory,
 not a completed distribution audit of a firmware image:
 

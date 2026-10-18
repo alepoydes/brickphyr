@@ -17,6 +17,8 @@ int hub_matrix_orientation(uint32_t rotation);
 /* Only privileged callers may wait. Do not call from the system work queue. */
 int hub_matrix_wait(void);
 int hub_matrix_release(enum bp_matrix_owner owner);
+/* Idle launcher must never wait for SPI from the hub's button loop. */
+int hub_matrix_system_release(void);
 /* May run under the host transport spinlock; release continues asynchronously. */
 void hub_matrix_session_closed(void);
 int hub_matrix_shutdown(void);
@@ -28,6 +30,7 @@ static inline int hub_matrix_animate(const uint8_t *frames, size_t count,
 	uint32_t interval_ms) { return -ENOTSUP; }
 static inline int hub_matrix_orientation(uint32_t rotation) { return -ENOTSUP; }
 static inline int hub_matrix_release(enum bp_matrix_owner owner) { return 0; }
+static inline int hub_matrix_system_release(void) { return 0; }
 static inline void hub_matrix_session_closed(void) { }
 static inline int hub_matrix_shutdown(void) { return 0; }
 #endif

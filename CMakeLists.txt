@@ -59,7 +59,7 @@ if(CONFIG_BRICKPHYR_CC2640_BLE)
 endif()
 target_sources_ifdef(CONFIG_BRICKPHYR_CC2640_SMP app PRIVATE src/host_cc2640_smp.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_SOUND app PRIVATE src/hub_sound.c src/sound/waveform.c)
-target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c)
+target_sources_ifdef(CONFIG_BRICKPHYR_MATRIX app PRIVATE src/hub_matrix.c src/hub_matrix_font.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_TELEMETRY app PRIVATE src/telemetry.c)
 target_include_directories(app PRIVATE include sdk/include)
 
@@ -91,6 +91,9 @@ endif()
 
 if(CONFIG_BRICKPHYR_HUB)
   target_sources(app PRIVATE src/hub.c src/hub_menu.c src/hub_light.c src/hub_power.c src/configuration.c)
+  if(CONFIG_BOARD_SPIKE_PRIME_F4 AND CONFIG_BRICKPHYR_APP_STORAGE AND CONFIG_BRICKPHYR_MATRIX)
+    target_sources(app PRIVATE src/hub_launcher.c)
+  endif()
   add_custom_target(firmware_package
     COMMAND "${PYTHON_EXECUTABLE}" -m tools.package_firmware
             "${ZEPHYR_BINARY_DIR}" --version "${APP_VERSION_STRING}"

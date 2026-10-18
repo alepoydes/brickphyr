@@ -13,6 +13,9 @@
 #include "configuration.h"
 #ifdef CONFIG_BRICKPHYR_APP_STORAGE
 #include "app_data.h"
+#if defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+#include "hub_launcher.h"
+#endif
 #endif
 #include <zephyr/usb/usbd.h>
 #include "hub.h"
@@ -93,6 +96,9 @@ static int center_pressed(void)
 
 static void shutdown(void)
 {
+#if defined(CONFIG_BRICKPHYR_APP_STORAGE) && defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+	hub_launcher_shutdown();
+#endif
 	int stopped = application_shutdown();
 	if (stopped) {
 		LOG_ERR("Application shutdown failed: %d", stopped);
@@ -279,7 +285,13 @@ void hub_run(void)
 	atomic_val_t center_presses = 0;
 	atomic_val_t observed[ARRAY_SIZE(codes)] = {0};
 	struct hub_menu menu = {0};
-	bool center_was_down = false;
+	bool center_was_down = atomic_test_bit(&buttons, 0);
+	bool launch_armed = false;
+	bool center_ready = false;
+	int64_t released_since = -1;
+	for (size_t i = 0; i < ARRAY_SIZE(codes); i++) {
+		observed[i] = atomic_get(&presses[i]);
+	}
 	int shown = -1;
 	enum hub_light_menu menu_shown = HUB_LIGHT_NORMAL;
 	int64_t busy_until = 0;
@@ -300,6 +312,15 @@ void hub_run(void)
 			pressed_at = now;
 		}
 		center_presses = count;
+		if (!center_ready) {
+			if (down) {
+				released_since = -1;
+			} else if (released_since < 0) {
+				released_since = now;
+			} else if (now - released_since >= 150) {
+				center_ready = true;
+			}
+		}
 		if (pressed_at >= 0 && now - pressed_at >= 2000) {
 			hub_power_request_shutdown();
 			shutdown();
@@ -316,9 +337,18 @@ void hub_run(void)
 			app_status.state != APPLICATION_RUNNING && !app_status.repl;
 #endif
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
-		menu_available = menu_available && !host_session_open();
+		menu_available = menu_available && !host_session_reserved();
 #endif
 		hub_menu_idle(&menu, menu_available);
+		if (!menu_available) launch_armed = false;
+		bool compatible = current == HOST_PYBRICKS;
+#if defined(CONFIG_BRICKPHYR_APP_STORAGE) && defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+		unsigned int selected_slot = 0;
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+		selected_slot = host_protocol_selected_slot();
+#endif
+		hub_launcher_poll(menu_available && !menu.open, compatible, selected_slot, now);
+#endif
 		application_buttons(menu.open ? 0 : hub_buttons());
 		/* Menu entry/cancel precedes navigation. Center confirms on release,
 		 * leaving its entire hold interval available for power-off. */
@@ -331,20 +361,30 @@ void hub_run(void)
 			observed[i] = presses_now;
 			if (pressed && menu_available) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
-				bool compatible = current == HOST_PYBRICKS;
-#if defined(CONFIG_BT_HCI_SETUP) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
-				compatible |= host_ble_status() == HOST_BLE_PYBRICKS;
-#endif
 				if (!menu.open && (i == 1 || i == 2) &&
 				    compatible) {
 					int slot = host_protocol_selected_slot() + (i == 1 ? -1 : 1);
 					(void)host_protocol_select_slot(slot);
 				}
 #endif
+				if (!menu.open && !compatible && (i == 1 || i == 2)) {
+#if defined(CONFIG_BRICKPHYR_APP_STORAGE) && defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+					hub_launcher_navigate(i == 1 ? -1 : 1);
+#endif
+				}
 				hub_menu_input(&menu, codes[i], true, current);
+				if (i == 0 && !menu.open && center_ready) launch_armed = true;
+				if (menu.open) launch_armed = false;
 			}
-			if (menu_available && i == 0 && !down && (center_was_down || pressed) &&
-			    hub_menu_input(&menu, codes[i], false, current)) {
+			if (menu_available && i == 0 && !down && (center_was_down || pressed)) {
+				bool confirmed = hub_menu_input(&menu, codes[i], false, current);
+				if (!confirmed && launch_armed && !menu.open) {
+#if defined(CONFIG_BRICKPHYR_APP_STORAGE) && defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+					hub_launcher_start(now);
+#endif
+				}
+				launch_armed = false;
+				if (!confirmed) continue;
 				int err = -ENOTSUP;
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 				err = menu.selected == current ? 0 : host_interface_select(menu.selected);
@@ -361,6 +401,13 @@ void hub_run(void)
 			}
 		}
 		center_was_down = down;
+#if defined(CONFIG_BRICKPHYR_APP_STORAGE) && defined(CONFIG_BOARD_SPIKE_PRIME_F4) && defined(CONFIG_BRICKPHYR_MATRIX)
+#if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
+		selected_slot = host_protocol_selected_slot();
+#endif
+		hub_launcher_poll(menu_available && !menu.open, current == HOST_PYBRICKS,
+			selected_slot, now);
+#endif
 		if (hub_power_update(supply, activity, now)) {
 			shutdown();
 		}

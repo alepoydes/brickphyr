@@ -52,8 +52,11 @@ static void copy_pixels(uint32_t first, const uint8_t *pixels, size_t count,
 
 static int admission(enum bp_matrix_owner owner)
 {
-	return disabled ? -ESHUTDOWN : releasing || state.pending ||
-		(state.owner != BP_MATRIX_FREE && state.owner != owner) ? -EBUSY : 0;
+	bool take_over = state.owner == BP_MATRIX_SYSTEM &&
+		owner != BP_MATRIX_SYSTEM && owner != BP_MATRIX_FREE;
+	if (disabled) return -ESHUTDOWN;
+	return !take_over && (releasing || state.pending ||
+		(state.owner != BP_MATRIX_FREE && state.owner != owner)) ? -EBUSY : 0;
 }
 
 static void apply(struct k_work *work)
@@ -113,7 +116,8 @@ static void apply(struct k_work *work)
 int hub_matrix_write(enum bp_matrix_owner owner, uint32_t first, const uint8_t *values,
 		     size_t count)
 {
-	if ((owner != BP_MATRIX_APPLICATION && owner != BP_MATRIX_TERMINAL) || !values ||
+	if ((owner != BP_MATRIX_APPLICATION && owner != BP_MATRIX_TERMINAL &&
+	     owner != BP_MATRIX_SYSTEM) || !values ||
 	    !count || first >= BP_MATRIX_PIXELS || count > BP_MATRIX_PIXELS - first) {
 		return -EINVAL;
 	}
@@ -129,15 +133,17 @@ int hub_matrix_write(enum bp_matrix_owner owner, uint32_t first, const uint8_t *
 	int err = admission(owner);
 	if (!err) {
 		bool animated = state.animating;
+		bool take_over = state.owner == BP_MATRIX_SYSTEM && owner != BP_MATRIX_SYSTEM;
 		/* Rescheduling and publication are atomic with respect to the worker. */
 		err = k_work_reschedule(&update, K_NO_WAIT);
 		if (err >= 0) {
 			k_free(animation);
 			animation = NULL;
 			state.animating = false;
-			if (animated) {
+			if (animated || take_over) {
 				memset(state.requested, 0, sizeof(state.requested));
 			}
+			releasing = false;
 			copy_pixels(first, values, count,
 				owner == BP_MATRIX_APPLICATION ? application_rotation : 0);
 			state.owner = owner;
@@ -168,6 +174,7 @@ int hub_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int err = admission(BP_MATRIX_APPLICATION);
 	if (!err) {
+		bool take_over = state.owner == BP_MATRIX_SYSTEM;
 		/* Nonwaiting allocation and <=6375-byte publication under the lock
 		 * prevent a forced application stop from leaking an unpublished copy. */
 		uint8_t *copy = k_malloc(bytes);
@@ -177,6 +184,9 @@ int hub_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms
 			err = k_work_reschedule(&update, K_NO_WAIT);
 			if (err >= 0) {
 				memcpy(copy, frames, bytes);
+				if (take_over) {
+					memset(state.requested, 0, sizeof(state.requested));
+				}
 				k_free(animation);
 				animation = copy;
 				animation_count = count;
@@ -185,6 +195,7 @@ int hub_matrix_animate(const uint8_t *frames, size_t count, uint32_t interval_ms
 				state.animating = true;
 				state.pending = true;
 				state.owner = BP_MATRIX_APPLICATION;
+				releasing = false;
 				revision++;
 				err = 0;
 			} else {
@@ -278,6 +289,14 @@ int hub_matrix_release(enum bp_matrix_owner owner)
 			return err;
 		}
 	}
+}
+
+int hub_matrix_system_release(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	int err = state.owner == BP_MATRIX_SYSTEM ? blank() : 0;
+	k_spin_unlock(&lock, key);
+	return err;
 }
 
 void hub_matrix_session_closed(void)

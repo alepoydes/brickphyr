@@ -6,7 +6,8 @@
 #define BP_MATRIX_PIXELS 25
 #define BP_MATRIX_MAX_FRAMES 255
 
-enum bp_matrix_owner { BP_MATRIX_FREE, BP_MATRIX_APPLICATION, BP_MATRIX_TERMINAL };
+enum bp_matrix_owner { BP_MATRIX_FREE, BP_MATRIX_APPLICATION, BP_MATRIX_TERMINAL,
+	BP_MATRIX_SYSTEM };
 
 /* Brightness is 0..100, row-major, top left first in the upright hub orientation.
  * Applied values mean a successful controller write, not measured light output.

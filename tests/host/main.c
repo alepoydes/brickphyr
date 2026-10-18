@@ -582,6 +582,8 @@ ZTEST(host, test_smp_ble_inflight_disconnect)
 	host_ble_release(true);
 	host_interface_status(state);
 	zassert_true(state[2], "Released owner while accepted request still runs");
+	zassert_false(host_session_open());
+	zassert_true(host_session_reserved(), "Closing session is still a menu owner");
 	struct hub_power_state disconnected;
 	hub_power_get(&disconnected);
 	zassert_equal(disconnected.transport, HUB_DISCONNECTED);

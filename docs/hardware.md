@@ -311,12 +311,30 @@ orientation. Matrix and button writes serialize through the same persistent
 controller frame, preserving each other's channels and the charger-control output.
 
 The [Shell commands](builds.md#diagnostic-shell) and native SDK use one display
-service. The first accepted write acquires the matrix for the terminal or the
-application; another owner receives `-EBUSY`. A terminal clear or disconnect
+service. The first accepted terminal or application write acquires the matrix;
+the other owner receives `-EBUSY`. The idle program selector owns a
+system preview that an application or terminal can replace immediately, including
+while a preview transfer is pending. A terminal clear or disconnect
 blanks its display and releases it. Host disconnection leaves an application's
 display alone. Application return, fault or stop blanks it before unload. A
 failed blank retains ownership and reports the error; an explicit cleanup can
 retry it. Shutdown closes admission and requests a blank.
+
+While no application, REPL or management session is active, the F4 matrix shows
+the selected program. Pybricks USB mode shows slot 0–4 when slot execution is
+included in the build; `!` indicates that it is unavailable. In Brickphyr USB mode,
+left/right browse installed named programs in lexical order with wraparound;
+`-` means there are none. The selected name starts with its first character and
+scrolls across the matrix once after a short pause. A new key press interrupts
+the scroll. A short center press launches the selection, and `X` briefly reports
+an empty slot or failed launch. The two-second center hold still shuts down.
+Holding the wake button at boot does not launch a program. The system preview
+releases the matrix before a button-launched program runs and returns when it
+stops and the hub is idle. A host-launched program can take the display on its
+first write. Named-program selection, scrolling and short-center launch are
+operator-confirmed on the Inventor F4 with a motorless native example. Pybricks
+slot digits, right-button selection and short-center launch of a motorless
+Python example are also confirmed there.
 
 `bp_matrix_write(first, values, count)` accepts a contiguous portion of the
 25-pixel row-major frame, including a single pixel or the whole display. It

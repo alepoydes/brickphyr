@@ -16,6 +16,8 @@ int host_transport_init(const struct device *uart, uint16_t hub_variant);
 void host_connection_changed(bool open);
 void host_interface_status(uint8_t state[8]);
 bool host_session_open(void);
+/* Includes accepted sessions still finishing disconnect cleanup. */
+bool host_session_reserved(void);
 enum host_mode host_interface_current(void);
 int host_interface_select(uint16_t mode);
 

@@ -1314,7 +1314,11 @@ previously installed applications.
 
 `app list`, `app run NAME`, and `app remove NAME` are available in the shared Shell.
 The host [CLI](host.md#native-applications) provides the same lifecycle over USB
-and BLE. Removal or replacement affects the stored image, not a running instance:
+and BLE. With no program or management session active, the hub's left/right
+buttons browse named applications and a short center press runs the selection
+through the same store and supervisor. Storage lookup and loading run on the
+existing storage worker so they do not block button or power handling. Removal
+or replacement affects the stored image, not a running instance:
 LLEXT has already copied its execution sections into protected RAM. There is no
 autorun. Installed images retain their ABI requirements; incompatible interface changes can
 require rebuilding and reinstalling them.

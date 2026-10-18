@@ -792,6 +792,14 @@ bool host_session_open(void)
 	return open;
 }
 
+bool host_session_reserved(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	bool reserved = usb_open || occupied || ble_occupied;
+	k_spin_unlock(&lock, key);
+	return reserved;
+}
+
 int host_interface_select(uint16_t requested)
 {
 	if (!uart || requested > HOST_SHELL) {

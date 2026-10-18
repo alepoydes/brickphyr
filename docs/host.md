@@ -901,8 +901,13 @@ fixed per-slot flash partitions. All programs share the available space and the
 common execution-memory limits. The slot count is a build option, not a limit on
 the number of ordinary named programs.
 
-Select a slot with left/right outside the connections menu when USB or BLE is in
-Pybricks mode, or from the native hub terminal:
+Select a slot with left/right while the hub is idle in Pybricks USB mode.
+The matrix shows the selected digit; a short center
+press runs its stored program. The Bluetooth button opens the connections menu
+only while no program or management session is active. During a program it
+remains an application button.
+
+The native hub terminal can also select a slot:
 
 ```text
 pybricks_slot 2

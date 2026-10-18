@@ -145,6 +145,58 @@ int app_store_next(const char *after, struct app_file *entry, size_t *available)
 	return err;
 }
 
+int app_store_browse(const char *current, int direction, struct app_file *entry)
+{
+	if (!current || !entry || (direction != -1 && direction != 0 && direction != 1) ||
+	    (*current && (!name_valid(current) || current[0] == '@'))) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&store_lock, K_FOREVER);
+	int err = status;
+	struct fs_dir_t directory;
+	fs_dir_t_init(&directory);
+	char wrap[APP_NAME_MAX + 1] = "";
+	size_t wrap_size = 0;
+	*entry = (struct app_file){0};
+	if (!err) {
+		err = fs_opendir(&directory, mount.mnt_point);
+	}
+	if (!err) {
+		struct fs_dirent item;
+		while (!(err = fs_readdir(&directory, &item)) && item.name[0]) {
+			if (item.type != FS_DIR_ENTRY_FILE || !name_valid(item.name) ||
+			    item.name[0] == '@') {
+				continue;
+			}
+			int order = strcmp(item.name, current);
+			if (!wrap[0] || (direction < 0 ? strcmp(item.name, wrap) > 0 :
+				strcmp(item.name, wrap) < 0)) {
+				strcpy(wrap, item.name);
+				wrap_size = item.size;
+			}
+			if ((direction < 0 ? order < 0 : direction > 0 ? order > 0 : true) &&
+			    (!entry->name[0] || (direction < 0 ?
+				strcmp(item.name, entry->name) > 0 :
+				strcmp(item.name, entry->name) < 0))) {
+				strcpy(entry->name, item.name);
+				entry->size = item.size;
+			}
+		}
+		int closed = fs_closedir(&directory);
+		err = err ? err : closed;
+	}
+	if (!err && !entry->name[0]) {
+		if (wrap[0]) {
+			strcpy(entry->name, wrap);
+			entry->size = wrap_size;
+		} else {
+			err = -ENOENT;
+		}
+	}
+	k_mutex_unlock(&store_lock);
+	return err;
+}
+
 int app_store_remove(const char *name)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];

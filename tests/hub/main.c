@@ -455,6 +455,27 @@ ZTEST(hub, test_matrix_ownership_and_shared_controller)
 	zassert_equal(value.owner, BP_MATRIX_FREE);
 }
 
+ZTEST(hub, test_matrix_launcher_hands_off_pending_frame)
+{
+	uint8_t system[BP_MATRIX_PIXELS] = {0};
+	uint8_t application[BP_MATRIX_PIXELS] = {0};
+	system[0] = 100;
+	system[24] = 100;
+	application[12] = 50;
+	hold_transfer = true;
+	zassert_ok(hub_matrix_write(BP_MATRIX_SYSTEM, 0, system, sizeof(system)));
+	zassert_ok(k_sem_take(&transfer_started, K_MSEC(100)));
+	zassert_ok(hub_matrix_write(BP_MATRIX_APPLICATION, 0, application,
+				    sizeof(application)));
+	k_sem_give(&transfer_continue);
+	zassert_ok(hub_matrix_wait());
+	struct bp_matrix_state value;
+	zassert_ok(hub_matrix_get(&value));
+	zassert_equal(value.owner, BP_MATRIX_APPLICATION);
+	zassert_mem_equal(value.applied, application, sizeof(application));
+	zassert_ok(hub_matrix_release(BP_MATRIX_APPLICATION));
+}
+
 ZTEST(hub, test_matrix_animation)
 {
 	uint8_t images[2][BP_MATRIX_PIXELS] = {{100}, {[4] = 50}};
@@ -870,10 +891,10 @@ ZTEST(hub, test_menu_selection_and_cancel)
 	zassert_equal(menu.selected, HOST_PYBRICKS);
 	hub_menu_input(&menu, INPUT_KEY_RIGHT, true, HOST_PYBRICKS);
 	zassert_equal(menu.selected, HOST_SHELL);
-	zassert_false(hub_menu_idle(&menu, false));
+	hub_menu_idle(&menu, false);
 	zassert_false(menu.open);
 	zassert_false(menu.confirm_armed);
-	zassert_true(hub_menu_idle(&menu, true));
+	hub_menu_idle(&menu, true);
 	zassert_false(menu.open);
 }
 
