@@ -34,7 +34,8 @@ static inline int bp_capture_app_config(const uint8_t base[BP_CAPTURE_CONFIG_SIZ
 	for (size_t i = 0; i < count; i++) {
 		const char *name = fields[i].name;
 		if (!name) return -EINVAL;
-		size_t name_length = strnlen(name, BP_CAPTURE_APP_MAX_NAME + 1);
+		size_t name_length = 0;
+		while (name_length <= BP_CAPTURE_APP_MAX_NAME && name[name_length]) name_length++;
 		if (!name_length || name_length > BP_CAPTURE_APP_MAX_NAME ||
 		    !((name[0] >= 'A' && name[0] <= 'Z') ||
 		      (name[0] >= 'a' && name[0] <= 'z'))) return -EINVAL;
