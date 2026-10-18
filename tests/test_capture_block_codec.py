@@ -11,7 +11,9 @@ from pathlib import Path
 import cbor2
 import pytest
 
-from brickphyrdev import bench_codec, capture_block_codec, capture_codec, record_codec
+from brickphyrdev import (
+    bench_codec, capture_app_codec, capture_block_codec, capture_codec, record_codec,
+)
 from brickphyrdev.records import Recording
 
 
@@ -113,6 +115,7 @@ def test_block_round_trip_and_corruption(tmp_path):
         capture_codec.decode(value, config, schema=capture_codec.SCHEMA_V2)
         for value in rows
     ]
+
     schedule = config + struct.pack("<8I", 1, 1, 7, 0, 0, 0, 0, 0) + struct.pack(
         "<3I6h", 0, 50, 0, 200, 0, 0, 0, 0, 0)
     record_codec.check_size(bench_codec.SCHEMA_V4, 1024, schedule, variable=True)
@@ -160,6 +163,33 @@ def test_block_round_trip_and_corruption(tmp_path):
         capture_block_codec.encode([rows[0], rows[2]] * 30, config)
     with pytest.raises(ValueError, match="Too many rows"):
         capture_block_codec.encode([rows[0]] * 256, config)
+
+
+def test_application_control_fields_use_the_compact_record_path(tmp_path):
+    selected = bytearray(15)
+    selected[2] = 1
+    base = struct.pack("<4I", 1 << 2, 15, 0, 1) + selected
+    config = capture_app_codec.config_with_fields(base, (
+        ("target_speed_mm_s", "h"), ("target_turn_mdps", "i"),
+    ))
+
+    def row(index, speed, turn):
+        time = 100_000 + index * 15_000
+        step = struct.pack("<qq4I", time, time + 2, index + 1, 0, 1, 0)
+        capture = struct.pack("<3qI", time, time + 2, time + 4, 0)
+        battery = struct.pack("<2q2Ii2I", time // 1000, time // 1000,
+                              7, 0, 0, 0, 7500)
+        return step + capture + battery + struct.pack("<hi", speed, turn)
+
+    rows = [row(0, -120, 900), row(1, -120, 900), row(2, 80, -450)]
+    block = _native_encode(tmp_path, rows, config, control=True, compact_first=True)
+    assert capture_block_codec.decode_control(block, config) == rows
+    values = record_codec.decode(capture_app_codec.SCHEMA, rows[-1][32:], config)
+    assert values["app"] == {"target_speed_mm_s": 80, "target_turn_mdps": -450}
+    assert values["sources"]["battery"]["voltage_mv"] == 7500
+    record_codec.check_size(capture_app_codec.SCHEMA, len(rows[0]) - 32, config)
+    with pytest.raises(RuntimeError, match="descriptor"):
+        capture_app_codec.layout(config[:-1] + b"?")
 
 
 def test_shared_imu_metadata_is_transmitted_once(tmp_path):

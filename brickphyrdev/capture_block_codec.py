@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bounded lossless blocks of capture/2 observation rows.
+"""Bounded lossless blocks of capture observation rows.
 
 The caller supplies the immutable capture configuration. Each block is independently
 decodable and carries full values for every field changed since the previous row.
@@ -8,8 +8,8 @@ decodable and carries full values for every field changed since the previous row
 import re
 import struct
 
-from . import capture_codec
-from .capture_layout import DELTA_COUNTERS, IMU_SHARED_FIELDS, KINDS, SOURCE_KINDS
+from . import capture_app_codec, capture_codec
+from .capture_layout import CONFIG_SIZE, DELTA_COUNTERS, IMU_SHARED_FIELDS, KINDS, SOURCE_KINDS
 
 _HEADER = struct.Struct("<4sHH")
 _MAGIC = b"BCB3"
@@ -21,7 +21,12 @@ MAX_TRANSFER_BYTES = 2048
 
 def _field_formats(config):
     # The decoder validates selection and length before any block is inspected.
-    mask, _period, _duration, _resolution, row_size = capture_codec._layout_v2(config)
+    app_fields = ()
+    if len(config) != CONFIG_SIZE:
+        _base_size, app_fields, row_size = capture_app_codec.layout(config)
+    else:
+        row_size = capture_codec._layout_v2(config)[4]
+    mask = int.from_bytes(config[:4], "little")
     header = capture_codec._HEADER.format.removeprefix("<")
     groups = re.findall(r"(\d*)([bBhHiIlLqQ])", header)
     if "".join(count + fmt for count, fmt in groups) != header:
@@ -35,6 +40,7 @@ def _field_formats(config):
                 if selector is None or selection & (1 << optional):
                     formats += (fmt,)
                 optional += selector is not None
+    formats += tuple(field.format.removeprefix("<") for _, field in app_fields)
     if sum(struct.calcsize("<" + fmt) for fmt in formats) != row_size:
         raise ValueError("Capture field layout differs from payload length")
     return tuple(struct.Struct("<" + fmt) for fmt in formats)
@@ -71,6 +77,9 @@ def _delta_flags(config):
                 flags.append(fmt == "q" and name.endswith(("_us", "_ms")) or
                              fmt == "I" and name in DELTA_COUNTERS)
             optional += selector is not None
+    if len(config) != CONFIG_SIZE:
+        _base_size, fields, _row_size = capture_app_codec.layout(config)
+        flags.extend(field.format[-1] in "iI" for _, field in fields)
     return flags
 
 
@@ -100,7 +109,7 @@ def _indices(mask, count):
 
 
 def encode(rows, config):
-    """Consume 1..255 capture/2 rows online into one block of at most 1024 bytes."""
+    """Consume 1..255 capture rows online into one block of at most 1024 bytes."""
     fields = _field_formats(config)
     aliases = _aliases(config, len(fields))
     deltas = _delta_flags(config)

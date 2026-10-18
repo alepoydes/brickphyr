@@ -922,6 +922,19 @@ path, outside the controller's recording call; retained RAM still holds the
 original fixed-size records. Other application schemas use the ordinary binary
 block transfer.
 
+For a controller that needs to record only the commands it actually used,
+`brickphyr.capture+app/1` extends the same row with up to eight named values.
+Build its configuration once with `bp_capture_app_config` from the ordinary
+31-byte capture selection and field names/types (`b/B/h/H/i/I/f`, little-endian;
+include units in names). After `bp_capture_pack_frame`, append those values to
+the row and use a control recording. The existing compact transfer and offline
+reader decode them under `app`; the control step supplies timestamps and applied
+parameter revisions. Only selected hardware fields and values copied by the
+application are sent. To replay the actual input, append values after applying
+any dead zones or limits, in the same step in which the controller uses them.
+An ARM/QEMU check and a passive SPIKE Prime F4 BLE run recovered 100 consecutive
+rows with two synthetic command values; neither run drove motors.
+
 Return, fault and forced stop freeze the retained tail for retrieval. Normal
 host disconnect does not stop recording. Starting another application, Python
 soft reset or explicit clearing discards it and changes the recording generation.

@@ -14,6 +14,7 @@ from smp import message
 
 from . import (
     application,
+    capture_app_codec,
     capture_block_codec,
     capture_codec,
     monitor,
@@ -365,7 +366,7 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     compact = getattr(info, "compact", False)
     if type(compact) is not bool or compact and not (
         block and info.control and not variable and
-        info.record_schema == capture_codec.SCHEMA_V2
+        info.record_schema in (capture_codec.SCHEMA_V2, capture_app_codec.SCHEMA)
     ):
         raise RuntimeError("Invalid compact recording mode")
     compact_ack = getattr(info, "compact_ack", False)

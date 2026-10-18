@@ -394,6 +394,43 @@ def test_compact_ring_reports_overwrite_without_acknowledgement():
         asyncio.run(exercise(port))
 
 
+def test_application_fields_share_compact_control_recording():
+    import io
+
+    from brickphyrdev import recording
+    from brickphyrdev.records import Recording
+
+    build = Path(__file__).resolve().parents[1] / "build/native-smp-tests"
+
+    async def exercise(port):
+        async with connection(port=port) as (client, transport):
+            await upload(client, transport, (build / "record_app_fields_probe.elf").read_bytes())
+            await checked(client, Start())
+            output = io.BytesIO()
+            with recording.session(output) as (session, counts):
+                await asyncio.wait_for(
+                    recording.collect(client, output, session, counts, wait=True), 5
+                )
+            output.seek(0)
+            reader = Recording(output)
+            frames = list(reader.frames(allow_gaps=True))
+            assert len(frames) == 100 and reader.missing == 0
+            assert [frame.index for frame in frames] == list(range(100))
+            assert [frame.values["app"] for frame in frames] == [
+                {"target_speed_mm_s": -120 if index < 50 else 80,
+                 "target_turn_mdps": 900 if index < 50 else -450}
+                for index in range(100)
+            ]
+            assert all(frame.control and "battery" in frame.values["sources"]
+                       for frame in frames)
+            info = await checked(client, recording.Info())
+            assert info.compact and info.first == info.next == 100
+            await checked(client, recording.Clear())
+
+    with native_console(build) as port:
+        asyncio.run(exercise(port))
+
+
 def test_segmented_control_stream_collects_without_acknowledgement():
     import io
 

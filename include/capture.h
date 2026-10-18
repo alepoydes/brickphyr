@@ -12,6 +12,9 @@ struct telemetry_wire_field;
  * Pass NULL to count fields before allocating the caller-owned array. */
 int capture_wire_layout(const uint8_t config[BP_CAPTURE_CONFIG_SIZE], size_t row_size,
 	struct telemetry_wire_field *wire, size_t capacity);
+/* The same row followed by 1..8 application-selected scalar values. */
+int capture_app_wire_layout(const uint8_t *config, size_t config_size, size_t row_size,
+	struct telemetry_wire_field *wire, size_t capacity);
 /* Pack a cached frame with the same generated fields as diagnostic capture.
  * No hardware read, allocation or persistent pointer. */
 int capture_pack_frame(const uint8_t config[BP_CAPTURE_CONFIG_SIZE],

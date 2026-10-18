@@ -3,7 +3,7 @@
 
 import struct
 
-from . import bench_codec, capture_codec
+from . import bench_codec, capture_app_codec, capture_codec
 
 END_REASONS = {2: "trigger", 3: "full", 4: "duration", 5: "cancelled", 6: "error"}
 
@@ -236,6 +236,12 @@ _DECODERS = {
 
 
 def check_size(schema, size, config=None, *, variable=False):
+    if schema == capture_app_codec.SCHEMA:
+        if variable:
+            raise RuntimeError(f"{schema} requires fixed-size records")
+        if config is not None and size != capture_app_codec.layout(config)[2]:
+            raise RuntimeError(f"Invalid {schema} record length")
+        return
     if schema == bench_codec.SCHEMA:
         if variable:
             raise RuntimeError("brickphyr.bench/1 requires fixed-size records")
@@ -268,6 +274,8 @@ def check_size(schema, size, config=None, *, variable=False):
 
 
 def decode(schema, data, config=b"") -> dict | None:
+    if schema == capture_app_codec.SCHEMA:
+        return capture_app_codec.decode(data, config)
     if schema == bench_codec.SCHEMA:
         return bench_codec.decode(data, config)
     if schema in (bench_codec.SCHEMA_V2, bench_codec.SCHEMA_V3, bench_codec.SCHEMA_V4):

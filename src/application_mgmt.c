@@ -279,8 +279,12 @@ static bool record_compact_supported(const struct bp_record_info *info, bool var
 {
 	if (segments && info->parameter_size && !record_inline_parameters(info, segments)) return false;
 	size_t context = segments && info->parameter_size ? info->parameter_size + 16 : 0;
-	return info->control && !variable && info->config_size == CONFIG_SIZE &&
-		!strcmp(info->spec.schema, "brickphyr.capture/2") &&
+	bool standard = info->config_size == CONFIG_SIZE &&
+		!strcmp(info->spec.schema, "brickphyr.capture/2");
+	bool application = info->config_size > CONFIG_SIZE + 1 &&
+		info->config_size <= BP_CAPTURE_APP_MAX_CONFIG_SIZE &&
+		!strcmp(info->spec.schema, "brickphyr.capture+app/1");
+	return info->control && !variable && (standard || application) &&
 		context < RECORD_COMPACT_BYTES &&
 		info->spec.size + 32 + 8 <= RECORD_COMPACT_BYTES - context;
 }
@@ -460,21 +464,26 @@ static int record_compact_read(struct smp_streamer *stream)
 		if (size != info.parameter_size || parameter_info.generation != generation)
 			return result(stream, size < 0 ? size : -ESTALE);
 	}
-	uint8_t config[CONFIG_SIZE];
+	uint8_t config[BP_CAPTURE_APP_MAX_CONFIG_SIZE];
 	struct bp_record_info current;
-	int length = application_record_config_read(generation, 0, config, sizeof(config), &current);
-	if (length != sizeof(config) || current.generation != generation) {
+	int length = application_record_config_read(generation, 0, config,
+		info.config_size, &current);
+	if (length != info.config_size || current.generation != generation) {
 		return result(stream, current.generation != generation ? -ESTALE : -EINVAL);
 	}
 	size_t row_size = info.spec.size + sizeof(struct bp_control_step);
-	int count = capture_wire_layout(config, info.spec.size, NULL, 0);
+	bool application = info.config_size != CONFIG_SIZE;
+	int count = application ? capture_app_wire_layout(config, info.config_size,
+		info.spec.size, NULL, 0) : capture_wire_layout(config, info.spec.size, NULL, 0);
 	if (count < 0) return result(stream, count);
 	struct telemetry_wire_field *wire = k_malloc((count + 6) * sizeof(*wire) +
 		RECORD_COMPACT_BYTES + 2 * row_size);
 	if (!wire) return result(stream, -ENOMEM);
 	uint8_t *encoded = (uint8_t *)(wire + count + 6);
 	uint8_t *rows = encoded + RECORD_COMPACT_BYTES;
-	int filled = capture_wire_layout(config, info.spec.size, wire + 6, count);
+	int filled = application ? capture_app_wire_layout(config, info.config_size,
+		info.spec.size, wire + 6, count) :
+		capture_wire_layout(config, info.spec.size, wire + 6, count);
 	if (filled != count) {
 		k_free(wire);
 		return result(stream, filled < 0 ? filled : -EINVAL);

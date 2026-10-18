@@ -268,6 +268,59 @@ int capture_wire_layout(const uint8_t config[CONFIG_SIZE], size_t row_size,
 	return count ? count : -EINVAL;
 }
 
+int capture_app_wire_layout(const uint8_t *config, size_t config_size, size_t row_size,
+	struct telemetry_wire_field *wire, size_t capacity)
+{
+	if (!config || config_size <= BP_CAPTURE_CONFIG_SIZE + 1 ||
+	    config_size > BP_CAPTURE_APP_MAX_CONFIG_SIZE) return -EINVAL;
+	unsigned int count = config[BP_CAPTURE_CONFIG_SIZE];
+	if (!count || count > BP_CAPTURE_APP_MAX_FIELDS) return -EINVAL;
+	size_t names[BP_CAPTURE_APP_MAX_FIELDS], lengths[BP_CAPTURE_APP_MAX_FIELDS];
+	uint8_t sizes[BP_CAPTURE_APP_MAX_FIELDS], deltas[BP_CAPTURE_APP_MAX_FIELDS];
+	size_t offset = BP_CAPTURE_CONFIG_SIZE + 1, app_size = 0;
+	for (unsigned int field = 0; field < count; field++) {
+		if (offset + 2 > config_size) return -EINVAL;
+		uint8_t type = config[offset++], length = config[offset++];
+		if (!length || length > BP_CAPTURE_APP_MAX_NAME || offset + length > config_size)
+			return -EINVAL;
+		if (!((config[offset] >= 'A' && config[offset] <= 'Z') ||
+		      (config[offset] >= 'a' && config[offset] <= 'z'))) return -EINVAL;
+		for (unsigned int letter = 1; letter < length; letter++) {
+			uint8_t ch = config[offset + letter];
+			if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+			      (ch >= '0' && ch <= '9') || ch == '_')) return -EINVAL;
+		}
+		for (unsigned int prior = 0; prior < field; prior++) {
+			if (length == lengths[prior] &&
+			    !memcmp(config + offset, config + names[prior], length)) return -EINVAL;
+		}
+		names[field] = offset;
+		lengths[field] = length;
+		offset += length;
+		sizes[field] = type == 'b' || type == 'B' ? 1 :
+			type == 'h' || type == 'H' ? 2 :
+			type == 'i' || type == 'I' || type == 'f' ? 4 : 0;
+		if (!sizes[field]) return -EINVAL;
+		deltas[field] = type == 'i' || type == 'I';
+		app_size += sizes[field];
+	}
+	if (offset != config_size || row_size < app_size || (wire && capacity < count))
+		return -EINVAL;
+	int base_count = capture_wire_layout(config, row_size - app_size, wire,
+		wire ? capacity - count : 0);
+	if (base_count < 0) return base_count;
+	if (wire && (capacity < count || (size_t)base_count > capacity - count)) return -EINVAL;
+	if (wire) {
+		size_t position = row_size - app_size;
+		for (unsigned int field = 0; field < count; field++) {
+			wire[base_count + field] = (struct telemetry_wire_field){
+				position, sizes[field], -1, deltas[field]};
+			position += sizes[field];
+		}
+	}
+	return base_count + count;
+}
+
 static int block_start(struct capture_task *run)
 {
 	size_t prefix = plan.step_count ? 4 : 0;
