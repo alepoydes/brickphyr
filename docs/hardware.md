@@ -327,14 +327,15 @@ left/right browse visible installed named programs in lexical order with wraparo
 names beginning with an underscore are skipped. The last selection remains in RAM
 after the program completes and after returning from Pybricks mode; a removed
 selection advances to the next visible name. `-` means there are none. The selected
-name starts with its first character and scrolls across the matrix once after a
-short pause. A new key press interrupts the scroll. A short center press launches
+name appears one letter at a time; each letter stays bright, fades out, then the
+next appears after a brief dark pause. After one pass, the first letter remains.
+A new key press starts the new selection immediately. A short center press launches
 the selection, and `X` briefly reports an empty slot or failed launch. The
 two-second center hold still shuts down.
 Holding the wake button at boot does not launch a program. The system preview
 releases the matrix before a button-launched program runs and returns when it
 stops and the hub is idle. A host-launched program can take the display on its
-first write. Named-program selection, scrolling and short-center launch are
+first write. Named-program selection and short-center launch are
 operator-confirmed on the Inventor F4 with a motorless native example. Pybricks
 slot digits, right-button selection and short-center launch of a motorless
 Python example are also confirmed there. The same board retained a motorless

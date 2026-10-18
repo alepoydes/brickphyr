@@ -58,7 +58,7 @@ sensor accuracy, sustained combined load or full device compatibility.
 `hub_menu` reuses the reference selection loop with the shared buttons/matrix.
 Navigation and stop restoration have ARM checks; F4 USB/BLE checks cover initial
 rendering and host interruption/stop. The operator confirmed named-program
-selection, scrolling and short-center launch on F4 with a motorless native
+selection and short-center launch on F4 with a motorless native
 example, and Pybricks slot selection and launch with a motorless Python example.
 
 Native simulator and protected ARM/QEMU checks cover additional driver, motor,

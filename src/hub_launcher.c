@@ -16,6 +16,8 @@ LOG_MODULE_REGISTER(hub_launcher);
 static atomic_t stopping;
 
 enum job_kind { JOB_BROWSE, JOB_START };
+enum { FIRST_HOLD_MS = 700, LETTER_HOLD_MS = 450, FADE_FRAME_MS = 20,
+	FADE_STEPS = 6, GAP_MS = 40 };
 static struct {
 	struct k_spinlock lock;
 	bool busy, done;
@@ -35,8 +37,8 @@ static struct {
 	int browse_error;
 	int8_t queued_direction;
 	int64_t frame_at, error_until;
-	uint8_t offset;
-	enum { PREVIEW_FIRST, PREVIEW_SCROLL, PREVIEW_DONE } preview;
+	uint8_t offset, fade_step;
+	enum { PREVIEW_HOLD, PREVIEW_FADE, PREVIEW_GAP, PREVIEW_DONE } preview;
 } ui;
 
 static bool can_start(void)
@@ -120,9 +122,10 @@ static void select_name(const char *name, int error, int64_t now)
 	if (name != ui.name) strcpy(ui.name, name);
 	ui.browse_error = error;
 	ui.error_until = 0;
-	ui.frame_at = now + 700;
+	ui.frame_at = now + FIRST_HOLD_MS;
 	ui.offset = 0;
-	ui.preview = PREVIEW_FIRST;
+	ui.fade_step = 0;
+	ui.preview = PREVIEW_HOLD;
 	ui.dirty = true;
 }
 
@@ -159,13 +162,13 @@ static bool finish_job(int64_t now)
 
 extern const uint8_t pb_font_5x5[95][5];
 
-static void glyph(char character, uint8_t frame[BP_MATRIX_PIXELS])
+static void glyph(char character, uint8_t brightness, uint8_t frame[BP_MATRIX_PIXELS])
 {
 	if (character < 32 || character > 126) character = '?';
 	for (size_t row = 0; row < 5; row++) {
 		for (size_t col = 0; col < 5; col++) {
 			frame[row * 5 + col] =
-				pb_font_5x5[character - 32][row] & BIT(4 - col) ? 100 : 0;
+				pb_font_5x5[character - 32][row] & BIT(4 - col) ? brightness : 0;
 		}
 	}
 }
@@ -173,36 +176,30 @@ static void glyph(char character, uint8_t frame[BP_MATRIX_PIXELS])
 static void preview_frame(uint8_t frame[BP_MATRIX_PIXELS], int64_t now)
 {
 	if (now < ui.error_until) {
-		glyph('X', frame);
+		glyph('X', 100, frame);
 		return;
 	}
 	if (ui.pybricks) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
-		glyph('0' + ui.slot, frame);
+		glyph('0' + ui.slot, 100, frame);
 #else
-		glyph('!', frame);
+		glyph('!', 100, frame);
 #endif
 		return;
 	}
 	if (!ui.name[0]) {
-		glyph(ui.browse_error == -ENOENT ? '-' : '!', frame);
+		glyph(ui.browse_error == -ENOENT ? '-' : '!', 100, frame);
 		return;
 	}
-	if (!ui.offset) {
-		glyph(ui.name[0], frame);
+	if (ui.preview == PREVIEW_GAP) {
+		memset(frame, 0, BP_MATRIX_PIXELS);
 		return;
 	}
-	size_t length = strlen(ui.name);
-	for (size_t row = 0; row < 5; row++) {
-		for (size_t col = 0; col < 5; col++) {
-			size_t column = ui.offset + col;
-			size_t character = column / 6;
-			size_t glyph_column = column % 6;
-			frame[row * 5 + col] = character < length && glyph_column < 5 &&
-				(pb_font_5x5[ui.name[character] - 32][row] &
-				 BIT(4 - glyph_column)) ? 100 : 0;
-		}
+	uint8_t brightness = 100;
+	if (ui.preview == PREVIEW_FADE) {
+		brightness = 100 * (FADE_STEPS + 1 - ui.fade_step) / (FADE_STEPS + 1);
 	}
+	glyph(ui.name[ui.offset], brightness, frame);
 }
 
 static void display(int64_t now)
@@ -211,18 +208,31 @@ static void display(int64_t now)
 		ui.error_until = 0;
 		select_name(ui.name, ui.browse_error, now);
 	}
-	if (!ui.pybricks && !ui.dirty && ui.name[1] && now >= ui.frame_at &&
-	    ui.preview != PREVIEW_DONE) {
-		if (ui.preview == PREVIEW_FIRST) {
-			ui.preview = PREVIEW_SCROLL;
-			ui.offset = 1;
-		} else if (ui.offset < strlen(ui.name) * 6) {
-			ui.offset++;
-		} else {
-			ui.preview = PREVIEW_DONE;
-			ui.offset = 0;
+	if (!ui.pybricks && !ui.dirty && ui.name[1] && ui.preview != PREVIEW_DONE) {
+		if (now >= ui.frame_at) {
+			switch (ui.preview) {
+			case PREVIEW_HOLD:
+				ui.preview = PREVIEW_FADE;
+				ui.fade_step = 1;
+				break;
+			case PREVIEW_FADE:
+				if (ui.fade_step < FADE_STEPS) ui.fade_step++;
+				else ui.preview = PREVIEW_GAP;
+				break;
+			case PREVIEW_GAP:
+				ui.offset++;
+				if (!ui.name[ui.offset]) {
+					ui.offset = 0;
+					ui.preview = PREVIEW_DONE;
+				} else {
+					ui.preview = PREVIEW_HOLD;
+				}
+				break;
+			default:
+				break;
+			}
+			ui.dirty = true;
 		}
-		ui.dirty = true;
 	}
 	if (!ui.dirty || ui.launching) return;
 	uint8_t frame[BP_MATRIX_PIXELS];
@@ -230,7 +240,13 @@ static void display(int64_t now)
 	int err = hub_matrix_write(BP_MATRIX_SYSTEM, 0, frame, sizeof(frame));
 	if (!err) {
 		ui.dirty = false;
-		if (ui.preview == PREVIEW_SCROLL) ui.frame_at = now + 90;
+		if (ui.preview == PREVIEW_HOLD) {
+			ui.frame_at = now + (ui.offset ? LETTER_HOLD_MS : FIRST_HOLD_MS);
+		} else if (ui.preview == PREVIEW_FADE) {
+			ui.frame_at = now + FADE_FRAME_MS;
+		} else if (ui.preview == PREVIEW_GAP) {
+			ui.frame_at = now + GAP_MS;
+		}
 	} else if (err != -EBUSY && err != -ESHUTDOWN) {
 		LOG_ERR("Launcher display failed: %d", err);
 		ui.dirty = false;
