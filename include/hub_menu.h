@@ -13,3 +13,5 @@ struct hub_menu {
  * succeeds. Holding center remains the power controller's responsibility. */
 bool hub_menu_input(struct hub_menu *menu, uint16_t key, bool pressed,
 		    enum host_mode current);
+/* A running program or management owner closes and disables system selection. */
+bool hub_menu_idle(struct hub_menu *menu, bool available);

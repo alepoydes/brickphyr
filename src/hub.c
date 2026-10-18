@@ -309,6 +309,16 @@ void hub_run(void)
 #else
 		enum host_mode current = HOST_SHELL;
 #endif
+		bool menu_available = true;
+#ifdef CONFIG_BRICKPHYR_NATIVE
+		struct application_status app_status;
+		menu_available = !application_observe(&app_status) &&
+			app_status.state != APPLICATION_RUNNING && !app_status.repl;
+#endif
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
+		menu_available = menu_available && !host_session_open();
+#endif
+		hub_menu_idle(&menu, menu_available);
 		application_buttons(menu.open ? 0 : hub_buttons());
 		/* Menu entry/cancel precedes navigation. Center confirms on release,
 		 * leaving its entire hold interval available for power-off. */
@@ -319,7 +329,7 @@ void hub_run(void)
 			bool pressed = presses_now != observed[i];
 			activity |= pressed;
 			observed[i] = presses_now;
-			if (pressed) {
+			if (pressed && menu_available) {
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 				bool compatible = current == HOST_PYBRICKS;
 #if defined(CONFIG_BT_HCI_SETUP) || defined(CONFIG_BRICKPHYR_CC2640_BLE)
@@ -333,7 +343,7 @@ void hub_run(void)
 #endif
 				hub_menu_input(&menu, codes[i], true, current);
 			}
-			if (i == 0 && !down && (center_was_down || pressed) &&
+			if (menu_available && i == 0 && !down && (center_was_down || pressed) &&
 			    hub_menu_input(&menu, codes[i], false, current)) {
 				int err = -ENOTSUP;
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)

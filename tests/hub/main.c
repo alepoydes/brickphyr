@@ -870,6 +870,11 @@ ZTEST(hub, test_menu_selection_and_cancel)
 	zassert_equal(menu.selected, HOST_PYBRICKS);
 	hub_menu_input(&menu, INPUT_KEY_RIGHT, true, HOST_PYBRICKS);
 	zassert_equal(menu.selected, HOST_SHELL);
+	zassert_false(hub_menu_idle(&menu, false));
+	zassert_false(menu.open);
+	zassert_false(menu.confirm_armed);
+	zassert_true(hub_menu_idle(&menu, true));
+	zassert_false(menu.open);
 }
 
 static int bad_adc(const struct device *dev, unsigned int channel, void *data, uint32_t *result)

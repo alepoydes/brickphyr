@@ -3,6 +3,15 @@
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+bool hub_menu_idle(struct hub_menu *menu, bool available)
+{
+	if (!available) {
+		menu->open = false;
+		menu->confirm_armed = false;
+	}
+	return available;
+}
+
 bool hub_menu_input(struct hub_menu *menu, uint16_t key, bool pressed,
 		    enum host_mode current)
 {
