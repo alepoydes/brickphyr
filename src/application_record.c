@@ -350,7 +350,6 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 		full_reason != BP_RECORD_OPEN && state.next >= state.spec.capacity ? -ENOSPC :
 		offsets && length > packed_capacity - offsets[state.next] ? -ENOSPC :
 		state.next == UINT64_MAX ? -EOVERFLOW : 0;
-	if (err == -ENOSPC && segments_on_read && full) segment_stalled = true;
 	if (!err) {
 		size_t index = state.next % state.spec.capacity;
 		if (state.control) {
@@ -389,6 +388,8 @@ static int write_record(const void *data, size_t length, uint32_t reason)
 			if (lengths) lengths[index] = length;
 		}
 		state.next++;
+		if (segments_on_read && state.next - state.first == state.spec.capacity)
+			segment_stalled = true;
 		if (reason != BP_RECORD_OPEN || (full_reason != BP_RECORD_OPEN && state.next == state.spec.capacity)) {
 			state.active = false;
 			state.reason = reason != BP_RECORD_OPEN ? reason : full_reason;

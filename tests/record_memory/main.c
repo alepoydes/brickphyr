@@ -283,13 +283,14 @@ ZTEST(record_memory, test_segments_resume_only_after_previous_series_is_drained)
 		value[0] = i;
 		zassert_ok(application_record_write(value, sizeof(value)));
 	}
-	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
 	zassert_equal(application_record_ack(generation, 3, 1), -ENOTSUP);
 	zassert_ok(application_record_advance(generation, 0, 0));
 	zassert_equal(application_record_advance(generation, 1, 2), -EINVAL);
 	application_record_info(&info);
 	zassert_equal(info.first, 0);
-	zassert_ok(application_record_advance(generation, 0, 2));
+	zassert_ok(application_record_advance(generation, 0, 1));
+	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
+	zassert_ok(application_record_advance(generation, 1, 2));
 	zassert_equal(application_record_write(value, sizeof(value)), -ENOSPC);
 	zassert_equal(application_record_copy(generation, 2, value, sizeof(value), applied,
 		sizeof(applied), &info, &step), sizeof(value));
