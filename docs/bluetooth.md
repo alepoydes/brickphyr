@@ -57,7 +57,7 @@ The F4 host offers ATT MTU 247. The CC2564C still carries it in 27-byte ACL
 fragments; the larger MTU reduces notification framing, not the radio packet
 limit. With an earlier four-buffer profile, 80 retained passive sensor rows
 downloaded in 0.840–0.851 s with MTU 247, versus 0.946–0.961 s with MTU 127.
-The current three-buffer profile's compact-transfer results are in
+The current F4 profile's compact-transfer results are in
 [telemetry](telemetry.md#ble-transfer-budget). That earlier profile also
 downloaded a concurrent 500-row passive recording at 15 ms per row without
 gaps in 7.65 s while the hub was powered by USB. These bounded checks do not establish

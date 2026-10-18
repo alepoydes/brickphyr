@@ -220,8 +220,16 @@ nine requests; sensor values varied between runs. Ten pairs of consecutive SMP
 Echo requests also returned in order. A live 1200-row check at a requested
 15 ms period, with passive BLE scanning and 28 parameter updates,
 recovered consecutive records without pauses or step gaps. Motors were off and
-USB supplied power; these checks do not establish battery-powered throughput
-or gap-free delivery under motor load.
+USB supplied power; these checks do not establish gap-free delivery under motor
+load.
+
+With USB disconnected, the same Inventor F4 also delivered 2,400 consecutive
+passive records requested every 15 ms while scanning over BLE and accepting 56
+parameter updates. Collection took 36.557 seconds for 35.985 seconds of hub
+observations and transferred 325,689 compact payload bytes. Offline decoding
+found no record gaps or unrecorded control steps. Battery voltage after the run
+was 8,716 mV. This one bounded battery-powered run does not establish throughput
+under motor load, movement, or different radio conditions.
 
 In an earlier bounded SPIKE Prime F4 check, a frozen 80-row native control recording
 (IMU, battery, A/B encoders and inactive outputs) contained 21,760 bytes of
