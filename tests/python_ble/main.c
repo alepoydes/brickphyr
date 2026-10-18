@@ -414,12 +414,13 @@ int __wrap_bt_gatt_discover(struct bt_conn *conn, struct bt_gatt_discover_params
 			return 0;
 		}
 		if (params->type == BT_GATT_DISCOVER_CHARACTERISTIC) {
-			/* Same UUID, three different report IDs/types, output before input. */
-			const uint16_t handles[] = {2, 10, 20};
-			const uint8_t properties[] = {BT_GATT_CHRC_READ, BT_GATT_CHRC_WRITE, BT_GATT_CHRC_NOTIFY};
+			/* Map plus three Report characteristics; output precedes input. */
+			const uint16_t handles[] = {2, 5, 10, 20};
+			const uint8_t properties[] = {BT_GATT_CHRC_READ, BT_GATT_CHRC_READ,
+				BT_GATT_CHRC_WRITE, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY};
 			zassert_is_null(params->uuid);
 			for (size_t i = 0; i < ARRAY_SIZE(handles); i++) {
-				struct bt_gatt_chrc chrc = {.uuid = BT_UUID_HIDS_REPORT,
+				struct bt_gatt_chrc chrc = {.uuid = i ? BT_UUID_HIDS_REPORT : BT_UUID_HIDS_REPORT_MAP,
 					.value_handle = handles[i] + 1, .properties = properties[i]};
 				attr.handle = handles[i];
 				attr.user_data = &chrc;
@@ -428,8 +429,8 @@ int __wrap_bt_gatt_discover(struct bt_conn *conn, struct bt_gatt_discover_params
 		} else {
 			zassert_equal(params->type, BT_GATT_DISCOVER_DESCRIPTOR);
 			uint16_t start = params->start_handle;
-			zassert_true(start == 4 || start == 12 || start == 22);
-			zassert_equal(params->end_handle, start == 4 ? 9 : start == 12 ? 19 : 30);
+			zassert_true(start == 7 || start == 12 || start == 22);
+			zassert_equal(params->end_handle, start == 7 ? 9 : start == 12 ? 19 : 30);
 			attr.handle = start;
 			if (start == 22) {
 				attr.uuid = BT_UUID_GATT_CCC;
@@ -470,9 +471,15 @@ int __wrap_bt_gatt_read(struct bt_conn *conn, struct bt_gatt_read_params *params
 	zassert_equal(params->single.offset, 0);
 	if (hold_hid_read) { held_read = params; return 0; }
 	uint16_t handle = params->single.handle;
-	zassert_true(handle == 4 || handle == 12 || handle == 23);
-	const uint8_t reference[] = {handle == 4 ? 5 : handle == 12 ? 3 : 1,
-		handle == 4 ? 3 : handle == 12 ? 2 : 1};
+	if (handle == 3 || handle == 21) {
+		const uint8_t value[] = {0x05, 0x01};
+		zassert_equal(params->func(conn, 0, params, value, sizeof(value)), BT_GATT_ITER_CONTINUE);
+		zassert_equal(params->func(conn, 0, params, NULL, 0), BT_GATT_ITER_STOP);
+		return 0;
+	}
+	zassert_true(handle == 7 || handle == 12 || handle == 23);
+	const uint8_t reference[] = {handle == 7 ? 5 : handle == 12 ? 3 : 1,
+		handle == 7 ? 3 : handle == 12 ? 2 : 1};
 	zassert_equal(params->func(conn, 0, params, reference, sizeof(reference)), BT_GATT_ITER_STOP);
 	return 0;
 }
@@ -1628,7 +1635,7 @@ ZTEST(python_ble, test_xbox_hid_and_cleanup)
 	uint32_t handle;
 	const struct bp_ble_peer_config config = {.protocol = BP_BLE_XBOX, .xbox_deadzone = 10};
 	zassert_equal(hub_ble_peer_open(&config, &handle), -EBUSY);
-	zassert_equal(held_read->single.handle, 4);
+	zassert_equal(held_read->single.handle, 3);
 	const uint8_t reference[] = {5, 3};
 	zassert_equal(held_read->func(lego, 0, held_read, reference, sizeof(reference)), BT_GATT_ITER_STOP);
 	held_read = NULL;

@@ -21,7 +21,13 @@ static struct bt_uuid_128 characteristic_uuid = BT_UUID_INIT_128(
 	BT_UUID_128_ENCODE(0x00001624, 0x1212, 0xefde, 0x1623, 0x785feabcd123));
 
 enum phase { IDLE, SCAN, CREATE, SECURITY, SERVICE, CHARACTERISTIC, CCC,
-	HID_DESCRIPTOR, HID_REFERENCE, SUBSCRIBE, SETUP, READY, WRITE, CLOSING };
+	HID_MAP_READ, HID_DESCRIPTOR, HID_REFERENCE, SUBSCRIBE, HID_REPORT_READ,
+	SETUP, READY, WRITE, CLOSING };
+static const char *const phase_names[] = {
+	"idle", "scan", "create", "security", "service", "characteristic", "ccc",
+	"hid-map-read", "hid-descriptor", "hid-reference", "subscribe",
+	"hid-report-read", "setup", "ready", "write", "closing",
+};
 /* HID services contain several Report characteristics with the same UUID.
  * Discover their bounded descriptor ranges and select by Report Reference. */
 struct hid_report { uint16_t handle, end, reference, ccc; uint8_t properties; };
@@ -41,15 +47,18 @@ static struct {
 	struct bp_sensor_palette palette;
 	bt_addr_le_t address;
 	int64_t deadline;
-	uint16_t service_start, service_end, value_handle, output_handle, ccc_handle;
+	uint16_t service_start, service_end, value_handle, output_handle, ccc_handle, hid_map_handle;
 	struct hid_report reports[8];
 	uint8_t report_count, report_index, reference_size, reference[2];
+	bool hid_read_nonempty;
 	struct bt_gatt_discover_params discovery;
 	struct bt_gatt_read_params read;
 	struct bt_gatt_subscribe_params subscription;
 	struct bt_gatt_write_params write;
 	struct bp_lwp3_message tx, *messages;
 	uint16_t first, count;
+	struct hub_ble_peer_diagnostics diagnostics;
+	uint8_t hci_status, security_error, security_level, disconnect_reason;
 } peer;
 
 static void wake(void) { host_radio_schedule(K_NO_WAIT); }
@@ -77,10 +86,28 @@ static void invalidate_sample(void)
 static void fail(int error)
 {
 	bool changed = !peer.cancel;
-	if (!peer.state.error) peer.state.error = error;
+	if (!peer.state.error) {
+		peer.state.error = error;
+		peer.diagnostics.last_error = error;
+		peer.diagnostics.last_failure_phase = phase_names[peer.phase];
+		peer.diagnostics.last_failure_ms = k_uptime_get_32();
+		peer.diagnostics.hci_status = peer.hci_status;
+		peer.diagnostics.security_error = peer.security_error;
+		peer.diagnostics.security_level = peer.security_level;
+		peer.diagnostics.disconnect_reason = peer.disconnect_reason;
+	}
 	peer.state.connected = peer.state.busy = 0;
 	peer.cancel = true;
 	if (changed) wake();
+}
+
+void hub_ble_peer_diagnostics(struct hub_ble_peer_diagnostics *diagnostics)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	*diagnostics = peer.diagnostics;
+	diagnostics->phase = phase_names[peer.phase];
+	memcpy(diagnostics->name, peer.state.name, sizeof(diagnostics->name));
+	k_spin_unlock(&lock, key);
 }
 
 int hub_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle)
@@ -149,11 +176,13 @@ int hub_ble_peer_connect(uint32_t handle)
 			peer.state.busy = 1;
 			wake();
 		} else if (peer.phase != READY) {
+			peer.diagnostics.attempts++;
+			peer.hci_status = peer.security_error = peer.security_level = peer.disconnect_reason = 0;
 			peer.phase = SCAN;
 			peer.state.busy = 1;
 			invalidate_sample();
 			peer.report_count = peer.report_index = 0;
-			peer.value_handle = peer.output_handle = peer.ccc_handle = 0;
+			peer.value_handle = peer.output_handle = peer.ccc_handle = peer.hid_map_handle = 0;
 			peer.paired = peer.configured = false;
 			peer.drive_repeats = 0;
 			peer.state.name[0] = 0;
@@ -444,6 +473,38 @@ done:
 	return result;
 }
 
+/* The controller's HID interface is activated by reading the report map and
+ * then its input report, as in Pybricks' Xbox connection sequence. The map is
+ * not needed by our fixed report decoder and is consumed without a copy. */
+static uint8_t read_hid_activation(struct bt_conn *conn, uint8_t error,
+	struct bt_gatt_read_params *params, const void *data, uint16_t size)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (conn != peer.conn || peer.cancel ||
+	    (peer.phase != HID_MAP_READ && peer.phase != HID_REPORT_READ)) goto done;
+	if (error) fail(-EIO);
+	else if (data && size) {
+		peer.hid_read_nonempty = true;
+		k_spin_unlock(&lock, key);
+		return BT_GATT_ITER_CONTINUE;
+	} else if (data || !peer.hid_read_nonempty) fail(-EPROTO);
+	else if (peer.phase == HID_MAP_READ) {
+		peer.report_index = 0;
+		peer.phase = HID_DESCRIPTOR;
+	} else {
+		peer.phase = SETUP;
+		peer.setup_step = 0;
+		peer.state.connected = 1;
+		peer.state.busy = 1;
+	}
+	peer.pending = false;
+	peer.deadline = 0;
+	wake();
+done:
+	k_spin_unlock(&lock, key);
+	return BT_GATT_ITER_STOP;
+}
+
 static uint8_t discovered(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	struct bt_gatt_discover_params *params)
 {
@@ -452,19 +513,24 @@ static uint8_t discovered(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	peer.pending = false;
 	if (peer.phase == CHARACTERISTIC && xbox()) {
 		if (!attr) {
-			if (!peer.report_count) fail(-ENOENT);
+			if (!peer.report_count || !peer.hid_map_handle) fail(-ENOENT);
 			else {
 				struct hid_report *last = &peer.reports[peer.report_count - 1];
 				if (!last->end) last->end = peer.service_end;
-				peer.report_index = 0;
-				peer.phase = HID_DESCRIPTOR;
+				peer.hid_read_nonempty = false;
+				peer.phase = HID_MAP_READ;
 			}
 		} else {
 			const struct bt_gatt_chrc *chrc = attr->user_data;
 			if (peer.report_count && !peer.reports[peer.report_count - 1].end) {
 				peer.reports[peer.report_count - 1].end = attr->handle - 1;
 			}
-			if (!bt_uuid_cmp(chrc->uuid, BT_UUID_HIDS_REPORT)) {
+			if (!bt_uuid_cmp(chrc->uuid, BT_UUID_HIDS_REPORT_MAP)) {
+				if (peer.hid_map_handle || chrc->value_handle <= attr->handle ||
+				    chrc->value_handle >= peer.service_end ||
+				    !(chrc->properties & BT_GATT_CHRC_READ)) fail(-EPROTO);
+				else peer.hid_map_handle = chrc->value_handle;
+			} else if (!bt_uuid_cmp(chrc->uuid, BT_UUID_HIDS_REPORT)) {
 				if (peer.report_count == ARRAY_SIZE(peer.reports)) fail(-E2BIG);
 				else if (chrc->value_handle <= attr->handle || chrc->value_handle >= peer.service_end) fail(-EPROTO);
 				else peer.reports[peer.report_count++] = (struct hid_report){
@@ -559,9 +625,10 @@ static void subscribed(struct bt_conn *conn, uint8_t error, struct bt_gatt_subsc
 		peer.deadline = 0;
 		if (error) fail(-EIO);
 		else {
-			peer.phase = SETUP;
+			peer.phase = xbox() ? HID_REPORT_READ : SETUP;
 			peer.setup_step = 0;
-			peer.state.connected = 1;
+			peer.hid_read_nonempty = false;
+			peer.state.connected = !xbox();
 			peer.state.busy = 1;
 		}
 		wake();
@@ -623,6 +690,7 @@ static void connected(struct bt_conn *conn, uint8_t error)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (our_connection(conn)) {
+		peer.hci_status = error;
 		peer.pending = false;
 		peer.deadline = 0;
 		if (error) {
@@ -638,6 +706,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (our_connection(conn)) {
+		peer.disconnect_reason = reason;
 		peer.ended = true;
 		if (!peer.cancel) fail(-ENOTCONN);
 		wake();
@@ -650,6 +719,8 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (conn == peer.conn && peer.phase == SECURITY && !peer.cancel) {
+		peer.security_error = error;
+		peer.security_level = level;
 		peer.pending = false;
 		peer.deadline = 0;
 		if (error || level < BT_SECURITY_L2) fail(-EACCES);
@@ -782,9 +853,16 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 		};
 		error = bt_gatt_discover(conn, &peer.discovery);
 		break;
+	case HID_MAP_READ:
 	case HID_REFERENCE:
-		peer.read = (struct bt_gatt_read_params){.func = read_reference, .handle_count = 1,
-			.single = {.handle = peer.reports[peer.report_index].reference}};
+	case HID_REPORT_READ:
+		peer.read = (struct bt_gatt_read_params){
+			.func = phase == HID_REFERENCE ? read_reference : read_hid_activation,
+			.handle_count = 1,
+			.single = {.handle = phase == HID_MAP_READ ? peer.hid_map_handle :
+				phase == HID_REPORT_READ ? peer.value_handle :
+				peer.reports[peer.report_index].reference},
+		};
 		error = bt_gatt_read(conn, &peer.read);
 		break;
 	case SUBSCRIBE:

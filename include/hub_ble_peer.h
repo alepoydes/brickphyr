@@ -7,6 +7,14 @@
 
 #ifdef CONFIG_BRICKPHYR_BLE_PEER
 #include <zephyr/bluetooth/addr.h>
+struct hub_ble_peer_diagnostics {
+	const char *phase, *last_failure_phase;
+	char name[BP_BLE_PEER_NAME_MAX + 1];
+	uint32_t attempts, last_failure_ms;
+	int last_error;
+	uint8_t hci_status, security_error, security_level, disconnect_reason;
+};
+void hub_ble_peer_diagnostics(struct hub_ble_peer_diagnostics *diagnostics);
 int hub_ble_peer_open(const struct bp_ble_peer_config *config, uint32_t *handle);
 int hub_ble_peer_connect(uint32_t handle);
 int hub_ble_peer_disconnect(uint32_t handle);

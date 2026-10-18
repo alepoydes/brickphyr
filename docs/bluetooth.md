@@ -123,6 +123,13 @@ also report unchanged parameters; these values do not prove sustained data rate
 or radio reliability.
 It can be read over USB after a failed BLE connection has released ownership.
 
+`bluetooth peer` reports the application-side central link separately: current
+phase, selected device name, attempt count, and the last failure's phase and
+uptime. It retains the raw HCI connection status, Zephyr security error and
+level, and disconnection reason across application cleanup. A zero HCI or
+security code can mean success or that its callback was never reached. The command
+does not initiate a connection and is available after the application exits.
+
 Closing a Linux client need not terminate the radio link immediately. For example,
 [BlueZ 5.87's disconnect path](https://github.com/bluez/bluez/blob/8750129efca8/src/device.c)
 waits on a two-second timer before requesting disconnection; bounded F4 checks
@@ -444,8 +451,10 @@ or 19-byte Elite extensions. It does not implement Classic Bluetooth or older
 report layouts. HID Report characteristics are selected by their Report Reference
 descriptors, not fixed handles or discovery order; a service with more than eight
 Report characteristics is unsupported. The input must support notifications and
-the output must support acknowledged writes. The HID Report Map is not parsed;
-other layouts require a reviewed codec extension. Pairing uses Zephyr security
+the output must support acknowledged writes. The HID Report Map and initial input
+Report are read after pairing to activate the controller, following the Pybricks
+connection sequence. The map is not parsed; other layouts require a reviewed codec
+extension. Pairing uses Zephyr security
 and can reuse a RAM bond during the same boot. Persistent bonds remain absent.
 
 Reads raise `OSError(EAGAIN)` until a complete input report arrives, and
@@ -466,8 +475,11 @@ not stop an autonomous application.
 
 Protected ARM checks cover synthetic HID discovery, input and rumble through
 Python and the native service, including malformed reports, bond reuse and stop
-during a pending descriptor read. Physical controller connection, activation,
-pairing/reconnection, input and rumble remain unverified. The wire codec uses
+during a pending descriptor read. On one Inventor F4 (PCB revision unknown),
+USB-managed Python connected to an Xbox Wireless Controller over BLE, read the
+initial report, and received A-button and left-stick changes while its indicator
+stayed lit. This checks connection and input, not rumble, sustained reconnection
+or simultaneous host BLE traffic. The wire codec uses
 licensed SDL/Bluepad32 sources; Pybricks' non-free Xbox source is excluded. See
 [licensing](licensing.md#xbox-controller-codec).
 

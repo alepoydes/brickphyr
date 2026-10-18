@@ -721,6 +721,21 @@ static void print_connection(struct bt_conn *conn, void *data)
 
 static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "peer")) {
+#ifdef CONFIG_BRICKPHYR_BLE_PEER
+		struct hub_ble_peer_diagnostics stats;
+		hub_ble_peer_diagnostics(&stats);
+		shell_print(shell, "BLE peer phase=%s name=%s attempts=%u",
+			stats.phase, stats.name[0] ? stats.name : "-", stats.attempts);
+		shell_print(shell, "last fail=%s:%d at %u ms; HCI=0x%02x security=%u level=%u disconnect=0x%02x",
+			stats.last_failure_phase ? stats.last_failure_phase : "none",
+			stats.last_error, stats.last_failure_ms, stats.hci_status,
+			stats.security_error, stats.security_level, stats.disconnect_reason);
+		return 0;
+#else
+		return -ENOTSUP;
+#endif
+	}
 	if (argc == 2 && !strcmp(argv[1], "link")) {
 		k_spinlock_key_t key = k_spin_lock(&session_lock);
 		struct link_diagnostics stats = link_stats;
@@ -781,7 +796,7 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 	}
 	return err;
 }
-SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth status, link, or on | off.", cmd_bluetooth, 1, 1);
+SHELL_CMD_ARG_REGISTER(bluetooth, NULL, "Bluetooth status, link, peer, or on | off.", cmd_bluetooth, 1, 1);
 
 static int setup(void)
 {
