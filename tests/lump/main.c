@@ -5,6 +5,7 @@
 #include "control_frame.h"
 #include "port_uart.h"
 #include "wiring.h"
+#include <lego/device.h>
 #include <string.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/serial/uart_emul.h>
@@ -687,6 +688,54 @@ static bool tx_has(const uint8_t *bytes, size_t size, size_t from)
 	return false;
 }
 
+static void matrix_first_write(void)
+{
+	begin_sensor(LEGO_DEVICE_TYPE_ID_TECHNIC_COLOR_LIGHT_MATRIX, 3);
+	for (uint8_t mode = 0; mode < 3; mode++) {
+		const uint8_t name[] = {'P', 'I', 'X', 0};
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_NAME, name, sizeof(name));
+		if (mode == LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O) {
+			const uint8_t mapping[] = {0, 1};
+			packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_MAPPING, mapping, sizeof(mapping));
+		}
+		const uint8_t format[] = {mode == LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O ? 9 : 1,
+			LUMP_DATA_TYPE_DATA8, 4, 0};
+		packet(LUMP_MSG_TYPE_INFO, mode, LUMP_INFO_FORMAT, format, sizeof(format));
+	}
+	uint8_t ack = LUMP_SYS_ACK;
+	feed(&ack, 1);
+	struct bp_port_state v = wait_phase(BP_PORT_READY);
+	zassert_equal(v.data_sequence, 0);
+	size_t from = tx_count;
+	uint32_t token;
+	zassert_ok(hub_port_matrix_write(BP_PORT_APPLICATION, 0, v.generation, NULL, &token));
+	wait_select(LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O, from);
+	const uint8_t pixel_header[] = {0x46, 0, 0xb9, 0xe2};
+	const uint8_t blank[9] = {0};
+	packet(LUMP_MSG_TYPE_DATA, LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O, 0,
+		blank, sizeof(blank));
+	zassert_equal(snapshot().data_sequence, 1);
+	k_msleep(10);
+	zassert_false(tx_has(pixel_header, sizeof(pixel_header), from),
+		"First matrix DATA sample allowed an early pixel write");
+	zassert_not_equal(snapshot().write.completed, token);
+	packet(LUMP_MSG_TYPE_DATA, LEGO_DEVICE_MODE_PUP_COLOR_LIGHT_MATRIX__PIX_O, 0,
+		blank, sizeof(blank));
+	int64_t deadline = k_uptime_get() + 100;
+	while (!tx_has(pixel_header, sizeof(pixel_header), from)) {
+		zassert_true(k_uptime_get() < deadline, "Second sample did not release matrix write");
+		k_msleep(1);
+	}
+	while (snapshot().write.completed != token) {
+		zassert_true(k_uptime_get() < deadline, "Matrix write did not complete");
+		k_msleep(1);
+	}
+	zassert_ok(snapshot().write.error);
+	zassert_ok(hub_ports_release(BP_PORT_APPLICATION));
+	pup_test_circuits[0].kind = UNPLUGGED;
+	wait_phase(BP_PORT_EMPTY);
+}
+
 static void writable_sensor(void)
 {
 	/* Private synthetic device: mode 8 accepts three logical DATA8 bytes.
@@ -1316,6 +1365,7 @@ ZTEST(lump, test_uart_hotplug)
 	encoder_measurements();
 	inspect_device();
 	writable_sensor();
+	matrix_first_write();
 	size_t heap_before_shutdown = allocated_bytes();
 	negotiate(true);
 	zassert_ok(hub_ports_shutdown());

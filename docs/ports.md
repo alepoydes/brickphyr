@@ -429,6 +429,9 @@ completion token as generic mode writes. Releasing the port drains/cancels write
 and relinquishes ownership; it does not send a blank frame automatically. Call
 `off()` when the image should disappear. Normal host disconnection leaves an
 autonomous application's outputs unchanged.
+The first pixel write waits for two valid DATA samples after negotiation, as
+required by the reference device startup sequence; the command remains pending
+until then.
 
 The conversion is a selected MIT-licensed port of
 `pybricks/util_pb/pb_conversions.c` and

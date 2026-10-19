@@ -3,6 +3,7 @@
 #include "port_uart.h"
 #include "lump.h"
 #include "sensor.h"
+#include <lego/device.h>
 #include <string.h>
 #include <zephyr/drivers/uart.h>
 #if defined(CONFIG_PINCTRL)
@@ -508,7 +509,10 @@ int port_uart_poll(uint32_t port, struct bp_port_state *out,
 			l->selecting = !err;
 		} else if (write && l->writing == WRITE_WAIT && !l->tx_busy &&
 		    !l->sensor.value.error && l->sensor.mode == write->mode &&
-		    l->lump.mode == write->mode && l->measurement == (PORT_RAW_MODE | write->mode)) {
+		    l->lump.mode == write->mode && l->measurement == (PORT_RAW_MODE | write->mode) &&
+		    /* The Technic matrix needs two DATA samples after negotiation before
+		     * its first pixel write, as in PBIO's port_lump sensor handling. */
+		    (l->lump.id != LEGO_DEVICE_TYPE_ID_TECHNIC_COLOR_LIGHT_MATRIX || l->lump.sequence >= 2)) {
 			uint8_t command[37];
 			int size = lump_data(command, write->mode, write->data, write->size);
 			err = size < 0 ? size : transmit(port, command, size);
