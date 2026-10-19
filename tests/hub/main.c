@@ -281,7 +281,13 @@ static void check_bluetooth_lighting(void)
 		zassert_equal(duty(4), 32768);
 		zassert_equal(duty(3), 65535);
 	}
-	hub_light_update(209000, HOST_BLE_CONNECTED);
+	hub_light_ble_retry();
+	hub_light_update(209000, HOST_BLE_WAITING);
+	zassert_equal(duty(20), 65535);
+	zassert_equal(duty(18), 0);
+	hub_light_update(209120, HOST_BLE_WAITING);
+	zassert_equal(duty(20), 0);
+	hub_light_update(209200, HOST_BLE_CONNECTED);
 	zassert_true(duty(18) > 0);
 	unsigned int before = writes;
 	zassert_equal(hub_light_update(209900, HOST_BLE_CONNECTED), INT64_MAX);

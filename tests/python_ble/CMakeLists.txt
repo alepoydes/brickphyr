@@ -13,6 +13,8 @@ elseif(FOCUSED_TEST STREQUAL "test_native_terminal_failed_notify_retires_link")
   target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_TERMINAL_FAILURE_TEST=1)
 elseif(FOCUSED_TEST STREQUAL "test_hidden_installed_programs")
   target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_STORE_TEST=1)
+elseif(FOCUSED_TEST STREQUAL "test_ble_peer_retry_and_unnamed")
+  target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_PEER_TEST=1)
 elseif(FOCUSED_TEST)
   message(FATAL_ERROR "Unknown FOCUSED_TEST: ${FOCUSED_TEST}")
 endif()
@@ -37,6 +39,7 @@ zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_conn_get_info
   -Wl,--wrap=bt_conn_le_create -Wl,--wrap=bt_conn_set_security
   -Wl,--wrap=bt_conn_get_security
+  -Wl,--wrap=bt_conn_get_dst -Wl,--wrap=bt_unpair
   -Wl,--wrap=bt_br_oob_get_local -Wl,--wrap=bt_br_set_connectable
   -Wl,--wrap=bt_l2cap_br_server_register -Wl,--wrap=bt_conn_create_br
   -Wl,--wrap=bt_conn_lookup_addr_br -Wl,--wrap=bt_l2cap_chan_connect

@@ -329,6 +329,8 @@ LEGO device classes share this service, including device setup, command packets
 and sensor conversion. Application
 loading and terminal commands remain available through either USB or BLE;
 an outgoing LEGO link does not acquire computer management or change its profile.
+An empty name filter accepts a matching advertisement even when the peripheral
+does not send a name; a nonempty filter still requires a matching name.
 
 For a Powered Up Remote in discovery mode, run a Python application such as:
 
@@ -456,6 +458,11 @@ Report are read after pairing to activate the controller, following the Pybricks
 connection sequence. The map is not parsed; other layouts require a reviewed codec
 extension. Pairing uses Zephyr security
 and can reuse a RAM bond during the same boot. Persistent bonds remain absent.
+If the first Xbox connection or pairing attempt fails, the service makes one
+more attempt after two seconds. An authentication or missing-key failure clears
+only that controller's bond after disconnect, before the retry. Other failures
+leave working bonds intact. A retry briefly flashes the hub's Bluetooth button
+red; normal connection indication then resumes.
 
 Reads raise `OSError(EAGAIN)` until a complete input report arrives, and
 `OSError(EPROTO)` after a malformed or unsupported report, until valid data

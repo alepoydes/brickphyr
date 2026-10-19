@@ -43,7 +43,8 @@ static atomic_t lego_refs, lego_creates, lego_pairs;
 static atomic_t lego_write_error;
 static uint8_t lego_kind = 0x42;
 static bool offer_lego = true, hold_lego_write, hold_lego_disconnect;
-static bool offer_xbox, hold_hid_read;
+static bool offer_xbox, hold_hid_read, offer_lego_name = true, fail_first_security;
+static atomic_t lego_unpairs;
 static struct bt_gatt_read_params *held_read;
 static atomic_t active_scan;
 static struct bt_gatt_write_params *held_write;
@@ -216,6 +217,7 @@ static void lego_advertise(bt_le_scan_cb_t cb)
 	struct net_buf_simple packet;
 	net_buf_simple_init_with_data(&packet, data, sizeof(data));
 	cb(&lego_address, -40, BT_GAP_ADV_TYPE_ADV_IND, &packet);
+	if (!offer_lego_name) return;
 	net_buf_simple_init_with_data(&packet, unrelated, sizeof(unrelated));
 	cb(BT_ADDR_LE_ANY, -40, BT_GAP_ADV_TYPE_SCAN_RSP, &packet);
 	net_buf_simple_init_with_data(&packet, name, sizeof(name));
@@ -232,7 +234,7 @@ static ssize_t command_result;
 static const struct bt_gatt_attr *command_attribute;
 static struct k_thread supervisor;
 static K_THREAD_STACK_DEFINE(supervisor_stack, 4096);
-static atomic_t supervisor_stop;
+static atomic_t supervisor_stop, pause_supervisor;
 static bool fixture_started;
 
 /* Same periodic lifecycle service as the hub loop; status reads must not be
@@ -240,7 +242,7 @@ static bool fixture_started;
 static void poll_applications(void *a, void *b, void *c)
 {
 	while (!atomic_get(&supervisor_stop)) {
-		application_poll();
+		if (!atomic_get(&pause_supervisor)) application_poll();
 		k_msleep(20);
 	}
 }
@@ -274,7 +276,7 @@ int __wrap_bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *command, struct
 	if (command) net_buf_unref(command);
 	return 0;
 }
-int __wrap_bt_enable(bt_ready_cb_t cb) { return bt_h4_vnd_setup(NULL, NULL); }
+int __wrap_bt_enable(bt_ready_cb_t cb) { return bt_h4_vnd_setup(uart, NULL); }
 int __wrap_bt_disable(void) { return 0; }
 int __wrap_bt_le_adv_start(const struct bt_le_adv_param *p, const struct bt_data *a,
 	size_t n, const struct bt_data *s, size_t m) { return 0; }
@@ -386,11 +388,31 @@ int __wrap_bt_conn_set_security(struct bt_conn *conn, bt_security_t security)
 {
 	zassert_equal(conn, lego);
 	zassert_equal(security, BT_SECURITY_L2 | (offer_xbox ? 0 : BT_SECURITY_FORCE_PAIR));
-	atomic_inc(&lego_pairs);
+	int attempt = atomic_inc(&lego_pairs);
 	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
-		if (cb->security_changed) cb->security_changed(conn, BT_SECURITY_L2, BT_SECURITY_ERR_SUCCESS);
+		if (cb->security_changed) cb->security_changed(conn,
+			attempt == 0 && fail_first_security ? BT_SECURITY_L1 : BT_SECURITY_L2,
+			attempt == 0 && fail_first_security ? BT_SECURITY_ERR_PIN_OR_KEY_MISSING :
+			BT_SECURITY_ERR_SUCCESS);
 	}
 	return 0;
+}
+
+const bt_addr_le_t *__wrap_bt_conn_get_dst(const struct bt_conn *conn)
+{
+	zassert_equal(conn, lego);
+	return &lego_address;
+}
+
+int __wrap_bt_unpair(uint8_t id, const bt_addr_le_t *address)
+{
+	if (address && !bt_addr_le_cmp(address, &lego_address)) {
+		zassert_equal(id, BT_ID_DEFAULT);
+		atomic_inc(&lego_unpairs);
+		return 0;
+	}
+	extern int __real_bt_unpair(uint8_t id, const bt_addr_le_t *address);
+	return __real_bt_unpair(id, address);
 }
 
 bt_security_t __wrap_bt_conn_get_security(const struct bt_conn *conn)
@@ -1648,6 +1670,91 @@ ZTEST(python_ble, test_xbox_hid_and_cleanup)
 	connected(false);
 }
 
+ZTEST(python_ble_peer, test_ble_peer_retry_and_unnamed)
+{
+	struct bp_ble_peer_state state;
+	struct hub_ble_peer_diagnostics diagnostics;
+	uint32_t handle;
+	int64_t deadline;
+
+	atomic_set(&pause_supervisor, 1);
+	k_msleep(20);
+	offer_xbox = true;
+	fail_first_security = true;
+	atomic_set(&lego_creates, 0);
+	atomic_set(&lego_pairs, 0);
+	atomic_set(&lego_unpairs, 0);
+	const struct bp_ble_peer_config xbox_config = {
+		.protocol = BP_BLE_XBOX, .name = "Xbox Wireless", .timeout_ms = 1000,
+	};
+	zassert_ok(hub_ble_peer_open(&xbox_config, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	deadline = k_uptime_get() + 5000;
+	do {
+		zassert_ok(hub_ble_peer_get(handle, &state));
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (state.busy);
+	zassert_equal(state.error, 0);
+	zassert_true(state.connected);
+	zassert_equal(atomic_get(&lego_creates), 2);
+	zassert_equal(atomic_get(&lego_pairs), 2);
+	zassert_equal(atomic_get(&lego_unpairs), 1);
+	hub_ble_peer_diagnostics(&diagnostics);
+	zassert_equal(diagnostics.last_error, -EACCES);
+	zassert_mem_equal(diagnostics.last_failure_phase, "security", sizeof("security"));
+	lego_disconnected();
+	deadline = k_uptime_get() + 1000;
+	do {
+		zassert_ok(hub_ble_peer_get(handle, &state));
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (state.busy);
+	zassert_equal(state.error, -ENOTCONN,
+		"A later disconnect must not replay the recovered pairing error");
+	zassert_ok(hub_ble_peer_release());
+	while (atomic_get(&lego_refs)) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	fail_first_security = offer_xbox = false;
+
+	offer_lego_name = false;
+	const struct bp_ble_peer_config named = {.name = "Remote", .lwp3 = {.kind = 0x42},
+		.timeout_ms = 500};
+	zassert_ok(hub_ble_peer_open(&named, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	k_msleep(30);
+	zassert_equal(atomic_get(&lego_creates), 2, "Named filter needs a name");
+	zassert_ok(hub_ble_peer_release());
+	deadline = k_uptime_get() + 1000;
+	do {
+		hub_ble_peer_diagnostics(&diagnostics);
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (strcmp(diagnostics.phase, "idle"));
+
+	const struct bp_ble_peer_config unnamed = {.lwp3 = {.kind = 0x42}, .timeout_ms = 1000};
+	zassert_ok(hub_ble_peer_open(&unnamed, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	deadline = k_uptime_get() + 1000;
+	do {
+		zassert_ok(hub_ble_peer_get(handle, &state));
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (state.busy);
+	zassert_equal(state.error, 0);
+	zassert_true(state.connected);
+	zassert_equal(state.name[0], 0);
+	zassert_ok(hub_ble_peer_release());
+	while (atomic_get(&lego_refs)) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	offer_lego_name = true;
+	atomic_clear(&pause_supervisor);
+}
+
 ZTEST(python_ble, test_radio_observation_and_cleanup)
 {
 	static const uint8_t program[] = {
@@ -2082,6 +2189,7 @@ static void teardown(void *unused)
 }
 
 ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, NULL);
+ZTEST_SUITE(python_ble_peer, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_network, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_terminal_failure, NULL, setup, NULL, NULL, NULL);
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
@@ -2098,6 +2206,8 @@ void test_main(void)
 	ztest_run_test_suite(python_ble_terminal_failure, false, 1, 1, NULL);
 #elif defined(BRICKPHYR_FOCUSED_STORE_TEST)
 	ztest_run_test_suite(python_ble_store, false, 1, 1, NULL);
+#elif defined(BRICKPHYR_FOCUSED_PEER_TEST)
+	ztest_run_test_suite(python_ble_peer, false, 1, 1, NULL);
 #else
 	ztest_run_all(NULL, false, 1, 1);
 	ztest_verify_all_test_suites_ran();

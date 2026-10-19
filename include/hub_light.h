@@ -11,6 +11,8 @@
 
 /* Advance readiness lighting; return next uptime deadline or INT64_MAX if stopped. */
 int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth);
+/* One short red pulse when an application-side BLE connection retries. */
+void hub_light_ble_retry(void);
 enum hub_light_menu { HUB_LIGHT_NORMAL, HUB_LIGHT_MENU, HUB_LIGHT_BUSY };
 /* Preview an interface; menu white and busy blanking override BLE indication. */
 int hub_light_select(enum host_mode selected, enum hub_light_menu menu, int64_t now);

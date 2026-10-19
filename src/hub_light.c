@@ -5,6 +5,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include "hub_light.h"
 #if DT_NODE_HAS_COMPAT(DT_NODELABEL(hub_leds), lego_hub_pwm_rgb)
 #include <zephyr/drivers/pwm.h>
@@ -70,6 +71,8 @@ static struct palette {
 static enum host_ble_status bluetooth_state;
 static int64_t bluetooth_changed;
 static bool bluetooth_manual;
+static atomic_t bluetooth_retry_event;
+static int64_t bluetooth_retry_until;
 static enum hub_light_menu menu_state;
 /* Center top, center bottom, Bluetooth: one latch also preserves manual colors. */
 static uint16_t colors[9];
@@ -312,6 +315,9 @@ static void bluetooth_color(int64_t now, uint32_t fluctuation)
 			rgb[0] = rgb[1] = rgb[2] = UINT16_MAX;
 			color_to_pwm(rgb, UINT16_MAX);
 		}
+	} else if (now < bluetooth_retry_until) {
+		/* Full PWM makes recovery visible without changing the selected mode. */
+		rgb[0] = UINT16_MAX;
 	} else if (bluetooth_state == HOST_BLE_WAITING) {
 		/* 100 ms at full blue PWM every three seconds; no catch-up flashes. */
 		rgb[2] = (now - bluetooth_changed) % 3000 < 100 ? UINT16_MAX : 0;
@@ -322,6 +328,8 @@ static void bluetooth_color(int64_t now, uint32_t fluctuation)
 		reactor_color(palette_blend(&bluetooth_palette, now), 4095, fluctuation, rgb);
 	}
 }
+
+void hub_light_ble_retry(void) { atomic_set(&bluetooth_retry_event, 1); }
 
 int hub_light_select(enum host_mode selected, enum hub_light_menu menu, int64_t now)
 {
@@ -354,6 +362,8 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 	bool pending = application_lights[0].state.pending || application_lights[1].state.pending;
 	k_spin_unlock(&application_lock, key);
 	bool changed = mode != OFF && bluetooth != bluetooth_state;
+	bool retry_event = atomic_set(&bluetooth_retry_event, 0);
+	if (retry_event && mode != OFF) bluetooth_retry_until = now + 100;
 	if (changed) {
 		uint32_t target = bluetooth == HOST_BLE_NATIVE ? 4095 : 0;
 		bool had_palette = bluetooth_state == HOST_BLE_NATIVE ||
@@ -367,9 +377,9 @@ int64_t hub_light_update(int64_t now, enum host_ble_status bluetooth)
 	}
 	bool animate_bt = !bluetooth_manual && menu_state == HUB_LIGHT_NORMAL &&
 		(bluetooth_state == HOST_BLE_WAITING || bluetooth_state == HOST_BLE_PYBRICKS ||
-		 bluetooth_state == HOST_BLE_NATIVE);
+		 bluetooth_state == HOST_BLE_NATIVE || now < bluetooth_retry_until);
 	bool animate = mode != OFF && (mode == ANIMATED || animate_bt);
-	bool readiness_frame = changed || (animate && now >= next_frame);
+	bool readiness_frame = changed || retry_event || (animate && now >= next_frame);
 	if (readiness_frame) {
 		if (started < 0) {
 			started = now;

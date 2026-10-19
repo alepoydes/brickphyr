@@ -219,6 +219,7 @@ Bluetooth button follows the actual BLE connection independently:
 | BLE state | Bluetooth button |
 | --- | --- |
 | Waiting for a connection | Full blue flash for 100 ms, once every three seconds |
+| Xbox connection retry | One full red flash for 100 ms |
 | Connected, no service used yet | Steady blue |
 | Pybricks service in use | Cyan reactor animation |
 | Native terminal or SMP in use | Yellow reactor animation |

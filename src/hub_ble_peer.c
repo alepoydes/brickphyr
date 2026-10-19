@@ -4,6 +4,7 @@
  * pybricks/iodevices/pb_type_iodevices_lwp3device.c at a7b1b04ae.
  * Zephyr owns connections/ATT; the shared radio worker owns all commands. */
 #include "hub_ble_peer.h"
+#include "hub_light.h"
 #include "host_radio.h"
 #include "lwp3_devices.h"
 #include "xbox_device.h"
@@ -20,11 +21,11 @@ static struct bt_uuid_128 service_uuid = BT_UUID_INIT_128(
 static struct bt_uuid_128 characteristic_uuid = BT_UUID_INIT_128(
 	BT_UUID_128_ENCODE(0x00001624, 0x1212, 0xefde, 0x1623, 0x785feabcd123));
 
-enum phase { IDLE, SCAN, CREATE, SECURITY, SERVICE, CHARACTERISTIC, CCC,
+enum phase { IDLE, SCAN, CREATE, SECURITY, RETRY_WAIT, SERVICE, CHARACTERISTIC, CCC,
 	HID_MAP_READ, HID_DESCRIPTOR, HID_REFERENCE, SUBSCRIBE, HID_REPORT_READ,
 	SETUP, READY, WRITE, CLOSING };
 static const char *const phase_names[] = {
-	"idle", "scan", "create", "security", "service", "characteristic", "ccc",
+	"idle", "scan", "create", "security", "retry-wait", "service", "characteristic", "ccc",
 	"hid-map-read", "hid-descriptor", "hid-reference", "subscribe",
 	"hid-report-read", "setup", "ready", "write", "closing",
 };
@@ -40,6 +41,9 @@ static struct {
 	struct bt_conn *conn;
 	enum phase phase;
 	bool pending, cancel, ended, candidate, opening;
+	bool retried, retry_pending, retry_unpair;
+	int retry_error;
+	int64_t retry_at;
 	bool paired, configured, drive_request;
 	uint8_t setup_step, drive_repeats;
 	int64_t drive_ms;
@@ -82,23 +86,64 @@ static void invalidate_sample(void)
 	}
 }
 
+static void remember_failure(int error)
+{
+	peer.diagnostics.last_error = error;
+	peer.diagnostics.last_failure_phase = phase_names[peer.phase];
+	peer.diagnostics.last_failure_ms = k_uptime_get_32();
+	peer.diagnostics.hci_status = peer.hci_status;
+	peer.diagnostics.security_error = peer.security_error;
+	peer.diagnostics.security_level = peer.security_level;
+	peer.diagnostics.disconnect_reason = peer.disconnect_reason;
+}
+
 /* Called with lock held. Keep the initiating error through asynchronous cleanup. */
 static void fail(int error)
 {
 	bool changed = !peer.cancel;
 	if (!peer.state.error) {
-		peer.state.error = error;
-		peer.diagnostics.last_error = error;
-		peer.diagnostics.last_failure_phase = phase_names[peer.phase];
-		peer.diagnostics.last_failure_ms = k_uptime_get_32();
-		peer.diagnostics.hci_status = peer.hci_status;
-		peer.diagnostics.security_error = peer.security_error;
-		peer.diagnostics.security_level = peer.security_level;
-		peer.diagnostics.disconnect_reason = peer.disconnect_reason;
+		peer.state.error = peer.retry_error ? peer.retry_error : error;
+		if (!peer.retry_error) remember_failure(error);
 	}
 	peer.state.connected = peer.state.busy = 0;
 	peer.cancel = true;
 	if (changed) wake();
+}
+
+/* One delayed Xbox retry mirrors the reference's connect/pair recovery. A
+ * failed attempt is not exposed as a completed operation while cleanup runs. */
+static bool retry_connect(int error, bool stale_bond)
+{
+	if (!xbox() || peer.retried || !peer.handle || peer.cancel) return false;
+	peer.retried = peer.retry_pending = true;
+	peer.retry_unpair = stale_bond;
+	peer.retry_error = error;
+	peer.retry_at = k_uptime_get() + 2000;
+	remember_failure(error);
+	peer.state.connected = 0;
+	peer.state.busy = 1;
+	peer.cancel = true;
+	wake();
+	return true;
+}
+
+static void start_scan(void)
+{
+	peer.diagnostics.attempts++;
+	peer.pending = false;
+	peer.hci_status = peer.security_error = peer.security_level = peer.disconnect_reason = 0;
+	peer.phase = SCAN;
+	peer.state.busy = 1;
+	invalidate_sample();
+	peer.report_count = peer.report_index = 0;
+	peer.value_handle = peer.output_handle = peer.ccc_handle = peer.hid_map_handle = 0;
+	peer.paired = peer.configured = false;
+	peer.drive_repeats = 0;
+	memset(peer.state.name, 0, sizeof(peer.state.name));
+	peer.first = peer.count = 0;
+	peer.candidate = false;
+	peer.deadline = peer.config.timeout_ms ? k_uptime_get() + peer.config.timeout_ms : 0;
+	wake();
 }
 
 void hub_ble_peer_diagnostics(struct hub_ble_peer_diagnostics *diagnostics)
@@ -170,26 +215,15 @@ int hub_ble_peer_connect(uint32_t handle)
 	if (!error && (peer.cancel || (peer.phase != IDLE && peer.phase != READY))) error = -EBUSY;
 	if (!error) {
 		peer.state.error = 0;
+		peer.retried = peer.retry_pending = peer.retry_unpair = false;
+		peer.retry_error = 0;
 		if (peer.phase == READY && !peer.configured) {
 			peer.phase = SETUP;
 			peer.setup_step = 0;
 			peer.state.busy = 1;
 			wake();
 		} else if (peer.phase != READY) {
-			peer.diagnostics.attempts++;
-			peer.hci_status = peer.security_error = peer.security_level = peer.disconnect_reason = 0;
-			peer.phase = SCAN;
-			peer.state.busy = 1;
-			invalidate_sample();
-			peer.report_count = peer.report_index = 0;
-			peer.value_handle = peer.output_handle = peer.ccc_handle = peer.hid_map_handle = 0;
-			peer.paired = peer.configured = false;
-			peer.drive_repeats = 0;
-			peer.state.name[0] = 0;
-			peer.first = peer.count = 0;
-			peer.candidate = false;
-			peer.deadline = peer.config.timeout_ms ? k_uptime_get() + peer.config.timeout_ms : 0;
-			wake();
+			start_scan();
 		}
 	}
 	k_spin_unlock(&lock, key);
@@ -408,9 +442,9 @@ void hub_ble_peer_receive(const bt_addr_le_t *address, uint8_t type, const uint8
 		if (!xbox()) peer.state.lwp3.kind = selected_kind;
 		peer.candidate = true;
 	} else if (!peer.candidate || bt_addr_le_cmp(address, &peer.address)) goto out;
-	if (!name) goto out;
+	if (!name && peer.config.name[0]) goto out;
 	size_t filter = strlen(peer.config.name);
-	if (name_size < filter || memcmp(name, peer.config.name, filter)) {
+	if (name_size < filter || (filter && memcmp(name, peer.config.name, filter))) {
 		peer.candidate = false;
 		goto out;
 	}
@@ -419,7 +453,7 @@ void hub_ble_peer_receive(const bt_addr_le_t *address, uint8_t type, const uint8
 		goto out;
 	}
 	name_size = MIN(name_size, xbox() ? BP_BLE_PEER_NAME_MAX : BP_LWP3_NAME_MAX);
-	memcpy(peer.state.name, name, name_size);
+	if (name_size) memcpy(peer.state.name, name, name_size);
 	peer.state.name[name_size] = 0;
 	memcpy(peer.config.name, peer.state.name, sizeof(peer.config.name));
 	peer.phase = CREATE;
@@ -695,7 +729,10 @@ static void connected(struct bt_conn *conn, uint8_t error)
 		peer.deadline = 0;
 		if (error) {
 			peer.ended = true;
-			if (!peer.cancel) fail(error == BT_HCI_ERR_UNKNOWN_CONN_ID ? -ETIMEDOUT : -ECONNREFUSED);
+			if (!peer.cancel) {
+				int result = error == BT_HCI_ERR_UNKNOWN_CONN_ID ? -ETIMEDOUT : -ECONNREFUSED;
+				if (!retry_connect(result, false)) fail(result);
+			}
 		} else peer.phase = needs_pairing() ? SECURITY : SERVICE;
 		wake();
 	}
@@ -723,8 +760,12 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 		peer.security_level = level;
 		peer.pending = false;
 		peer.deadline = 0;
-		if (error || level < BT_SECURITY_L2) fail(-EACCES);
-		else {
+		if (error || level < BT_SECURITY_L2) {
+			bool stale_bond = error == BT_SECURITY_ERR_AUTH_FAIL ||
+				error == BT_SECURITY_ERR_PIN_OR_KEY_MISSING ||
+				error == BT_SECURITY_ERR_KEY_REJECTED;
+			if (!retry_connect(-EACCES, stale_bond)) fail(-EACCES);
+		} else {
 			peer.paired = true;
 			peer.phase = SERVICE;
 		}
@@ -744,6 +785,8 @@ BT_CONN_CB_DEFINE(lwp3_callbacks) = {
 void hub_ble_peer_process(int radio_error, bool scan_stopped)
 {
 	struct bt_conn *retired = NULL;
+	bool unpair = false, retry_flash = false;
+	bt_addr_le_t unpair_address;
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (radio_error && peer.phase != IDLE) fail(radio_error);
 	if (peer.ended) {
@@ -759,8 +802,17 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 	if (peer.deadline && k_uptime_get() >= peer.deadline) fail(-ETIMEDOUT);
 	if (peer.cancel) {
 		if (!peer.conn) {
-			peer.phase = IDLE;
-			peer.state.connected = peer.state.busy = 0;
+			if (peer.retry_pending && peer.handle && !radio_error) {
+				peer.phase = RETRY_WAIT;
+				peer.state.busy = 1;
+				unpair = peer.retry_unpair;
+				unpair_address = peer.address;
+				retry_flash = true;
+			} else {
+				peer.phase = IDLE;
+				peer.state.connected = peer.state.busy = 0;
+			}
+			peer.retry_pending = peer.retry_unpair = false;
 			peer.pending = peer.cancel = false;
 			peer.deadline = 0;
 		} else if (peer.phase != CLOSING) {
@@ -769,19 +821,21 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 			peer.deadline = 0;
 		}
 	}
+	if (peer.phase == RETRY_WAIT && k_uptime_get() >= peer.retry_at) start_scan();
 	if (peer.phase == SETUP && !peer.pending && !peer.cancel) {
 		int size = xbox() ? 0 : lwp3_device_setup(peer.config.lwp3.profile, peer.state.lwp3.kind, peer.setup_step, peer.tx.data);
 		if (size < 0) fail(size);
 		else if (!size) {
 			peer.configured = true;
 			peer.phase = READY;
+			peer.retry_error = 0;
 			peer.state.busy = 0;
 		} else peer.tx.size = size;
 	}
 	enum phase phase = peer.phase;
 	struct bt_conn *conn = peer.conn;
 	bool issue = !radio_error && !peer.pending && (!peer.cancel || phase == CLOSING) &&
-		phase != IDLE && phase != SCAN && phase != READY;
+		phase != IDLE && phase != SCAN && phase != RETRY_WAIT && phase != READY;
 	if (issue && phase == CREATE && !scan_stopped) {
 		/* RX may find a candidate while scan_start itself is completing. */
 		issue = false;
@@ -794,9 +848,26 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 		peer.deadline = phase == CLOSING || phase == CREATE ? 0 :
 			k_uptime_get() + (phase == SECURITY ? 5000 : 30000);
 	}
-	int64_t deadline = peer.deadline;
+	int64_t deadline = peer.phase == RETRY_WAIT ? peer.retry_at : peer.deadline;
 	k_spin_unlock(&lock, key);
+	if (unpair && retired) {
+		/* The connected destination is the resolved identity when the peer
+		 * advertised with a private address. */
+		const bt_addr_le_t *identity = bt_conn_get_dst(retired);
+		if (identity) unpair_address = *identity;
+	}
 	if (retired) bt_conn_unref(retired);
+	if (unpair) {
+		int error = bt_unpair(BT_ID_DEFAULT, &unpair_address);
+		if (error) {
+			key = k_spin_lock(&lock);
+			if (peer.phase == RETRY_WAIT) fail(error);
+			k_spin_unlock(&lock, key);
+		}
+	}
+#ifdef CONFIG_BRICKPHYR_HUB
+	if (retry_flash) hub_light_ble_retry();
+#endif
 	if (deadline) host_radio_schedule(K_MSEC(MAX(1, deadline - k_uptime_get())));
 	if (!issue) return;
 
@@ -892,13 +963,14 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 		if (phase == CLOSING) host_radio_failure("peer disconnect", error);
 		key = k_spin_lock(&lock);
 		if (phase != CLOSING) peer.pending = false;
-		if (phase == WRITE && peer.phase == WRITE && !peer.cancel) {
+		if ((phase == CREATE || phase == SECURITY) && !retry_connect(error, false)) fail(error);
+		else if (phase == WRITE && peer.phase == WRITE && !peer.cancel) {
 			if (peer.drive_request) peer.drive_repeats = 0;
 			peer.phase = READY;
 			peer.state.error = error;
 			peer.state.busy = 0;
 			peer.deadline = 0;
-		} else fail(error);
+		} else if (phase != CREATE && phase != SECURITY) fail(error);
 		k_spin_unlock(&lock, key);
 	}
 }
