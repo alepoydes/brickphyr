@@ -675,9 +675,10 @@ must not depend on them. Bootloader recovery remains a separate operation under
 [recovery](recovery.md).
 
 The implementation uses one CDC ACM data channel and device-specific control
-requests on endpoint 0. Boot selects Pybricks; the selection survives closing the
-port and changes only through an explicit request or reboot. No protocol is
-guessed from data. USB IDs remain the experimental `2fe3:0004`.
+requests on endpoint 0. Boot selects Brickphyr Shell/SMP (yellow central-button
+lighting). The selection survives closing the port and changes only through an
+explicit request or reboot; reboot restores Brickphyr mode. No protocol is guessed
+from data. USB IDs remain the experimental `2fe3:0004`.
 
 DTR acquires the data session after discarding buffered UART input from the
 previous port session. Closing it retains the power hold until accepted commands

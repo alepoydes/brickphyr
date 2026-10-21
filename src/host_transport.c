@@ -38,7 +38,7 @@ static struct smp_shell_data smp_input = { .buf_pool = &smp_lines };
 static struct mcumgr_serial_rx_ctxt smp_serial;
 static struct smp_transport smp_transport;
 static struct k_spinlock lock;
-static uint8_t mode;
+static uint8_t mode = HOST_SHELL;
 static int next_mode = -1;
 static bool occupied;
 static bool usb_open;
