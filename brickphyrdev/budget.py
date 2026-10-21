@@ -139,11 +139,11 @@ async def inspect(client, args):
     # Preparation keeps the old application until the new primary is ready.
     # A ready RAM source is already in heap_used, and a Python arena can be
     # reused. Controller, recorder and native-code allocations follow release.
-    before_release = overview["heap_used"] + primary["user_stack"] + primary["priv_stack"]
+    before_release = (overview["heap_used"] + primary["user_stack"] +
+                      primary["priv_stack"] + primary["supervisor"])
     if primary["format"] == "native":
         before_release += primary["native"]
     else:
-        before_release += primary["supervisor"]
         if not overview["python_arena"]:
             before_release += primary["arena"]
     unknown = ["allocator and kernel-object overhead", "alignment and fragmentation",
@@ -166,7 +166,6 @@ async def inspect(client, args):
                     "heap_free": overview["heap_free"], "heap_peak": overview["heap_peak"],
                     "stacks": memory["stacks"]},
         "staged_transfer": overview["staging"],
-        "potential_store_mutation_snapshot": overview["source_flash"],
         "phases": {
             "load": {"accounted": accounted + transfer, "peak": "unknown"},
             "replacement": {"before_release_accounted": before_release, "peak": "unknown"},

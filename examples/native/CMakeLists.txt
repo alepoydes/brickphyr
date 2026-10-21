@@ -56,3 +56,6 @@ foreach(example ${native_examples})
   target_link_libraries(${example} PRIVATE c gcc)
   add_dependencies(${example} application_layout)
 endforeach()
+
+include(${LLEXT_EDK_INSTALL_DIR}/package.cmake)
+brickphyr_package(control_robot ENTRY control_background COMPONENTS control_loop)

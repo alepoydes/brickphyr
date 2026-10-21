@@ -104,8 +104,16 @@ def main():
         )
         if command == "run":
             run_parser = transfer
+    packing = app_commands.add_parser("pack", help="Build one composite application package")
+    packing.add_argument("output")
+    packing.add_argument("--entry", required=True, help="Primary ELF, Python or MPY file")
+    packing.add_argument("--component", action="append", default=[], help="Required controller ELF")
+    packing.add_argument("--resource", action="append", default=[], metavar="NAME=FILE")
+    packing.add_argument("--sdk", help="SDK directory used to build the executable components")
+    from . import package
+    packing.set_defaults(handler=package.run)
     installation = app_commands.add_parser(
-        "install", help="Store a validated application without starting"
+        "install", help="Stop the app and replace its installed package without starting"
     )
     installation.add_argument("image")
     installation.add_argument("--name", help="Installed name; default is the image filename stem")

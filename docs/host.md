@@ -119,13 +119,12 @@ allocation or application replacement will fit fragmented heap memory. See
 
 Use `app budget` to inspect a completed RAM upload or an installed name before
 starting it. It reads the actual image through firmware validation and does not
-upload, start, stop, consume the ready upload or write flash. Install the SDK
-`control_loop` controller as in [the native example](applications.md#native-primary-context),
-then stage its `control_background` primary in RAM:
+upload, start, stop, consume the ready upload or write flash. Build and install
+the [native composite example](applications.md#native-control-and-background-computation),
+then inspect its bundled controller:
 
 ```sh
-uv run brickphyrdev app upload build/native-examples/control_background.elf
-uv run brickphyrdev app budget --controller control_loop --parameters 4 \
+uv run brickphyrdev app budget control_robot --resource control_loop.elf --parameters 4 \
   --record-size 184 --record-count 32 --record-config 4
 ```
 
@@ -142,7 +141,7 @@ native ELF stack size comes from its ABI. `--native-code` accounts for the Pytho
 native-code limit, and `--dynamic BYTES` declares other application allocations.
 Without both record size and count, recorder storage remains unknown. JSON lists
 the primary/controller, declared or unknown recorder/dynamic bytes, current heap
-and stack snapshot, current staging, possible active-source republish snapshot,
+and stack snapshot, current staging,
 and separately named load/replacement accounting phases. Native admission is a
 conservative bound; neither an accounted amount nor free heap guarantees a fit
 or predicts a peak. See [budget semantics](applications.md#experimental-native-profile).
@@ -185,6 +184,19 @@ Use `app discard` to free it. An interrupted upload is discarded automatically a
 does not stop an existing application. The hub rejects malformed or incompatible
 images; RAM exhaustion never silently switches to persistent storage.
 
+To assemble one native/Python composite package from explicit inputs, use:
+
+```sh
+uv run brickphyrdev app pack --entry build/native-examples/control_background.elf \
+  --component build/native-examples/control_loop.elf \
+  --sdk build/native-sdk/brickphyr-sdk build/native-examples/control_robot.cbor
+```
+
+Repeat `--component PATH` for required native ELF components and
+`--resource NAME=PATH` for other bundled files. Native inputs must use the SDK
+that built them. This explicit command validates the given artifacts; rebuild
+with the SDK CMake package target to track source and component changes.
+
 To keep several applications across power cycles:
 
 ```sh
@@ -198,8 +210,14 @@ uv run brickphyrdev app stop
 uv run brickphyrdev app remove counter
 ```
 
-`install FILE --name NAME` overrides the filename stem. Installation never starts
-an application; `start NAME` selects an installed file, while `start` without a
+`install FILE --name NAME` overrides the filename stem. Installation stops and
+joins the current application, completes cleanup, removes the old named image,
+streams the new image through hidden `/apps/.incoming`, validates it, and renames
+it into place. After removal, a failed replacement leaves the name absent, with no rollback.
+Local validation and stop/cleanup failures precede removal. If the final reply is
+lost, the client compares the installed bytes; without readback it reports an
+unknown outcome rather than assuming that publication failed.
+Installation does not start an application; `start NAME` selects an installed file, while `start` without a
 name uses the waiting RAM upload. In either hub terminal, use `app list`,
 `app run NAME`, `app output`, `app stop` and `app remove NAME`. Firmware/SDK ABI
 changes may require rebuilding stored applications. See
@@ -259,7 +277,7 @@ The experimental application management group is SMP group 65, API version 1:
 
 | Command ID | Operation | Fields/result |
 | --- | --- | --- |
-| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag; `control_stack`/`control_unused` describe an independent controller's stack |
+| 0 | Read status | ABI, state/result/fault/cleanup, memory/output counts, upload state, image limit, active `format`, supported `formats` bitmask and `repl` flag; `install=1` advertises stop-first installation; `control_stack`/`control_unused` describe an independent controller's stack |
 | 1 | Write upload fragment | `off`, `total`, `data`, optional `format` (default native); returns accepted `off` |
 | 2 | Write start | Start the completed RAM image; optional `stack` bytes for Python (0 or absent selects firmware default) |
 | 3 | Write stop | Confirm application termination and release |
@@ -267,7 +285,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 4 | Write Python output attachment | Required boolean `attached`: enable interruptible output backpressure, or detach and resume counted nonblocking logging |
 | 5 | Write discard | Discard the waiting RAM upload |
 | 6 | Read installed files | `name`: lexical cursor (empty for first); returns next `name`, `size`, `available` bytes; empty name ends iteration |
-| 7 | Write publish | `name`, `size`: validate and atomically publish `/apps/.incoming` |
+| 7 | Write publish | `name`, `size`: close, validate and atomically rename `/apps/.incoming`; reject replacement of a retained running source |
 | 8 | Write remove | `name`: remove an installed image |
 | 9 | Write stored start | `name`: start an installed image; optional `stack` bytes for Python |
 | 10 | Write Python input | `data`: at most 128 bytes; accepted atomically or rejected with `EAGAIN` when full |
@@ -282,7 +300,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 17 | Read applied control parameters | Required `generation`, record `index`; returns current `generation`, `first`, `next`, applied `revision`, and its exact `data` (at most 256 bytes) |
 | 18 | Read memory snapshot | `heap_total`, `heap_used`, `heap_free`, `heap_peak`, `source_ram`, `source_flash`, `staging`, `python_arena`, `primary_native`, `control_native`, `code`, `code_used`, `records`, `gc_used`, `gc_free`, `gc_age_ms`, `stack_min`, `stack_max`, `stack_default`, `active` |
 | 19 | Read thread stack | Required zero-based `index`; `present=false` ends the list, otherwise returns `name`, `kind`, `requested`, `user`, `unused`, `privileged`, `priv_unused`, `next` |
-| 20 | Read image budget | Optional `name` (empty: completed RAM upload), `resource` (controller ELF within a Python package), `control` (default false), `stack` and `parameters` (default zero); returns integer `format`, `image`, `source_ram`, `source_flash`, `transfer`, `stack`, `user_stack`, `priv_stack`, `arena`, `code_limit`, `native`, `alignment`, `supervisor` |
+| 20 | Read image budget | Optional `name` (empty: completed RAM upload), `resource` (controller ELF within a package), `control` (default false), `stack` and `parameters` (default zero); returns integer `format`, `image`, `source_ram`, `source_flash`, `transfer`, `stack`, `user_stack`, `priv_stack`, `arena`, `code_limit`, `native`, `alignment`, `supervisor` |
 | 21 | Read recorder budget | `size`, `capacity`, `config`, `control`, `parameters`; returns `bytes` for the firmware recorder allocation excluding allocator metadata |
 | 22 | Read recording block | Required `generation`, starting `index` and slot byte `off`; returns consecutive slot bytes in `data` and the current position/capture fields, without a separate `step` field |
 | 23 | Write recording identity | Required `generation` and nonzero 16-byte `tag`; bind an untagged capture or retain its existing tag; returns `generation` and the retained `tag` |
@@ -291,6 +309,7 @@ The experimental application management group is SMP group 65, API version 1:
 | 26 | Read native message type | Zero-based `index`; `present=false` ends the list, otherwise `run`, `type`, `name`, `version`, `max_size`, `policy`, `last` |
 | 27 | Write native message | Required `run`, `type`, nonzero `request`, binary `data`; returns `state`, `result`, `detail`, `request` |
 | 28 | Read native message status | Required `run`, `type`, `request` (zero selects latest); returns the same result fields |
+| 29 | Write install prepare | `name`: stop/join/cleanup the current application, remove old named image and stale staging before SMP file upload |
 
 Recording metadata (command 14) advertises the maximum block payload as `block`.
 Its absence means only command 15 is available. A block slot consists of the

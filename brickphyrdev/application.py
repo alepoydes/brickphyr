@@ -2,6 +2,7 @@
 """Application operations through the standard SMP clients."""
 
 import asyncio
+import contextlib
 import json
 import math
 import re
@@ -11,9 +12,11 @@ from pathlib import Path
 
 import cbor2
 from smp import error, message
+from smpclient.exceptions import SMPUploadError
 from smpclient.requests.file_management import FileClose
 
-from .smp import Failure, checked, connection
+from .smp import Failure, Rejected, checked, connection
+from .storage_errors import upload_storage_failure
 
 GROUP = 65
 
@@ -62,6 +65,7 @@ class StatusResponse(message.ReadResponse):
     total: int
     ready: bool
     limit: int
+    install: int = 0
     # Older application servers support only native ELF.
     format: Format = Format.NATIVE
     formats: int = 1
@@ -172,6 +176,12 @@ class Publish(_Group, message.WriteRequest):
     _Response = Done
     name: str
     size: int
+
+
+class PrepareInstall(_Group, message.WriteRequest):
+    _COMMAND_ID = 29
+    _Response = Done
+    name: str
 
 
 class Remove(_Group, message.WriteRequest):
@@ -327,28 +337,72 @@ def read_image(path, format=None):
 
 
 async def install(client, image, name, format=Format.NATIVE):
+    from . import package
+
     installed_name(name)
     format = Format(format)
     if format in (Format.PYTHON, Format.MPY):
         image = cbor2.dumps({"main.py" if format == Format.PYTHON else "main.mpy": image})
         format = Format.FILES
-    if format == Format.NATIVE and not image.startswith(b"\x7fELF"):
-        raise ValueError("Native installation requires an ELF image")
+    # Validate local bytes before any destructive command. Firmware repeats
+    # admission over the received file; installation never allocates its size.
+    if format == Format.NATIVE:
+        package.validate_native(image)
+    else:
+        package.validate(image)
     status = await checked(client, Status())
-    if status.api != 1:
-        raise RuntimeError(f"Unsupported application API {status.api}")
-    if not image or len(image) > status.limit:
-        raise ValueError(f"Image must contain 1 through {status.limit} bytes")
-    if not status.formats & (1 << format):
-        raise ValueError(f"Hub does not support {format.name.lower()} applications")
-    # Cancel a previous partial standard transfer before reusing its staging path.
-    await checked(client, FileClose())
-    previous = 0
-    async for offset in client.upload_file(image, "/apps/.incoming"):
-        if not previous < offset <= len(image):
-            raise RuntimeError(f"Invalid file upload offset {offset}")
-        previous = offset
-    await checked(client, Publish(name=name, size=len(image)))
+    if status.api != 1 or status.install != 1:
+        raise RuntimeError("Firmware does not support stop-first application installation")
+    engine = Format.NATIVE
+    if format == Format.NATIVE:
+        package.validate_native(image, abi=status.abi)
+    else:
+        engine = Format(package.validate(image, abi=status.abi).engine)
+    if not status.formats & (1 << format) or not status.formats & (1 << engine):
+        raise ValueError(f"Hub does not support {engine.name.lower()} applications")
+    # One firmware operation excludes queued launches while stopping, joining,
+    # closing the previous transfer, and removing the old installed entry.
+    available = None
+    phase = "preparation"
+    try:
+        await checked(client, PrepareInstall(name=name))
+        phase = "upload"
+        available = (await checked(client, ListFiles(name=""))).available
+        if len(image) > available:
+            raise RuntimeError("insufficient flash space before upload")
+        previous = 0
+        async for offset in client.upload_file(image, "/apps/.incoming"):
+            if not previous < offset <= len(image):
+                raise RuntimeError(f"Invalid file upload offset {offset}")
+            previous = offset
+        if previous != len(image):
+            raise RuntimeError(f"Incomplete file upload: {previous}/{len(image)} bytes")
+        phase = "publication"
+        await checked(client, Publish(name=name, size=len(image)))
+    except Exception as error:
+        if phase == "publication" and not isinstance(error, Rejected):
+            # The commit may precede a lost reply. Standard readback can resolve
+            # that uncertainty; never report an absent program just on timeout.
+            try:
+                if await client.download_file(f"/apps/{name}") == image:
+                    return
+            except Exception:
+                pass
+            outcome = "publication outcome unknown; inspect the installed application"
+        elif phase == "upload" or phase == "publication":
+            outcome = "previous application removed; new application is not installed"
+        else:
+            outcome = "preparation did not complete; inspect the installed application before retrying"
+        failure = upload_storage_failure(error) if isinstance(error, SMPUploadError) else None
+        with contextlib.suppress(Exception):
+            await checked(client, FileClose())
+        with contextlib.suppress(Exception):
+            available = (await checked(client, ListFiles(name=""))).available
+        space = "unknown" if available is None else f"{available} bytes"
+        raise RuntimeError(
+            f"Installing {name}: {failure or error}; package {len(image)} bytes, "
+            f"free flash {space}; {outcome}"
+        ) from error
 
 
 async def files(client):

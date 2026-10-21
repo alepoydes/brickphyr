@@ -5,7 +5,7 @@
 #include <limits.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
-#include "python_source.h"
+#include "app_package.h"
 #include "py/builtin.h"
 #include "py/lexer.h"
 #include "py/runtime.h"
@@ -17,53 +17,53 @@
 
 /* The package owner outlives every open reader. Only offsets cross the
  * application boundary; buffers contain bounded copies owned by Python. */
-static struct python_source files;
+static struct app_source files;
 
 int python_files_check(const void *image, size_t length)
 {
-	const struct python_source source = {python_source_memory, (void *)image, length};
+	const struct app_source source = {app_source_memory, (void *)image, length};
 	return python_source_check(&source);
 }
 
-void python_files_set_source(const struct python_source *source)
+void python_files_set_source(const struct app_source *source)
 {
-	files = source ? *source : (struct python_source){0};
+	files = source ? *source : (struct app_source){0};
 }
 
-static mp_import_stat_t find(const char *path, struct python_resource *file)
+static mp_import_stat_t find(const char *path, struct app_resource *file)
 {
 	if (!files.read) return MP_IMPORT_STAT_NO_EXIST;
-	int type = python_source_find(&files, path, file);
+	int type = app_package_find(&files, path, file);
 	if (type < 0) mp_raise_OSError(-type);
-	return type == PYTHON_RESOURCE_FILE ? MP_IMPORT_STAT_FILE :
-		type == PYTHON_RESOURCE_DIR ? MP_IMPORT_STAT_DIR : MP_IMPORT_STAT_NO_EXIST;
+	return type == APP_RESOURCE_FILE ? MP_IMPORT_STAT_FILE :
+		type == APP_RESOURCE_DIR ? MP_IMPORT_STAT_DIR : MP_IMPORT_STAT_NO_EXIST;
 }
 
 mp_import_stat_t mp_import_stat(const char *path)
 {
-	struct python_resource file;
+	struct app_resource file;
 	return find(path, &file);
 }
 
 const char *python_files_entry(void)
 {
-	char path[PYTHON_PATH_LIMIT + 1];
-	int err = python_source_entry(&files, path, sizeof(path));
+	char path[APP_PATH_LIMIT + 1];
+	int err = app_package_entry(&files, path, sizeof(path));
 	if (err) mp_raise_OSError(-err);
 	return qstr_str(qstr_from_str(path));
 }
 
-struct python_resource python_files_resource(const char *path)
+struct app_resource python_files_resource(const char *path)
 {
-	struct python_resource file;
+	struct app_resource file;
 	mp_import_stat_t type = find(path, &file);
 	if (type != MP_IMPORT_STAT_FILE) mp_raise_OSError(type == MP_IMPORT_STAT_DIR ? EISDIR : ENOENT);
 	return file;
 }
 
 struct source_reader {
-	struct python_source source;
-	struct python_resource file;
+	struct app_source source;
+	struct app_resource file;
 	size_t offset, cursor, available;
 	bool bytecode;
 	uint8_t buffer[128];
@@ -79,7 +79,7 @@ static mp_uint_t read_byte(void *context)
 			return MP_READER_EOF;
 		}
 		size_t size = MIN(sizeof(reader->buffer), reader->file.length - reader->offset);
-		int err = python_source_read(&reader->source, reader->file.offset + reader->offset, reader->buffer, size);
+		int err = app_source_read(&reader->source, reader->file.offset + reader->offset, reader->buffer, size);
 		if (err) mp_raise_OSError(-err);
 		reader->offset += size;
 		reader->cursor = 0;
@@ -93,8 +93,8 @@ static void close_reader(void *context)
 	m_del_obj(struct source_reader, context);
 }
 
-void python_reader_new_source(mp_reader_t *reader, const struct python_source *source,
-	struct python_resource file, bool bytecode)
+void python_reader_new_source(mp_reader_t *reader, const struct app_source *source,
+	struct app_resource file, bool bytecode)
 {
 	struct source_reader *stream = m_new_obj(struct source_reader);
 	*stream = (struct source_reader){.source = *source, .file = file, .bytecode = bytecode};
@@ -103,8 +103,8 @@ void python_reader_new_source(mp_reader_t *reader, const struct python_source *s
 
 void python_reader_new_mem(mp_reader_t *reader, const void *data, size_t length)
 {
-	const struct python_source source = {python_source_memory, (void *)data, length};
-	python_reader_new_source(reader, &source, (struct python_resource){0, length}, true);
+	const struct app_source source = {app_source_memory, (void *)data, length};
+	python_reader_new_source(reader, &source, (struct app_resource){0, length}, true);
 }
 
 mp_lexer_t *mp_lexer_new_from_file(qstr filename)
@@ -116,9 +116,9 @@ mp_lexer_t *mp_lexer_new_from_file(qstr filename)
 
 void mp_reader_new_file(mp_reader_t *reader, qstr filename)
 {
-	struct python_resource file = python_files_resource(qstr_str(filename));
+	struct app_resource file = python_files_resource(qstr_str(filename));
 	uint8_t header[4];
-	int err = file.length < sizeof(header) ? -ENOEXEC : python_source_read(&files, file.offset, header, sizeof(header));
+	int err = file.length < sizeof(header) ? -ENOEXEC : app_source_read(&files, file.offset, header, sizeof(header));
 	if (!err) err = python_image_check(header, sizeof(header), APPLICATION_MPY);
 	if (err) mp_raise_OSError(-err);
 	python_reader_new_source(reader, &files, file, true);
@@ -126,7 +126,7 @@ void mp_reader_new_file(mp_reader_t *reader, qstr filename)
 
 struct resource_file {
 	mp_obj_base_t base;
-	struct python_resource resource;
+	struct app_resource resource;
 	size_t offset;
 	bool closed;
 };
@@ -139,7 +139,7 @@ static mp_uint_t resource_read(mp_obj_t object, void *buffer, mp_uint_t size, in
 		return MP_STREAM_ERROR;
 	}
 	size = MIN(size, file->offset < file->resource.length ? file->resource.length - file->offset : 0);
-	int err = size ? python_source_read(&files, file->resource.offset + file->offset, buffer, size) : 0;
+	int err = size ? app_source_read(&files, file->resource.offset + file->offset, buffer, size) : 0;
 	if (err) {
 		*error = -err;
 		return MP_STREAM_ERROR;
@@ -225,7 +225,7 @@ static mp_obj_t resource_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwa
 	    (mode_size == 2 && mode[1] != 'b' && mode[1] != 't') || memchr(name, 0, name_size)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("invalid file name or mode"));
 	}
-	struct python_resource data;
+	struct app_resource data;
 	mp_import_stat_t stat = find(name, &data);
 	if (stat != MP_IMPORT_STAT_FILE) {
 		mp_raise_OSError(stat == MP_IMPORT_STAT_DIR ? EISDIR : ENOENT);

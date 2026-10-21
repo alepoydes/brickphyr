@@ -257,7 +257,8 @@ UART negotiation, encoder motor drive and regulated control remain disabled.
 Battery voltage/current and connector-selected chemistry use `bp_battery_get()`,
 `observe battery` and the BLE monitor; battery temperature is unsupported. See
 [the board coefficients and limitations](hardware.md#hub-battery).
-There is no Python or persistent program store in this profile.
+There is no Python or persistent program store in this profile. Composite file
+maps are disabled to fit its flash budget; RAM uploads accept standalone ELF.
 It omits an unused libc malloc arena and floating
 point text formatting in the firmware; the system/application heaps and hardware
 float arithmetic remain enabled. Native SDK C-library formatting is linked into
@@ -598,9 +599,11 @@ the shared semantics. Complete each step with an observable result:
    within the recovery constraints, then expose LittleFS file operations and
    standard SMP transfer on both transports. Upload, inspect, list and remove
    files through the existing filesystem mechanisms. Add staged application
-   installation and complete-image validation. Verify persistence across reboot,
-   capacity errors and preservation of the previous installed image after an
-   interrupted update. Installation does not implicitly start or stop an app.
+   installation and complete-image validation. Prepare stops, joins and cleans up
+   the running application before deleting the old named image; SMP then streams
+   hidden staging, validates it and renames it into place. Verify persistence
+   across reboot, capacity errors and interrupted updates. Failure after removal
+   leaves the name absent; installation does not start an app.
 4. **Run installed applications.** Feed selected files into the same loader and
    supervisor used for RAM runs. Store at least two distinguishable applications,
    power-cycle the hub, then select and run each from the terminal and host CLI.
@@ -637,6 +640,22 @@ uv run --locked cmake -S examples/native -B build/native-examples -G Ninja \
   -DLLEXT_EDK_INSTALL_DIR="$PWD/build/native-sdk/brickphyr-sdk"
 uv run --locked cmake --build build/native-examples
 ```
+
+The exported SDK includes `package.cmake`. In an application CMake project,
+`brickphyr_package(control_robot ENTRY control_background COMPONENTS control_loop)`
+adds a package target depending on both executable ELF targets and their output
+files. Optional `RESOURCES name=path...` adds explicit data files. The package
+helper checks the same SDK used by those ELF builds and validates its ABI metadata.
+The bundled native example defines this target; after the configure step above:
+
+```sh
+uv run --locked cmake --build build/native-examples --target control_robot -j4
+uv run --locked brickphyrdev app install build/native-examples/control_robot.cbor --name control_robot
+```
+
+The output is `build/native-examples/control_robot.cbor`, containing the primary
+and required `control_loop.elf` controller. A CMake build tracks source changes;
+the standalone `app pack` command validates only the artifacts supplied to it.
 
 SDK archives use normalized timestamps for reproducibility. Keep `tar -m` when
 replacing an extracted SDK: it gives the headers current modification times so
@@ -833,7 +852,7 @@ pending.
 An earlier F4 comparison with Zephyr 4.4.2 and the Zephyr SDK 1.0.1 ARM compiler
 has the following linked budgets. These builds precede built-in capture and use
 512-byte SMP buffers. Both retain the full Python surface except
-for the Classic-only HubNetwork binding, with 64 KiB application image and
+for the Classic-only HubNetwork binding, with a 64 KiB RAM-uploaded application image and
 64 KiB Python arena limits:
 
 | Full Python profile | Flash | Linked RAM, including heap | Shared system heap |

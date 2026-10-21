@@ -5,17 +5,19 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "application.h"
-#include "python_source.h"
+#include "app_package.h"
 
-#define PYTHON_FILE_LIMIT 64
 #define PYTHON_STACK_MIN 4096
 #define PYTHON_ARENA_SIZE CONFIG_BRICKPHYR_PYTHON_HEAP_SIZE
 /* Maximum expansion of the reference module records into the common file map. */
-#define PYTHON_PYBRICKS_HEADROOM (16 * (PYTHON_FILE_LIMIT + 1))
+#define PYTHON_PYBRICKS_HEADROOM (16 * (APP_FILE_LIMIT + 1))
 #define PYTHON_PYBRICKS_LIMIT (APPLICATION_IMAGE_LIMIT - PYTHON_PYBRICKS_HEADROOM)
 
 /* Admission checks do not compile, allocate or execute application input. */
 int python_image_check(const void *program, size_t length, enum application_format format);
+int python_source_check(const struct app_source *source);
+int python_resource_check(const struct app_source *source, struct app_resource file,
+	enum application_format format);
 /* Normalize module records in place, with PYTHON_PYBRICKS_HEADROOM spare bytes.
  * The caller discards failed conversions and admits successful output with the
  * same python_image_check as other FILES uploads. No second image is allocated. */
@@ -37,7 +39,7 @@ void python_memory_get(uint32_t now_ms, int *used, int *free, int *age_ms);
  * One VM at a time; the caller owns the heap and reclaims it after joining.
  * stack_bottom is the lowest usable address of the downward-growing stack.
  * A NULL program with length zero selects interactive REPL. */
-int python_execute_source(const struct python_source *source, enum application_format format,
+int python_execute_source(const struct app_source *source, enum application_format format,
 	void *heap, size_t heap_size, uintptr_t stack_bottom);
 int python_execute(const void *program, size_t length, enum application_format format,
 	void *heap, size_t heap_size, uintptr_t stack_bottom);

@@ -197,12 +197,34 @@ int app_store_browse(const char *current, int direction, struct app_file *entry)
 	return err;
 }
 
+int app_store_prepare_install(const char *name)
+{
+	if (name[0] == '@') return -EACCES;
+	char path[sizeof("/apps/") + APP_NAME_MAX];
+	k_mutex_lock(&store_lock, K_FOREVER);
+	int err = app_store_path(name, path, sizeof(path));
+	/* Exclude a queued local launch until its source has been removed. Stop
+	 * failure retains both installed bytes and any still-owned resources. */
+	if (!err) err = application_stop();
+	if (!err) {
+		err = fs_unlink(APP_STAGE);
+		if (err == -ENOENT) err = 0;
+	}
+	if (!err) {
+		err = application_file_idle(path);
+		if (!err) err = fs_unlink(path);
+		if (err == -ENOENT) err = 0;
+	}
+	k_mutex_unlock(&store_lock);
+	return err;
+}
+
 int app_store_remove(const char *name)
 {
 	char path[sizeof("/apps/") + APP_NAME_MAX];
 	k_mutex_lock(&store_lock, K_FOREVER);
 	int err = app_store_path(name, path, sizeof(path));
-	if (!err) err = application_preserve_file(path);
+	if (!err) err = application_file_idle(path);
 	if (!err) {
 		err = fs_unlink(path);
 	}
@@ -228,10 +250,10 @@ int app_store_publish(const char *name, size_t length)
 	if (!err) {
 		err = application_check_file(APP_STAGE, length);
 	}
-	if (!err) err = application_preserve_file(path);
+	if (!err) err = application_file_idle(path);
 	if (!err) {
-		/* LittleFS commits this replacement atomically; old content remains
-		 * visible until the fully validated incoming image takes its name. */
+		/* Only a closed, complete, admitted file becomes launchable. The
+		 * stop-first installer has already removed the previous version. */
 		err = fs_rename(APP_STAGE, path);
 	}
 	k_mutex_unlock(&store_lock);
@@ -253,7 +275,7 @@ int app_store_publish_upload(const char *name)
 	if (!err) {
 		err = application_write_upload(APP_STAGE);
 	}
-	if (!err) err = application_preserve_file(path);
+	if (!err) err = application_file_idle(path);
 	if (!err) {
 		err = fs_rename(APP_STAGE, path);
 	}

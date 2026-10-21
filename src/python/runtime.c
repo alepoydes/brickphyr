@@ -170,7 +170,7 @@ int python_image_check(const void *program, size_t length, enum application_form
 	return 0;
 }
 
-int python_execute_source(const struct python_source *source, enum application_format format,
+int python_execute_source(const struct app_source *source, enum application_format format,
 	void *heap, size_t heap_size, uintptr_t stack_bottom)
 {
 	volatile uintptr_t stack_top;
@@ -221,7 +221,7 @@ int python_execute_source(const struct python_source *source, enum application_f
 			if (format == APPLICATION_FILES) {
 				mp_reader_new_file(&reader, filename);
 			} else {
-				python_reader_new_source(&reader, source, (struct python_resource){0, source->length}, true);
+				python_reader_new_source(&reader, source, (struct app_resource){0, source->length}, true);
 			}
 			mp_module_context_t *context = m_new_obj(mp_module_context_t);
 			context->module.globals = mp_globals_get();
@@ -234,7 +234,7 @@ int python_execute_source(const struct python_source *source, enum application_f
 				lexer = mp_lexer_new_from_file(filename);
 			} else {
 				mp_reader_t reader;
-				python_reader_new_source(&reader, source, (struct python_resource){0, source->length}, false);
+				python_reader_new_source(&reader, source, (struct app_resource){0, source->length}, false);
 				lexer = mp_lexer_new(filename, reader);
 			}
 			qstr name = lexer->source_name;
@@ -258,7 +258,7 @@ int python_execute(const void *program, size_t length, enum application_format f
 	void *heap, size_t heap_size, uintptr_t stack_bottom)
 {
 	if (!program && length) return -EINVAL;
-	const struct python_source source = {python_source_memory, (void *)program, length};
+	const struct app_source source = {app_source_memory, (void *)program, length};
 	return python_execute_source(program ? &source : NULL, format, heap, heap_size, stack_bottom);
 }
 

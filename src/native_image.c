@@ -87,9 +87,6 @@ static int name_at(struct image *image, const elf_shdr_t *strings, size_t offset
 int native_image_check(native_image_read_fn read, void *context, size_t length,
 		       struct native_image_requirements *requirements)
 {
-	if (length > APPLICATION_IMAGE_LIMIT) {
-		return -EFBIG;
-	}
 	struct image image = {.read = read, .context = context, .length = length};
 	elf_ehdr_t *header = &image.header;
 	int err = read_at(&image, 0, header, sizeof(*header));

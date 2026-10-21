@@ -22,7 +22,7 @@ set(native_probes record record_event record_paused record_paused_segments recor
   record_app_fields host_inbox
   record_frame_segments record_frame_segments_params record_frame_segments_params_raw
   record_frame_segments_params_big
-  record_stream record_stream_ring record_stream_segments control control_file)
+  record_stream record_stream_ring record_stream_segments control control_file control_resource)
 if(CONFIG_BRICKPHYR_PYTHON)
   list(APPEND native_probes capacity)
 endif()
@@ -82,7 +82,7 @@ endif()
 target_sources(app PRIVATE main.c ${BRICKPHYR_ROOT}/src/hub_power.c ${BRICKPHYR_ROOT}/src/configuration.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_battery.c ../native/battery_adc.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_light.c ${BRICKPHYR_ROOT}/src/hub_matrix.c
-  ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c)
+  ${BRICKPHYR_ROOT}/src/hub_matrix_font.c ${BRICKPHYR_ROOT}/drivers/led_tlc5955.c)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/hub_ports.c ${BRICKPHYR_ROOT}/src/ports/output.c ../ports/wiring.c)
 target_sources_ifdef(CONFIG_BRICKPHYR_PORT_UART app PRIVATE pup_peer.c
   ${BRICKPHYR_ROOT}/src/ports/settings.c

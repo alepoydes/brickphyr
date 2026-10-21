@@ -57,6 +57,9 @@ def export(build: Path, micropython: Path | None, dsp: list[Path] | None):
         root = Path(__file__).resolve().parents[1]
         shutil.copy2(root / "LICENSE", sdk / "LICENSE")
         (sdk / "build.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        (sdk / "tools").mkdir()
+        shutil.copy2(root / "brickphyrdev/package.py", sdk / "tools/package.py")
+        shutil.copy2(root / "sdk/package.cmake", sdk / "package.cmake")
         headers = sdk / "include"
         headers.mkdir()
         public = Path(__file__).resolve().parents[1] / "sdk/include"

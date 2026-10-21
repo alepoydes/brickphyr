@@ -64,7 +64,6 @@ def test_budget_queries_and_reports_replacement_with_arena_reuse(monkeypatch):
     # Before release only the new primary stack and supervisor must coexist.
     assert report["phases"]["replacement"]["before_release_accounted"] == 420
     assert report["phases"]["replacement"]["peak"] == "unknown"
-    assert report["potential_store_mutation_snapshot"] == 70
     assert report["staged_transfer"] == 100
     assert report["admission"]["status"] == "fit_unknown"
     json.dumps(report)

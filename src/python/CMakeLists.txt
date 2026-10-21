@@ -98,6 +98,9 @@ endif()
 zephyr_library_named(${MICROPY_TARGET})
 zephyr_library_sources(${MICROPY_SOURCE_QSTR} ${gc_sources}
   ${MICROPY_DIR}/shared/runtime/stdout_helpers.c)
+if(NOT CONFIG_BRICKPHYR_NATIVE)
+  zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/../app_package.c)
+endif()
 zephyr_library_include_directories(${MICROPY_INC_CORE} ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/include)

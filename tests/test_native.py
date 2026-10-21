@@ -833,12 +833,12 @@ def test_installed_applications():
             assert await client.download_file("/apps/hello") == hello
             assert (await checked(client, Status())).state == 1
             incompatible = incompatible_native(hello)
-            with pytest.raises(RuntimeError, match="Publish rejected"):
+            with pytest.raises(ValueError, match="ABI"):
                 await install(client, incompatible, "hello")
             assert await client.download_file("/apps/hello") == hello
-            # Replacement while counter is running changes only its installed image.
+            # Replacement stops and joins the previous application before deleting its file.
             await install(client, hello, "counter")
-            assert (await checked(client, Status())).state == 1
+            assert (await checked(client, Status())).state == 3
             for _ in range(2):
                 await checked(client, RunStored(name="hello"))
                 async with asyncio.timeout(2):

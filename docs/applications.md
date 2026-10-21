@@ -150,34 +150,35 @@ regions must be disjoint; overlap returns `EINVAL` before any output is written.
 Neither reading nor updating allocates.
 
 The [native background example](../examples/native/control_background.c) starts
-the existing `control_loop` controller, reads 24 observations and changes the
-observed port mask at a step boundary. It sends no actuator commands. Build
-`control_background` with the [ordinary SDK procedure](builds.md#experimental-native-sdk):
+the bundled `control_loop.elf` controller, reads 24 observations and changes the
+observed port mask at a step boundary. It sends no actuator commands. Build its
+package with the [matching SDK](builds.md#experimental-native-sdk):
 
 ```sh
-uv run cmake --build build/native-examples --target control_background control_loop -j4
-uv run brickphyrdev app install build/native-examples/control_loop.elf --name control_loop
-uv run brickphyrdev app run build/native-examples/control_background.elf
+uv run cmake --build build/native-examples --target control_robot -j4
+uv run brickphyrdev app install build/native-examples/control_robot.cbor --name control_robot
+uv run brickphyrdev app start control_robot
 uv run brickphyrdev app output
 uv run brickphyrdev app record reports/native-control.jsonl
 ```
 
 Add `--ble Brickphyr` after `app` for Bluetooth. The primary calls
-`bp_control_start_file("control_loop", 12, parameters, size)` to load the installed
-controller through the same validator and LLEXT linker as a buffered start. The
-store remains locked through validation/linking; no complete controller ELF is
-embedded in the primary or retained after linking. Missing files return `ENOENT`,
-invalid images fail admission, and a rejected start leaves the primary alive.
-Without application storage the call returns `ENOTSUP`. Initial parameters,
-independent protection and the common stop/fault lifetime are unchanged.
+`bp_control_start_resource("control_loop.elf", 16, parameters, size)` to load the
+bundled controller through the same validator and LLEXT linker as a buffered
+start. Native ABI 2.8 exposes this resource API to both native and Python primaries. No complete
+controller ELF is embedded in the primary or copied into a separate RAM buffer. Missing
+resources return `ENOENT`, invalid images fail admission, and a rejected start
+leaves the primary alive. Initial parameters, independent protection and the
+common stop/fault lifetime are unchanged.
 Real numerical algorithms, candidate validation and rollback remain application code.
 
 Protected ARM checks cover native primary progress, copied revisions,
 cross-domain faults, forced stop and complete heap reclamation, including a
-firmware configuration without Python. On one Robot Inventor F4, the SDK example
-also passes through USB and BLE with real IMU/passive port observations and both
-parameter revisions retained. It makes no motor commands. This checks the shared
-native lifecycle and transport path, not a numerical workload's deadline budget.
+firmware configuration without Python. The composite SDK example also passes
+on one Robot Inventor F4 over USB with passive IMU/port observations and changed
+parameters. A sensor-independent controller checks composite native and Python
+execution and replacement of the running native package over BLE. These checks
+exercise packaging and lifetime, not sensor validity or a workload's deadlines.
 
 ### Reading observations from Python
 
@@ -584,11 +585,12 @@ a 1024-byte queue with counted overflow; writing never waits for a reader. The
 `diagnostics` command separately drains a bounded firmware log queue. Its backend
 remains available without a host, including during LLEXT's deferred-log flush.
 
-`CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits uploaded image bytes;
+`CONFIG_BRICKPHYR_APPLICATION_IMAGE_SIZE` limits RAM-uploaded image bytes, not
+installed file size;
 `CONFIG_BRICKPHYR_NATIVE_MEMORY_SIZE` limits each native image's loader budget.
 `CONFIG_BRICKPHYR_PYTHON_HEAP_SIZE` independently sets the on-demand Python arena
 (64 KiB on F4); an idle Python engine reserves none of it. Both F4 profiles permit
-64 KiB of ELF and a 214144-byte native loader budget. Their shared system heaps
+64 KiB RAM ELF uploads and a 214144-byte native loader budget. Their shared system heaps
 are 221696 bytes for native-only and 217600 bytes with full BLE Python.
 Core Python also reserves 217600 bytes; enabling the Classic Python profile
 leaves 193536 bytes for the shared heap. These reservations leave room for the
@@ -645,7 +647,7 @@ free block or prove that loading, replacement, or concurrent components will fit
 installed application without starting it. It validates the real native ELF or
 Python package through the firmware's admission readers; `--controller NAME`
 checks a separately installed ELF, while `--resource PATH` checks an ELF inside
-the selected Python package. Native image and recorder budgets come from the
+the selected package. Native image and recorder budgets come from the
 same firmware validators used at launch, including target stack rounding and
 recorder layout. The command does not stop an application, consume a ready
 upload, install another one or write flash. Declared record size/count/configuration,
@@ -663,8 +665,9 @@ amounts exclude allocator/kernel-object metadata and transient loader allocation
 native admission `native` is a conservative bound, not measured retained memory.
 Alignment, fragmentation and undeclared runtime allocations leave both phase
 peaks and overall fit unknown unless the minimum known arena, stack and source
-bytes already exceed the heap. `potential_store_mutation_snapshot` describes a
-possible RAM copy when republishing an active stored source, not normal start.
+bytes already exceed the heap. Installation stops and releases the current
+application before deleting its previous installed image; it does not keep a
+RAM copy for rollback.
 On Inventor F4, USB checks compare RAM/stored package and controller estimates
 with live allocations and verify that preflight leaves staging and execution
 unchanged. A native-image preflight also passes over BLE. These bounded checks
@@ -1294,7 +1297,9 @@ neither files nor allocation with settings. The [recovery map](recovery.md) defi
 its bounds and initialization policy. A successful mount exposes existing files;
 only an entirely erased partition is initialized automatically.
 
-Standard SMP file management transfers `/apps/.incoming`. This reserved staging
+Installation first stops and joins the current application, completes its cleanup,
+then removes the previous installed file at the selected name. Standard SMP file
+management streams the replacement into `/apps/.incoming`. This reserved staging
 file is excluded from the application list. Installed names contain 1–32 ASCII
 letters, digits, dots, underscores or hyphens, with no leading dot. A leading
 underscore hides a program from the hub's button selector, but it remains visible
@@ -1305,14 +1310,15 @@ them. Other paths, including settings and traversal aliases, are denied.
 Installed files are readable through SMP but cannot be overwritten through the
 file-upload command.
 
-Publication closes the transfer, checks the declared size and the complete ELF
-using the same admission checks as RAM, then atomically renames the staging file.
-It does not execute code or stop the current instance. An interrupted or rejected
-update leaves the previous installed file intact. Partial staging data may survive
-a disconnect or reboot; the next installation closes and truncates it. LittleFS
-metadata and staging consume space, so reported free bytes are not a guarantee
-that a file of exactly that size can be installed. Capacity errors preserve
-previously installed applications.
+Publication closes the transfer, checks its declared size and complete image
+through admission, then atomically renames the staging file. It does not start
+the application. After removal, a failed or interrupted replacement leaves that name absent;
+there is no rollback copy. Partial staging data may survive a disconnect or
+reboot; the next installation removes it before streaming. LittleFS metadata
+and staging consume space, so reported free bytes do not guarantee that an
+image of exactly that size can be installed. Stored image size is limited by
+available storage and admission, while the 64 KiB RAM-upload limit applies only
+to temporary transfers.
 
 `app list`, `app run NAME`, and `app remove NAME` are available in the shared Shell.
 The host [CLI](host.md#native-applications) provides the same lifecycle over USB
@@ -1320,19 +1326,44 @@ and BLE. With no program or management session active, the hub's left/right
 buttons browse visible named applications and a short center press runs the
 selection through the same store and supervisor. Storage lookup and loading run on the
 existing storage worker so they do not block button or power handling. Removal
-or replacement affects the stored image, not a running instance:
-LLEXT has already copied its execution sections into protected RAM. There is no
-autorun. The selected visible name is kept in RAM until power-off and revalidated
-when the selector returns; deleting it selects the next visible program. Installed
+requires an idle source; installation stops the running application before
+replacement. There is no autorun. The selected visible name is kept in RAM until
+power-off and revalidated when the selector returns; deleting it selects the next visible program. Installed
 images retain their ABI requirements; incompatible interface changes can require
 rebuilding and reinstalling them.
 
 File runs use Zephyr's LLEXT file loader without reserving a full ELF receive
 buffer. File admission and loading hold the store lock so replacement cannot
 change the checked file. Both sources then enter the same protected supervisor.
-LittleFS installation, rejected partial updates, reboot/power-cycle persistence and USB/BLE
-Shell/CLI launches have been checked on the Inventor F4. ARM QEMU also exercises
-filesystem exhaustion and compares the loaded allocations of both sources.
+ARM QEMU checks native composite execution without Python, stop-first
+replacement with insufficient space for two versions, hidden incomplete uploads,
+component rejection, real LittleFS exhaustion and source-release accounting.
+One Robot Inventor F4 also installs a 65 KiB package over USB and BLE, exceeding
+its RAM-upload limit, and runs native/Python primaries with bundled controllers.
+BLE replacement stops both active contexts; unrelated installed files remain
+unchanged. Earlier standalone-file checks additionally cover reboot/power-cycle
+persistence. Interrupted physical flash writes and composite power-cut recovery
+remain unverified.
+
+### Composite application packages
+
+A composite application is one CBOR map from relative file paths to byte strings.
+The empty-string key holds a byte string containing the CBOR manifest
+`[1, engine, entry, components]`: `engine` is 0 for native, 1 for Python or 2
+for MPY; `entry` names the primary `.elf`, `.py` or `.mpy` file; `components`
+lists required native ELF paths. A native package needs no Python engine.
+`CONFIG_BRICKPHYR_APP_PACKAGES` enables file maps. Python always includes this
+reader; small native-only profiles may disable it and accept standalone ELF only.
+The package is read in bounded windows without a resident file index or a full
+RAM copy. A package has at most 64 files
+plus entry metadata and 128 UTF-8 bytes per relative path. Absolute paths,
+empty/`.`/`..` components, embedded NUL, duplicate keys and file/directory
+collisions are rejected. CBOR keys and values
+must be definite-length text and byte strings.
+Admission checks the manifest, required components and executable envelopes;
+it never executes the primary or controller. Internal components are not separate
+installed applications. Build one package with the [SDK target](builds.md#experimental-native-sdk)
+or [explicit CLI inputs](host.md#native-applications).
 
 ## Experimental Python profile
 
@@ -1362,7 +1393,8 @@ raises `MemoryError`. Status reports its reservation as `code` and usage as
 admission rather than a GC-heap allocation: free Python heap alone cannot satisfy
 its system-heap capacity and alignment requirements.
 
-The full F4 Python profile accepts packages up to 64 KiB. The 64 KiB Python
+The full F4 Python profile accepts RAM-uploaded packages up to 64 KiB. The
+64 KiB Python
 arena holds the GC heap; package bytes live outside it. RAM uploads retain one
 immutable allocation, shared with a retained repeat upload when requested.
 Stored packages are read from LittleFS in bounded chunks. Imports, ordinary
@@ -1587,38 +1619,33 @@ software coverage; hardware bindings remain unfinished.
 
 ### Named Python programs
 
-A Python program with accompanying modules is one CBOR map from relative file
-paths to byte strings. By default it has exactly one root entry, `main.py` or
-`main.mpy`. An optional empty-string key selects another entry: its byte-string
-value must name an existing `.py` or `.mpy` file in the same map. This metadata is
-not a file. The Pybricks adapter uses it to select the first module while preserving
-an ordinary imported module named `main`.
+Python uses the [shared application package](#composite-application-packages).
+The legacy Python map still accepts an empty-key entry path or the default
+`main.py`/`main.mpy`. The Pybricks adapter uses the entry to select the first
+module while preserving an ordinary imported module named `main`.
 The CLI builds this image from a dedicated application directory, or wraps a
 single `.py`/`.mpy` file for installation. Source and compatible bytecode/native
 modules can coexist, including packages with `__init__.py` or `__init__.mpy`.
 MicroPython owns module resolution and execution; this map supplies the file bytes.
 It introduces no second writable filesystem or package manager.
 
-The full F4 profile limits the encoded image to 64 KiB, at most 64 files plus optional entry
-metadata, and 128 bytes per relative path. Absolute paths, empty/`.`/`..` components, embedded NUL,
-duplicate keys and file/directory collisions are rejected. CBOR keys and values
-must be definite-length text and byte strings. Admission validates the complete
+The full F4 profile limits RAM uploads to 64 KiB; stored package size is governed
+by available application storage and admission. The common package path and
+file-count limits apply. Admission validates the complete
 map and each Python/MPY format envelope; syntax and bytecode-body errors remain
 execution errors. Unsupported native architectures are checked again on import.
 
 Named images use the same LittleFS staging, validation, atomic rename, listing and
-removal as native ELF. Upload/install never starts or stops a program. Admission
-scans the map and code envelopes through bounded reads; execution keeps the
+removal as native ELF. RAM upload does not stop a program; installation stops,
+joins and cleans up the current application before deleting the old installed
+file and streaming the replacement. Admission scans the map and code envelopes
+through bounded reads; execution keeps the
 read-only source open, without copying the complete package into RAM or GC.
 
-Later replacement or removal cannot change a running instance's imports, even
-when a module is imported again after removal from `sys.modules`. LittleFS does
-not pin all blocks of an unlinked read-only file, so before mutating the active
-source's installed path, the supervisor snapshots that old package into RAM.
-This allocation occurs only on replacement/removal of the running package.
-Insufficient memory rejects the mutation and preserves both the installed and
-running versions. Account for this snapshot in the update peak; stop first when
-that extra reservation is unwanted. Ordinary launch/read never writes flash.
+Removal of an active source is rejected. Installation stops and releases the
+source before replacing its path, so later imports cannot read unlinked blocks.
+After removal, an interrupted or rejected installation leaves the selected name absent; the
+old source is not held in RAM for rollback. Ordinary launch/read never writes flash.
 
 The source and any retained RAM upload have explicit references. Stop/fault joins
 both execution contexts and cancels pending reads before releasing the source;
@@ -1632,12 +1659,12 @@ in this same program namespace, never in the firmware filesystem. `__file__` and
 `sys.argv[0]` identify the root entry.
 See [CLI and terminal commands](host.md#python-applications).
 
-Protected ARM checks cover bounded resource reads, source/bytecode/native imports,
-running-version preservation during replacement/removal, and complete system-heap
-reclamation after RAM and stored execution. On one Robot Inventor F4, a synthetic
+Earlier protected ARM checks covered bounded resource reads,
+source/bytecode/native imports and complete system-heap reclamation after RAM
+and stored execution. On one Robot Inventor F4, a synthetic
 64 KiB package with padding and a matching-SDK C module ran from RAM and LittleFS
-over USB; both left 62,944 B free after GC. USB/BLE checks also cover the native
-named-controller example and Python controllers loaded directly from RAM/stored
+over USB; both left 62,944 B free after GC. USB/BLE checks also cover the earlier
+separate-file native controller and Python controllers loaded from RAM/stored
 package resources, with passive observations only. These bounded examples do not
 establish capacity for a complete Babybot workload.
 
@@ -1866,7 +1893,7 @@ use cases and is outside the initial milestone.
 | Operation | Required result |
 | --- | --- |
 | Run a transferred image | Receive into bounded RAM, validate, load and start without persisting the image |
-| Install an application | Store and validate a complete image, then publish it in the installed application list; installation does not start it |
+| Install an application | Stop/join/cleanup, remove the old named image, stream hidden staging, validate and publish the replacement; installation does not start it |
 | Start an installed application | Read the selected file and use the same admission, loader and execution lifecycle as a temporary image |
 
 Both sources use the same application format, ABI/capability checks, allowed
@@ -1876,9 +1903,9 @@ replacement follows the confirmed-stop order below. An interrupted temporary
 upload releases its staging resources without stopping an autonomous application.
 RAM exhaustion reports an error rather than silently persisting the image.
 
-Installation uses a staging file. A complete, validated image replaces the
-installed entry atomically; an interrupted or rejected update preserves the
-previous installed version. Listing, inspecting and removing installed files
+Installation uses a staging file. Once the old named file has been removed, a
+complete, validated image is published by rename; an interrupted or rejected
+update leaves the name absent. Listing, inspecting and removing installed files
 share the same storage operations across clients. Storage access must preserve
 the settings validation/save contract and the regions in [recovery](recovery.md).
 Determine the application partition and usable capacity from the actual flash

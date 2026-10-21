@@ -4,7 +4,7 @@
 #include "application_record.h"
 #include "native_image.h"
 #include "app_store.h"
-#include "python_source.h"
+#include "app_package.h"
 #ifdef CONFIG_BRICKPHYR_CAPTURE
 #include "capture.h"
 #include "telemetry_block.h"
@@ -60,8 +60,10 @@ static int status_read(struct smp_streamer *stream)
 		number(zs, "queued", status.output_bytes) &&
 		number(zs, "received", status.upload_bytes) && number(zs, "total", status.upload_size) &&
 		zcbor_tstr_put_lit(zs, "ready") && zcbor_bool_put(zs, status.upload_ready) &&
+		number(zs, "install", IS_ENABLED(CONFIG_BRICKPHYR_APP_STORAGE) ? 1 : 0) &&
 		number(zs, "limit", APPLICATION_IMAGE_LIMIT) && number(zs, "format", status.format) &&
-		number(zs, "formats", IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ? 15 : 1) &&
+		number(zs, "formats", 1 | (IS_ENABLED(CONFIG_BRICKPHYR_PYTHON) ? 6 : 0) |
+			(IS_ENABLED(CONFIG_BRICKPHYR_APP_PACKAGES) ? 8 : 0)) &&
 		number(zs, "code", status.code_bytes) && number(zs, "code_used", status.code_used) &&
 		zcbor_tstr_put_lit(zs, "repl") && zcbor_bool_put(zs, status.repl);
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
@@ -161,7 +163,7 @@ static int budget_read(struct smp_streamer *stream)
 		ZCBOR_MAP_DECODE_KEY_DECODER("parameters", zcbor_uint32_decode, &parameters),
 		ZCBOR_MAP_DECODE_KEY_DECODER("control", zcbor_bool_decode, &control),
 	};
-	char installed[APP_NAME_MAX + 1], path[PYTHON_PATH_LIMIT + 1];
+	char installed[APP_NAME_MAX + 1], path[APP_PATH_LIMIT + 1];
 	if (zcbor_map_decode_bulk(stream->reader->zs, fields, ARRAY_SIZE(fields), &decoded) ||
 	    name.len >= sizeof(installed) || resource.len >= sizeof(path) ||
 	    (name.len && memchr(name.value, 0, name.len)) ||
@@ -740,7 +742,10 @@ static int file_operation(struct smp_streamer *stream, unsigned int command)
 	uint32_t length = UINT32_MAX, stack = 0;
 	int err = file_arguments(stream, name, sizeof(name), &length, &stack);
 	if (!err) {
-		if (command == 7) {
+		if (command == 29) {
+			err = fs_mgmt_file_close();
+			if (!err) err = app_store_prepare_install(name);
+		} else if (command == 7) {
 			/* All file uploads and publication run serially on SMP's worker.
 			 * Close also cancels a partial standard upload before validation. */
 			err = fs_mgmt_file_close();
@@ -753,6 +758,7 @@ static int file_operation(struct smp_streamer *stream, unsigned int command)
 	}
 	return result(stream, err);
 }
+static int install_prepare_write(struct smp_streamer *s) { return file_operation(s, 29); }
 static int publish_write(struct smp_streamer *s) { return file_operation(s, 7); }
 static int remove_write(struct smp_streamer *s) { return file_operation(s, 8); }
 static int stored_run_write(struct smp_streamer *s) { return file_operation(s, 9); }
@@ -843,6 +849,7 @@ static const struct mgmt_handler handlers[] = {
 	[7] = {.mh_write = publish_write},
 	[8] = {.mh_write = remove_write},
 	[9] = {.mh_write = stored_run_write},
+	[29] = {.mh_write = install_prepare_write},
 #endif
 #ifdef CONFIG_BRICKPHYR_PYTHON
 	[10] = {.mh_write = input_write},

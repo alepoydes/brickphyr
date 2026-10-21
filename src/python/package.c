@@ -21,7 +21,7 @@ static bool next(const uint8_t **cursor, const uint8_t *end, struct module *modu
 	module->size = sys_get_le32(*cursor);
 	module->name = *cursor + 4;
 	const uint8_t *zero = memchr(module->name, 0, end - module->name);
-	if (!zero || zero == module->name || zero - module->name > PYTHON_PATH_LIMIT - 4 ||
+	if (!zero || zero == module->name || zero - module->name > APP_PATH_LIMIT - 4 ||
 	    module->size > end - zero - 1) {
 		return false;
 	}
@@ -41,13 +41,13 @@ int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *
 	struct module module;
 	size_t count = 0;
 	while (cursor < end) {
-		if (++count > PYTHON_FILE_LIMIT || !next(&cursor, end, &module) ||
+		if (++count > APP_FILE_LIMIT || !next(&cursor, end, &module) ||
 		    python_image_check(module.data, module.size, APPLICATION_MPY)) {
 			return -ENOEXEC;
 		}
 	}
 	/* Determine package parents before encoding can overwrite their names. */
-	bool packages[PYTHON_FILE_LIMIT] = {0};
+	bool packages[APP_FILE_LIMIT] = {0};
 	cursor = start;
 	for (size_t i = 0; i < count; i++) {
 		next(&cursor, end, &module);
@@ -62,7 +62,7 @@ int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *
 				break;
 			}
 		}
-		if (packages[i] && module.name_size + sizeof("/__init__.mpy") - 1 > PYTHON_PATH_LIMIT) {
+		if (packages[i] && module.name_size + sizeof("/__init__.mpy") - 1 > APP_PATH_LIMIT) {
 			return -ENOEXEC;
 		}
 	}
@@ -70,7 +70,7 @@ int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *
 	 * Shift input above that total bound so encoding any prefix cannot overwrite
 	 * unread records. zcbor's string encoder supports overlapping payloads. The
 	 * two bounded moves run outside the allocator/interrupt lock. */
-	size_t padding = 13 * count + PYTHON_PATH_LIMIT + 8;
+	size_t padding = 13 * count + APP_PATH_LIMIT + 8;
 	if (capacity < length || padding > capacity - length) {
 		return -EFBIG;
 	}
@@ -82,7 +82,7 @@ int python_pybricks_package(void *data, size_t length, size_t capacity, size_t *
 	cursor = start;
 	for (size_t i = 0; ok && i < count; i++) {
 		next(&cursor, end, &module);
-		char path[PYTHON_PATH_LIMIT + sizeof("/__init__.mpy")];
+		char path[APP_PATH_LIMIT + sizeof("/__init__.mpy")];
 		for (size_t i = 0; i < module.name_size; i++) {
 			path[i] = module.name[i] == '.' ? '/' : module.name[i];
 		}

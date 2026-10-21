@@ -11,7 +11,7 @@ BRICKPHYR_APPLICATION_REQUIRES(BP_CAP_IMU | BP_CAP_BATTERY | BP_CAP_PORTS, 2048)
 int app_main(void)
 {
 	uint32_t mask = 3;
-	int err = bp_control_start_file("control_loop", sizeof("control_loop") - 1, &mask, sizeof(mask));
+	int err = bp_control_start_resource("control_loop.elf", sizeof("control_loop.elf") - 1, &mask, sizeof(mask));
 	if (err) return err;
 	struct { struct control_record input; uint32_t port_mask, reserved; } record;
 	struct bp_record_request request = {

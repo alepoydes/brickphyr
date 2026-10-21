@@ -22,6 +22,8 @@ int app_store_next(const char *after, struct app_file *entry, size_t *available)
  * otherwise chooses the next name; an empty current starts at the first.
  * The other directions wrap at the ends. */
 int app_store_browse(const char *current, int direction, struct app_file *entry);
+/* Stop/join the app, remove abandoned staging and the named previous package. */
+int app_store_prepare_install(const char *name);
 int app_store_remove(const char *name);
 /* Called by the serial SMP dispatcher, after closing its standard FS transfer. */
 int app_store_publish(const char *name, size_t length);

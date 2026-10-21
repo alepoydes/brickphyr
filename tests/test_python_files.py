@@ -284,7 +284,7 @@ print('explicit entry 42')
         asyncio.run(exercise(port))
 
 
-def test_python_store_keeps_running_version():
+def test_python_store_stops_before_replacement():
     original = cbor2.dumps(
         {
             "main.py": b"""import sys
@@ -343,16 +343,16 @@ while True:
                 with pytest.raises(RuntimeError, match="Publish rejected"):
                     await checked(client, Publish(name="program", size=len(replacement)))
                 assert await client.download_file("/apps/program") == original
-                with pytest.raises(RuntimeError, match="Publish rejected"):
+                with pytest.raises(ValueError):
                     await install(
                         client, cbor2.dumps({"../escape.py": b""}), "program", Format.FILES
                     )
                 assert await client.download_file("/apps/program") == original
-                await install(client, replacement, "program", Format.FILES)
-                before = await heartbeat(client, before)
-                await checked(client, Remove(name="program"))
+                with pytest.raises(RuntimeError, match="error 16"):
+                    await checked(client, Remove(name="program"))
                 await heartbeat(client, before)
                 await install(client, replacement, "program", Format.FILES)
+                assert (await checked(client, Status())).state == 3
                 await checked(client, RunStored(name="program"))
                 assert (await completed(client)).result == 0
                 assert b"new version 2" in await output(client)

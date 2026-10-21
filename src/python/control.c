@@ -19,8 +19,7 @@ static mp_obj_t control_start(size_t count, const mp_obj_t *args)
 		size_t length;
 		const char *name = mp_obj_str_get_data(args[0], &length);
 		if (memchr(name, 0, length)) mp_raise_ValueError(MP_ERROR_TEXT("invalid resource name"));
-		struct python_resource file = python_files_resource(name);
-		check(application_control_resource(file.offset, file.length, parameters.buf, parameters.len));
+		check(bp_control_start_resource(name, length, parameters.buf, parameters.len));
 	} else {
 		mp_get_buffer_raise(args[0], &image, MP_BUFFER_READ);
 		check(bp_control_start(image.buf, image.len, parameters.buf, parameters.len));

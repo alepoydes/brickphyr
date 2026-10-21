@@ -552,6 +552,14 @@ __syscall int bp_host_read(uint16_t type, void *data, size_t capacity,
  * optional application result such as the applied controller revision. */
 __syscall int bp_host_finish(uint16_t type, uint32_t request, int result, uint32_t detail);
 
+/* Start one controller from this application's immutable package. Paths are
+ * relative, 1-128 bytes, without NUL. Parameters and lifecycle match
+ * bp_control_start; no complete ELF or package is copied into the primary.
+ * ENODATA for an unpackaged primary; ENOENT for a missing resource;
+ * ENOTSUP when this firmware omits application packages. */
+__syscall int bp_control_start_resource(const char *name, size_t name_length,
+	const void *parameters, size_t length);
+
 #include <zephyr/syscalls/brickphyr.h>
 #endif
 

@@ -17,6 +17,7 @@ file(REMOVE ${ZEPHYR_BINARY_DIR}/include/generated/brickphyr_abi.h)
 add_custom_target(brickphyr_api DEPENDS ${native_api})
 add_dependencies(app brickphyr_api)
 target_sources(app PRIVATE ${BRICKPHYR_ROOT}/src/application.c ${BRICKPHYR_ROOT}/src/native_image.c ${BRICKPHYR_ROOT}/src/native_api.c
+  ${BRICKPHYR_ROOT}/src/app_package.c
   ${BRICKPHYR_ROOT}/src/diagnostics.c ${BRICKPHYR_ROOT}/src/control_frame.c
   ${BRICKPHYR_ROOT}/src/application_record.c)
 if(CONFIG_BRICKPHYR_CAPTURE)

@@ -351,6 +351,15 @@ config BRICKPHYR_NATIVE
 	help
 	  One separately built application, with a compatible versioned SDK.
 
+config BRICKPHYR_APP_PACKAGES
+	bool "Composite application packages" if !BRICKPHYR_PYTHON
+	depends on (BRICKPHYR_NATIVE || BRICKPHYR_PYTHON) && ZCBOR
+	default y
+	help
+	  Read one file map containing a primary, native controllers and resources.
+	  Python requires its file-map reader. Native-only profiles may omit it
+	  while retaining standalone ELF applications and the same native ABI.
+
 config BRICKPHYR_CAPTURE
 	bool "Built-in finite RAM observations"
 	depends on BRICKPHYR_NATIVE && BRICKPHYR_TELEMETRY && SHELL
@@ -452,6 +461,7 @@ config BRICKPHYR_APP_STORAGE
 	depends on DT_HAS_FIXED_PARTITIONS_ENABLED
 	depends on FILE_SYSTEM_MKFS
 	depends on !MCUMGR || MCUMGR_GRP_FS_FILE_ACCESS_HOOK
+	select MCUMGR_SMP_VERBOSE_ERR_RESPONSE if MCUMGR
 
 config BRICKPHYR_RADIO
 	bool "Application BLE observations"

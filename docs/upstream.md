@@ -592,6 +592,16 @@ A native simulator test exercises the actual SMP handler with an injected
 filesystem close failure; Brickphyr tests use real LittleFS. Keep both
 prerequisites when building the native profile.
 
+Zephyr commit `0177626f` on `topic/fs-upload-errors` preserves `ENOSPC` and
+`EIO` from file upload operations in the standard optional SMP reason field.
+The reply uses the existing error envelope; no new transfer protocol or private
+client API is needed. Opening, seeking, truncating, writing and final close retain
+the first failing operation through cleanup. A failed terminal close is not
+retried on a backend handle that may already have been released.
+The native-simulator file-close fixture injects storage errors and checks the
+encoded replies and cleanup counts. Brickphyr enables verbose SMP errors for its
+application store and translates those reasons into installation diagnostics.
+
 Native applications also require upstream's
 [ARM syscall register correction `fe5781eb`](https://github.com/zephyrproject-rtos/zephyr/commit/fe5781eb97475847214a24cc2a20b0f5ad53dabf).
 The dispatcher changes `r6`; the inline invocation must declare it read-write.
