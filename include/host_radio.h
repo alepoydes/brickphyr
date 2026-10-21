@@ -7,5 +7,7 @@
 void host_radio_schedule(k_timeout_t delay);
 int host_radio_error(void);
 bool host_radio_starting(void);
-/* Radio-worker-only fatal command failure; preserves the first radio error. */
-int host_radio_failure(const char *operation, int error);
+struct bt_conn;
+/* Idempotent asynchronous close. Retains the connection until its real end
+ * callback; callers retain their own protocol state until that callback too. */
+void host_radio_disconnect(struct bt_conn *conn);

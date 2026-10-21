@@ -603,11 +603,7 @@ void hub_network_process(int radio_error)
 			k_spin_unlock(&lock, key);
 			if (created) bt_conn_unref(created);
 		} else if (phase == CHANNEL) error = bt_l2cap_chan_connect(conn, &p->channel.chan, NETWORK_PSM);
-		else {
-			error = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-			if (error == -ENOTCONN) error = 0; /* Retain storage until the real callback. */
-			if (error) host_radio_failure("network disconnect", error);
-		}
+		else host_radio_disconnect(conn);
 		if (error) {
 			key = k_spin_lock(&lock);
 			if (phase == CHANNEL && !p->channel.chan.conn) p->channel_live = false;

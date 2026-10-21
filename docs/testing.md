@@ -561,6 +561,19 @@ while connecting, reopening established links, stale handles and delayed channel
 release check application lifetime and connection references. This does not
 exercise the controller, pairing, encryption or physical radio coexistence.
 
+Two focused disconnect checks cover the shared radio queue, with a fresh emulator
+for each permanent failure. They exercise callbacks before, during and after a
+disconnect request, duplicate requests, subscription/channel loss, retained
+references and reopening. An active-link HCI error and an accepted command whose
+callback never arrives must still fail the radio. Deadlines run in virtual time;
+these checks do not establish physical controller timing.
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-disconnect-recoverable-tests -- -DFOCUSED_TEST=test_shared_disconnect_recoverable
+CMAKE_BUILD_PARALLEL_LEVEL=4 uv run --locked west build -b mps2/an386 -s tests/python_ble -d build/python-disconnect-timeout-tests -- -DFOCUSED_TEST=test_shared_disconnect_missing_callback
+uv run --locked pytest -q -x tests/test_native.py -k 'python-disconnect-recoverable-tests or python-disconnect-timeout-tests'
+```
+
 The LEGO peripheral case drives the real native service and protected
 `Remote`/`LWP3Device` bindings with synthetic public GATT callbacks. It checks
 advertisement/response address matching, scan timeout, reference Remote messages,

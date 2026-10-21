@@ -267,9 +267,26 @@ The management adapter accepts incoming LE peripheral-role links only. Outgoing
 central-role connection events do not acquire or release management, change its
 profile, or consume its advertisement. Recycled connection objects restart
 advertising only when no management owner and no active advertisement remain.
-Pending disconnects retain each distinct connection separately, so a slow HCI
-command cannot discard another rejected client's cleanup. These boundaries have
-synthetic checks with multiple connection slots. The Bluetooth and full BLE
+Management, application BLE peers and optional Classic links share one bounded
+disconnect queue. Repeated requests do not send another command for an established
+link. The queue retains each connection until its disconnect or failed-connect
+callback; losing a subscription or L2CAP channel invalidates application data but
+does not establish that the physical link has closed. Protocol storage remains
+owned until Zephyr's teardown callbacks permit reuse. Cancelling an initiation
+that races a successful connection also terminates the resulting link.
+
+A disconnect return code, including `-EIO`, is not by itself proof of a radio
+failure: the connection's end callback may arrive during or after the call.
+After the command returns, completion has a bounded wait: at least ten seconds,
+extended to the LE supervision timeout if longer. Classic uses its maximum finite
+supervision interval, 40.96 seconds, because Zephyr's public connection information
+does not expose that setting. If no completion arrives, the radio enters `failed`
+with the first command error or `-ETIMEDOUT`; it retains unresolved resources until
+a real callback or reboot. Repeated requests do not extend the deadline.
+Explicit application disconnect also cancels pending automatic pairing retries.
+Ordinary close of a ready peer continues to permit later connection reuse.
+
+These boundaries have synthetic checks with multiple connection slots. The Bluetooth and full BLE
 Python profiles reserve two slots: one management connection and one application
 peripheral. The optional Classic Python fragment raises this to five for
 HubNetwork links.

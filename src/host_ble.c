@@ -28,7 +28,12 @@ static struct bt_uuid_128 service_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 command_uuid = BT_UUID_INIT_128(0);
 static struct bt_uuid_128 capabilities_uuid = BT_UUID_INIT_128(0);
 /* Connection and GATT callbacks execute on the Bluetooth RX workqueue. */
-static struct bt_conn *disconnect_pending[CONFIG_BT_MAX_CONN];
+static struct disconnect_request {
+	int64_t deadline;
+	struct bt_conn *conn;
+	int error;
+	bool sent, connecting, ended;
+} disconnect_pending[CONFIG_BT_MAX_CONN];
 static struct k_spinlock session_lock;
 /* Diagnostic history is limited to incoming management-side LE links. */
 struct link_diagnostics {
@@ -43,7 +48,10 @@ struct link_diagnostics {
 	uint8_t last_failure_stage, last_reason;
 };
 static struct link_diagnostics link_stats;
-static void request_disconnect(struct bt_conn *conn);
+static void disconnect_peer(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(disconnect_work, disconnect_peer);
+
+static void disconnect_event(struct bt_conn *conn, bool ended);
 static K_MUTEX_DEFINE(radio_lock);
 enum radio_state { RADIO_OFF, RADIO_STARTING, RADIO_ON, RADIO_STOPPING, RADIO_FAILED };
 static atomic_t radio_state;
@@ -288,7 +296,7 @@ uint16_t host_ble_link_mtu(struct host_ble_link *link)
 
 void host_ble_link_disconnect(struct host_ble_link *link)
 {
-	request_disconnect((struct bt_conn *)link);
+	host_radio_disconnect((struct bt_conn *)link);
 }
 
 static ssize_t read_value(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -403,6 +411,7 @@ int host_ble_link_notify(struct host_ble_link *link, enum host_ble_value value,
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	disconnect_event(conn, err != 0);
 	struct bt_conn_info info;
 	if (bt_conn_get_info(conn, &info) || info.type != BT_CONN_TYPE_LE ||
 	    info.role != BT_CONN_ROLE_PERIPHERAL) return;
@@ -441,7 +450,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 	atomic_clear(&advertising);
 	k_spin_unlock(&session_lock, key);
-	if (admission) request_disconnect(conn);
+	if (admission) host_radio_disconnect(conn);
 }
 
 static void le_param_updated(struct bt_conn *conn, uint16_t interval,
@@ -462,6 +471,7 @@ static void le_param_updated(struct bt_conn *conn, uint16_t interval,
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	disconnect_event(conn, true);
 	struct bt_conn_info info;
 	if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE &&
 	    info.role == BT_CONN_ROLE_PERIPHERAL) {
@@ -544,59 +554,121 @@ static int radio_failed(const char *operation, int error)
 	return error;
 }
 
-int host_radio_failure(const char *operation, int error)
+/* The pinned Zephyr host allows 10 s for a command response. After that
+ * response, allow at least this long for completion, or the link's supervision
+ * timeout if longer. BR/EDR exposes no timeout in bt_conn_info: use its maximum
+ * finite supervision interval (65535 slots of 625 us, rounded up). */
+static uint32_t disconnect_timeout(const struct bt_conn_info *info)
 {
-	return radio_failed(operation, error);
+	return info->type == BT_CONN_TYPE_BR ? 40960 :
+		info->type == BT_CONN_TYPE_LE ? MAX(10000U, info->le.timeout * 10U) : 10000;
 }
 
+static void disconnect_event(struct bt_conn *conn, bool ended)
+{
+	k_spinlock_key_t key = k_spin_lock(&session_lock);
+	for (size_t i = 0; i < ARRAY_SIZE(disconnect_pending); i++) {
+		if (disconnect_pending[i].conn != conn) continue;
+		disconnect_pending[i].ended |= ended;
+		k_work_reschedule_for_queue(&radio_queue, &disconnect_work, K_NO_WAIT);
+		break;
+	}
+	k_spin_unlock(&session_lock, key);
+}
 static void disconnect_peer(struct k_work *work)
 {
-	for (;;) {
+	int64_t deadline = 0;
+	k_mutex_lock(&radio_lock, K_FOREVER);
+	for (size_t i = 0; i < ARRAY_SIZE(disconnect_pending); i++) {
+		struct disconnect_request *request = &disconnect_pending[i];
 		k_spinlock_key_t key = k_spin_lock(&session_lock);
-		size_t index = 0;
-		while (index < ARRAY_SIZE(disconnect_pending) && !disconnect_pending[index]) index++;
-		struct bt_conn *conn = index < ARRAY_SIZE(disconnect_pending) ? disconnect_pending[index] : NULL;
-		k_spin_unlock(&session_lock, key);
-		if (!conn) return;
-
-		k_mutex_lock(&radio_lock, K_FOREVER);
-		int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		if (err && err != -ENOTCONN) {
-			radio_failed("disconnect", err);
+		struct bt_conn *conn = request->conn;
+		if (!conn) {
+			k_spin_unlock(&session_lock, key);
+			continue;
 		}
-		k_mutex_unlock(&radio_lock);
+		struct bt_conn_info info = {0};
+		int error = bt_conn_get_info(conn, &info);
+		/* Cancelling initiation can race a successful connection. Terminating
+		 * that new physical link is distinct from cancelling its creation. */
+		if (request->connecting && !error && info.state == BT_CONN_STATE_CONNECTED) {
+			request->sent = request->connecting = false;
+		}
+		bool issue = !request->ended && !request->sent &&
+			atomic_get(&radio_state) != RADIO_FAILED;
+		if (issue) {
+			request->sent = true;
+			request->connecting = !error && info.state == BT_CONN_STATE_CONNECTING;
+		}
+		k_spin_unlock(&session_lock, key);
+
+		if (issue) {
+			if (!error && info.state != BT_CONN_STATE_DISCONNECTED &&
+			    info.state != BT_CONN_STATE_DISCONNECTING) {
+				error = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+			}
+			key = k_spin_lock(&session_lock);
+			if (error && !request->error) request->error = error;
+			request->deadline = k_uptime_get() + disconnect_timeout(&info);
+			k_spin_unlock(&session_lock, key);
+		}
 
 		key = k_spin_lock(&session_lock);
-		disconnect_pending[index] = NULL;
+		bool ended = request->ended;
+		int failure = 0;
+		if (ended) memset(request, 0, sizeof(*request));
+		else if (atomic_get(&radio_state) != RADIO_FAILED && request->deadline) {
+			if (k_uptime_get() >= request->deadline) {
+				failure = request->error ? request->error : -ETIMEDOUT;
+			} else if (!deadline || request->deadline < deadline) deadline = request->deadline;
+		}
 		k_spin_unlock(&session_lock, key);
-		bt_conn_unref(conn);
+		if (ended) bt_conn_unref(conn);
+		if (failure) {
+			/* A return code alone cannot establish loss of this connection:
+			 * callbacks may run during or after the HCI call. No completion by
+			 * the deadline leaves the controller state unconfirmed. Keep refs. */
+			radio_failed("disconnect", failure);
+#ifdef CONFIG_BRICKPHYR_RADIO
+			host_radio_schedule(K_NO_WAIT);
+#endif
+		}
+	}
+	k_mutex_unlock(&radio_lock);
+	if (deadline && atomic_get(&radio_state) != RADIO_FAILED) {
+		k_work_schedule_for_queue(&radio_queue, &disconnect_work,
+			K_MSEC(MAX(1, deadline - k_uptime_get())));
 	}
 }
-static K_WORK_DEFINE(disconnect_work, disconnect_peer);
 
-static void request_disconnect(struct bt_conn *conn)
+void host_radio_disconnect(struct bt_conn *conn)
 {
-	/* Retain each distinct connection until its HCI command finishes. HCI
-	 * waits must not block the system/button queue or Bluetooth RX callbacks.
-	 * Only the real disconnection callback releases management ownership. */
-	struct bt_conn_info info;
-	bool management = !bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE &&
-		info.role == BT_CONN_ROLE_PERIPHERAL;
+	/* Serialize state inspection with callbacks: an already disconnected
+	 * object needs no new request, and a concurrent end cannot miss a newly
+	 * inserted entry. Protocol owners still await their own callback. */
 	k_spinlock_key_t key = k_spin_lock(&session_lock);
 	size_t free = ARRAY_SIZE(disconnect_pending);
 	for (size_t i = 0; i < ARRAY_SIZE(disconnect_pending); i++) {
-		if (disconnect_pending[i] == conn) {
+		if (disconnect_pending[i].conn == conn) {
 			k_spin_unlock(&session_lock, key);
 			return;
 		}
-		if (!disconnect_pending[i]) free = i;
+		if (!disconnect_pending[i].conn) free = i;
 	}
-	/* Every occupied entry holds a reference to a different Zephyr slot,
-	 * so a new connection always has room in this equally sized array. */
+	struct bt_conn_info info;
+	int error = bt_conn_get_info(conn, &info);
+	if (!error && info.state == BT_CONN_STATE_DISCONNECTED) {
+		k_spin_unlock(&session_lock, key);
+		return;
+	}
+	/* Every entry references a different Zephyr slot, so a new connection
+	 * always has room in this equally sized array. */
 	__ASSERT_NO_MSG(free < ARRAY_SIZE(disconnect_pending));
-	disconnect_pending[free] = bt_conn_ref(conn);
-	if (management) link_stats.local_disconnects++;
-	k_work_submit_to_queue(&radio_queue, &disconnect_work);
+	disconnect_pending[free] = (struct disconnect_request){.conn = bt_conn_ref(conn)};
+	if (!error && info.type == BT_CONN_TYPE_LE && info.role == BT_CONN_ROLE_PERIPHERAL) {
+		link_stats.local_disconnects++;
+	}
+	k_work_reschedule_for_queue(&radio_queue, &disconnect_work, K_NO_WAIT);
 	k_spin_unlock(&session_lock, key);
 }
 

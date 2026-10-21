@@ -15,6 +15,10 @@ elseif(FOCUSED_TEST STREQUAL "test_hidden_installed_programs")
   target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_STORE_TEST=1)
 elseif(FOCUSED_TEST STREQUAL "test_ble_peer_retry_and_unnamed")
   target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_PEER_TEST=1)
+elseif(FOCUSED_TEST STREQUAL "test_shared_disconnect_recoverable")
+  target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_DISCONNECT_RECOVERABLE_TEST=1)
+elseif(FOCUSED_TEST STREQUAL "test_shared_disconnect_missing_callback")
+  target_compile_definitions(app PRIVATE BRICKPHYR_FOCUSED_DISCONNECT_TIMEOUT_TEST=1)
 elseif(FOCUSED_TEST)
   message(FATAL_ERROR "Unknown FOCUSED_TEST: ${FOCUSED_TEST}")
 endif()
@@ -46,7 +50,8 @@ zephyr_ld_options(-Wl,--wrap=bt_enable -Wl,--wrap=bt_disable
   -Wl,--wrap=bt_l2cap_chan_send
   -Wl,--wrap=bt_gatt_discover -Wl,--wrap=bt_gatt_subscribe -Wl,--wrap=bt_gatt_write
   -Wl,--wrap=bt_gatt_read
-  -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb -Wl,--wrap=bt_gatt_get_mtu)
+  -Wl,--wrap=bt_gatt_is_subscribed -Wl,--wrap=bt_gatt_notify_cb
+  -Wl,--wrap=bt_gatt_get_mtu -Wl,--wrap=bt_gatt_get_uatt_mtu)
 include(${BRICKPHYR_ROOT}/cmake/python_arch.cmake)
 set(programs echo spin flood native messaging radio lwp3 wireless xbox network)
 if(CONFIG_BRICKPHYR_PYBRICKS_SLOTS GREATER 0)

@@ -5,6 +5,7 @@
 #endif
 #include "host_protocol.h"
 #include "host_transport.h"
+#include "host_radio.h"
 #include "hub_ble_peer.h"
 #include "hub_network.h"
 #include <string.h>
@@ -36,13 +37,15 @@ static bt_le_scan_cb_t *scan_callback;
 static atomic_t scan_starts, scan_stops;
 static atomic_t negotiated_mtu = ATOMIC_INIT(23);
 static atomic_t shell_max_notify;
-static bool peer_connected;
+static enum bt_conn_state peer_state = BT_CONN_STATE_DISCONNECTED;
 static uintptr_t lego_token;
 static struct bt_conn *const lego = (void *)&lego_token;
 static atomic_t lego_refs, lego_creates, lego_pairs;
+static enum bt_conn_state lego_state = BT_CONN_STATE_DISCONNECTED;
 static atomic_t lego_write_error;
 static uint8_t lego_kind = 0x42;
 static bool offer_lego = true, hold_lego_write, hold_lego_disconnect;
+static bool hold_lego_connect;
 static bool offer_xbox, hold_hid_read, offer_lego_name = true, fail_first_security;
 static atomic_t lego_unpairs;
 static struct bt_gatt_read_params *held_read;
@@ -60,6 +63,7 @@ struct br_link {
 	atomic_t refs;
 	struct bt_l2cap_chan *channel;
 	bool connected;
+	enum bt_conn_state state;
 };
 static struct br_link br_links[3] = {
 	{.address = {.val = {6, 5, 4, 3, 2, 1}}},
@@ -71,6 +75,13 @@ static struct bt_l2cap_server *br_server;
 static bt_br_conn_req_func_t br_incoming;
 static bool hold_br_create, hold_br_disconnect;
 static atomic_t br_creates, br_disconnects;
+static atomic_t lego_disconnects, management_disconnects;
+static atomic_t disconnect_in_call;
+static bool disconnect_test_mode, disconnect_callback_inline, disconnect_hold_return;
+static int disconnect_result;
+K_SEM_DEFINE(disconnect_entered, 0, 1);
+K_SEM_DEFINE(disconnect_continue, 0, 1);
+static void connected(bool open);
 struct br_frame { uint8_t peer; uint16_t size; uint8_t data[520]; };
 K_MSGQ_DEFINE(br_frames, sizeof(struct br_frame), 12, 4);
 struct bt_conn *__wrap_bt_conn_ref(struct bt_conn *conn);
@@ -99,6 +110,7 @@ static struct br_link *br_for_address(const bt_addr_t *address)
 static void br_connection_event(struct br_link *link, bool connected)
 {
 	link->connected = connected;
+	link->state = connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
 	struct bt_conn *conn = br_conn(link);
 	if (!connected && link->channel) {
 		struct bt_l2cap_chan *channel = link->channel;
@@ -146,6 +158,7 @@ struct bt_conn *__wrap_bt_conn_create_br(const bt_addr_t *address,
 	zassert_not_null(link);
 	zassert_equal(atomic_get(&link->refs), 0);
 	atomic_set(&link->refs, 1); /* Owned result, transferred to the service. */
+	link->state = BT_CONN_STATE_CONNECTING;
 	atomic_inc(&br_creates);
 	if (!hold_br_create) br_connection_event(link, true);
 	return br_conn(link);
@@ -179,6 +192,7 @@ int __wrap_bt_l2cap_chan_send(struct bt_l2cap_chan *channel, struct net_buf *buf
 
 static void lego_connection_event(bool connected)
 {
+	lego_state = connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
 	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
 		if (connected && cb->connected) cb->connected(lego, 0);
 		if (!connected && cb->disconnected) cb->disconnected(lego, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -326,6 +340,25 @@ void __wrap_bt_conn_unref(struct bt_conn *conn)
 int __wrap_bt_conn_disconnect(struct bt_conn *conn, uint8_t reason)
 {
 	struct br_link *br = br_for_conn(conn);
+	if (disconnect_test_mode) {
+		zassert_equal(reason, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		atomic_set(&disconnect_in_call, 1);
+		if (br) atomic_inc(&br_disconnects);
+		else if (conn == lego) atomic_inc(&lego_disconnects);
+		else if (conn == peer) atomic_inc(&management_disconnects);
+		else zassert_unreachable("Unknown synthetic connection");
+		k_sem_give(&disconnect_entered);
+		if (disconnect_hold_return) {
+			zassert_ok(k_sem_take(&disconnect_continue, K_SECONDS(1)));
+		}
+		if (disconnect_callback_inline) {
+			if (br) br_connection_event(br, false);
+			else if (conn == lego) lego_disconnected();
+			else connected(false);
+		}
+		atomic_clear(&disconnect_in_call);
+		return disconnect_result;
+	}
 	if (br) {
 		atomic_inc(&br_disconnects);
 		if (!hold_br_disconnect) br_connection_event(br, false);
@@ -350,7 +383,7 @@ int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *inf
 		memset(info, 0, sizeof(*info));
 		info->type = BT_CONN_TYPE_BR;
 		info->role = BT_CONN_ROLE_CENTRAL;
-		info->state = br->connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_CONNECTING;
+		info->state = br->state;
 		info->br.dst = &br->address;
 		return 0;
 	}
@@ -358,14 +391,14 @@ int __wrap_bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *inf
 		memset(info, 0, sizeof(*info));
 		info->type = BT_CONN_TYPE_LE;
 		info->role = BT_CONN_ROLE_CENTRAL;
-		info->state = BT_CONN_STATE_CONNECTED;
+		info->state = lego_state;
 		return 0;
 	}
 	zassert_equal(conn, peer);
 	memset(info, 0, sizeof(*info));
 	info->type = BT_CONN_TYPE_LE;
 	info->role = BT_CONN_ROLE_PERIPHERAL;
-	info->state = peer_connected ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
+	info->state = peer_state;
 	return 0;
 }
 
@@ -378,8 +411,9 @@ int __wrap_bt_conn_le_create(const bt_addr_le_t *address,
 	zassert_equal(atomic_get(&lego_refs), 0);
 	atomic_inc(&lego_refs);
 	atomic_inc(&lego_creates);
+	lego_state = BT_CONN_STATE_CONNECTING;
 	/* Public API can deliver this callback before returning its owned ref. */
-	lego_connection_event(true);
+	if (!hold_lego_connect) lego_connection_event(true);
 	*result = lego;
 	return 0;
 }
@@ -536,6 +570,11 @@ uint16_t __wrap_bt_gatt_get_mtu(struct bt_conn *conn)
 	zassert_equal(conn, peer);
 	return atomic_get(&negotiated_mtu);
 }
+uint16_t __wrap_bt_gatt_get_uatt_mtu(struct bt_conn *conn)
+{
+	/* SMP fragments use the same ordered ATT bearer as this synthetic peer. */
+	return __wrap_bt_gatt_get_mtu(conn);
+}
 int __wrap_bt_gatt_notify_cb(struct bt_conn *conn, struct bt_gatt_notify_params *params)
 {
 	zassert_equal(conn, peer);
@@ -591,7 +630,7 @@ static ssize_t command(const void *data, size_t length)
 
 static void connected(bool open)
 {
-	peer_connected = open;
+	peer_state = open ? BT_CONN_STATE_CONNECTED : BT_CONN_STATE_DISCONNECTED;
 	STRUCT_SECTION_FOREACH(bt_conn_cb, cb) {
 		if (open && cb->connected) { cb->connected(peer, 0); }
 		if (!open && cb->disconnected) { cb->disconnected(peer, 0); }
@@ -937,11 +976,15 @@ static void smp_exchange(const void *request, size_t length)
 	const struct bt_gatt_attr *attr = bt_gatt_find_by_uuid(NULL, 0, SMP_BT_CHR_UUID);
 	zassert_not_null(attr);
 	zassert_equal(gatt_write(attr, request, length), length);
+	const uint8_t *header = request;
 	uint8_t response[384];
 	size_t received = 0, expected = 8;
 	while (received < expected) {
 		struct event part;
-		zassert_ok(k_msgq_get(&events, &part, K_SECONDS(1)));
+		zassert_ok(k_msgq_get(&events, &part, K_SECONDS(1)),
+			"SMP command 0x%02x sequence %u: received %zu of %zu bytes, BLE %d, radio %d",
+			header[7], header[6], received, expected,
+			host_ble_status(), host_radio_error());
 		zassert_true(received + part.length <= sizeof(response));
 		memcpy(response + received, part.data, part.length);
 		received += part.length;
@@ -950,7 +993,6 @@ static void smp_exchange(const void *request, size_t length)
 			zassert_true(expected <= sizeof(response));
 		}
 	}
-	const uint8_t *header = request;
 	zassert_equal(received, expected);
 	zassert_equal(response[0], header[0] + 1);
 	zassert_mem_equal(response + 4, header + 4, 4);
@@ -1755,6 +1797,243 @@ ZTEST(python_ble_peer, test_ble_peer_retry_and_unnamed)
 	atomic_clear(&pause_supervisor);
 }
 
+#if defined(BRICKPHYR_FOCUSED_DISCONNECT_RECOVERABLE_TEST) || \
+	defined(BRICKPHYR_FOCUSED_DISCONNECT_TIMEOUT_TEST)
+static void disconnect_fixture(int result, bool inline_callback, bool hold_return)
+{
+	disconnect_test_mode = true;
+	disconnect_result = result;
+	disconnect_callback_inline = inline_callback;
+	disconnect_hold_return = hold_return;
+	k_sem_reset(&disconnect_entered);
+	k_sem_reset(&disconnect_continue);
+}
+
+static void await_disconnect_call(atomic_t *count, int expected)
+{
+	int64_t deadline = k_uptime_get() + 1000;
+	while (atomic_get(count) != expected) {
+		zassert_true(k_uptime_get() < deadline, "disconnect command not issued");
+		k_msleep(1);
+	}
+}
+
+static void await_disconnect_return(void)
+{
+	int64_t deadline = k_uptime_get() + 1000;
+	while (atomic_get(&disconnect_in_call)) {
+		zassert_true(k_uptime_get() < deadline, "HCI wrapper did not return");
+		k_msleep(1);
+	}
+	/* Give the worker the rest of its current turn before injecting the RX
+	 * callback; the wrapper clears its flag just before its C return. */
+	k_msleep(1);
+}
+
+static void await_radio_error(int expected)
+{
+	int64_t deadline = k_uptime_get() + 15000;
+	while (host_radio_error() != expected) {
+		zassert_true(k_uptime_get() < deadline, "radio error deadline did not expire");
+		k_msleep(1);
+	}
+}
+#endif
+
+#ifdef BRICKPHYR_FOCUSED_DISCONNECT_RECOVERABLE_TEST
+ZTEST(python_ble_disconnect_recoverable, test_shared_disconnect_recoverable)
+{
+	zassert_ok(host_radio_error());
+	/* Direct service leases have no application thread. The fixture supervisor
+	 * otherwise reaps the idle application and releases those leases. */
+	atomic_set(&pause_supervisor, 1);
+	k_msleep(20);
+	atomic_set(&management_disconnects, 0);
+	atomic_set(&lego_disconnects, 0);
+	atomic_set(&br_disconnects, 0);
+
+	/* A callback may run inside bt_conn_disconnect() before its -EIO return. */
+	connected(true);
+	disconnect_fixture(-EIO, true, false);
+	host_radio_disconnect(peer);
+	await_disconnect_call(&management_disconnects, 1);
+	zassert_ok(host_radio_error());
+	await_disconnect_call(&refs, 0);
+	host_radio_disconnect(peer); /* A completed connection is a no-op. */
+	zassert_equal(atomic_get(&management_disconnects), 1);
+
+	/* The callback may also run on the RX thread while HCI is blocked. */
+	connected(true);
+	disconnect_fixture(-EIO, false, true);
+	host_radio_disconnect(peer);
+	zassert_ok(k_sem_take(&disconnect_entered, K_SECONDS(1)));
+	zassert_true(atomic_get(&refs) > 0);
+	connected(false);
+	k_sem_give(&disconnect_continue);
+	await_disconnect_call(&refs, 0);
+	zassert_ok(host_radio_error());
+	zassert_equal(atomic_get(&management_disconnects), 2);
+
+	/* A READY lease survives close/reopen without another LEGO connection. */
+	const struct bp_ble_peer_config config = {
+		.lwp3 = {.profile = BP_LWP3_REMOTE, .notifications = 2}, .timeout_ms = 1000,
+	};
+	struct bp_ble_peer_state state;
+	uint32_t handle;
+	zassert_ok(hub_ble_peer_open(&config, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	int64_t deadline = k_uptime_get() + 1000;
+	do {
+		zassert_ok(hub_ble_peer_get(handle, &state));
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (state.busy);
+	zassert_true(state.connected);
+	int creates = atomic_get(&lego_creates);
+	zassert_ok(hub_ble_peer_close(handle));
+	zassert_ok(hub_ble_peer_open(&config, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	zassert_equal(atomic_get(&lego_creates), creates);
+	lego_notify((uint8_t[]){7, 0, 0x45, 0, 1, 0, 0}, 7);
+	zassert_ok(hub_ble_peer_get(handle, &state));
+	zassert_true(state.lwp3.buttons != 0);
+
+	/* Subscription loss starts cleanup before an explicit disconnect. Neither
+	 * repeated disconnect nor repeated close may send a second command. The
+	 * GATT release is distinct from the physical disconnected callback. */
+	disconnect_fixture(-EIO, false, false);
+	zassert_not_null(lego_subscription);
+	lego_subscription->notify(lego, lego_subscription, NULL, 0);
+	lego_subscription = NULL;
+	zassert_ok(hub_ble_peer_disconnect(handle));
+	zassert_ok(hub_ble_peer_disconnect(handle));
+	zassert_ok(hub_ble_peer_get(handle, &state));
+	zassert_equal(state.lwp3.buttons, 0, "disconnect leaves a stale LEGO sample");
+	int disconnects = 1;
+	await_disconnect_call(&lego_disconnects, disconnects);
+	await_disconnect_return();
+	zassert_true(atomic_get(&lego_refs) > 0);
+	zassert_ok(hub_ble_peer_close(handle));
+	zassert_ok(hub_ble_peer_close(handle));
+	host_radio_disconnect(lego);
+	zassert_equal(atomic_get(&lego_disconnects), disconnects);
+	zassert_true(atomic_get(&lego_refs) > 0);
+	lego_connection_event(false);
+	deadline = k_uptime_get() + 1000;
+	while (atomic_get(&lego_refs)) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	zassert_ok(host_radio_error());
+
+	/* The create call can return a CONNECTING ref; cancellation must still
+	 * disconnect a later successful link after the initiation cancel command. */
+	hold_lego_connect = true;
+	zassert_ok(hub_ble_peer_open(&config, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	deadline = k_uptime_get() + 1000;
+	while (atomic_get(&lego_creates) == creates) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	zassert_equal(lego_state, BT_CONN_STATE_CONNECTING);
+	disconnect_fixture(0, false, false);
+	zassert_ok(hub_ble_peer_disconnect(handle));
+	await_disconnect_call(&lego_disconnects, ++disconnects);
+	await_disconnect_return();
+	zassert_equal(lego_state, BT_CONN_STATE_CONNECTING);
+	lego_connection_event(true);
+	await_disconnect_call(&lego_disconnects, ++disconnects);
+	zassert_true(atomic_get(&lego_refs) > 0);
+	lego_disconnected();
+	deadline = k_uptime_get() + 1000;
+	while (atomic_get(&lego_refs)) {
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	}
+	zassert_ok(hub_ble_peer_close(handle));
+	hold_lego_connect = false;
+	zassert_ok(host_radio_error());
+
+	/* Explicit cancellation must suppress the delayed Xbox pairing retry. */
+	offer_xbox = fail_first_security = true;
+	atomic_set(&lego_pairs, 0);
+	const struct bp_ble_peer_config xbox = {
+		.protocol = BP_BLE_XBOX, .name = "Xbox Wireless", .timeout_ms = 1000,
+	};
+	zassert_ok(hub_ble_peer_open(&xbox, &handle));
+	zassert_ok(hub_ble_peer_connect(handle));
+	await_disconnect_call(&lego_disconnects, ++disconnects);
+	zassert_true(atomic_get(&lego_refs) > 0);
+	lego_disconnected();
+	struct hub_ble_peer_diagnostics diagnostics;
+	deadline = k_uptime_get() + 1000;
+	do {
+		hub_ble_peer_diagnostics(&diagnostics);
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (strcmp(diagnostics.phase, "retry-wait"));
+	creates = atomic_get(&lego_creates);
+	zassert_ok(hub_ble_peer_disconnect(handle));
+	deadline = k_uptime_get() + 1000;
+	do {
+		hub_ble_peer_diagnostics(&diagnostics);
+		zassert_true(k_uptime_get() < deadline);
+		k_msleep(1);
+	} while (strcmp(diagnostics.phase, "idle"));
+	k_msleep(2100); /* Delayed pairing retry is scheduled two seconds later. */
+	zassert_equal(atomic_get(&lego_creates), creates);
+	zassert_ok(hub_ble_peer_close(handle));
+	offer_xbox = fail_first_security = false;
+	zassert_ok(host_radio_error());
+
+	/* A Classic ACL uses the same queue and retains its connection ref. */
+	struct br_link *br = &br_links[0];
+	atomic_set(&br->refs, 1); /* Host-owned synthetic ACL. */
+	br_connection_event(br, true);
+	disconnect_fixture(-ENOTCONN, false, false);
+	host_radio_disconnect(br_conn(br));
+	host_radio_disconnect(br_conn(br));
+	await_disconnect_call(&br_disconnects, 1);
+	zassert_equal(atomic_get(&br->refs), 2);
+	br->state = BT_CONN_STATE_DISCONNECTING;
+	host_radio_disconnect(br_conn(br));
+	zassert_equal(atomic_get(&br_disconnects), 1);
+	br_connection_event(br, false);
+	__wrap_bt_conn_unref(br_conn(br));
+	br_wait_refs(0, 0);
+	zassert_ok(host_radio_error());
+
+	/* An active -EIO without a callback is a genuine radio failure. */
+	connected(true);
+	disconnect_fixture(-EIO, false, false);
+	host_radio_disconnect(peer);
+	await_disconnect_call(&management_disconnects, 3);
+	zassert_ok(host_radio_error());
+	await_radio_error(-EIO);
+	connected(false);
+	await_disconnect_call(&refs, 0);
+	atomic_clear(&pause_supervisor);
+}
+#endif
+
+#ifdef BRICKPHYR_FOCUSED_DISCONNECT_TIMEOUT_TEST
+ZTEST(python_ble_disconnect_timeout, test_shared_disconnect_missing_callback)
+{
+	atomic_set(&management_disconnects, 0);
+	connected(true);
+	disconnect_fixture(0, false, false);
+	host_radio_disconnect(peer);
+	await_disconnect_call(&management_disconnects, 1);
+	zassert_true(atomic_get(&refs) > 0);
+	host_radio_disconnect(peer);
+	zassert_equal(atomic_get(&management_disconnects), 1);
+	await_radio_error(-ETIMEDOUT);
+	connected(false);
+	await_disconnect_call(&refs, 0);
+}
+#endif
+
 ZTEST(python_ble, test_radio_observation_and_cleanup)
 {
 	static const uint8_t program[] = {
@@ -2192,6 +2471,12 @@ ZTEST_SUITE(python_ble, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_peer, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_network, NULL, setup, NULL, NULL, NULL);
 ZTEST_SUITE(python_ble_terminal_failure, NULL, setup, NULL, NULL, NULL);
+#ifdef BRICKPHYR_FOCUSED_DISCONNECT_RECOVERABLE_TEST
+ZTEST_SUITE(python_ble_disconnect_recoverable, NULL, setup, NULL, NULL, NULL);
+#endif
+#ifdef BRICKPHYR_FOCUSED_DISCONNECT_TIMEOUT_TEST
+ZTEST_SUITE(python_ble_disconnect_timeout, NULL, setup, NULL, NULL, NULL);
+#endif
 #if CONFIG_BRICKPHYR_PYBRICKS_SLOTS > 0
 ZTEST_SUITE(python_ble_store, NULL, NULL, NULL, NULL, NULL);
 #endif
@@ -2208,6 +2493,10 @@ void test_main(void)
 	ztest_run_test_suite(python_ble_store, false, 1, 1, NULL);
 #elif defined(BRICKPHYR_FOCUSED_PEER_TEST)
 	ztest_run_test_suite(python_ble_peer, false, 1, 1, NULL);
+#elif defined(BRICKPHYR_FOCUSED_DISCONNECT_RECOVERABLE_TEST)
+	ztest_run_test_suite(python_ble_disconnect_recoverable, false, 1, 1, NULL);
+#elif defined(BRICKPHYR_FOCUSED_DISCONNECT_TIMEOUT_TEST)
+	ztest_run_test_suite(python_ble_disconnect_timeout, false, 1, 1, NULL);
 #else
 	ztest_run_all(NULL, false, 1, 1);
 	ztest_verify_all_test_suites_ran();

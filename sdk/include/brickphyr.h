@@ -53,6 +53,8 @@ __syscall int bp_radio_close(uint32_t handle);
  * its filter and allocates only the requested notification queue (0..255).
  * Connect/disconnect/write start cancellable asynchronous operations; get copies
  * busy/error and the typed snapshot. No application buffer reaches HCI.
+ * Repeated disconnect with a valid handle is harmless, invalidates the snapshot
+ * immediately and cancels automatic pairing retries; physical cleanup may follow.
  * read returns the oldest message size, or 0; overflow drops the oldest message.
  * close releases the lease, retaining an idle connected peer for reuse within
  * this application. Supervised application cleanup always disconnects it. */

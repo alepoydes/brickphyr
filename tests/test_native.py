@@ -82,6 +82,8 @@ def test_reserved_slot_names():
         ("python-arm-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-network-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-disconnect-recoverable-tests", b"PROJECT EXECUTION SUCCESSFUL"),
+        ("python-disconnect-timeout-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-core-ble-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("python-slots-tests", b"PROJECT EXECUTION SUCCESSFUL"),
         ("uart-cmsdk-tests", b"PROJECT EXECUTION SUCCESSFUL"),

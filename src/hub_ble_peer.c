@@ -106,6 +106,7 @@ static void fail(int error)
 		if (!peer.retry_error) remember_failure(error);
 	}
 	peer.state.connected = peer.state.busy = 0;
+	invalidate_sample();
 	peer.cancel = true;
 	if (changed) wake();
 }
@@ -122,6 +123,7 @@ static bool retry_connect(int error, bool stale_bond)
 	remember_failure(error);
 	peer.state.connected = 0;
 	peer.state.busy = 1;
+	invalidate_sample();
 	peer.cancel = true;
 	wake();
 	return true;
@@ -235,11 +237,15 @@ int hub_ble_peer_disconnect(uint32_t handle)
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	int error = lease(handle);
 	if (!error) {
-		peer.state.error = 0;
-		peer.state.busy = 1;
-		peer.state.connected = 0;
-		peer.cancel = true;
-		wake();
+		peer.retry_pending = peer.retry_unpair = false;
+		if (!peer.cancel && (peer.conn || peer.phase != IDLE)) {
+			peer.state.error = 0;
+			peer.state.busy = 1;
+			peer.state.connected = 0;
+			invalidate_sample();
+			peer.cancel = true;
+			wake();
+		}
 	}
 	k_spin_unlock(&lock, key);
 	return error;
@@ -407,7 +413,11 @@ void hub_ble_peer_receive(const bt_addr_le_t *address, uint8_t type, const uint8
 	const uint8_t *name = NULL;
 	size_t name_size = 0;
 	k_spinlock_key_t key = k_spin_lock(&lock);
-	if (peer.phase != SCAN || peer.cancel) goto out;
+	/* An unfiltered advertisement can select an unnamed device immediately.
+	 * Still accept its already arriving scan response before scanning stops;
+	 * selecting it must not discard the advertised name. */
+	if (peer.cancel || (peer.phase != SCAN &&
+	    !(peer.phase == CREATE && type == BT_GAP_ADV_TYPE_SCAN_RSP))) goto out;
 	/* Parse the complete AD packet before publishing a candidate. Malformed
 	 * packets and scan responses from another address cannot select a peer. */
 	while (size && data[0]) {
@@ -951,18 +961,14 @@ void hub_ble_peer_process(int radio_error, bool scan_stopped)
 		error = bt_gatt_write(conn, &peer.write);
 		break;
 	case CLOSING:
-		error = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		/* ENOTCONN may precede the deferred disconnected callback. Retain the
-		 * reference/params until that callback; do not manufacture completion. */
-		if (error == -ENOTCONN) error = 0;
+		host_radio_disconnect(conn);
 		break;
 	default:
 		break;
 	}
 	if (error) {
-		if (phase == CLOSING) host_radio_failure("peer disconnect", error);
 		key = k_spin_lock(&lock);
-		if (phase != CLOSING) peer.pending = false;
+		peer.pending = false;
 		if ((phase == CREATE || phase == SECURITY) && !retry_connect(error, false)) fail(error);
 		else if (phase == WRITE && peer.phase == WRITE && !peer.cancel) {
 			if (peer.drive_request) peer.drive_repeats = 0;
