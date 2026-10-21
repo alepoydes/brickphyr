@@ -3,12 +3,18 @@
 
 import argparse
 
-from . import application, budget, compiler, monitor, records, terminal, usb
+from . import application, budget, compiler, flash, monitor, records, terminal, usb
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
+    flash_parser = commands.add_parser("flash", help="Install Brickphyr firmware over USB")
+    flash_parser.add_argument("firmware", help="Brickphyr SPIKE/Inventor F4 firmware ZIP")
+    flash_parser.add_argument(
+        "--pybricks", help="Pybricks source checkout; default is ../pybricks-micropython"
+    )
+    flash_parser.set_defaults(handler=flash.run)
     compile_parser = commands.add_parser("compile", help="Compile Python source with the SDK")
     compile_parser.add_argument("source", help="Python source file")
     compile_parser.add_argument("--output", help="Output .mpy path; default is SOURCE.mpy")

@@ -245,12 +245,15 @@ name = "brickphyrdev"
 version = "0.2.0a1"
 source = { editable = "." }
 dependencies = [
+    { name = "argcomplete" },
     { name = "bleak" },
     { name = "cbor2" },
+    { name = "hidapi" },
     { name = "pybricksdev" },
     { name = "pyserial" },
     { name = "pyusb" },
     { name = "smpclient", extra = ["ble", "serial"] },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -281,12 +284,15 @@ sdk = [
 
 [package.metadata]
 requires-dist = [
+    { name = "argcomplete", specifier = ">=3.6" },
     { name = "bleak", specifier = ">=3" },
     { name = "cbor2", specifier = ">=6.1" },
+    { name = "hidapi", specifier = ">=0.15" },
     { name = "pybricksdev", editable = "../pybricksdev" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyusb", specifier = ">=1.3" },
     { name = "smpclient", extras = ["serial", "ble"], specifier = ">=7.3" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [package.metadata.requires-dev]

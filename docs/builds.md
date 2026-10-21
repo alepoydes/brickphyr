@@ -266,8 +266,8 @@ build fit and shared loader behavior, not physical Technic operation.
 
 ### Diagnostic shell
 
-The F4 firmware starts in the experimental Pybricks identification interface.
-Select the standard Zephyr Shell from the computer before opening a terminal;
+The F4 firmware starts in the native Shell/SMP interface, shown by the yellow
+central-button light. Open a USB terminal to use the standard Zephyr Shell;
 see [host connections](host.md). Boot never waits for a host. Its intended hardware behavior is to keep battery power on and hold
 all six motor bridges in coast until an explicit [motor command](ports.md#direct-motor-drive). The
 current USB descriptors use Zephyr's development VID/PID (`2fe3:0004`); a project
@@ -345,7 +345,6 @@ Find `Brickphyr bring-up console` (`2fe3:0004`) and open its device. For
 `/dev/ttyACM0`, use:
 
 ```sh
-uv run brickphyrdev usb select shell
 uv run python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
@@ -353,7 +352,7 @@ Replace `/dev/ttyACM0` if the port listing shows another device. Press Enter to
 display `brickphyr> `. Type `info` to identify the firmware, or call `uptime`
 twice to check that it advances. Exit miniterm with **Ctrl+]**. For a wireless session, use the
 [native BLE terminal](host.md#native-bluetooth-terminal). After `reboot`,
-select Shell and open the USB port again; its device name may change. Only one terminal may own it.
+open the USB port again; its device name may change. Only one terminal may own it.
 
 The shell uses Zephyr's standard line editing: Left/Right, Home/End,
 Backspace/Delete, Tab completion, and Up/Down command history. History is held
@@ -412,18 +411,39 @@ detected source permits it, including after shutdown. Use `observe charger` and
 `observe battery` to inspect its state. See [hardware](hardware.md) for physical verification and
 [testing](testing.md) for local driver checks.
 
-To update from this build, run `reboot dfu` in the hub terminal and wait for
-the USB disconnect before exiting miniterm with Ctrl+]. Wait for the DFU device
-to appear in `lsusb` before running the existing installer from the repository:
+### Firmware update over USB
+
+To update a connected Brickphyr F4 hub over USB, close any terminal or other
+controlling client and run:
 
 ```sh
-uv run --locked --group flash python ../pybricks-micropython/tools/flash build/prime/zephyr/firmware.zip
+uv run brickphyrdev flash build/python-ble-full/zephyr/firmware.zip
 ```
 
-`reboot dfu` does not write flash. The installer handles the firmware package and
-existing bootloaders. If the console is unavailable, independent factory DFU entry remains the recovery
-path: disconnect USB and remove/reinsert the battery, then hold Bluetooth while
-connecting USB and release it after the colored blink. See the
+The command requires exactly one connected LEGO or Brickphyr hub: a running
+Brickphyr F4 hub or an F4 hub already in DFU mode. It accepts a Brickphyr F4
+firmware ZIP with one `prime_hub_f4` variant and no image patch or checksum.
+Before entering DFU it validates the package, stops any running application and
+confirms cleanup. It then uses the unchanged Pybricks installer and checks the
+returning Brickphyr version and target through `info` on the same USB port.
+Pass `--pybricks PATH` to use a different Pybricks source checkout; the default
+is the sibling `../pybricks-micropython` checkout. Firmware update over BLE is
+not supported.
+The full running-hub cycle and installation from an existing DFU session have
+been checked over Linux USB on one Robot Inventor F4 (PCB revision unknown).
+
+For manual recovery, enter DFU with `reboot dfu` in the hub terminal, wait for
+the USB disconnect, then close the terminal. If the console is unavailable,
+use the independent factory entry: disconnect USB
+and remove/reinsert the battery, then hold Bluetooth while connecting USB and
+release it after the colored blink. Once the DFU device appears, run the
+standard installer directly:
+
+```sh
+uv run python ../pybricks-micropython/tools/flash build/python-ble-full/zephyr/firmware.zip
+```
+
+The installer handles the firmware package and existing bootloaders. See the
 [recovery constraints](recovery.md) before installing.
 
 ## Firmware profiles

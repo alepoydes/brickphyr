@@ -69,7 +69,7 @@ def _wake_phase(hub, timeout_ms):
     return WAKE_PHASES[value[1]]
 
 
-def _reset_error(error):
+def is_reset_error(error):
     return getattr(error, "errno", None) in {
         errno.EIO, errno.ENODEV, errno.ECONNRESET, errno.ESHUTDOWN, errno.ETIMEDOUT
     } or getattr(error, "backend_error_code", None) in {-1, -4, -7}
@@ -122,7 +122,7 @@ def wake(hub):
                         with contextlib.suppress(Exception):
                             usb.util.dispose_resources(current)
         except usb.core.USBError as error:
-            if not _reset_error(error):
+            if not is_reset_error(error):
                 raise
             if first_error is None:
                 first_error = error

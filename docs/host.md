@@ -490,7 +490,7 @@ preserves variables and cancels an unfinished line.
 ## Host CLI
 
 `brickphyrdev` provides USB/BLE terminals, a text telemetry monitor, application
-management and USB interface commands.
+management, USB interface commands and [F4 firmware update over USB](builds.md#firmware-update-over-usb).
 After [workspace setup](builds.md#setup-and-board-bring-up), run it from the repository:
 
 ```sh
@@ -512,8 +512,8 @@ validation: it rejects an outdated lockfile instead of updating it. See
 The CLI currently targets Linux. USB identity and Pybricks-to-Shell handover use
 the [pybricksdev CDC extension](upstream.md#usb-experiment-prerequisites) pinned
 by west and installed by uv from its sibling checkout. Upstream's released Python
-package does not yet provide this transport. The installed CLI itself does not
-require west or firmware sources at runtime.
+package does not yet provide this transport. Most CLI commands need neither west
+nor firmware sources at runtime; `flash` uses the Pybricks source checkout.
 
 `uv run brickphyrdev terminal --usb` selects and opens the USB Shell. The existing
 `uv run brickphyrdev terminal` command still opens BLE. Add `--monitor` to either
@@ -727,7 +727,7 @@ uv run brickphyrdev usb select shell
 uv run python -m serial.tools.miniterm --raw /dev/ttyACM0 115200
 ```
 
-`uptime` must continue across the round trip. After reboot, select Shell again.
+`uptime` must continue across the round trip. Reboot restores Shell as the default.
 To exercise the in-band commands instead of selecting through USB control requests:
 
 ```sh
