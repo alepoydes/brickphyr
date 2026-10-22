@@ -184,28 +184,60 @@ def test_paused_recording_acks_only_complete_persisted_records(monkeypatch):
 def test_recording_discards_partial_on_overwrite_and_reports_gaps(monkeypatch):
     replies = iter(
         (
-            _fragment(first=2, next=4, data=b"ab"),
+            _fragment(first=0, next=3, data=b"ab"),
             _fragment(first=3, next=4),
             _fragment(first=3, next=4, active=False, data=b"WXYZ"),
         )
     )
-    reads = _fixture(monkeypatch, replies, _info(first=2, next=4))
+    reads = _fixture(monkeypatch, replies, _info(first=0, next=3))
     output = io.StringIO()
     counts = {"records": 0, "gaps": 0}
     asyncio.run(recording.collect(object(), output, "fixture", counts))
     events = [json.loads(line) for line in output.getvalue().splitlines()]
     assert [(event["from"], event["to"]) for event in events if event["type"] == "gap"] == [
-        (0, 2),
-        (2, 3),
+        (0, 3),
     ]
     assert [(event["index"], event["data"]) for event in events if event["type"] == "record"] == [
         (3, "5758595a")
     ]
-    assert reads == [(2, 0), (2, 2), (3, 0)]
-    assert counts == {"records": 1, "gaps": 2}
+    assert reads == [(0, 0), (0, 2), (3, 0)]
+    assert counts == {"records": 1, "gaps": 1}
     assert next(event for event in events if event["type"] == "application-end") == {
         "type": "application-end", "state": 3, "result": -1, "fault": 2, "cleanup": -5,
     }
+
+
+def test_late_circular_collection_does_not_chase_oldest_record(monkeypatch):
+    initial = _info(capacity=8, first=8, next=16)
+    reads = []
+
+    def fragments():
+        first, next_index = initial.first, initial.next
+        active = True
+        for _ in range(20):
+            index, offset = reads[-1]
+            assert offset == 0
+            if active:
+                first += 1
+                next_index += 1
+            if index < first:
+                yield _fragment(first=first, next=next_index)
+            else:
+                active = False
+                yield _fragment(first=first, next=next_index, active=False, data=b"ABCD")
+        pytest.fail("Collector kept requesting overwritten records")
+
+    reads = _fixture(monkeypatch, fragments(), initial)
+    output = io.StringIO()
+    counts = {"records": 0, "gaps": 0}
+    asyncio.run(recording.collect(object(), output, "fixture", counts))
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [(event["from"], event["to"]) for event in events if event["type"] == "gap"] == [
+        (0, 12)
+    ]
+    assert [event["index"] for event in events if event["type"] == "record"] == list(range(12, 17))
+    assert reads == [(index, 0) for index in range(12, 17)]
+    assert counts == {"records": 5, "gaps": 1}
 
 
 def test_recording_generation_change_ends_without_mixing_partial(monkeypatch):

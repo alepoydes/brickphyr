@@ -833,8 +833,12 @@ work or waiting for a reader. Wrong lengths are rejected before modifying the
 buffer. The ordinary recording, including `bp_control_record_begin`, replaces its
 oldest record when full. This is the default telemetry policy when recent values
 matter more than a continuous trajectory. Its 64-bit record indices expose
-overwritten ranges. The collector skips ahead within a live compact ring if it
-falls behind, instead of repeatedly requesting records already overwritten.
+overwritten ranges. If the collector falls behind a live ring, it resumes in
+the newer half of the retained records and reports the entire skipped range.
+This leaves room for new writes while the next request travels to the hub,
+instead of repeatedly requesting records already overwritten. The same recovery
+serves ordinary and compact records; completed recordings and the
+continuous-series policy retain their existing read positions.
 Sequence exhaustion returns `EOVERFLOW`.
 
 Native ABI 2.6 adds `bp_record_begin_segments(&spec, config, length, control)`

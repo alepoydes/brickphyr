@@ -62,14 +62,21 @@ The current F4 profile's compact-transfer results are in
 downloaded a concurrent 500-row passive recording at 15 ms per row without
 gaps in 7.65 s while the hub was powered by USB. These bounded checks do not establish
 gap-free delivery under motor load, radio interference, or long operation.
-The F4 profile advertises a preferred 7.5 ms connection interval with peripheral
-latency 0. Active SMP traffic requests the same parameters; the transport restores
-that preference after five seconds without an SMP request. A central chooses the
-negotiated parameters. On one Inventor F4, a first management link negotiated
-latency 4 and then timed out 420 ms after changing to latency 0; the latency-zero
-preference passed bounded cold-link and passive-transfer checks without that
-transition. Sustained reliability and idle connected battery current remain
-unmeasured.
+The F4 profile advertises a preferred 15 ms connection interval with peripheral
+latency 0. Active SMP traffic requests the same parameters; idle restoration
+keeps that preference. The hub requests an update immediately after connection,
+including when a central has cached the former 7.5 ms preference. Zephyr's default
+five-second delay exceeds the three-second supervision timeout observed with
+the Xbox controller. A central still chooses the negotiated parameters; inspect `bluetooth`
+and `bluetooth link` when diagnosing another host.
+
+On one Inventor F4, concurrent 7.5 ms management traffic and Xbox input reproduced
+Xbox supervision timeouts (HCI `0x08`). A 15 ms management interval passed bounded
+combined-input and telemetry checks; see [Xbox coverage](#application-xbox-controller).
+This is an observed coexistence constraint, not proof of a particular controller
+scheduler defect. Peripheral latency remains zero: an earlier first-link
+transition from latency 4 to 0 also produced a supervision timeout. Sustained
+reliability, other centrals and idle connected battery current remain unmeasured.
 The native application API includes experimental LEGO peripheral connections;
 see [application LEGO devices](#application-lego-devices) for its limits and evidence.
 Program execution through the Pybricks endpoint requires Python.
@@ -125,10 +132,14 @@ It can be read over USB after a failed BLE connection has released ownership.
 
 `bluetooth peer` reports the application-side central link separately: current
 phase, selected device name, attempt count, and the last failure's phase and
-uptime. It retains the raw HCI connection status, Zephyr security error and
-level, and disconnection reason across application cleanup. A zero HCI or
-security code can mean success or that its callback was never reached. The command
-does not initiate a connection and is available after the application exits.
+uptime, with the raw HCI connection status and Zephyr security error/level at
+that failure. It separately retains the last physical disconnection's reason,
+uptime and attempt number, even when GATT subscription removal reported the
+failure first. Both survive application cleanup and a subsequent connection
+attempt. A zero HCI or security code can mean success or that its callback was
+never reached; disconnect attempt zero means no physical disconnection has been
+reported. The command does not initiate a connection and is available after the
+application exits.
 
 Closing a Linux client need not terminate the radio link immediately. For example,
 [BlueZ 5.87's disconnect path](https://github.com/bluez/bluez/blob/8750129efca8/src/device.c)
@@ -502,8 +513,14 @@ Python and the native service, including malformed reports, bond reuse and stop
 during a pending descriptor read. On one Inventor F4 (PCB revision unknown),
 USB-managed Python connected to an Xbox Wireless Controller over BLE, read the
 initial report, and received A-button and left-stick changes while its indicator
-stayed lit. This checks connection and input, not rumble, sustained reconnection
-or simultaneous host BLE traffic. The wire codec uses
+stayed lit. Motorless native checks on that board also held Xbox input and BLE
+management together for 75 seconds in each connection order, transferring
+72-byte IMU/input records produced every 15 ms. The management interval was
+15 ms and Xbox used 7.5 ms. The computer-first run retained consecutive records;
+the Xbox-first run reported ring overwrites during active input, so coexistence
+does not imply lossless telemetry at that rate. Pairing used the controller's
+pairing mode. Other controller variants, rumble and sustained reconnection remain
+unverified. The wire codec uses
 licensed SDL/Bluepad32 sources; Pybricks' non-free Xbox source is excluded. See
 [licensing](licensing.md#xbox-controller-codec).
 

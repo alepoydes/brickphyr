@@ -11,6 +11,7 @@ struct hub_ble_peer_diagnostics {
 	const char *phase, *last_failure_phase;
 	char name[BP_BLE_PEER_NAME_MAX + 1];
 	uint32_t attempts, last_failure_ms;
+	uint32_t disconnect_ms, disconnect_attempt;
 	int last_error;
 	uint8_t hci_status, security_error, security_level, disconnect_reason;
 };

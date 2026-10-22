@@ -473,7 +473,8 @@ async def collect(client, log, session, counts, *, after=None, wait=False, resum
     clock = asyncio.get_running_loop()
     while True:
         if index < first:
-            target = max(first, next - max(1, info.capacity // 2)) if compact and active and not (
+            # Leave half the actual retained window as headroom for the next read.
+            target = max(first, next - max(1, (next - first) // 2)) if active and not (
                 paused or segments
             ) else first
             pending_gap += target - index

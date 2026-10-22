@@ -799,10 +799,12 @@ static int cmd_bluetooth(const struct shell *shell, size_t argc, char **argv)
 		hub_ble_peer_diagnostics(&stats);
 		shell_print(shell, "BLE peer phase=%s name=%s attempts=%u",
 			stats.phase, stats.name[0] ? stats.name : "-", stats.attempts);
-		shell_print(shell, "last fail=%s:%d at %u ms; HCI=0x%02x security=%u level=%u disconnect=0x%02x",
+		shell_print(shell, "last fail=%s:%d at %u ms; HCI=0x%02x security=%u level=%u",
 			stats.last_failure_phase ? stats.last_failure_phase : "none",
 			stats.last_error, stats.last_failure_ms, stats.hci_status,
-			stats.security_error, stats.security_level, stats.disconnect_reason);
+			stats.security_error, stats.security_level);
+		shell_print(shell, "last disconnect=0x%02x at %u ms; attempt=%u",
+			stats.disconnect_reason, stats.disconnect_ms, stats.disconnect_attempt);
 		return 0;
 #else
 		return -ENOTSUP;

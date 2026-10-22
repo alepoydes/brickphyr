@@ -195,8 +195,9 @@ and `DuploTrain` share native LEGO BLE setup, commands and snapshots, with
 protected ARM checks for operations, reconnects and lifetime cleanup.
 `XboxController` uses the same peer owner with a licensed SDL/Bluepad32 codec;
 standard/Elite input, rumble and pending-read cleanup have protected ARM checks.
-Physical controller behavior remains unverified. `HubNetwork` uses shared native
-Classic routing/inboxes with protected ARM checks for both roles, the Python
+Xbox input has bounded Inventor F4 USB/BLE checks, including simultaneous host
+BLE traffic; other controller variants and rumble remain unverified. `HubNetwork`
+uses shared native Classic routing/inboxes with protected ARM checks for both roles, the Python
 codec, forwarding and cleanup. F4 leaf exchange with a synthetic Linux peer
 also passes alongside BLE management. Physical Pybricks/peripheral interoperability,
 broadcasting remain pending. See [Bluetooth](../docs/bluetooth.md).

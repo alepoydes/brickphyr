@@ -278,7 +278,7 @@ transport queues ordered notification fragments up to the available buffers
 instead of waiting for each fragment's completion before sending the next.
 The image used for the following run preferred a 7.5 ms interval with peripheral
 latency 4 and requested latency 0 during active SMP traffic. The current F4
-profile prefers latency 0 from connection establishment; see
+profile prefers a 15 ms interval and latency 0 from connection establishment; see
 [Bluetooth integration](bluetooth.md#experimental-f4-controller). On one
 USB-powered Robot Inventor F4 and Linux central, an immediately started passive
 2,400-row recording at a requested

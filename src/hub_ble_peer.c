@@ -62,7 +62,7 @@ static struct {
 	struct bp_lwp3_message tx, *messages;
 	uint16_t first, count;
 	struct hub_ble_peer_diagnostics diagnostics;
-	uint8_t hci_status, security_error, security_level, disconnect_reason;
+	uint8_t hci_status, security_error, security_level;
 } peer;
 
 static void wake(void) { host_radio_schedule(K_NO_WAIT); }
@@ -94,7 +94,6 @@ static void remember_failure(int error)
 	peer.diagnostics.hci_status = peer.hci_status;
 	peer.diagnostics.security_error = peer.security_error;
 	peer.diagnostics.security_level = peer.security_level;
-	peer.diagnostics.disconnect_reason = peer.disconnect_reason;
 }
 
 /* Called with lock held. Keep the initiating error through asynchronous cleanup. */
@@ -133,7 +132,7 @@ static void start_scan(void)
 {
 	peer.diagnostics.attempts++;
 	peer.pending = false;
-	peer.hci_status = peer.security_error = peer.security_level = peer.disconnect_reason = 0;
+	peer.hci_status = peer.security_error = peer.security_level = 0;
 	peer.phase = SCAN;
 	peer.state.busy = 1;
 	invalidate_sample();
@@ -753,7 +752,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	if (our_connection(conn)) {
-		peer.disconnect_reason = reason;
+		/* GATT subscription removal precedes this callback in Zephyr. Keep
+		 * the physical cause independently of that earlier initiating error. */
+		peer.diagnostics.disconnect_reason = reason;
+		peer.diagnostics.disconnect_ms = k_uptime_get_32();
+		peer.diagnostics.disconnect_attempt = peer.diagnostics.attempts;
 		peer.ended = true;
 		if (!peer.cancel) fail(-ENOTCONN);
 		wake();

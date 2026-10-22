@@ -1893,10 +1893,29 @@ ZTEST(python_ble_disconnect_recoverable, test_shared_disconnect_recoverable)
 	zassert_ok(hub_ble_peer_close(handle));
 	zassert_ok(hub_ble_peer_open(&config, &handle));
 	zassert_ok(hub_ble_peer_connect(handle));
+	deadline = k_uptime_get() + 1000;
+	do {
+		zassert_ok(hub_ble_peer_get(handle, &state));
+		zassert_true(k_uptime_get() < deadline, "reused peer did not become ready");
+		k_msleep(1);
+	} while (state.busy);
+	zassert_equal(state.error, 0);
+	zassert_true(state.connected);
 	zassert_equal(atomic_get(&lego_creates), creates);
 	lego_notify((uint8_t[]){7, 0, 0x45, 0, 1, 0, 0}, 7);
 	zassert_ok(hub_ble_peer_get(handle, &state));
 	zassert_true(state.lwp3.buttons != 0);
+	struct bt_gatt_subscribe_params *subscription = lego_subscription;
+	int peer_refs = atomic_get(&lego_refs);
+	connected(true);
+	zassert_ok(hub_ble_peer_get(handle, &state));
+	zassert_true(state.connected);
+	zassert_equal(lego_subscription, subscription);
+	connected(false);
+	zassert_ok(hub_ble_peer_get(handle, &state));
+	zassert_true(state.connected);
+	zassert_equal(lego_subscription, subscription);
+	zassert_equal(atomic_get(&lego_refs), peer_refs);
 
 	/* Subscription loss starts cleanup before an explicit disconnect. Neither
 	 * repeated disconnect nor repeated close may send a second command. The
@@ -1905,6 +1924,11 @@ ZTEST(python_ble_disconnect_recoverable, test_shared_disconnect_recoverable)
 	zassert_not_null(lego_subscription);
 	lego_subscription->notify(lego, lego_subscription, NULL, 0);
 	lego_subscription = NULL;
+	struct hub_ble_peer_diagnostics first_failure;
+	hub_ble_peer_diagnostics(&first_failure);
+	zassert_equal(first_failure.last_error, -ENOTCONN);
+	zassert_mem_equal(first_failure.last_failure_phase, "ready", sizeof("ready"));
+	zassert_true(first_failure.last_failure_ms > 0);
 	zassert_ok(hub_ble_peer_disconnect(handle));
 	zassert_ok(hub_ble_peer_disconnect(handle));
 	zassert_ok(hub_ble_peer_get(handle, &state));
@@ -1918,13 +1942,27 @@ ZTEST(python_ble_disconnect_recoverable, test_shared_disconnect_recoverable)
 	host_radio_disconnect(lego);
 	zassert_equal(atomic_get(&lego_disconnects), disconnects);
 	zassert_true(atomic_get(&lego_refs) > 0);
+	uint32_t callback_at = k_uptime_get_32();
 	lego_connection_event(false);
+	struct hub_ble_peer_diagnostics after_disconnect;
+	hub_ble_peer_diagnostics(&after_disconnect);
+	zassert_equal(after_disconnect.last_error, first_failure.last_error);
+	zassert_equal(after_disconnect.last_failure_phase, first_failure.last_failure_phase);
+	zassert_equal(after_disconnect.last_failure_ms, first_failure.last_failure_ms);
+	zassert_equal(after_disconnect.disconnect_reason, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	zassert_true(after_disconnect.disconnect_ms >= callback_at);
+	zassert_equal(after_disconnect.disconnect_attempt, first_failure.attempts);
+	uint32_t disconnect_ms = after_disconnect.disconnect_ms;
 	deadline = k_uptime_get() + 1000;
 	while (atomic_get(&lego_refs)) {
 		zassert_true(k_uptime_get() < deadline);
 		k_msleep(1);
 	}
 	zassert_ok(host_radio_error());
+	hub_ble_peer_diagnostics(&after_disconnect);
+	zassert_equal(after_disconnect.disconnect_ms, disconnect_ms);
+	zassert_equal(after_disconnect.disconnect_reason, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	zassert_equal(after_disconnect.disconnect_attempt, first_failure.attempts);
 
 	/* The create call can return a CONNECTING ref; cancellation must still
 	 * disconnect a later successful link after the initiation cancel command. */
@@ -1936,6 +1974,13 @@ ZTEST(python_ble_disconnect_recoverable, test_shared_disconnect_recoverable)
 		zassert_true(k_uptime_get() < deadline);
 		k_msleep(1);
 	}
+	hub_ble_peer_diagnostics(&after_disconnect);
+	zassert_equal(after_disconnect.last_error, first_failure.last_error);
+	zassert_equal(after_disconnect.last_failure_phase, first_failure.last_failure_phase);
+	zassert_equal(after_disconnect.last_failure_ms, first_failure.last_failure_ms);
+	zassert_equal(after_disconnect.disconnect_ms, disconnect_ms);
+	zassert_equal(after_disconnect.disconnect_reason, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	zassert_equal(after_disconnect.disconnect_attempt, first_failure.attempts);
 	zassert_equal(lego_state, BT_CONN_STATE_CONNECTING);
 	disconnect_fixture(0, false, false);
 	zassert_ok(hub_ble_peer_disconnect(handle));
